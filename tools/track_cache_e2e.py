@@ -66,8 +66,12 @@ def post_stream(route, body):
         n = int(data[h + 16:data.index(b"\r\n", h)])
         start = data.index(b"\r\n\r\n", h) + 4
         d = json.loads(data[start:start + n])
-        frames.append((d["frame_index"], {x["object_id"]: rle.decode(x["mask"]) for x in d["results"]}))
         pos = start + n
+        if "done" in d:  # the closing part of a track job
+            if not d["done"] or d.get("failed"):
+                raise SystemExit(f"FAIL track job reported {d}")
+            continue
+        frames.append((d["frame_index"], {x["object_id"]: rle.decode(x["mask"]) for x in d["results"]}))
     return ids, frames, time.time() - t0
 
 
