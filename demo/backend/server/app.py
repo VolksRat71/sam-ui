@@ -2,6 +2,7 @@
 # All rights reserved.
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
+# Modified by sam-ui: registers the track routes (tracks/routes.py).
 
 import logging
 from typing import Any, Generator
@@ -23,6 +24,7 @@ from inference.data_types import PropagateDataResponse, PropagateInVideoRequest
 from inference.multipart import MultipartResponseBuilder
 from inference.predictor import InferenceAPI
 from strawberry.flask.views import GraphQLView
+from tracks.routes import make_blueprint as make_track_routes
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +35,7 @@ videos = preload_data()
 set_videos(videos)
 
 inference_api = InferenceAPI()
+app.register_blueprint(make_track_routes(inference_api.track_context))
 
 
 @app.route("/healthy")

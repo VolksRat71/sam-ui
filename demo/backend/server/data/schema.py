@@ -2,6 +2,7 @@
 # All rights reserved.
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
+# Modified by sam-ui: objectTracks query, clearTrack mutation, startSession returns known objects.
 
 import hashlib
 import os
@@ -26,8 +27,10 @@ from data.data_types import (
     ClearPointsInFrameInput,
     ClearPointsInVideo,
     ClearPointsInVideoInput,
+    ClearTrackInput,
     CloseSession,
     CloseSessionInput,
+    ObjectTrack,
     RemoveObjectInput,
     RLEMask,
     RLEMaskForObject,
@@ -87,6 +90,12 @@ class Query:
         all_videos = get_videos()
         return all_videos.values()
 
+    @strawberry.field
+    def object_tracks(self, session_id: str, info: strawberry.Info) -> List[ObjectTrack]:
+        """sam-ui: every object known for the session's video, with its track state."""
+        inference_api: InferenceAPI = info.context["inference_api"]
+        return [ObjectTrack.from_info(o) for o in inference_api.object_tracks(session_id)]
+
 
 @strawberry.type
 class Mutation:
@@ -132,7 +141,21 @@ class Mutation:
 
         response = inference_api.start_session(request=request)
 
-        return StartSession(session_id=response.session_id)
+        return StartSession(
+            session_id=response.session_id,
+            objects=[
+                ObjectTrack.from_info(o)
+                for o in inference_api.object_tracks(response.session_id)
+            ],
+        )
+
+    @strawberry.mutation
+    def clear_track(self, input: ClearTrackInput, info: strawberry.Info) -> ObjectTrack:
+        """sam-ui: drop one object's cached track; its seeds stay."""
+        inference_api: InferenceAPI = info.context["inference_api"]
+        return ObjectTrack.from_info(
+            inference_api.clear_track(input.session_id, input.object_id)
+        )
 
     @strawberry.mutation
     def close_session(

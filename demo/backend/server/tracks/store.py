@@ -16,7 +16,7 @@ import shutil
 import time
 import uuid
 from pathlib import Path
-from typing import Dict, Iterator, Optional, Tuple
+from typing import Dict, Iterator, Optional, Tuple, Union
 
 import numpy as np
 
@@ -33,7 +33,7 @@ class TrackStore:
         return self.root / video / str(int(obj_id)) / engine
 
     def save(self, video: str, obj_id: int, engine: str, model: str, seeds_hash: str,
-             frames: Dict[int, np.ndarray], elapsed_s: float) -> Dict:
+             frames: Dict[int, Union[np.ndarray, Dict]], elapsed_s: float) -> Dict:
         """Write a whole track, atomically: into a temp dir, then swapped in, so
         a crash mid-write leaves the previous track (or none), never half of one."""
         final = self._dir(video, obj_id, engine)
@@ -43,7 +43,9 @@ class TrackStore:
         try:
             with open(tmp / "masks.jsonl", "w") as f:
                 for i in sorted(frames):
-                    f.write(json.dumps({"frame": int(i), **rle.encode(frames[i])}) + "\n")
+                    m = frames[i]  # a bool mask, or RLE already encoded for the stream
+                    enc = {"size": m["size"], "counts": m["counts"]} if isinstance(m, dict) else rle.encode(m)
+                    f.write(json.dumps({"frame": int(i), **enc}) + "\n")
         except BaseException:
             shutil.rmtree(tmp, ignore_errors=True)
             raise

@@ -47,6 +47,7 @@ type Mutation {
   cancelPropagateInVideo(
     input: CancelPropagateInVideoInput!
   ): CancelPropagateInVideo!
+  clearTrack(input: ClearTrackInput!): ObjectTrack!
   createDeletionId: String!
   acceptTos: Boolean!
   acceptTermsOfService: String!
@@ -59,6 +60,27 @@ type Mutation {
   uploadAnnotations(file: Upload!): Boolean!
 }
 
+input ClearTrackInput {
+  sessionId: String!
+  objectId: Int!
+}
+
+type SeedFrame {
+  frameIndex: Int!
+  points: [[Float!]!]!
+  labels: [Int!]!
+}
+
+type ObjectTrack {
+  objectId: Int!
+  state: String!
+  engine: String!
+  model: String!
+  frames: [Int!]
+  nFrames: Int!
+  seeds: [SeedFrame!]!
+}
+
 input PingInput {
   sessionId: String!
 }
@@ -69,6 +91,7 @@ type Pong {
 
 type Query {
   ping(input: PingInput!): Pong!
+  objectTracks(sessionId: String!): [ObjectTrack!]!
   defaultVideo: Video!
   videos(
     """
@@ -114,6 +137,7 @@ input RemoveObjectInput {
 
 type StartSession {
   sessionId: String!
+  objects: [ObjectTrack!]!
 }
 
 input StartSessionInput {

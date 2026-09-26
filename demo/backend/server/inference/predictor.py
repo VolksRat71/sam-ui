@@ -2,6 +2,7 @@
 # All rights reserved.
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
+# Modified by sam-ui: clicks are recorded as seeds, and track jobs run through tracks/.
 
 import contextlib
 import logging
@@ -13,7 +14,7 @@ from typing import Any, Dict, Generator, List
 
 import numpy as np
 import torch
-from app_conf import APP_ROOT, MODEL_SIZE
+from app_conf import APP_ROOT, DATA_PATH, MODEL_SIZE
 from inference.data_types import (
     AddMaskRequest,
     AddPointsRequest,
@@ -33,8 +34,12 @@ from inference.data_types import (
     StartSessionRequest,
     StartSessionResponse,
 )
-from pycocotools.mask import decode as decode_masks, encode as encode_masks
+from pycocotools.mask import decode as decode_masks
 from sam2.build_sam import build_sam2_video_predictor
+from tracks import rle as track_rle
+from tracks.engine import Sam2Engine
+from tracks.routes import TrackContext
+from tracks.service import TrackService
 
 
 logger = logging.getLogger(__name__)
@@ -90,6 +95,17 @@ class InferenceAPI:
             model_cfg, checkpoint, device=device
         )
         self.inference_lock = Lock()
+        # sam-ui: seeds and cached tracks, per video, under DATA_PATH/tracks
+        self.tracks = TrackService(
+            str(DATA_PATH / "tracks"),
+            Sam2Engine(
+                self.predictor,
+                model=MODEL_SIZE,
+                offload_video_to_cpu=device.type == "mps",
+                autocast=self.autocast_context,
+                score_thresh=self.score_thresh,
+            ),
+        )
 
     def autocast_context(self):
         if self.device.type == "cuda":
@@ -107,9 +123,24 @@ class InferenceAPI:
                 request.path,
                 offload_video_to_cpu=offload_video_to_cpu,
             )
+            # sam-ui: replay the stored seeds, so a reload keeps its objects
+            video = self.tracks.video_key(request.path)
+            for obj_id in self.tracks.seeds.objects(video):
+                for frame_idx, seed in sorted(self.tracks.seeds.seeds(video, obj_id).items()):
+                    self.predictor.add_new_points_or_box(
+                        inference_state=inference_state,
+                        frame_idx=frame_idx,
+                        obj_id=obj_id,
+                        points=np.array(seed["points"], np.float32),
+                        labels=np.array(seed["labels"], np.int32),
+                        clear_old_points=True,
+                        normalize_coords=False,
+                    )
             self.session_states[session_id] = {
                 "canceled": False,
                 "state": inference_state,
+                "video": video,
+                "path": request.path,
             }
             return StartSessionResponse(session_id=session_id)
 
@@ -141,6 +172,9 @@ class InferenceAPI:
                 normalize_coords=False,
             )
 
+            self.tracks.record_points(
+                session["video"], obj_id, frame_idx, points, labels, clear_old_points
+            )
             masks_binary = (masks > self.score_thresh)[:, 0].cpu().numpy()
 
             rle_mask_list = self.__get_rle_mask_list(
@@ -213,6 +247,7 @@ class InferenceAPI:
                     inference_state, frame_idx, obj_id
                 )
             )
+            self.tracks.clear_frame(session["video"], obj_id, request.frame_index)
             masks_binary = (video_res_masks > self.score_thresh)[:, 0].cpu().numpy()
 
             rle_mask_list = self.__get_rle_mask_list(
@@ -236,6 +271,7 @@ class InferenceAPI:
             session = self.__get_session(session_id)
             inference_state = session["state"]
             self.predictor.reset_state(inference_state)
+            self.tracks.clear_video(session["video"])  # "start over" forgets the cache too
             return ClearPointsInVideoResponse(success=True)
 
     def remove_object(self, request: RemoveObjectRequest) -> RemoveObjectResponse:
@@ -251,6 +287,7 @@ class InferenceAPI:
             new_obj_ids, updated_frames = self.predictor.remove_object(
                 inference_state, obj_id
             )
+            self.tracks.remove_object(session["video"], obj_id)
 
             results = []
             for frame_index, video_res_masks in updated_frames:
@@ -354,6 +391,28 @@ class InferenceAPI:
                     f"propagation ended in session {session_id}; {self.__get_session_stats()}"
                 )
 
+    # -- sam-ui: per-object tracks -------------------------------------------
+    def object_tracks(self, session_id: str) -> List[Dict]:
+        session = self.__get_session(session_id)
+        return self.tracks.objects(session["video"])
+
+    def clear_track(self, session_id: str, object_id: int) -> Dict:
+        with self.inference_lock:  # not while a job is writing
+            session = self.__get_session(session_id)
+            return self.tracks.clear_track(session["video"], object_id)
+
+    def track_context(self, session_id: str) -> TrackContext:
+        session = self.__get_session(session_id)
+        return TrackContext(
+            service=self.tracks,
+            video=session["video"],
+            path=session["path"],
+            lock=self.inference_lock,
+            autocast=self.autocast_context,
+            canceled=lambda: session["canceled"],
+            reset_cancel=lambda: session.__setitem__("canceled", False),
+        )
+
     def cancel_propagate_in_video(
         self, request: CancelPropagateInVideoRequest
     ) -> CancelPorpagateResponse:
@@ -378,8 +437,7 @@ class InferenceAPI:
         """
         Create a data value for an object/mask combo.
         """
-        mask_rle = encode_masks(np.array(mask, dtype=np.uint8, order="F"))
-        mask_rle["counts"] = mask_rle["counts"].decode()
+        mask_rle = track_rle.encode(mask)
         return PropagateDataValue(
             object_id=object_id,
             mask=Mask(

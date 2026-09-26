@@ -2,6 +2,7 @@
 # All rights reserved.
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
+# Modified by sam-ui: types for per-object tracks (ObjectTrack, SeedFrame, clearTrack).
 
 from dataclasses import dataclass
 from typing import Iterable, List, Optional
@@ -73,8 +74,52 @@ class StartSessionInput:
 
 
 @strawberry.type
+class SeedFrame:
+    """sam-ui: one frame's clicks for an object (points normalised to 0-1)."""
+
+    frame_index: int
+    points: List[List[float]]
+    labels: List[int]
+
+
+@strawberry.type
+class ObjectTrack:
+    """sam-ui: an object's seeds and the state of its cached track."""
+
+    object_id: int
+    state: str  # untracked | stale | tracked
+    engine: str
+    model: str
+    frames: Optional[List[int]]  # [first, last] tracked frame, or null
+    n_frames: int
+    seeds: List[SeedFrame]
+
+    @staticmethod
+    def from_info(info: dict) -> "ObjectTrack":
+        return ObjectTrack(
+            object_id=info["object_id"],
+            state=info["state"],
+            engine=info["engine"],
+            model=info["model"],
+            frames=info["frames"],
+            n_frames=info["n_frames"],
+            seeds=[
+                SeedFrame(frame_index=f, points=v["points"], labels=v["labels"])
+                for f, v in sorted(info["seeds"].items())
+            ],
+        )
+
+
+@strawberry.input
+class ClearTrackInput:
+    session_id: str
+    object_id: int
+
+
+@strawberry.type
 class StartSession:
     session_id: str
+    objects: List[ObjectTrack]  # sam-ui: objects already known for this video
 
 
 @strawberry.input
