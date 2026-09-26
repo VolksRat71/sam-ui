@@ -16,6 +16,8 @@ import type {
 type Pending = {resolve: (value: unknown) => void; reject: (error: Error) => void};
 
 export default class StudioBridge extends VideoWorkerBridge {
+  /** Set once the UI has started this worker's session. */
+  public started = false;
   private _nextCall = 1;
   private _pending = new Map<number, Pending>();
   private _studioListeners = new Set<(event: StudioEvent) => void>();

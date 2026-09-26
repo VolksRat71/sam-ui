@@ -22,10 +22,9 @@ class ErrorBoundary extends Component<{children: ReactNode}, {error: Error | nul
       return (
         <div className="app empty-app">
           <div className="empty-card">
-            <h1>Cannot reach the backend</h1>
-            <p>
-              {API_ENDPOINT} did not answer: {this.state.error.message}
-            </p>
+            <h1>studio stopped</h1>
+            <p>{this.state.error.message}</p>
+            <p className="muted">Backend: {API_ENDPOINT}</p>
             <button className="button primary" onClick={() => window.location.reload()}>
               Retry
             </button>

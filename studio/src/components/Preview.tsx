@@ -4,12 +4,14 @@
 // click layer and the active object's points on top. Clicks follow Meta's
 // demo: left click adds a point of the selected kind, right click the other
 // kind, clicking a point removes it. The view zooms (pinch, or Ctrl/Cmd +
-// wheel, or the buttons) and pans (wheel, middle drag, or Alt + drag); the
-// points zoom with the video.
+// wheel, or the buttons) and pans (wheel, middle drag, or Alt + drag). Only
+// the video and its masks are pixels, scaled by the zoom; the point markers
+// are an SVG overlay outside the zoomed box, placed in video coordinates, so
+// they stay crisp, keep their size, and never cover what they mark.
 import {AddFilled, SubtractFilled, ZoomIn, ZoomOut} from '@carbon/icons-react';
-import {useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type PointerEvent} from 'react';
+import {useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type PointerEvent} from 'react';
 import {needsPositiveClick} from '~/state/objects';
-import {FIT, panBy, zoomAt, type View} from '~/state/view';
+import {FIT, panBy, toScreen, zoomAt, type View} from '~/state/view';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
 
 export type LabelMode = 'positive' | 'negative';
@@ -48,20 +50,32 @@ export default function Preview({session, mode, onModeChange}: Props) {
   const {bridge, meta, state, frame, status, statusError, start} = session;
   const aspect = meta.width > 0 && meta.height > 0 ? meta.width / meta.height : 16 / 9;
   const {ref, box} = useFittedBox(aspect);
-  const transferred = useRef<StudioSessionApiBridge>(null);
   const [size] = useState(() => ({width: dim(meta.width), height: dim(meta.height)}));
 
-  // hand the canvas to this video's worker, once
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (bridge == null || canvas == null || transferred.current === bridge) {
-      return;
-    }
-    transferred.current = bridge;
-    bridge.setCanvas(canvas);
-    start();
-  }, [bridge, start]);
+  // Hand each canvas element to the worker once. If React ever replaces the
+  // element (a remount, a hot reload), the new one is handed over too and the
+  // frame redrawn; the session itself starts once per worker.
+  const canvasRef = useCallback(
+    (canvas: HTMLCanvasElement | null) => {
+      // flags live on the element and the bridge, so they survive a hot reload
+      if (bridge == null || canvas == null || canvas.dataset.transferred === 'yes') {
+        return;
+      }
+      canvas.dataset.transferred = 'yes';
+      try {
+        bridge.setCanvas(canvas);
+      } catch {
+        return; // already handed to a worker (only after a hot reload)
+      }
+      if (bridge.started) {
+        bridge.goToFrame(bridge.frame);
+      } else {
+        bridge.started = true;
+        start();
+      }
+    },
+    [bridge, start],
+  );
 
   const active = state.objects.find(o => o.id === state.activeId);
   const points = active?.points[frame] ?? [];
@@ -136,7 +150,8 @@ export default function Preview({session, mode, onModeChange}: Props) {
   }
 
   const primary: 0 | 1 = mode === 'positive' ? 1 : 0;
-  const r = 8;
+  const r = 8; // screen pixels, at any zoom
+  const stroke = 2;
 
   return (
     <div className="preview">
@@ -186,13 +201,10 @@ export default function Preview({session, mode, onModeChange}: Props) {
         onPointerMove={onPanMove}
         onPointerUp={onPanEnd}
         onAuxClick={e => e.preventDefault()}>
+        <div className="stage-frame" style={{width: box.width, height: box.height}}>
         <div
-          className="stage-box"
-          style={{
-            width: box.width,
-            height: box.height,
-            transform: `translate(${view.x}px, ${view.y}px) scale(${view.zoom})`,
-          }}>
+          className={view.zoom >= 2 ? 'stage-box pixelated' : 'stage-box'}
+          style={{transform: `translate(${view.x}px, ${view.y}px) scale(${view.zoom})`}}>
           {bridge != null && (
             // width/height are set once: a canvas handed to a worker cannot be resized here
             <canvas ref={canvasRef} className="stage-canvas" width={size.width} height={size.height} />
@@ -207,10 +219,10 @@ export default function Preview({session, mode, onModeChange}: Props) {
               }
             }}
           />
-          <svg className="points-layer" viewBox={`0 0 ${box.width || 1} ${box.height || 1}`}>
+        </div>
+          <svg className="points-layer" width={box.width} height={box.height}>
             {points.map((p, i) => {
-              const cx = p[0] * box.width;
-              const cy = p[1] * box.height;
+              const {x: cx, y: cy} = toScreen(view, box.width, box.height, p[0], p[1]);
               const positive = p[2] === 1;
               return (
                 <g
@@ -220,9 +232,9 @@ export default function Preview({session, mode, onModeChange}: Props) {
                     e.stopPropagation();
                     session.removePoint(i);
                   }}>
-                  <circle cx={cx} cy={cy} r={r} fill={positive ? '#000000' : '#E6193B'} />
-                  <line x1={cx - r / 2} y1={cy} x2={cx + r / 2} y2={cy} />
-                  {positive && <line x1={cx} y1={cy - r / 2} x2={cx} y2={cy + r / 2} />}
+                  <circle cx={cx} cy={cy} r={r} fill={positive ? '#000000' : '#E6193B'} strokeWidth={stroke} />
+                  <line x1={cx - r / 2} y1={cy} x2={cx + r / 2} y2={cy} strokeWidth={stroke} />
+                  {positive && <line x1={cx} y1={cy - r / 2} x2={cx} y2={cy + r / 2} strokeWidth={stroke} />}
                 </g>
               );
             })}
@@ -249,7 +261,6 @@ export default function Preview({session, mode, onModeChange}: Props) {
   );
 }
 
-type StudioSessionApiBridge = StudioSessionApi['bridge'];
 
 function dim(n: number): number {
   return n > 0 ? Math.round(n) : 1;

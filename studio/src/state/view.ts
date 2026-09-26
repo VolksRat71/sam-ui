@@ -43,3 +43,21 @@ export function zoomAt(
 export function panBy(view: View, dx: number, dy: number, boxWidth: number, boxHeight: number): View {
   return clampPan({...view, x: view.x + dx, y: view.y + dy}, boxWidth, boxHeight);
 }
+
+/**
+ * Where a video point (normalised 0-1) lands on screen, in pixels from the
+ * top-left of the unzoomed box. Overlays drawn with this stay crisp and
+ * keep their size at any zoom, instead of being scaled with the video.
+ */
+export function toScreen(
+  view: View,
+  boxWidth: number,
+  boxHeight: number,
+  nx: number,
+  ny: number,
+): {x: number; y: number} {
+  return {
+    x: boxWidth / 2 + view.x + (nx - 0.5) * boxWidth * view.zoom,
+    y: boxHeight / 2 + view.y + (ny - 0.5) * boxHeight * view.zoom,
+  };
+}
