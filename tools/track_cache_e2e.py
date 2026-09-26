@@ -1,15 +1,22 @@
 # sam-ui (Apache-2.0). New file, not from SAM 2.
 """End-to-end check of the per-object track cache against a running backend.
 
-Uses a synthetic video (three moving squares, generated here), never footage.
+Uses synthetic videos (moving squares, generated in a temp folder), never
+footage. It never writes into the backend's data folder: each clip goes in
+through the uploadVideo mutation, and the script closes its sessions and
+deletes its uploads (with their tracks) when it finishes, pass or fail. Point
+it at a scratch backend; --api is required so it never defaults to one in use.
 
-    python tools/track_cache_e2e.py --data-path "$DATA_PATH"            # phase 1
-    # restart the backend, then:
-    python tools/track_cache_e2e.py --data-path "$DATA_PATH" --after-restart
+    python tools/track_cache_e2e.py --api http://127.0.0.1:7373               # phase 1
+    # restart that backend, then:
+    python tools/track_cache_e2e.py --api http://127.0.0.1:7373 --after-restart
 
-    python tools/track_cache_e2e.py --data-path "$DATA_PATH" --correction   # any time
-    python tools/track_cache_e2e.py --data-path "$DATA_PATH" --responsive   # any time
-    (--api http://127.0.0.1:PORT for a backend other than 7263)
+    python tools/track_cache_e2e.py --api http://127.0.0.1:7373 --correction  # any time
+    python tools/track_cache_e2e.py --api http://127.0.0.1:7373 --responsive  # any time
+
+Phase 1 leaves its upload for phase 2 (remembered in ~/.cache/sam-ui-e2e/),
+which deletes it. A phase 1 that finds a leftover from an earlier run deletes
+that first.
 
 Phase 1: track A and B; add C and Track again (only C may run); clear B.
 Phase 2: a new session must bring back A and C tracked and B untracked.
@@ -24,8 +31,11 @@ well under a frame's worth of the job, and the job must still finish.
 import argparse
 import json
 import sys
+import tempfile
 import time
+import urllib.error
 import urllib.request
+import uuid
 from pathlib import Path
 
 import numpy as np
@@ -33,8 +43,11 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "demo" / "backend" / "server"))
 from tracks import rle  # noqa: E402
 
-API = "http://127.0.0.1:7263"
-REL = "gallery/_sam_ui_e2e.mp4"
+API = ""  # set from --api
+REL = ""  # the uploaded clip's path, set by use_clip()
+WORK = Path(tempfile.gettempdir()) / "sam-ui-e2e"
+STATE = Path.home() / ".cache" / "sam-ui-e2e" / "state.json"
+OPEN_SESSIONS = []
 N, H, W, S = 24, 240, 320, 50
 SQUARES = {0: (20, 10, (220, 40, 40)), 1: (95, 260, (40, 60, 220)), 2: (170, 10, (40, 200, 60))}
 A, B, C = 0, 1, 2
@@ -42,7 +55,8 @@ A, B, C = 0, 1, 2
 
 def make_video(path: Path):
     import av
-    bg = np.random.default_rng(0).integers(90, 140, (H, W, 3), dtype=np.uint8)
+    # a fresh background per run: every upload is unique, so no run deletes another's clip
+    bg = np.random.default_rng().integers(90, 140, (H, W, 3), dtype=np.uint8)
     out = av.open(str(path), "w")
     st = out.add_stream("libx264", rate=24, options={"crf": "12"})
     st.width, st.height, st.pix_fmt = W, H, "yuv420p"
@@ -86,9 +100,56 @@ def post_stream(route, body):
     return ids, frames, time.time() - t0
 
 
+def upload(path: Path) -> str:
+    """uploadVideo, as a multipart GraphQL request; returns uploads/<hash>.mp4."""
+    boundary = uuid.uuid4().hex
+    parts = [("operations", None, json.dumps({"query": "mutation($f: Upload!) { uploadVideo(file: $f) { path } }",
+                                              "variables": {"f": None}}).encode()),
+             ("map", None, json.dumps({"0": ["variables.f"]}).encode()),
+             ("0", path.name, path.read_bytes())]
+    body = b""
+    for name, filename, data in parts:
+        disp = f'form-data; name="{name}"' + (f'; filename="{filename}"' if filename else "")
+        body += f"--{boundary}\r\nContent-Disposition: {disp}\r\n".encode()
+        body += (b"Content-Type: video/mp4\r\n" if filename else b"") + b"\r\n" + data + b"\r\n"
+    body += f"--{boundary}--\r\n".encode()
+    req = urllib.request.Request(f"{API}/graphql", body, {"Content-Type": f"multipart/form-data; boundary={boundary}"})
+    out = json.load(urllib.request.urlopen(req))
+    if out.get("errors"):
+        raise SystemExit(f"upload failed: {out['errors']}")
+    return out["data"]["uploadVideo"]["path"]
+
+
+def use_clip(make, name: str) -> str:
+    """Generate a clip in the temp folder, upload it, and make it the current one."""
+    global REL
+    WORK.mkdir(parents=True, exist_ok=True)
+    local = WORK / name
+    make(local)
+    REL = upload(local)
+    return REL
+
+
+def cleanup(rel: str) -> None:
+    """Close the sessions this run opened, then delete its upload and tracks."""
+    while OPEN_SESSIONS:
+        sid = OPEN_SESSIONS.pop()
+        try:
+            gql('mutation($s: String!) { closeSession(input: {sessionId: $s}) { success } }', {"s": sid})
+        except SystemExit:
+            pass
+    try:
+        gql('mutation($p: String!) { deleteVideo(input: {path: $p, purgeTracks: true, closeIdleSessions: true}) '
+            '{ purged } }', {"p": rel})
+        print(f"cleaned up {rel}")
+    except SystemExit as err:
+        print(f"WARN could not delete {rel}: {err}")
+
+
 def start():
     d = gql('mutation($p: String!) { startSession(input: {path: $p}) { sessionId objects { objectId state } } }',
             {"p": REL})["startSession"]
+    OPEN_SESSIONS.append(d["sessionId"])
     return d["sessionId"], {o["objectId"]: o["state"] for o in d["objects"]}
 
 
@@ -135,12 +196,9 @@ def phase2():
     check(ids == "1", f"Track after the restart runs only B ({t:.1f} s)")
 
 
-TWO = "gallery/_sam_ui_twotone.mp4"
-
-
 def make_twotone(path: Path, n=20):
     import av
-    bg = np.random.default_rng(1).integers(90, 140, (H, W, 3), dtype=np.uint8)
+    bg = np.random.default_rng().integers(90, 140, (H, W, 3), dtype=np.uint8)
     out = av.open(str(path), "w")
     st = out.add_stream("libx264", rate=24, options={"crf": "12"})
     st.width, st.height, st.pix_fmt = W, H, "yuv420p"
@@ -156,10 +214,9 @@ def make_twotone(path: Path, n=20):
     out.close()
 
 
-def correction(data_path: Path):
-    if not (data_path / TWO).exists():
-        make_twotone(data_path / TWO)
-    sid = gql('mutation($p: String!) { startSession(input: {path: $p}) { sessionId } }', {"p": TWO})["startSession"]["sessionId"]
+def correction():
+    use_clip(make_twotone, "twotone.mp4")
+    sid, _ = start()
     gql('mutation($s: String!) { clearPointsInVideo(input: {sessionId: $s}) { success } }', {"s": sid})
 
     def add(frame, pts, labels):
@@ -204,20 +261,35 @@ def responsive():
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data-path", required=True, help="the backend's DATA_PATH")
+    ap.add_argument("--api", required=True, help="a scratch backend, e.g. http://127.0.0.1:7373")
     ap.add_argument("--after-restart", action="store_true")
     ap.add_argument("--correction", action="store_true")
     ap.add_argument("--responsive", action="store_true")
-    ap.add_argument("--api", default=API)
     a = ap.parse_args()
-    API = a.api
-    video = Path(a.data_path) / REL
-    if not video.exists():
-        make_video(video)
-    if a.responsive:
-        responsive()
-        sys.exit(0)
-    if a.correction:
-        correction(Path(a.data_path))
-        sys.exit(0)
-    phase2() if a.after_restart else phase1()
+    API = a.api.rstrip("/")
+    if a.correction or a.responsive:
+        try:
+            correction() if a.correction else (use_clip(make_video, "squares.mp4"), responsive())
+        finally:
+            cleanup(REL)
+    elif a.after_restart:
+        if not STATE.exists():
+            raise SystemExit("no phase 1 upload recorded: run phase 1 first")
+        REL = json.loads(STATE.read_text())["path"]
+        try:
+            phase2()
+        finally:
+            cleanup(REL)
+            STATE.unlink(missing_ok=True)
+    else:
+        if STATE.exists():  # a leftover from an earlier run that never reached phase 2
+            cleanup(json.loads(STATE.read_text())["path"])
+        use_clip(make_video, "squares.mp4")
+        STATE.parent.mkdir(parents=True, exist_ok=True)
+        STATE.write_text(json.dumps({"path": REL, "api": API}))
+        try:
+            phase1()
+        finally:
+            while OPEN_SESSIONS:  # keep the upload for phase 2, but not the sessions
+                sid = OPEN_SESSIONS.pop()
+                gql('mutation($s: String!) { closeSession(input: {sessionId: $s}) { success } }', {"s": sid})
