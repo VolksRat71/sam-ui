@@ -1,0 +1,5 @@
+# Media files the footage guard lets through: exact repo paths, one per line.
+# Only upstream (Meta) assets belong here, never footage or project data.
+studio/src/meta/assets/icons/angery.png
+studio/src/meta/assets/icons/heart.png
+studio/src/meta/assets/icons/whistle.png
