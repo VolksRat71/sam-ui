@@ -451,6 +451,22 @@ class InferenceAPI:
         target = Path(path).resolve()
         return any(Path(s["path"]).resolve() == target for s in self.session_states.values())
 
+    def close_idle_sessions_on(self, path: str, idle_s: float = 60.0) -> int:
+        """Close sessions on this video untouched for `idle_s` seconds and with no
+        running track job: tabs that went away without closeSession. A session
+        used within the last minute is someone's, and is left alone."""
+        target, now = Path(path).resolve(), time.time()
+        stale = [
+            sid
+            for sid, s in self.session_states.items()
+            if Path(s["path"]).resolve() == target
+            and now - s.get("last_used", now) > idle_s
+            and not self.tracks.jobs.session_busy(sid)
+        ]
+        for sid in stale:
+            self.session_states.pop(sid, None)
+        return len(stale)
+
     def purge_video(self, path: str) -> None:
         """Drop a video's seeds and cached tracks (keyed by its sha256)."""
         with self.inference_lock:

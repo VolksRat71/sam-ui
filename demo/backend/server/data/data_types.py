@@ -147,12 +147,14 @@ class DeleteVideoInput:
 
     path: str  # as `videos` lists it, e.g. uploads/<hash>.mp4
     purge_tracks: bool = True  # also drop its seeds and cached tracks
+    close_idle_sessions: bool = False  # first close sessions on it idle > 60 s (tabs that went away)
 
 
 @strawberry.type
 class DeleteVideo:
     path: str
     purged: bool
+    sessions_closed: int = 0
 
 
 @strawberry.input

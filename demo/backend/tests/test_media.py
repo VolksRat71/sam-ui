@@ -135,3 +135,39 @@ def test_delete_video_refuses_gallery_videos_escapes_missing_files_and_open_ones
         p.unlink()
     finally:
         g.unlink()
+
+
+def test_delete_video_can_close_sessions_that_went_idle():
+    p, v = upload("idle.mp4")
+
+    class IdleApi(Api):
+        def close_idle_sessions_on(self, path):
+            self.busy.discard(str(Path(path).resolve()))  # the leaked tab's session
+            return 1
+
+    api = IdleApi(busy=[p])
+    r = delete(api, v.path)
+    assert r.errors and "open in a session" in r.errors[0].message  # not asked: refused as before
+    from data.schema import schema
+    q = 'mutation($p: String!) { deleteVideo(input: {path: $p, closeIdleSessions: true}) { purged sessionsClosed } }'
+    r = schema.execute_sync(q, variable_values={"p": v.path}, context_value={"inference_api": api})
+    assert r.errors is None and r.data["deleteVideo"] == {"purged": True, "sessionsClosed": 1} and not p.exists()
+
+
+def test_close_idle_sessions_on_keeps_recent_and_busy_ones(tmp_path, monkeypatch):
+    from test_inference_api import StubPredictor
+    from inference.data_types import StartSessionRequest
+    from inference.predictor import InferenceAPI
+
+    video = tmp_path / "v.mp4"
+    video.write_bytes(b"x")
+    a = InferenceAPI(predictor=StubPredictor(), tracks_root=str(tmp_path / "t"))
+    clock = [100.0]
+    monkeypatch.setattr("inference.predictor.time.time", lambda: clock[0])
+    old, busy = (a.start_session(StartSessionRequest(type="start_session", path=str(video))).session_id for _ in range(2))
+    job = a.tracks.jobs.claim(busy, "v", [1])
+    clock[0] += 120
+    recent = a.start_session(StartSessionRequest(type="start_session", path=str(video))).session_id
+    assert a.close_idle_sessions_on(str(video)) == 1
+    assert set(a.session_states) == {busy, recent}
+    a.tracks.jobs.release(job)

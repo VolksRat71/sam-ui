@@ -8,7 +8,7 @@ session first. With purge, the video's seeds and cached tracks go with it.
 """
 import os
 from pathlib import Path
-from typing import Callable, Dict
+from typing import Callable, Dict, Optional
 
 from app_conf import DATA_PATH, POSTERS_PATH, UPLOADS_PATH
 from data.store import get_videos
@@ -19,7 +19,7 @@ class DeleteRefused(ValueError):
 
 
 def delete_upload(path: str, in_use: Callable[[str], bool], purge: Callable[[str], None],
-                  do_purge: bool = True) -> Dict:
+                  do_purge: bool = True, close_idle: Optional[Callable[[str], int]] = None) -> Dict:
     """`path` is the video's path as the API lists it (uploads/<hash>.mp4).
     `in_use(abs_path)` says whether a session holds it; `purge(abs_path)`
     drops its seeds and tracks. Returns what was removed."""
@@ -29,6 +29,7 @@ def delete_upload(path: str, in_use: Callable[[str], bool], purge: Callable[[str
         raise DeleteRefused(f"only uploaded videos can be deleted, not {path!r}")
     if not full.is_file():
         raise DeleteRefused(f"no uploaded video {path!r}")
+    closed = close_idle(str(full)) if close_idle else 0  # sessions nobody is using any more
     if in_use(str(full)):
         raise DeleteRefused(f"{path!r} is open in a session; close the session first")
     purged = False
@@ -42,4 +43,4 @@ def delete_upload(path: str, in_use: Callable[[str], bool], purge: Callable[[str
     videos = get_videos()
     for code in [c for c, v in videos.items() if v.path == path or c == path]:
         del videos[code]
-    return {"path": path, "purged": purged}
+    return {"path": path, "purged": purged, "sessions_closed": closed}

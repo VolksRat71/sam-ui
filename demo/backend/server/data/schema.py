@@ -168,8 +168,9 @@ class Mutation:
             in_use=inference_api.video_in_use,
             purge=inference_api.purge_video,
             do_purge=input.purge_tracks,
+            close_idle=inference_api.close_idle_sessions_on if input.close_idle_sessions else None,
         )
-        return DeleteVideo(path=out["path"], purged=out["purged"])
+        return DeleteVideo(path=out["path"], purged=out["purged"], sessions_closed=out["sessions_closed"])
 
     @strawberry.mutation
     def clear_track(self, input: ClearTrackInput, info: strawberry.Info) -> ObjectTrack:
