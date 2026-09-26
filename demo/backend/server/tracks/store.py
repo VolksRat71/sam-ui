@@ -38,6 +38,9 @@ class TrackStore:
         a crash mid-write leaves the previous track (or none), never half of one."""
         final = self._dir(video, obj_id, engine)
         final.parent.mkdir(parents=True, exist_ok=True)
+        self._recover(final)
+        for stray in final.parent.glob(f".{engine}.*-*"):  # leftovers of a crashed save
+            shutil.rmtree(stray, ignore_errors=True)
         tmp = final.with_name(f".{engine}.tmp-{uuid.uuid4().hex}")
         tmp.mkdir()
         try:
@@ -62,13 +65,24 @@ class TrackStore:
             shutil.rmtree(old, ignore_errors=True)
         return meta
 
+    def _recover(self, final: Path) -> None:
+        """Undo a crash between save()'s two renames: the previous track sits
+        in an .old dir and nothing in its place. Put it back."""
+        if final.exists() or not final.parent.is_dir():
+            return
+        olds = sorted(final.parent.glob(f".{final.name}.old-*"), key=lambda p: p.stat().st_mtime)
+        if olds:
+            os.replace(olds[-1], final)
+
     def meta(self, video: str, obj_id: int, engine: str) -> Optional[Dict]:
+        self._recover(self._dir(video, obj_id, engine))
         p = self._dir(video, obj_id, engine) / "track.json"
         return json.loads(p.read_text()) if p.exists() else None
 
     def masks(self, video: str, obj_id: int, engine: str) -> Iterator[Tuple[int, Dict]]:
         """(frame, rle) for every stored frame, in order. RLE stays encoded: the
         stream sends it as is."""
+        self._recover(self._dir(video, obj_id, engine))
         p = self._dir(video, obj_id, engine) / "masks.jsonl"
         if not p.exists():
             return
@@ -76,6 +90,13 @@ class TrackStore:
             for line in f:
                 d = json.loads(line)
                 yield d["frame"], {"size": d["size"], "counts": d["counts"]}
+
+    def mask_at(self, video: str, obj_id: int, engine: str, frame: int) -> Optional[Dict]:
+        """The cached track's RLE mask on one frame, or None."""
+        for f, r in self.masks(video, obj_id, engine):
+            if f == frame:
+                return r
+        return None
 
     def clear(self, video: str, obj_id: int, engine: Optional[str] = None) -> None:
         """Drop an object's track from one engine, or from every engine. Its seeds stay."""

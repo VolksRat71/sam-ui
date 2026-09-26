@@ -5,8 +5,14 @@ Seeds are the source of truth for an object. The interactive session's SAM 2
 state is a cache of them, and a track job rebuilds its own state from them.
 
 Layout: <root>/<video_key>/<obj_id>/seeds.json, holding
-{"<frame>": {"points": [[x, y], ...], "labels": [1, 0, ...]}}. Points are
-normalised to 0-1, as the demo's addPoints mutation sends them.
+{"<frame>": {"points": [[x, y], ...], "labels": [1, 0, ...], "mask": RLE}}.
+Points are normalised to 0-1, as the demo's addPoints mutation sends them.
+
+A seed frame's "mask" is the mask the user approved there: the result of their
+last click on that frame. Track jobs condition on it (not on replayed clicks),
+because SAM 2 reads a click as a correction only against a mask already on
+that frame; replayed alone, a negative click has nothing to subtract from.
+The points stay as the record of how the mask was made.
 """
 import hashlib
 import json
@@ -22,7 +28,8 @@ def seeds_hash(seeds: Seeds) -> str:
     """sha256 of the seeds as canonical JSON: independent of dict order, and
     changed by any point, label or frame."""
     canon = {str(int(f)): {"points": [[float(x), float(y)] for x, y in v["points"]],
-                           "labels": [int(l) for l in v["labels"]]}
+                           "labels": [int(l) for l in v["labels"]],
+                           "mask": (v.get("mask") or {}).get("counts")}
              for f, v in seeds.items() if v["points"]}
     blob = json.dumps(canon, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(blob.encode()).hexdigest()
@@ -70,13 +77,16 @@ class SeedStore:
         _write_json_atomic(p, {str(f): v for f, v in sorted(seeds.items()) if v["points"]})
 
     def add_points(self, video: str, obj_id: int, frame: int, points: List[List[float]],
-                   labels: List[int], clear_old_points: bool) -> Seeds:
+                   labels: List[int], clear_old_points: bool, mask: Optional[Dict] = None) -> Seeds:
         """Mirror SAM 2's add_new_points_or_box: clear_old_points replaces this
-        frame's points, otherwise they are appended."""
+        frame's points, otherwise they are appended. `mask` (RLE) is the mask
+        the click produced; it replaces the frame's approved mask."""
         seeds = self.seeds(video, obj_id)
         old = {"points": [], "labels": []} if clear_old_points else seeds.get(frame, {"points": [], "labels": []})
         seeds[frame] = {"points": old["points"] + [list(map(float, p)) for p in points],
                         "labels": old["labels"] + [int(l) for l in labels]}
+        if mask is not None:
+            seeds[frame]["mask"] = {"size": list(mask["size"]), "counts": mask["counts"]}
         self._save(video, obj_id, seeds)
         return seeds
 

@@ -37,7 +37,7 @@ from inference.data_types import (
 from pycocotools.mask import decode as decode_masks
 from sam2.build_sam import build_sam2_video_predictor
 from tracks import rle as track_rle
-from tracks.engine import Sam2Engine
+from tracks.engine import Sam2Engine, seed_into_state
 from tracks.routes import TrackContext
 from tracks.service import TrackService
 
@@ -47,11 +47,19 @@ logger = logging.getLogger(__name__)
 
 class InferenceAPI:
 
-    def __init__(self) -> None:
+    def __init__(self, predictor=None, device=None, tracks_root=None) -> None:
+        """sam-ui: predictor, device and tracks_root can be injected (tests use a
+        stub predictor); by default the model is built as upstream does."""
         super(InferenceAPI, self).__init__()
 
         self.session_states: Dict[str, Any] = {}
         self.score_thresh = 0
+        if predictor is not None:
+            self.device = device or torch.device("cpu")
+            self.predictor = predictor
+            self.inference_lock = Lock()
+            self._init_tracks(tracks_root)
+            return
 
         if MODEL_SIZE == "tiny":
             checkpoint = Path(APP_ROOT) / "checkpoints/sam2.1_hiera_tiny.pt"
@@ -95,13 +103,16 @@ class InferenceAPI:
             model_cfg, checkpoint, device=device
         )
         self.inference_lock = Lock()
-        # sam-ui: seeds and cached tracks, per video, under DATA_PATH/tracks
+        self._init_tracks(None)
+
+    def _init_tracks(self, tracks_root) -> None:
+        """sam-ui: seeds and cached tracks, per video, under DATA_PATH/tracks."""
         self.tracks = TrackService(
-            str(DATA_PATH / "tracks"),
+            str(tracks_root or DATA_PATH / "tracks"),
             Sam2Engine(
                 self.predictor,
                 model=MODEL_SIZE,
-                offload_video_to_cpu=device.type == "mps",
+                offload_video_to_cpu=self.device.type == "mps",
                 autocast=self.autocast_context,
                 score_thresh=self.score_thresh,
             ),
@@ -123,19 +134,15 @@ class InferenceAPI:
                 request.path,
                 offload_video_to_cpu=offload_video_to_cpu,
             )
-            # sam-ui: replay the stored seeds, so a reload keeps its objects
+            # sam-ui: replay the stored seeds (their approved masks), so a reload
+            # keeps its objects and a click on a seed frame refines its mask.
+            # Frame-major: each frame's backbone features serve every object.
             video = self.tracks.video_key(request.path)
-            for obj_id in self.tracks.seeds.objects(video):
-                for frame_idx, seed in sorted(self.tracks.seeds.seeds(video, obj_id).items()):
-                    self.predictor.add_new_points_or_box(
-                        inference_state=inference_state,
-                        frame_idx=frame_idx,
-                        obj_id=obj_id,
-                        points=np.array(seed["points"], np.float32),
-                        labels=np.array(seed["labels"], np.int32),
-                        clear_old_points=True,
-                        normalize_coords=False,
-                    )
+            seeds = {o: self.tracks.seeds.seeds(video, o) for o in self.tracks.seeds.objects(video)}
+            for frame_idx, obj_id in sorted(
+                (f, o) for o, s in seeds.items() for f, v in s.items() if v["points"]
+            ):
+                seed_into_state(self.predictor, inference_state, obj_id, frame_idx, seeds[obj_id][frame_idx])
             self.session_states[session_id] = {
                 "canceled": False,
                 "state": inference_state,
@@ -161,6 +168,19 @@ class InferenceAPI:
             labels = request.labels
             clear_old_points = request.clear_old_points
 
+            # sam-ui: a first click on a frame SAM 2 holds no mask for (a frame
+            # tracked by a job, not in this state) refines that frame's cached
+            # mask, as a correction should, instead of starting from nothing.
+            if not self.__has_output(inference_state, obj_id, frame_idx):
+                prime = self.tracks.prime_mask(session["video"], obj_id, frame_idx)
+                if prime is not None:
+                    self.predictor.add_new_mask(
+                        inference_state=inference_state,
+                        frame_idx=frame_idx,
+                        obj_id=obj_id,
+                        mask=track_rle.decode(prime),
+                    )
+
             # add new prompts and instantly get the output on the same frame
             frame_idx, object_ids, masks = self.predictor.add_new_points_or_box(
                 inference_state=inference_state,
@@ -172,10 +192,16 @@ class InferenceAPI:
                 normalize_coords=False,
             )
 
-            self.tracks.record_points(
-                session["video"], obj_id, frame_idx, points, labels, clear_old_points
-            )
             masks_binary = (masks > self.score_thresh)[:, 0].cpu().numpy()
+            self.tracks.record_points(
+                session["video"],
+                obj_id,
+                frame_idx,
+                points,
+                labels,
+                clear_old_points,
+                mask=track_rle.encode(masks_binary[list(object_ids).index(obj_id)]),
+            )
 
             rle_mask_list = self.__get_rle_mask_list(
                 object_ids=object_ids, masks=masks_binary
@@ -411,7 +437,22 @@ class InferenceAPI:
             autocast=self.autocast_context,
             canceled=lambda: session["canceled"],
             reset_cancel=lambda: session.__setitem__("canceled", False),
+            video_handle=session["state"],
         )
+
+    @staticmethod
+    def __has_output(inference_state, obj_id: int, frame_idx: int) -> bool:
+        """Whether SAM 2 holds a mask for this object on this frame (so a click
+        there refines it)."""
+        obj_idx = inference_state["obj_id_to_idx"].get(obj_id)
+        if obj_idx is None:
+            return False
+        for d in (inference_state["temp_output_dict_per_obj"].get(obj_idx, {}),
+                  inference_state["output_dict_per_obj"].get(obj_idx, {})):
+            for k in ("cond_frame_outputs", "non_cond_frame_outputs"):
+                if frame_idx in d.get(k, {}):
+                    return True
+        return False
 
     def cancel_propagate_in_video(
         self, request: CancelPropagateInVideoRequest

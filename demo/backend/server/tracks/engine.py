@@ -7,10 +7,12 @@ every frame's masks for exactly those objects. It never sees the interactive
 session: each track job builds its own state and drops it afterwards.
 """
 import contextlib
-from typing import Callable, Dict, Iterator, List, Protocol, Tuple
+from collections import OrderedDict
+from typing import Any, Callable, Dict, Iterator, List, Optional, Protocol, Tuple
 
 import numpy as np
 
+from tracks import rle
 from tracks.seeds import Seeds
 
 FrameMasks = Tuple[int, Dict[int, np.ndarray]]
@@ -20,10 +22,30 @@ class Engine(Protocol):
     name: str
     model: str
 
-    def track(self, video_path: str, objects: Dict[int, Seeds]) -> Iterator[FrameMasks]:
+    def track(self, video_path: str, objects: Dict[int, Seeds],
+              video_handle: Optional[Any] = None) -> Iterator[FrameMasks]:
         """Yield (frame_idx, {obj_id: bool mask HxW}) for every frame, each frame
-        once. Stopping the iteration early (a cancel) must release the job's state."""
+        once. Stopping the iteration early (a cancel) must release the job's state.
+        `video_handle` is the caller's already-loaded video, if it has one (for
+        SAM 2, the interactive session's state), so a job need not decode it again."""
         ...
+
+
+# init_state's per-object and per-job keys: a job gets fresh ones. Every other
+# key (the decoded frames, sizes, devices) is shared with the session's state.
+_JOB_KEYS = {"point_inputs_per_obj": dict, "mask_inputs_per_obj": dict, "cached_features": dict,
+             "constants": dict, "obj_id_to_idx": OrderedDict, "obj_idx_to_id": OrderedDict, "obj_ids": list,
+             "output_dict_per_obj": dict, "temp_output_dict_per_obj": dict, "frames_tracked_per_obj": dict}
+
+
+def job_state_like(session_state: Dict) -> Dict:
+    """A new SAM 2 inference state that shares the session's decoded video
+    (read only) but holds no objects, so a job never decodes the video twice
+    (about 12.6 MB a frame at 1024x1024) and never touches the session."""
+    missing = set(_JOB_KEYS) - set(session_state)
+    if missing:
+        raise ValueError(f"not a SAM 2 inference state (missing {sorted(missing)})")
+    return {k: (_JOB_KEYS[k]() if k in _JOB_KEYS else v) for k, v in session_state.items()}
 
 
 class Sam2Engine:
@@ -45,22 +67,20 @@ class Sam2Engine:
         self.autocast = autocast
         self.score_thresh = score_thresh
 
-    def track(self, video_path: str, objects: Dict[int, Seeds]) -> Iterator[FrameMasks]:
+    def track(self, video_path: str, objects: Dict[int, Seeds],
+              video_handle: Optional[Dict] = None) -> Iterator[FrameMasks]:
         objects = {o: s for o, s in objects.items() if any(v["points"] for v in s.values())}
         if not objects:
             return
         with self.autocast():
-            state = self.predictor.init_state(video_path, offload_video_to_cpu=self.offload_video_to_cpu)
+            if video_handle is not None:
+                state = job_state_like(video_handle)
+            else:
+                state = self.predictor.init_state(video_path, offload_video_to_cpu=self.offload_video_to_cpu)
             try:
-                for obj_id, seeds in objects.items():
-                    for frame, v in sorted(seeds.items()):
-                        if not v["points"]:
-                            continue
-                        # the seed store holds a frame's full point list, so replace
-                        self.predictor.add_new_points_or_box(
-                            inference_state=state, frame_idx=frame, obj_id=obj_id,
-                            points=np.array(v["points"], np.float32), labels=np.array(v["labels"], np.int32),
-                            clear_old_points=True, normalize_coords=False)
+                # frame-major, so each frame's backbone features serve every object
+                for frame, obj_id in sorted((f, o) for o, s in objects.items() for f, v in s.items() if v["points"]):
+                    seed_into_state(self.predictor, state, obj_id, frame, objects[obj_id][frame])
                 start = min(f for s in objects.values() for f, v in s.items() if v["points"])
                 for reverse in (False, True):
                     for frame, obj_ids, masks in self.predictor.propagate_in_video(
@@ -71,6 +91,19 @@ class Sam2Engine:
                                       for k, o in enumerate(obj_ids)}
             finally:
                 self.predictor.reset_state(state)
+
+
+def seed_into_state(predictor, state, obj_id: int, frame: int, seed: Dict) -> None:
+    """Condition a SAM 2 state on one seed frame: its approved mask when the
+    seed has one, else its clicks (seeds stored before masks were)."""
+    if seed.get("mask"):
+        predictor.add_new_mask(inference_state=state, frame_idx=frame, obj_id=obj_id, mask=rle.decode(seed["mask"]))
+    else:
+        # the seed store holds a frame's full point list, so replace
+        predictor.add_new_points_or_box(
+            inference_state=state, frame_idx=frame, obj_id=obj_id,
+            points=np.array(seed["points"], np.float32), labels=np.array(seed["labels"], np.int32),
+            clear_old_points=True, normalize_coords=False)
 
 
 class FakeEngine:
@@ -92,7 +125,8 @@ class FakeEngine:
         m[y:y + 4, x:x + 4] = True
         return m
 
-    def track(self, video_path: str, objects: Dict[int, Seeds]) -> Iterator[FrameMasks]:
+    def track(self, video_path: str, objects: Dict[int, Seeds],
+              video_handle: Optional[Any] = None) -> Iterator[FrameMasks]:
         self.calls.append(sorted(objects))
         for i in range(self.n_frames):
             yield i, {o: self.mask(o, i, self.shape) for o in objects}
