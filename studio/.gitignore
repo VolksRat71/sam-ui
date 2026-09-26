@@ -3,3 +3,4 @@ dist
 *.local
 .env
 e2e/out
+.models
