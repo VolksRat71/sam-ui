@@ -35,6 +35,15 @@ section 4(b) of the licence requires. New files under `demo/backend/server/track
   `data/clip.mp4` + `data/frames/`), which the rotoscoping-video-subjects pipeline
   loads and traces unchanged. Writes only under `SAM_UI_EXPORT_ROOT` (default
   ~/Movies) and never replaces confirmed decision files without `force`.
+- Engines (`tracks/service.py`, `tracks/sam3_engine.py`): SAM 2 is the default and
+  serves clicks; SAM 3's video tracker (Hugging Face transformers
+  `Sam3TrackerVideoModel`, which runs on MPS) is opt-in per track job
+  (`"engine": "sam3"`), built on first use. Each object keeps one cached track per
+  engine (`ObjectTrack.tracks`); `GET /engines`; `POST /track_disagreement` flags
+  frames where two engines' current tracks disagree. **SAM 3 is under Meta's SAM
+  License, not Apache-2.0**: sam-ui only imports transformers at run time and loads
+  weights from a local folder (`SAM_UI_SAM3_WEIGHTS`); no SAM 3 code or weights are
+  in this repository.
 - Changed upstream files: `demo/backend/server/app.py`, `inference/predictor.py`,
   `data/schema.py`, `data/data_types.py`, `demo/frontend/schemas/inference-api-schema.graphql`
   (and the generated `demo/frontend/schema.graphql`).

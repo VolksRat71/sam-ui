@@ -63,6 +63,15 @@ type Mutation {
 input ClearTrackInput {
   sessionId: String!
   objectId: Int!
+  engine: String
+}
+
+type EngineTrack {
+  engine: String!
+  model: String!
+  state: String!
+  frames: [Int!]
+  nFrames: Int!
 }
 
 type SeedFrame {
@@ -79,6 +88,7 @@ type ObjectTrack {
   frames: [Int!]
   nFrames: Int!
   seeds: [SeedFrame!]!
+  tracks: [EngineTrack!]!
 }
 
 input PingInput {

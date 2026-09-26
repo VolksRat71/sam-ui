@@ -25,6 +25,7 @@ def parse_all(body: bytes):
             assert closing is None, "one closing part, at the end"
             assert d.pop("frame_index") == -1 and d.pop("results") == []  # safe for a frames-only parser
             assert d.pop("job_id").startswith("job-")
+            assert d.pop("engine")
             closing = d
         else:
             assert closing is None, "no frames after the closing part"
@@ -52,7 +53,7 @@ class Harness:
         app = Flask(__name__)
         self.lock = threading.Lock()  # one model lock, as in production
         app.register_blueprint(make_blueprint(lambda sid: TrackContext(
-            self.service, self.video, str(self.video_path), session_id=sid, lock=self.lock)))
+            self.service, self.video, str(self.video_path), session_id=sid, lock=self.lock), self.service))
         self.client = app.test_client()
 
     def click(self, obj, frame=0, points=P, labels=(1,), clear=True):

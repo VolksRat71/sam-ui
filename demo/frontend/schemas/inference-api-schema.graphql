@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# Modified by sam-ui: ObjectTrack, SeedFrame, objectTracks, clearTrack, StartSession.objects.
+# Modified by sam-ui: ObjectTrack, EngineTrack, SeedFrame, objectTracks, clearTrack, StartSession.objects.
 
 input AddPointsInput {
   sessionId: String!
@@ -70,6 +70,17 @@ type Mutation {
 input ClearTrackInput {
   sessionId: String!
   objectId: Int!
+  # one engine's track; every engine's when null
+  engine: String
+}
+
+type EngineTrack {
+  engine: String!
+  model: String!
+  # untracked | stale | tracked | tracking
+  state: String!
+  frames: [Int!]
+  nFrames: Int!
 }
 
 type SeedFrame {
@@ -87,6 +98,8 @@ type ObjectTrack {
   frames: [Int!]
   nFrames: Int!
   seeds: [SeedFrame!]!
+  # every engine's track (the top-level fields are the default engine's)
+  tracks: [EngineTrack!]!
 }
 
 input PingInput {

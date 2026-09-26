@@ -154,7 +154,7 @@ class Mutation:
         """sam-ui: drop one object's cached track; its seeds stay."""
         inference_api: InferenceAPI = info.context["inference_api"]
         return ObjectTrack.from_info(
-            inference_api.clear_track(input.session_id, input.object_id)
+            inference_api.clear_track(input.session_id, input.object_id, input.engine)
         )
 
     @strawberry.mutation
