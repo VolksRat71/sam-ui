@@ -1,0 +1,40 @@
+// sam-ui (Apache-2.0). New file, not from SAM 2.
+// Type-checks studio/src and the Meta demo modules it imports through "@/"
+// (../demo/frontend/src). The packages those modules import are pinned to
+// studio/node_modules below, so they never resolve from the demo's own tree.
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "useDefineForClassFields": true,
+    "lib": ["ES2020", "DOM", "DOM.Iterable", "webworker"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["../demo/frontend/src/*"],
+      "~/*": ["./src/*"],
+      "mp4box": ["../demo/frontend/src/types/mp4box"],
+      "@carbon/icons-react": ["./node_modules/@carbon/icons-react/lib/index.d.ts"],
+      "invariant": ["./node_modules/@types/invariant/index.d.ts"],
+      "pts": ["./node_modules/pts/dist/index.d.ts"],
+      "react-device-detect": ["./node_modules/react-device-detect/index.d.ts"],
+      "relay-runtime": ["./node_modules/@types/relay-runtime/index.d.ts"],
+      "serialize-error": ["./node_modules/serialize-error/index.d.ts"]
+    }
+  },
+  "include": ["src"]
+}
