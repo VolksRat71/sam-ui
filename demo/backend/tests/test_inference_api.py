@@ -236,3 +236,22 @@ def test_clear_frame_remove_object_and_start_over_keep_the_store_in_step(world):
     click(a, sid, 3, 1, [[0.5, 0.5]], [1])
     a.clear_points_in_video(ClearPointsInVideoRequest(type="clear_points_in_video", session_id=sid))
     assert a.object_tracks(sid) == []
+
+
+def test_idle_sessions_expire_but_a_busy_one_is_kept(world, monkeypatch):
+    make, _, path = world
+    a = make()
+    clock = [1000.0]
+    monkeypatch.setattr("inference.predictor.time.time", lambda: clock[0])
+    monkeypatch.setenv("SAM_UI_SESSION_TTL_MIN", "30")
+    idle, busy, fresh = start(a, path), start(a, path), None
+    job = a.tracks.jobs.claim(busy, "v", [1])
+    clock[0] += 31 * 60
+    fresh = start(a, path)  # a new session sweeps the idle ones
+    assert set(a.session_states) == {busy, fresh}
+    a.tracks.jobs.release(job)
+    clock[0] += 29 * 60
+    a.object_tracks(fresh)  # touching a session keeps it alive
+    clock[0] += 2 * 60
+    start(a, path)
+    assert busy not in a.session_states and fresh in a.session_states

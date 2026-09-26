@@ -7,6 +7,7 @@
 import contextlib
 import logging
 import os
+import time
 import uuid
 from pathlib import Path
 from threading import Lock
@@ -132,6 +133,7 @@ class InferenceAPI:
 
     def start_session(self, request: StartSessionRequest) -> StartSessionResponse:
         with self.autocast_context(), self.inference_lock:
+            self._expire_idle_sessions()
             session_id = str(uuid.uuid4())
             # for MPS devices, we offload the video frames to CPU by default to avoid
             # memory fragmentation in MPS (which sometimes crashes the entire process)
@@ -155,6 +157,7 @@ class InferenceAPI:
                 "state": inference_state,
                 "video": video,
                 "path": request.path,
+                "last_used": time.time(),
             }
             return StartSessionResponse(session_id=session_id)
 
@@ -507,7 +510,27 @@ class InferenceAPI:
             raise RuntimeError(
                 f"Cannot find session {session_id}; it might have expired"
             )
+        session["last_used"] = time.time()
         return session
+
+    def _expire_idle_sessions(self) -> List[str]:
+        """sam-ui: free sessions idle longer than SAM_UI_SESSION_TTL_MIN (default
+        30; 0 keeps them forever). Each holds its whole decoded video, and a
+        closed browser tab never calls closeSession. A session with a running
+        track job is kept: the job reads its video."""
+        ttl = float(os.environ.get("SAM_UI_SESSION_TTL_MIN", "30")) * 60
+        if ttl <= 0:
+            return []
+        now = time.time()
+        expired = [
+            sid
+            for sid, s in self.session_states.items()
+            if now - s.get("last_used", now) > ttl and not self.tracks.jobs.session_busy(sid)
+        ]
+        for sid in expired:
+            self.session_states.pop(sid, None)
+            logger.info(f"expired idle session {sid}")
+        return expired
 
     def __get_session_stats(self):
         """Get a statistics string for live sessions and their GPU usage."""
