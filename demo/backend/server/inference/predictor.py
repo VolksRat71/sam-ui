@@ -38,6 +38,7 @@ from pycocotools.mask import decode as decode_masks
 from sam2.build_sam import build_sam2_video_predictor
 from tracks import rle as track_rle
 from tracks.engine import Sam2Engine, seed_into_state
+from tracks.features import VIDEO_KEY, FeatureCache, install as install_feature_cache
 from tracks.routes import TrackContext
 from tracks.service import TrackService
 
@@ -106,7 +107,12 @@ class InferenceAPI:
         self._init_tracks(None)
 
     def _init_tracks(self, tracks_root) -> None:
-        """sam-ui: seeds and cached tracks, per video, under DATA_PATH/tracks."""
+        """sam-ui: seeds and cached tracks, per video, under DATA_PATH/tracks;
+        and a backbone-feature cache shared by sessions and jobs on a video
+        (SAM_UI_FEATURE_CACHE_GB, default 6; 0 turns it off)."""
+        cache_gb = float(os.environ.get("SAM_UI_FEATURE_CACHE_GB", "6"))
+        if cache_gb > 0:
+            install_feature_cache(self.predictor, FeatureCache(int(cache_gb * (1 << 30))))
         self.tracks = TrackService(
             str(tracks_root or DATA_PATH / "tracks"),
             Sam2Engine(
@@ -138,6 +144,7 @@ class InferenceAPI:
             # keeps its objects and a click on a seed frame refines its mask.
             # Frame-major: each frame's backbone features serve every object.
             video = self.tracks.video_key(request.path)
+            inference_state[VIDEO_KEY] = video  # opts the session (and its jobs) into the feature cache
             seeds = {o: self.tracks.seeds.seeds(video, o) for o in self.tracks.seeds.objects(video)}
             for frame_idx, obj_id in sorted(
                 (f, o) for o, s in seeds.items() for f, v in s.items() if v["points"]

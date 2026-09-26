@@ -132,3 +132,36 @@ def test_sam2_engine_tracks_a_synthetic_square_and_reports_backbone_share(tmp_pa
           f"({100 * backbone_s[0] / total:.0f}%), min IoU {min(ious):.3f}, mean {np.mean(ious):.3f}")
     assert sorted(frames) == list(range(N)) and set(frames[0]) == {1}
     assert min(ious) > 0.9
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(not CKPT.exists() or os.environ.get("SAM_UI_SLOW") != "1",
+                    reason="set SAM_UI_SLOW=1 with the large checkpoint in checkpoints/")
+def test_feature_cache_makes_a_retrack_faster_with_the_same_masks(tmp_path):
+    import torch
+    from sam2.build_sam import build_sam2_video_predictor
+    from tracks.engine import job_state_like
+    from tracks.features import VIDEO_KEY, FeatureCache, install
+
+    truth = _synthetic_video(tmp_path / "squares.mp4")
+    dev = "mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu")
+    pred = build_sam2_video_predictor("configs/sam2.1/sam2.1_hiera_l.yaml", str(CKPT), device=dev)
+    cache = FeatureCache(4 << 30)
+    install(pred, cache)
+    session = pred.init_state(str(tmp_path / "squares.mp4"), offload_video_to_cpu=dev == "mps")
+    session[VIDEO_KEY] = "squares"
+    e = Sam2Engine(pred, model="hiera_l")
+    seeds = {1: {0: {"points": [[(10 + S / 2) / W, (40 + S / 2) / H]], "labels": [1]}},
+             2: {0: {"points": [[(250 + S / 2) / W, (140 + S / 2) / H]], "labels": [1]}}}
+    runs = []
+    for _ in range(2):
+        t0 = time.perf_counter()
+        runs.append((dict(e.track("unused", seeds, video_handle=session)), time.perf_counter() - t0))
+    (a, t_cold), (b, t_warm) = runs
+    ious = [((a[i][o] & b[i][o]).sum() / max((a[i][o] | b[i][o]).sum(), 1)) for i in range(N) for o in (1, 2)]
+    print(f"\nfeature cache: cold {t_cold:.1f} s, warm {t_warm:.1f} s ({100 * (1 - t_warm / t_cold):.0f}% faster); "
+          f"{len(cache)} frames, {cache.nbytes / 2**20:.0f} MB; hits {cache.hits}; min IoU cold vs warm {min(ious):.4f}")
+    assert len(cache) == N and cache.hits >= N
+    assert t_warm < 0.8 * t_cold
+    assert min(ious) > 0.99
+    assert min(((b[i][1] & truth[1][i]).sum() / (b[i][1] | truth[1][i]).sum()) for i in range(N)) > 0.9
