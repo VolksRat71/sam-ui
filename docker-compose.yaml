@@ -1,9 +1,12 @@
+# Modified by sam-ui: the frontend service builds studio/ (Meta's demo/frontend was removed).
 services:
   frontend:
-    image: sam2/frontend
+    image: sam-ui/studio
     build:
-      context: ./demo/frontend
-      dockerfile: frontend.Dockerfile
+      context: ./studio
+      dockerfile: Dockerfile
+      args:
+        - VITE_API_ENDPOINT=http://localhost:7263
     ports:
       - 7262:80
 
