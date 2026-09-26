@@ -41,7 +41,8 @@ from tracks import rle as track_rle
 from tracks.engine import Sam2Engine, seed_into_state
 from tracks.features import VIDEO_KEY, FeatureCache, install as install_feature_cache
 from tracks.routes import TrackContext
-from tracks.service import TrackService
+from tracks import sam3_engine
+from tracks.service import EngineSpec, TrackService
 
 
 logger = logging.getLogger(__name__)
@@ -123,6 +124,16 @@ class InferenceAPI:
                 autocast=self.autocast_context,
                 score_thresh=self.score_thresh,
             ),
+            # SAM 3, opt-in per track job; built on first use, and only if its
+            # weights and transformers are present (sam3_engine.available)
+            extra=[
+                EngineSpec(
+                    name=sam3_engine.Sam3Engine.name,
+                    model=sam3_engine.Sam3Engine.model,
+                    factory=sam3_engine.Sam3Engine,
+                    unavailable=sam3_engine.available,
+                )
+            ],
         )
 
     def autocast_context(self):
@@ -439,10 +450,10 @@ class InferenceAPI:
         session = self.__get_session(session_id)
         return self.tracks.objects(session["video"])
 
-    def clear_track(self, session_id: str, object_id: int) -> Dict:
+    def clear_track(self, session_id: str, object_id: int, engine=None) -> Dict:
         with self.inference_lock:  # not while a job is writing
             session = self.__get_session(session_id)
-            return self.tracks.clear_track(session["video"], object_id)
+            return self.tracks.clear_track(session["video"], object_id, engine)
 
     def track_context(self, session_id: str) -> TrackContext:
         session = self.__get_session(session_id)

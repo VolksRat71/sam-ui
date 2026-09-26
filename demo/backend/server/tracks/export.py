@@ -70,8 +70,10 @@ def _spec(obj_id: int, given: Optional[Dict], index: int) -> Dict:
 
 
 def export(service, video: str, video_path: str, out_dir: str, objects: Optional[Dict[int, Dict]] = None,
-           include_stale: bool = False, frames: bool = False, force: bool = False) -> Dict:
+           include_stale: bool = False, frames: bool = False, force: bool = False,
+           engine: Optional[str] = None) -> Dict:
     out = _check_out(out_dir)
+    engine = service.get_engine(engine).name if engine else service.default
     if not force:
         clash = [n for n in DECISIONS if (out / n).exists()]
         if clash:
@@ -80,7 +82,7 @@ def export(service, video: str, video_path: str, out_dir: str, objects: Optional
     ok_states = (TRACKED, STALE) if include_stale else (TRACKED,)
     specs, skipped = {}, {}
     for i, o in enumerate(wanted):
-        info = service.object_info(video, o)
+        info = service.object_info(video, o, engine)
         if info["state"] not in ok_states:
             skipped[o] = info["state"]
             continue
@@ -98,7 +100,7 @@ def export(service, video: str, video_path: str, out_dir: str, objects: Optional
             shutil.rmtree(mdir)
         mdir.mkdir(parents=True)
         size = None
-        for frame, r in service.tracks.masks(video, o, service.engine.name):
+        for frame, r in service.tracks.masks(video, o, engine):
             m = rle.decode(r)
             size = m.shape
             Image.fromarray((m * 255).astype(np.uint8)).save(mdir / f"{frame + 1:05d}.png")

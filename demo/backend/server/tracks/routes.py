@@ -2,21 +2,28 @@
 """HTTP routes for track jobs, streamed in the demo's multipart format (the
 same parts /propagate_in_video sends).
 
-POST /track_objects {session_id, object_ids?}: run the untracked and stale
-  objects (or the object_ids given) that no other running job holds. Headers:
+Every track route takes an optional "engine" ("sam2", the default, or "sam3");
+an unknown or unavailable engine is a 400. GET /engines lists them.
+
+POST /track_objects {session_id, object_ids?, engine?}: run the untracked and
+  stale objects (or the object_ids given) that no other running job on that
+  engine holds. Headers:
   Job-Id, and Objects-Tracked (the objects this job claimed). The job takes
   the model lock one frame at a time, so clicks are served between frames.
   The last part is {"done": true, "job_id", "objects", "tracked", "failed"}, or
   {"done": false, "job_id", "error", "objects"} when the engine failed or the
   job was cancelled; it also carries frame_index -1 and results [], so a
   parser that expects every part to be a frame reads it as an empty frame.
-POST /track_masks {session_id, object_ids?}: stream cached tracks, to repaint
+POST /track_masks {session_id, object_ids?, engine?}: stream cached tracks, to repaint
   them after a reload (disk only, no lock).
 POST /cancel_track {session_id, job_id}: cancel one job. (cancelPropagateInVideo
   cancels every job of its session.)
 POST /track_jobs {session_id}: the running jobs on the session's video, with
   progress.
-POST /export {session_id, out_dir, objects?, include_stale?, frames?, force?}:
+POST /track_disagreement {session_id, object_ids?, a?, b?, threshold?}: frames
+  where two engines' current tracks of an object disagree (IoU < threshold,
+  default 0.8; engines default sam2 and sam3), as review flags.
+POST /export {session_id, out_dir, objects?, include_stale?, frames?, force?, engine?}:
   write tracked objects as a rotoscoping working folder (see tracks/export.py);
   out_dir must be under SAM_UI_EXPORT_ROOT (default ~/Movies). 400 on a refusal.
 
@@ -34,7 +41,7 @@ from flask import Blueprint, Response, jsonify, request
 from inference.multipart import MultipartResponseBuilder
 from tracks.export import ExportError, export
 from tracks.jobs import Job
-from tracks.service import FrameRle, JobResult, TrackService
+from tracks.service import FrameRle, JobResult, TrackService, UnknownEngine
 
 BOUNDARY = "frame"
 logger = logging.getLogger(__name__)
@@ -83,11 +90,13 @@ def _run_job(ctx: TrackContext, job: Job) -> Iterator[bytes]:
     service, result = ctx.service, JobResult()
     try:
         with ctx.autocast():
-            it = service.track(ctx.video, ctx.path, job.objects, video_handle=ctx.video_handle, result=result)
+            it = service.track(ctx.video, ctx.path, job.objects, video_handle=ctx.video_handle, result=result,
+                               engine=job.engine)
             try:
                 while True:
                     if job.canceled:
-                        yield _closing({"done": False, "job_id": job.id, "error": "canceled", "objects": job.objects})
+                        yield _closing({"done": False, "job_id": job.id, "engine": job.engine, "error": "canceled",
+                                    "objects": job.objects})
                         return
                     with ctx.lock:
                         try:
@@ -98,14 +107,14 @@ def _run_job(ctx: TrackContext, job: Job) -> Iterator[bytes]:
                     yield part(frame, masks)
             except Exception as err:
                 logger.exception(f"track job {job.id} failed")
-                yield _closing({"done": False, "job_id": job.id, "error": f"{type(err).__name__}: {err}",
-                                "objects": job.objects})
+                yield _closing({"done": False, "job_id": job.id, "engine": job.engine,
+                                "error": f"{type(err).__name__}: {err}", "objects": job.objects})
                 return
             finally:
                 with ctx.lock:
                     it.close()  # a cancel, an error or a dropped client: the job caches nothing
-        yield _closing({"done": True, "job_id": job.id, "objects": result.objects, "tracked": result.tracked,
-                        "failed": {str(o): e for o, e in result.failed.items()}})
+        yield _closing({"done": True, "job_id": job.id, "engine": job.engine, "objects": result.objects,
+                        "tracked": result.tracked, "failed": {str(o): e for o, e in result.failed.items()}})
     finally:
         service.jobs.release(job)
 
@@ -115,7 +124,8 @@ def _stream_cached(frames: Iterator[FrameRle]) -> Iterator[bytes]:
         yield part(frame, masks)
 
 
-def make_blueprint(resolve: Callable[[str], TrackContext]) -> Blueprint:
+def make_blueprint(resolve: Callable[[str], TrackContext], service: Optional[TrackService] = None) -> Blueprint:
+    """`service` serves the routes that need no session (GET /engines)."""
     bp = Blueprint("tracks", __name__)
 
     def _response(body: Iterator[bytes], ids, job: Optional[Job] = None) -> Response:
@@ -128,13 +138,24 @@ def make_blueprint(resolve: Callable[[str], TrackContext]) -> Blueprint:
         r.headers["Access-Control-Expose-Headers"] = ", ".join(expose)
         return r
 
+    @bp.errorhandler(UnknownEngine)
+    def unknown_engine(err):
+        return jsonify({"error": str(err)}), 400
+
+    @bp.route("/engines", methods=["GET"])
+    def engines() -> Response:
+        if service is None:
+            return jsonify({"error": "no track service"}), 404
+        return jsonify({"engines": service.engines()})
+
     @bp.route("/track_objects", methods=["POST"])
     def track_objects() -> Response:
         data = request.json
         ctx = resolve(data["session_id"])
+        engine = ctx.service.get_engine(data.get("engine")).name  # 400 now if it can't run, not mid-stream
         with ctx.lock:  # a consistent read of the seeds and tracks
-            ids = ctx.service.select(ctx.video, data.get("object_ids"))
-        job = ctx.service.jobs.claim(ctx.session_id, ctx.video, ids, _n_frames(ctx.video_handle))
+            ids = ctx.service.select(ctx.video, data.get("object_ids"), engine)
+        job = ctx.service.jobs.claim(ctx.session_id, ctx.video, ids, _n_frames(ctx.video_handle), engine)
         r = _response(_run_job(ctx, job), job.objects, job)
         r.call_on_close(lambda: ctx.service.jobs.release(job))  # also if the stream never started
         return r
@@ -145,7 +166,8 @@ def make_blueprint(resolve: Callable[[str], TrackContext]) -> Blueprint:
         ctx = resolve(data["session_id"])
         ids: Optional[list] = data.get("object_ids")
         shown = ctx.service.seeds.objects(ctx.video) if ids is None else ids
-        return _response(_stream_cached(ctx.service.cached(ctx.video, ids)), shown)
+        frames = ctx.service.cached(ctx.video, ids, data.get("engine"))
+        return _response(_stream_cached(frames), shown)
 
     @bp.route("/cancel_track", methods=["POST"])
     def cancel_track() -> Response:
@@ -157,6 +179,13 @@ def make_blueprint(resolve: Callable[[str], TrackContext]) -> Blueprint:
         ctx = resolve(request.json["session_id"])
         return jsonify({"jobs": ctx.service.jobs.running(ctx.video)})
 
+    @bp.route("/track_disagreement", methods=["POST"])
+    def track_disagreement() -> Response:
+        data = request.json
+        ctx = resolve(data["session_id"])
+        return jsonify(ctx.service.disagreement(ctx.video, data.get("object_ids"), data.get("a"),
+                                                data.get("b", "sam3"), float(data.get("threshold", 0.8))))
+
     @bp.route("/export", methods=["POST"])
     def export_route() -> Response:
         data = request.json
@@ -164,7 +193,7 @@ def make_blueprint(resolve: Callable[[str], TrackContext]) -> Blueprint:
         try:
             manifest = export(ctx.service, ctx.video, ctx.path, data["out_dir"], objects=data.get("objects"),
                               include_stale=bool(data.get("include_stale")), frames=bool(data.get("frames")),
-                              force=bool(data.get("force")))
+                              force=bool(data.get("force")), engine=data.get("engine"))
         except ExportError as err:
             return jsonify({"error": str(err)}), 400
         return jsonify(manifest)

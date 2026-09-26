@@ -2,6 +2,7 @@
 # All rights reserved.
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
+# Modified by sam-ui: uploads are listed with the gallery.
 
 import os
 import shutil
@@ -11,7 +12,7 @@ from pathlib import Path
 from typing import Dict, Optional
 
 import imagesize
-from app_conf import GALLERY_PATH, POSTERS_PATH, POSTERS_PREFIX
+from app_conf import GALLERY_PATH, POSTERS_PATH, POSTERS_PREFIX, UPLOADS_PATH
 from data.data_types import Video
 from tqdm import tqdm
 
@@ -32,6 +33,11 @@ def preload_data() -> Dict[str, Video]:
     for p in tqdm(video_paths):
         video = get_video(p, GALLERY_PATH)
         all_videos[video.code] = video
+
+    # sam-ui: uploads are listed too (after the gallery), so they survive a restart
+    for p in sorted(glob(os.path.join(UPLOADS_PATH, "*.mp4"))):
+        video = get_video(p, UPLOADS_PATH)
+        all_videos.setdefault(video.code, video)
 
     return all_videos
 

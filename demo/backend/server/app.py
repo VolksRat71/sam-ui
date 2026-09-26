@@ -35,7 +35,7 @@ videos = preload_data()
 set_videos(videos)
 
 inference_api = InferenceAPI()
-app.register_blueprint(make_track_routes(inference_api.track_context))
+app.register_blueprint(make_track_routes(inference_api.track_context, inference_api.tracks))
 
 
 @app.route("/healthy")

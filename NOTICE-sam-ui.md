@@ -43,6 +43,15 @@ that carry Meta's header (adapted from `demo/frontend`).
   worker bridge, effects, RLE, multipart parser, Relay environment). Two files are
   adapted from Meta's (`src/worker/studio.worker.ts` from `VideoWorker.ts`,
   `src/worker/StudioSession.ts` from `SAM2Model.ts`). See `studio/README.md`.
+- Engines (`tracks/service.py`, `tracks/sam3_engine.py`): SAM 2 is the default and
+  serves clicks; SAM 3's video tracker (Hugging Face transformers
+  `Sam3TrackerVideoModel`, which runs on MPS) is opt-in per track job
+  (`"engine": "sam3"`), built on first use. Each object keeps one cached track per
+  engine (`ObjectTrack.tracks`); `GET /engines`; `POST /track_disagreement` flags
+  frames where two engines' current tracks disagree. **SAM 3 is under Meta's SAM
+  License, not Apache-2.0**: sam-ui only imports transformers at run time and loads
+  weights from a local folder (`SAM_UI_SAM3_WEIGHTS`); no SAM 3 code or weights are
+  in this repository.
 - Changed upstream files: `demo/backend/server/app.py`, `inference/predictor.py`,
   `data/schema.py`, `data/data_types.py`, `demo/frontend/schemas/inference-api-schema.graphql`
   (and the generated `demo/frontend/schema.graphql`).

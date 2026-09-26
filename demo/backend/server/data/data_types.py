@@ -80,11 +80,24 @@ class SeedFrame:
     frame_index: int
     points: List[List[float]]
     labels: List[int]
+    mask: Optional[RLEMask] = None  # the approved mask on this frame, if recorded
+
+
+@strawberry.type
+class EngineTrack:
+    """sam-ui: one engine's cached track of an object."""
+
+    engine: str
+    model: str
+    state: str  # untracked | stale | tracked | tracking
+    frames: Optional[List[int]]
+    n_frames: int
 
 
 @strawberry.type
 class ObjectTrack:
-    """sam-ui: an object's seeds and the state of its cached track."""
+    """sam-ui: an object's seeds and the state of its cached track (the
+    default engine's in the top-level fields, every engine's in `tracks`)."""
 
     object_id: int
     state: str  # untracked | stale | tracked
@@ -93,6 +106,7 @@ class ObjectTrack:
     frames: Optional[List[int]]  # [first, last] tracked frame, or null
     n_frames: int
     seeds: List[SeedFrame]
+    tracks: List[EngineTrack]
 
     @staticmethod
     def from_info(info: dict) -> "ObjectTrack":
@@ -104,8 +118,25 @@ class ObjectTrack:
             frames=info["frames"],
             n_frames=info["n_frames"],
             seeds=[
-                SeedFrame(frame_index=f, points=v["points"], labels=v["labels"])
+                SeedFrame(
+                    frame_index=f,
+                    points=v["points"],
+                    labels=v["labels"],
+                    mask=RLEMask(size=v["mask"]["size"], counts=v["mask"]["counts"], order="F")
+                    if v.get("mask")
+                    else None,
+                )
                 for f, v in sorted(info["seeds"].items())
+            ],
+            tracks=[
+                EngineTrack(
+                    engine=t["engine"],
+                    model=t["model"],
+                    state=t["state"],
+                    frames=t["frames"],
+                    n_frames=t["n_frames"],
+                )
+                for t in info.get("tracks", [])
             ],
         )
 
@@ -114,6 +145,7 @@ class ObjectTrack:
 class ClearTrackInput:
     session_id: str
     object_id: int
+    engine: Optional[str] = None  # one engine's track; every engine's when null
 
 
 @strawberry.type
