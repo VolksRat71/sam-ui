@@ -7,8 +7,15 @@ Uses a synthetic video (three moving squares, generated here), never footage.
     # restart the backend, then:
     python tools/track_cache_e2e.py --data-path "$DATA_PATH" --after-restart
 
+    python tools/track_cache_e2e.py --data-path "$DATA_PATH" --correction   # any time
+
 Phase 1: track A and B; add C and Track again (only C may run); clear B.
 Phase 2: a new session must bring back A and C tracked and B untracked.
+Correction: a two-tone bar tracked as one object; on a frame only the job
+tracked, a negative click on one half plus a positive on the other must keep
+just that half, and the re-track must carry it to later frames. (A lone
+negative click empties the mask in SAM 2, in Meta's own flow too: a
+correction frame needs a positive click.)
 """
 import argparse
 import json
@@ -124,11 +131,61 @@ def phase2():
     check(ids == "1", f"Track after the restart runs only B ({t:.1f} s)")
 
 
+TWO = "gallery/_sam_ui_twotone.mp4"
+
+
+def make_twotone(path: Path, n=20):
+    import av
+    bg = np.random.default_rng(1).integers(90, 140, (H, W, 3), dtype=np.uint8)
+    out = av.open(str(path), "w")
+    st = out.add_stream("libx264", rate=24, options={"crf": "12"})
+    st.width, st.height, st.pix_fmt = W, H, "yuv420p"
+    for i in range(n):
+        img = bg.copy()
+        x = 30 + 5 * i
+        img[100:150, x:x + 50] = (220, 40, 40)
+        img[100:150, x + 50:x + 100] = (240, 170, 30)
+        for pkt in st.encode(av.VideoFrame.from_ndarray(img, format="rgb24")):
+            out.mux(pkt)
+    for pkt in st.encode():
+        out.mux(pkt)
+    out.close()
+
+
+def correction(data_path: Path):
+    if not (data_path / TWO).exists():
+        make_twotone(data_path / TWO)
+    sid = gql('mutation($p: String!) { startSession(input: {path: $p}) { sessionId } }', {"p": TWO})["startSession"]["sessionId"]
+    gql('mutation($s: String!) { clearPointsInVideo(input: {sessionId: $s}) { success } }', {"s": sid})
+
+    def add(frame, pts, labels):
+        gql('mutation($i: AddPointsInput!) { addPoints(input: $i) { frameIndex } }',
+            {"i": {"sessionId": sid, "frameIndex": frame, "objectId": 0, "clearOldPoints": True,
+                   "labels": labels, "points": pts}})
+
+    add(0, [[55 / W, 125 / H], [105 / W, 125 / H]], [1, 1])  # both halves
+    _, frames, _ = post_stream("/track_objects", {"session_id": sid})
+    f, x = 10, 30 + 5 * 10
+    c = dict(frames)[f][0]
+    check(c[100:150, x:x + 100].sum() > 4800, "the job tracks the whole bar to frame 10")
+    add(f, [[(x + 75) / W, 125 / H], [(x + 25) / W, 125 / H]], [0, 1])  # cut orange, keep red
+    _, frames, _ = post_stream("/track_objects", {"session_id": sid})
+    fr = dict(frames)
+    for g in (10, 15, 19):
+        xg = 30 + 5 * g
+        red, orange = fr[g][0][100:150, xg:xg + 50].sum(), fr[g][0][100:150, xg + 50:xg + 100].sum()
+        check(red > 2400 and orange < 100, f"after the correction, frame {g} is red only ({red} red, {orange} orange px)")
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--data-path", required=True, help="the backend's DATA_PATH")
     ap.add_argument("--after-restart", action="store_true")
+    ap.add_argument("--correction", action="store_true")
     a = ap.parse_args()
+    if a.correction:
+        correction(Path(a.data_path))
+        sys.exit(0)
     video = Path(a.data_path) / REL
     if not video.exists():
         make_video(video)
