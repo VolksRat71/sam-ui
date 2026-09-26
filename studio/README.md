@@ -81,7 +81,7 @@ schema is `demo/frontend/schema.graphql`).
 | --- | --- |
 | Gallery of videos, pick one | done (Media) |
 | Upload a video (mp4/mov, 70 MB) | done (click or drop); uploads are listed with the gallery |
-| Remove a video | missing: the backend has no mutation for it (nor does Meta's demo) |
+| Remove a video | studio only (Meta's demo has none): a delete button on uploads, never on gallery videos, confirmed in an in-app dialog, with an option to keep the tracks. An open video's session closes first, and studio moves to the next video or the empty state |
 | Default video (`defaultVideo`) | partial: the last video you used, else the first in the gallery |
 | Click adds a positive point, right click a negative one | done |
 | Add / Remove point toggle | done |

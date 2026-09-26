@@ -11,6 +11,7 @@ import type {
 } from '@/common/components/video/VideoWorkerBridge';
 import {useCallback, useEffect, useMemo, useReducer, useRef, useState} from 'react';
 import StudioBridge from '~/bridge/StudioBridge';
+import {recordClose} from '~/lib/sessionClose';
 import {API_ENDPOINT, OBJECT_LIMIT} from '~/config';
 import {
   DEFAULT_ENGINE,
@@ -80,10 +81,17 @@ export default function useStudioSession(video: VideoItem) {
     const b = StudioBridge.createStudio();
     setBridge(b);
     return () => {
-      b.call('closeSession', {}).catch(() => {});
-      // let the close go out before the worker goes
-      setTimeout(() => b.terminate(), 500);
+      // recorded, so deleting this video can wait for the session to close
+      recordClose(
+        video.path,
+        b
+          .call('closeSession', {})
+          .catch(() => {})
+          .finally(() => b.terminate()),
+      );
     };
+    // one worker per Workspace, which is keyed by the video path
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {

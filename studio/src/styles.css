@@ -553,6 +553,24 @@ button {
   display: grid;
   gap: 6px;
 }
+.media-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.media-remove {
+  flex: none;
+  color: var(--gray-400);
+}
+.media-remove:hover:not(:disabled) {
+  color: #ff6b7f;
+}
+.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
 .media-item {
   display: grid;
   grid-template-columns: 64px minmax(0, 1fr) auto;
