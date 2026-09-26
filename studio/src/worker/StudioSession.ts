@@ -1,0 +1,677 @@
+/**
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+// Modified by sam-ui: adapted from demo/frontend/src/common/tracker/SAM2Model.ts
+// for per-object track jobs (/track_objects, /track_masks), restored objects
+// and client-assigned ids; a job only ever replaces the masks of its own objects.
+import {generateThumbnail} from '@/common/components/video/editor/VideoEditorUtils';
+import type VideoWorkerContext from '@/common/components/video/VideoWorkerContext';
+import type {Mask, SegmentationPoint, Tracklet} from '@/common/tracker/Tracker';
+import {createEnvironment} from '@/graphql/RelayEnvironment';
+import {type RLEObject, toBbox} from '@/jscocotools/mask';
+import {
+  type GraphQLTaggedNode,
+  type IEnvironment,
+  type MutationParameters,
+  commitMutation,
+  fetchQuery,
+  graphql,
+} from 'relay-runtime';
+import {
+  type DonePart,
+  type ErrorPart,
+  jobOutcome,
+  parseObjectsHeader,
+  readTrackStream,
+} from '~/api/trackStream';
+import {maskSegments} from '~/state/segments';
+import {colorFor, type NormPoint, type ServerObject} from '~/state/objects';
+import type MaskOverlayEffect from './MaskOverlayEffect';
+import {paintAlpha} from './maskPixels';
+import type {RunningJob, SessionInfo, StudioEvent, TrackResult} from './protocol';
+import type {StudioSessionAddPointsMutation} from './__generated__/StudioSessionAddPointsMutation.graphql';
+import type {StudioSessionCancelMutation} from './__generated__/StudioSessionCancelMutation.graphql';
+import type {StudioSessionClearFrameMutation} from './__generated__/StudioSessionClearFrameMutation.graphql';
+import type {StudioSessionClearTrackMutation} from './__generated__/StudioSessionClearTrackMutation.graphql';
+import type {StudioSessionClearVideoMutation} from './__generated__/StudioSessionClearVideoMutation.graphql';
+import type {StudioSessionCloseMutation} from './__generated__/StudioSessionCloseMutation.graphql';
+import type {StudioSessionObjectTracksQuery} from './__generated__/StudioSessionObjectTracksQuery.graphql';
+import type {StudioSessionRemoveObjectMutation} from './__generated__/StudioSessionRemoveObjectMutation.graphql';
+import type {StudioSessionStartMutation} from './__generated__/StudioSessionStartMutation.graphql';
+
+type RleList = ReadonlyArray<{
+  readonly objectId: number;
+  readonly rleMask: {readonly size: ReadonlyArray<number>; readonly counts: string};
+}>;
+
+// Each operation spells out the ObjectTrack fields it needs (ServerObject):
+// ObjectTrack has no id, so a shared fragment would buy nothing in the store.
+const START = graphql`
+  mutation StudioSessionStartMutation($input: StartSessionInput!) {
+    startSession(input: $input) {
+      sessionId
+      objects {
+        objectId
+        state
+        frames
+        nFrames
+        seeds {
+          frameIndex
+          points
+          labels
+        }
+      }
+    }
+  }
+`;
+
+const CLOSE = graphql`
+  mutation StudioSessionCloseMutation($input: CloseSessionInput!) {
+    closeSession(input: $input) {
+      success
+    }
+  }
+`;
+
+const ADD_POINTS = graphql`
+  mutation StudioSessionAddPointsMutation($input: AddPointsInput!) {
+    addPoints(input: $input) {
+      frameIndex
+      rleMaskList {
+        objectId
+        rleMask {
+          size
+          counts
+        }
+      }
+    }
+  }
+`;
+
+const CLEAR_FRAME = graphql`
+  mutation StudioSessionClearFrameMutation($input: ClearPointsInFrameInput!) {
+    clearPointsInFrame(input: $input) {
+      frameIndex
+      rleMaskList {
+        objectId
+        rleMask {
+          size
+          counts
+        }
+      }
+    }
+  }
+`;
+
+const REMOVE_OBJECT = graphql`
+  mutation StudioSessionRemoveObjectMutation($input: RemoveObjectInput!) {
+    removeObject(input: $input) {
+      frameIndex
+    }
+  }
+`;
+
+const CLEAR_TRACK = graphql`
+  mutation StudioSessionClearTrackMutation($input: ClearTrackInput!) {
+    clearTrack(input: $input) {
+      objectId
+      state
+      frames
+      nFrames
+      seeds {
+        frameIndex
+        points
+        labels
+      }
+    }
+  }
+`;
+
+const CLEAR_VIDEO = graphql`
+  mutation StudioSessionClearVideoMutation($input: ClearPointsInVideoInput!) {
+    clearPointsInVideo(input: $input) {
+      success
+    }
+  }
+`;
+
+const CANCEL = graphql`
+  mutation StudioSessionCancelMutation($input: CancelPropagateInVideoInput!) {
+    cancelPropagateInVideo(input: $input) {
+      success
+    }
+  }
+`;
+
+const OBJECT_TRACKS = graphql`
+  query StudioSessionObjectTracksQuery($sessionId: String!) {
+    objectTracks(sessionId: $sessionId) {
+      objectId
+      state
+      frames
+      nFrames
+      seeds {
+        frameIndex
+        points
+        labels
+      }
+    }
+  }
+`;
+
+function mutate<T extends MutationParameters>(
+  env: IEnvironment,
+  mutation: GraphQLTaggedNode,
+  variables: T['variables'],
+): Promise<T['response']> {
+  return new Promise((resolve, reject) => {
+    commitMutation<T>(env, {
+      mutation,
+      variables,
+      onCompleted: (response, errors) => {
+        if (errors != null && errors.length > 0) {
+          reject(new Error(errors.map(e => e.message).join('; ')));
+        } else {
+          resolve(response);
+        }
+      },
+      onError: reject,
+    });
+  });
+}
+
+/** Copy Relay's frozen records into plain objects that survive postMessage. */
+function plain<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function toMask(rle: {readonly size: ReadonlyArray<number>; readonly counts: string}): Mask | undefined {
+  const data: RLEObject = {size: [rle.size[0], rle.size[1]], counts: rle.counts};
+  const [x, y, w, h] = toBbox([data]);
+  if (!(w > 0 && h > 0)) {
+    return undefined; // an empty mask draws nothing
+  }
+  return {
+    data,
+    shape: [data.size[0], data.size[1]],
+    bounds: [
+      [x, y],
+      [x + w, y + h],
+    ],
+    isEmpty: false,
+  };
+}
+
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+export default class StudioSession {
+  private _endpoint = '';
+  private _env: IEnvironment | null = null;
+  private _sessionId: string | null = null;
+  private _tracklets = new Map<number, Tracklet>();
+  /** Per object, the mask each seed frame's last click produced. */
+  private _seedMasks = new Map<number, Map<number, Mask>>();
+  private _seedPoints = new Map<number, Map<number, NormPoint[]>>();
+
+  constructor(
+    private readonly _context: VideoWorkerContext,
+    private readonly _overlay: MaskOverlayEffect,
+    private readonly _emit: (event: StudioEvent) => void,
+  ) {}
+
+  // -- setup -----------------------------------------------------------------
+
+  init(endpoint: string): void {
+    this._endpoint = endpoint;
+    this._env = createEnvironment(endpoint);
+  }
+
+  private get env(): IEnvironment {
+    if (this._env == null) {
+      throw new Error('studio worker not initialised');
+    }
+    return this._env;
+  }
+
+  private get sessionId(): string {
+    if (this._sessionId == null) {
+      throw new Error('no active session');
+    }
+    return this._sessionId;
+  }
+
+  async startSession(path: string): Promise<SessionInfo> {
+    this._reset();
+    const res = await mutate<StudioSessionStartMutation>(this.env, START, {input: {path}});
+    this._sessionId = res.startSession.sessionId;
+    const objects = plain(res.startSession.objects) as ServerObject[];
+    for (const o of objects) {
+      const t = this._tracklet(o.objectId);
+      for (const s of o.seeds) {
+        this._setSeedPoints(t, s.frameIndex, s.points.map((p, i) => [p[0], p[1], s.labels[i] === 0 ? 0 : 1]));
+      }
+    }
+    this._render(false);
+    return {sessionId: this._sessionId, objects};
+  }
+
+  async closeSession(): Promise<void> {
+    const id = this._sessionId;
+    this._reset();
+    if (id != null) {
+      await mutate<StudioSessionCloseMutation>(this.env, CLOSE, {input: {sessionId: id}});
+    }
+  }
+
+  private _reset(): void {
+    this._sessionId = null;
+    this._tracklets.clear();
+    this._seedMasks.clear();
+    this._seedPoints.clear();
+    this._context.clearMasks();
+  }
+
+  // -- clicks ----------------------------------------------------------------
+
+  async setPoints(objectId: number, frameIndex: number, points: NormPoint[]): Promise<void> {
+    const t = this._tracklet(objectId);
+    let list: RleList;
+    if (points.length === 0) {
+      const res = await mutate<StudioSessionClearFrameMutation>(this.env, CLEAR_FRAME, {
+        input: {sessionId: this.sessionId, frameIndex, objectId},
+      });
+      list = res.clearPointsInFrame.rleMaskList;
+      this._seedMasks.get(objectId)?.delete(frameIndex);
+    } else {
+      const res = await mutate<StudioSessionAddPointsMutation>(this.env, ADD_POINTS, {
+        input: {
+          sessionId: this.sessionId,
+          frameIndex,
+          objectId,
+          points: points.map(p => [p[0], p[1]]),
+          labels: points.map(p => p[2]),
+          clearOldPoints: true,
+        },
+      });
+      list = res.addPoints.rleMaskList;
+    }
+    this._setSeedPoints(t, frameIndex, points);
+    // addPoints answers with every object on this frame; only the clicked
+    // object's mask is new. The others' (from tracks) stay as they are.
+    const mine = list.find(m => m.objectId === objectId);
+    const mask = mine == null ? undefined : toMask(mine.rleMask);
+    this._setMask(t, frameIndex, mask);
+    if (points.length > 0) {
+      const seeds = this._seedMasks.get(objectId) ?? new Map<number, Mask>();
+      if (mask != null) {
+        seeds.set(frameIndex, mask);
+      } else {
+        seeds.delete(frameIndex);
+      }
+      this._seedMasks.set(objectId, seeds);
+      if (mask != null) {
+        await this._thumbnail(t, frameIndex);
+      }
+    }
+    this._context.updateTracklets(frameIndex, this._list(), true);
+    this._emitTracklets();
+  }
+
+  async removeObject(objectId: number): Promise<void> {
+    await mutate<StudioSessionRemoveObjectMutation>(this.env, REMOVE_OBJECT, {
+      input: {sessionId: this.sessionId, objectId},
+    });
+    const t = this._tracklets.get(objectId);
+    this._tracklets.delete(objectId);
+    this._seedMasks.delete(objectId);
+    this._seedPoints.delete(objectId);
+    if (t != null) {
+      this._context.clearTrackletMasks(t);
+    }
+    this._render(true);
+  }
+
+  // -- tracks ----------------------------------------------------------------
+
+  async objectTracks(): Promise<ServerObject[]> {
+    const res = await fetchQuery<StudioSessionObjectTracksQuery>(
+      this.env,
+      OBJECT_TRACKS,
+      {sessionId: this.sessionId},
+      {fetchPolicy: 'network-only'},
+    ).toPromise();
+    return plain(res?.objectTracks ?? []) as ServerObject[];
+  }
+
+  async clearTrack(objectId: number): Promise<ServerObject> {
+    const res = await mutate<StudioSessionClearTrackMutation>(this.env, CLEAR_TRACK, {
+      input: {sessionId: this.sessionId, objectId},
+    });
+    const t = this._tracklets.get(objectId);
+    if (t != null) {
+      this._keepSeedMasksOnly(t);
+    }
+    this._render(true);
+    return plain(res.clearTrack) as ServerObject;
+  }
+
+  async startOver(): Promise<void> {
+    await mutate<StudioSessionClearVideoMutation>(this.env, CLEAR_VIDEO, {
+      input: {sessionId: this.sessionId},
+    });
+    this._tracklets.clear();
+    this._seedMasks.clear();
+    this._seedPoints.clear();
+    this._context.clearMasks();
+    this._render(true);
+  }
+
+  /** Cancel one job (POST /cancel_track), or every job of the session. */
+  async cancelTrack(jobId: string | null): Promise<boolean> {
+    if (jobId == null) {
+      const res = await mutate<StudioSessionCancelMutation>(this.env, CANCEL, {
+        input: {sessionId: this.sessionId},
+      });
+      return res.cancelPropagateInVideo.success;
+    }
+    const response = await fetch(`${this._endpoint}/cancel_track`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({session_id: this.sessionId, job_id: jobId}),
+    });
+    if (!response.ok) {
+      throw new Error(`cancel_track: HTTP ${response.status}`);
+    }
+    return Boolean(((await response.json()) as {canceled?: boolean}).canceled);
+  }
+
+  /** Every job running on this video (POST /track_jobs), other tabs' included. */
+  async trackJobs(): Promise<RunningJob[]> {
+    const response = await fetch(`${this._endpoint}/track_jobs`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({session_id: this.sessionId}),
+    });
+    if (!response.ok) {
+      throw new Error(`track_jobs: HTTP ${response.status}`);
+    }
+    const body = (await response.json()) as {
+      jobs?: Array<{job_id: string; objects: number[]; frames_done: number; n_frames: number | null; elapsed_s: number}>;
+    };
+    return (body.jobs ?? []).map(j => ({
+      jobId: j.job_id,
+      objects: j.objects,
+      framesDone: j.frames_done,
+      nFrames: j.n_frames,
+      elapsedS: j.elapsed_s,
+    }));
+  }
+
+  /**
+   * Run one track job for `objectIds` (the backend claims the ones no other
+   * job holds). Only those objects' masks are replaced as the stream arrives;
+   * every other object keeps what it shows, and the view stays on the frame
+   * the user is on, so clicking goes on while jobs run. A job that does not
+   * finish caches nothing on the backend, so its objects are repainted from
+   * their cached tracks instead.
+   */
+  async track(objectIds: number[], key: number): Promise<TrackResult> {
+    const response = await fetch(`${this._endpoint}/track_objects`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({session_id: this.sessionId, object_ids: objectIds}),
+    });
+    if (!response.ok) {
+      return {
+        selected: [],
+        jobId: null,
+        outcome: {ok: false, error: `track_objects: HTTP ${response.status}`, objects: []},
+      };
+    }
+    const selected = parseObjectsHeader(response.headers.get('Objects-Tracked'));
+    const jobId = response.headers.get('Job-Id');
+    this._emit({type: 'jobStarted', key, jobId, selected});
+    for (const id of selected) {
+      const t = this._tracklet(id);
+      this._keepSeedMasksOnly(t);
+    }
+    this._render(true);
+
+    let closing: DonePart | ErrorPart | null = null;
+    let streamError: string | null = null;
+    let n = 0;
+    try {
+      for await (const part of readTrackStream(
+        response.headers.get('Content-Type'),
+        response.body,
+      )) {
+        if (part.kind !== 'frame') {
+          closing = part;
+          continue;
+        }
+        for (const r of part.results) {
+          this._setMask(this._tracklet(r.objectId), part.frameIndex, toMask(r.mask));
+        }
+        // redraw only when the frame on screen changed; never move the view
+        this._context.updateTracklets(
+          this._context.frameIndex,
+          this._list(),
+          part.frameIndex === this._context.frameIndex,
+        );
+        this._emit({type: 'trackFrame', key, frameIndex: part.frameIndex});
+        if (++n % 12 === 0) {
+          this._emitTracklets();
+        }
+      }
+    } catch (error) {
+      streamError = error instanceof Error ? error.message : String(error);
+    }
+
+    const outcome =
+      streamError != null
+        ? ({ok: false, error: streamError, objects: selected} as const)
+        : jobOutcome(closing);
+    if (!outcome.ok || Object.keys(outcome.failed).length > 0) {
+      const lost = outcome.ok ? Object.keys(outcome.failed).map(Number) : selected;
+      for (const id of lost) {
+        const t = this._tracklets.get(id);
+        if (t != null) {
+          this._keepSeedMasksOnly(t);
+        }
+      }
+      if (lost.length > 0) {
+        await this.repaint(lost).catch(err =>
+          this._emit({type: 'warning', message: `could not repaint cached tracks: ${String(err)}`}),
+        );
+      }
+    } else {
+      await this._thumbnails(outcome.tracked);
+    }
+    this._render(true);
+    return {selected, jobId, outcome};
+  }
+
+  /** Stream cached tracks (all objects, or `objectIds`) into the preview. */
+  async repaint(objectIds?: number[]): Promise<void> {
+    this._emit({type: 'repaint', active: true});
+    try {
+      const response = await fetch(`${this._endpoint}/track_masks`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({session_id: this.sessionId, object_ids: objectIds ?? null}),
+      });
+      if (!response.ok) {
+        throw new Error(`track_masks: HTTP ${response.status}`);
+      }
+      for await (const part of readTrackStream(
+        response.headers.get('Content-Type'),
+        response.body,
+      )) {
+        if (part.kind !== 'frame') {
+          continue;
+        }
+        for (const r of part.results) {
+          this._setMask(this._tracklet(r.objectId), part.frameIndex, toMask(r.mask));
+        }
+      }
+      this._render(true);
+      await this._thumbnails([...this._tracklets.keys()]);
+      this._render(true);
+    } finally {
+      this._emit({type: 'repaint', active: false});
+    }
+  }
+
+  setActiveObject(objectId: number | null): void {
+    this._overlay.activeObjectId = objectId;
+    this._render(true);
+  }
+
+  // -- tracklets ---------------------------------------------------------------
+
+  private _tracklet(id: number): Tracklet {
+    let t = this._tracklets.get(id);
+    if (t == null) {
+      t = {id, color: colorFor(id), thumbnail: null, points: [], masks: [], isInitialized: true};
+      this._tracklets.set(id, t);
+    }
+    return t;
+  }
+
+  private _list(): Tracklet[] {
+    return [...this._tracklets.values()].sort((a, b) => a.id - b.id);
+  }
+
+  private _setMask(t: Tracklet, frame: number, mask: Mask | undefined): void {
+    if (mask == null) {
+      delete t.masks[frame];
+    } else {
+      t.masks[frame] = mask;
+    }
+  }
+
+  private _setSeedPoints(t: Tracklet, frame: number, points: NormPoint[]): void {
+    const w = this._context.width || 1;
+    const h = this._context.height || 1;
+    t.points[frame] =
+      points.length === 0
+        ? undefined
+        : points.map((p): SegmentationPoint => [p[0] * w, p[1] * h, p[2]]);
+    const seeds = this._seedPoints.get(t.id) ?? new Map<number, NormPoint[]>();
+    if (points.length === 0) {
+      seeds.delete(frame);
+    } else {
+      seeds.set(frame, points);
+    }
+    this._seedPoints.set(t.id, seeds);
+  }
+
+  /** Drop a track's masks but keep what the clicks themselves produced. */
+  private _keepSeedMasksOnly(t: Tracklet): void {
+    t.masks = [];
+    for (const [frame, mask] of this._seedMasks.get(t.id) ?? []) {
+      t.masks[frame] = mask;
+    }
+  }
+
+  private _render(redraw: boolean): void {
+    this._context.updateTracklets(this._context.frameIndex, this._list(), redraw);
+    this._emitTracklets();
+  }
+
+  private _emitTracklets(): void {
+    this._emit({
+      type: 'tracklets',
+      tracklets: this._list().map(t => ({
+        id: t.id,
+        color: t.color,
+        thumbnail: t.thumbnail,
+        segments: maskSegments(t.masks),
+      })),
+    });
+  }
+
+  // -- thumbnails (Meta's generateThumbnail, fed from our masks) ---------------
+
+  /** The decoded frame, once the decoder has reached it. */
+  private async _frameAt(index: number, timeoutMs = 20_000): Promise<VideoFrame | null> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      // Meta's context keeps its frames private; bracket access is the
+      // TypeScript escape hatch for reading one without copying the class.
+      const decoded = this._context['_decodedVideo'];
+      const frame = decoded?.frames[index]?.bitmap;
+      if (frame != null) {
+        return frame as VideoFrame;
+      }
+      if (decoded != null && decoded.frames.length >= decoded.numFrames && index >= decoded.numFrames) {
+        return null;
+      }
+      await sleep(100);
+    }
+    return null;
+  }
+
+  private async _thumbnail(t: Tracklet, frameIndex: number): Promise<void> {
+    const mask = t.masks[frameIndex];
+    if (mask == null || mask.isEmpty) {
+      return;
+    }
+    if ((t.points[frameIndex]?.length ?? 0) === 0) {
+      return;
+    }
+    const frame = await this._frameAt(frameIndex);
+    if (frame == null) {
+      return;
+    }
+    const rle = mask.data as RLEObject;
+    const [h, w] = rle.size;
+    const canvas = new OffscreenCanvas(w, h);
+    const ctx = canvas.getContext('2d', {willReadFrequently: true});
+    if (ctx == null) {
+      return;
+    }
+    const image = ctx.createImageData(w, h);
+    paintAlpha(new Uint32Array(image.data.buffer), rle);
+    ctx.putImageData(image, 0, 0);
+    try {
+      await generateThumbnail(t, frameIndex, mask, frame, ctx);
+    } catch (error) {
+      this._emit({type: 'warning', message: `thumbnail failed: ${String(error)}`});
+    }
+  }
+
+  /** A thumbnail for each object that has none, from its first seed frame with a mask. */
+  private async _thumbnails(ids: number[]): Promise<void> {
+    for (const id of ids) {
+      const t = this._tracklets.get(id);
+      if (t == null || t.thumbnail != null) {
+        continue;
+      }
+      const frames = [...(this._seedPoints.get(id)?.keys() ?? [])].sort((a, b) => a - b);
+      for (const f of frames) {
+        if (t.masks[f] != null) {
+          if (t.points[f] == null || t.points[f]!.length === 0) {
+            continue;
+          }
+          await this._thumbnail(t, f);
+          if (t.thumbnail != null) {
+            break;
+          }
+        }
+      }
+    }
+  }
+}
