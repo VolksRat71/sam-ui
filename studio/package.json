@@ -6,11 +6,12 @@
   "license": "Apache-2.0",
   "scripts": {
     "dev": "vite",
-    "relay": "relay-compiler",
+    "relay": "npm run merge-schemas && relay-compiler",
     "build": "tsc -p tsconfig.json && tsc -p tsconfig.node.json && vite build",
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "merge-schemas": "tsx schemas/merge-schemas.ts"
   },
   "dependencies": {
     "@carbon/icons-react": "^11.89.0",
@@ -27,6 +28,8 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
+    "@graphql-tools/load-files": "^7.0.1",
+    "@graphql-tools/merge": "^9.2.4",
     "@types/dom-webcodecs": "^0.1.11",
     "@types/invariant": "^2.2.37",
     "@types/node": "^20.19.43",
@@ -41,7 +44,9 @@
     "eslint-plugin-react-refresh": "^0.4.26",
     "globals": "^15.15.0",
     "graphql": "^16.14.2",
+    "prettier": "^3.9.9",
     "relay-compiler": "^16.2.0",
+    "tsx": "^4.23.15",
     "typescript": "^5.3.3",
     "typescript-eslint": "^8.70.1",
     "vite": "^5.4.21",
