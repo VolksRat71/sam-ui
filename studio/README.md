@@ -33,6 +33,16 @@ Other scripts: `npm test` (vitest, the pure logic), `npm run lint`,
 `npm run relay` (after a GraphQL change: merges `schemas/*.graphql` into
 `schema.graphql`, then regenerates the `__generated__/` artifacts).
 
+End-to-end smoke test (headless Chrome, a running backend and studio): upload,
+three objects, Track, per-object effects, reload, video export (checked to play
+in `<video>`), delete. It saves the export as `e2e/out/export.mp4`.
+
+```sh
+<backend venv>/bin/python e2e/make_clip.py e2e/out/clip.mp4 $RANDOM
+CLIP=e2e/out/clip.mp4 STUDIO_URL=http://127.0.0.1:7362 API=http://127.0.0.1:7363 npm run smoke
+swift e2e/avcheck.swift e2e/out/export.mp4   # decodes it with AVFoundation (QuickTime)
+```
+
 ## Using it
 
 - **Objects.** Click the video to add an object and a positive point. Right
@@ -61,11 +71,18 @@ Other scripts: `npm test` (vitest, the pure logic), `npm run lint`,
   and their cached tracks, repainted.
 - **Start over** removes every object and cached track for the video. It asks
   first, in an in-app dialog.
-- **Effects** are Meta's: a selected-object effect and a background, and
-  clicking the active one again cycles its variants. The selected-object
-  effect applies only to the focused object, and only once it is tracked;
-  every other object keeps the overlay. Both groups start collapsed. *Export video with
-  effects* renders an MP4 through Meta's encoder.
+- **Effects** are Meta's. Each object keeps its own selected-object effect
+  and variant (Original, Pixelate, Emoji, ...) until you change it: selecting
+  an object only chooses which object the buttons edit, and they show its
+  effect. New objects start on the coloured Overlay. The background effect is
+  one per video. Clicking the active effect again cycles its variants. Both
+  groups start collapsed. Effects are saved per video in this browser.
+- **Export video** (top bar) renders the whole video as an H.264 MP4 in the
+  browser, every object with its own effect and the background effect.
+  Objects that were never given an effect render as Original (unchanged) by
+  default, or as shown (the Overlay) if you choose. No point markers,
+  selection highlights or watermark are in the file. It plays in QuickTime and
+  browsers (constant frame rate, even size, moov atom first).
 - **Export for rotoscoping** (bottom of Objects) writes the tracked objects as
   a rotoscoping working folder (`POST /export`), with a product id, prompt and
   colour per object, and then shows the manifest.
@@ -97,8 +114,8 @@ Compared with Meta's demo UI, which studio replaced:
 | Cancel tracking | done (per job, or all) |
 | Start over | done, behind a confirmation |
 | Remove object | done |
-| Highlight and background effects, with variants | done, and changed: a selected-object effect applies only to the focused object once it is tracked (Meta applies it to every object); the others keep the overlay. Both effect groups start collapsed |
-| Download the video with effects | done (Meta's encoder, and Meta's watermark) |
+| Highlight and background effects, with variants | done, and changed: each object has its own effect (Meta applies one to every object); the background stays one per video. Both effect groups start collapsed |
+| Download the video with effects | done, and changed: Export video in the top bar, studio's own encoder (mediabunny), no watermark, untouched objects as Original by default |
 | Share section and "try another video" step | missing |
 | First-click onboarding, snackbar tips, tooltips | partial: an empty-state line and the negative-click hint |
 | Settings modal (API endpoints) | missing: set `VITE_API_ENDPOINT` instead |

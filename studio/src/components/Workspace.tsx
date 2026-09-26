@@ -3,7 +3,7 @@
 // One video's editor: a top bar with the job controls, the preview on the
 // left, collapsible Media, Objects and Effects sections on the right, and the timeline
 // along the bottom. Every divider drags; sizes are remembered per browser.
-import {Close, Renew} from '@carbon/icons-react';
+import {Close, Download, Renew} from '@carbon/icons-react';
 import {useEffect, useState, type ReactNode} from 'react';
 import {Panel, PanelGroup, PanelResizeHandle} from 'react-resizable-panels';
 import {OBJECT_LIMIT} from '~/config';
@@ -13,6 +13,7 @@ import useStudioSession, {type VideoItem} from '~/workspace/useStudioSession';
 import ConfirmModal from './ConfirmModal';
 import EffectsSection from './EffectsSection';
 import ExportPanel from './ExportPanel';
+import ExportVideoModal from './ExportVideoModal';
 import ObjectsSection from './ObjectsSection';
 import Preview, {type LabelMode} from './Preview';
 import Sidebar from './Sidebar';
@@ -29,6 +30,7 @@ export default function Workspace({video, renderMedia}: Props) {
   const [mode, setMode] = useState<LabelMode>('positive');
   const [confirmStartOver, setConfirmStartOver] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [exportVideoOpen, setExportVideoOpen] = useState(false);
   const videoName = video.path.split('/').pop() ?? 'video';
   const jobs = state.jobs;
   const n = meta.numFrames;
@@ -148,6 +150,13 @@ export default function Workspace({video, renderMedia}: Props) {
             </button>
           </div>
           <button
+            className="button"
+            onClick={() => setExportVideoOpen(true)}
+            disabled={!meta.decoded}
+            title="Export the video with each object's effect, as an MP4">
+            <Download size={16} /> Export video
+          </button>
+          <button
             className="button subtle"
             onClick={() => setConfirmStartOver(true)}
             disabled={session.busy || jobs.length > 0 || state.objects.length === 0}
@@ -187,7 +196,7 @@ export default function Workspace({video, renderMedia}: Props) {
                     id: 'effects',
                     title: 'Effects',
                     content: (
-                      <EffectsSection session={session} videoName={videoName} />
+                      <EffectsSection session={session} />
                     ),
                   },
                 ]}
@@ -200,6 +209,10 @@ export default function Workspace({video, renderMedia}: Props) {
           <Timeline session={session} />
         </Panel>
       </PanelGroup>
+
+      {exportVideoOpen && (
+        <ExportVideoModal session={session} videoName={videoName} onClose={() => setExportVideoOpen(false)} />
+      )}
 
       {exportOpen && <ExportPanel session={session} videoName={videoName} onClose={() => setExportOpen(false)} />}
 

@@ -208,16 +208,6 @@ export function dirtyIds(state: StudioState): number[] {
 }
 
 /**
- * The object a selected-object effect applies to: the selected one, if the
- * engine on screen has a current track of it (its masks are what the effect
- * draws). Null otherwise.
- */
-export function effectFocusId(state: StudioState): number | null {
-  const o = state.objects.find(x => x.id === state.activeId);
-  return o != null && o.engines[state.engine]?.state === 'tracked' ? o.id : null;
-}
-
-/**
  * The engine to show after a restore: the current one if any object has a
  * track on it, else an available engine that does (the one with the most
  * tracked objects), else the current one. A video tracked only with SAM 3

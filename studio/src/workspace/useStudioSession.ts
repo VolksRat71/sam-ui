@@ -12,6 +12,14 @@ import type {
 import {useCallback, useEffect, useMemo, useReducer, useRef, useState} from 'react';
 import StudioBridge from '~/bridge/StudioBridge';
 import {explainGraphQLError} from '~/lib/errors';
+import {
+  EffectMap,
+  UntouchedMode,
+  exportEffects,
+  parseEffectMap,
+  pickEffect,
+  pruneEffects,
+} from '~/state/objectEffects';
 import {closeSessionOnUnload, recordClose, recordOpen} from '~/lib/sessionClose';
 import {readJson, writeJson} from '~/lib/storage';
 import {API_ENDPOINT, OBJECT_LIMIT} from '~/config';
@@ -21,7 +29,6 @@ import {
   canAddObject,
   comparableIds,
   dirtyIds,
-  effectFocusId,
   preferredEngine,
   hasSeeds,
   initialState,
@@ -34,6 +41,19 @@ import type {EngineInfo, RunningJob, TrackletSummary} from '~/worker/protocol';
 export type ObjectDisagreement = {flagged: number[]; meanIou: number | null};
 
 const ENGINE_KEY = 'sam-ui-studio:engine';
+
+/** Meta's selected-object effects (EffectsUtils' highlight and "more" lists). */
+const HIGHLIGHT_NAMES = [
+  'Cutout',
+  'EraseForeground',
+  'VibrantMask',
+  'PixelateMask',
+  'Overlay',
+  'Replace',
+  'Burst',
+  'Scope',
+  'NoisyMask',
+];
 
 /** The engine studio compares SAM 2 with when both have tracks. */
 const COMPARE_ENGINE = 'sam3';
@@ -151,6 +171,9 @@ export default function useStudioSession(video: VideoItem) {
           break;
         case 'warning':
           setWarning(event.message);
+          break;
+        case 'exportProgress':
+          setExportProgress(event.done);
           break;
       }
     });
@@ -428,11 +451,72 @@ export default function useStudioSession(video: VideoItem) {
     [bridge],
   );
 
-  // Selected-object effects apply to the focused object, once it is tracked.
-  const effectFocus = effectFocusId(state);
+  // Per-object effects: each object keeps its own until the user changes it;
+  // saved per video in this browser.
+  const effectsKey = `sam-ui-studio:effects:${video.path}`;
+  const [objectEffects, setObjectEffects] = useState<EffectMap>(() => parseEffectMap(readJson(effectsKey, {})));
+  const [variantCounts, setVariantCounts] = useState<Record<string, number>>({});
+  const idsKey = state.objects.map(o => o.id).join(',');
   useEffect(() => {
-    bridge?.call('setEffectFocus', {objectId: effectFocus}).catch(() => {});
-  }, [bridge, effectFocus]);
+    // forget effects of removed objects, once the objects are known
+    if (status === 'ready') {
+      setObjectEffects(m => {
+        const pruned = pruneEffects(m, idsKey === '' ? [] : idsKey.split(',').map(Number));
+        return Object.keys(pruned).length === Object.keys(m).length ? m : pruned;
+      });
+    }
+  }, [idsKey, status]);
+  useEffect(() => {
+    writeJson(effectsKey, objectEffects);
+    bridge?.call('setObjectEffects', {effects: objectEffects}).catch(error => setWarning(message(error)));
+  }, [bridge, effectsKey, objectEffects]);
+  useEffect(() => {
+    if (bridge != null && meta.decoded) {
+      // set up effects that waited for the decoded size, and learn their variants
+      bridge.call('setObjectEffects', {effects: objectEffects}).catch(() => {});
+      bridge
+        .call('effectVariants', {names: HIGHLIGHT_NAMES})
+        .then(setVariantCounts)
+        .catch(() => {});
+    }
+    // once per decode
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bridge, meta.decoded]);
+
+  /** Give the selected object the effect `name` (again: its next variant). */
+  const pickObjectEffect = useCallback(
+    (name: string) => {
+      const id = stateRef.current.activeId;
+      if (id == null) {
+        return;
+      }
+      setObjectEffects(m => pickEffect(m, id, name, variantCounts[name] ?? 1));
+    },
+    [variantCounts],
+  );
+
+  const [exportProgress, setExportProgress] = useState<number | null>(null);
+  /** Render the video with every object's own effect, as an MP4 file. */
+  const exportVideo = useCallback(
+    async (untouched: UntouchedMode): Promise<Blob> => {
+      if (bridge == null) {
+        throw new Error('no session');
+      }
+      setExportProgress(0);
+      try {
+        const effects = exportEffects(
+          objectEffects,
+          stateRef.current.objects.map(o => o.id),
+          untouched,
+        );
+        const buffer = await bridge.call('exportVideo', {effects});
+        return new Blob([buffer], {type: 'video/mp4'});
+      } finally {
+        setExportProgress(null);
+      }
+    },
+    [bridge, objectEffects],
+  );
 
   // Where SAM 2 and SAM 3 disagree, for objects both track with current
   // clicks: fetched again whenever that set, or any of its tracks, changes.
@@ -536,7 +620,11 @@ export default function useStudioSession(video: VideoItem) {
     engines,
     setEngine,
     disagreement,
-    effectFocus,
+    objectEffects,
+    pickObjectEffect,
+    variantCounts,
+    exportVideo,
+    exportProgress,
     dismissWarning: () => setWarning(null),
     start,
     addPoint,

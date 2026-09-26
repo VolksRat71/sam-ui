@@ -11,11 +11,13 @@
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run",
     "preview": "vite preview",
-    "merge-schemas": "tsx schemas/merge-schemas.ts"
+    "merge-schemas": "tsx schemas/merge-schemas.ts",
+    "smoke": "node e2e/smoke.mjs"
   },
   "dependencies": {
     "@carbon/icons-react": "^11.89.0",
     "invariant": "^2.2.4",
+    "mediabunny": "^1.60.0",
     "mp4box": "^0.5.2",
     "pts": "^0.12.8",
     "react": "^18.3.1",
@@ -44,6 +46,7 @@
     "eslint-plugin-react-refresh": "^0.4.26",
     "globals": "^15.15.0",
     "graphql": "^16.14.2",
+    "playwright-core": "^1.63.0",
     "prettier": "^3.9.9",
     "relay-compiler": "^16.2.0",
     "tsx": "^4.23.15",

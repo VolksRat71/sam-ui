@@ -101,8 +101,12 @@ export type StudioMethods = {
   setEngine: {args: {engine: string}; result: void};
   engines: {args: Record<string, never>; result: EngineInfo[]};
   disagreement: {args: {a: string; b: string; objectIds?: number[]}; result: Disagreement};
-  /** Selected-object effects apply to this object only (null: to none). */
-  setEffectFocus: {args: {objectId: number | null}; result: void};
+  /** Every object's own selected-object effect (objects not listed: Overlay). */
+  setObjectEffects: {args: {effects: Record<number, {name: string; variant: number}>}; result: void};
+  /** How many variants each highlight effect has. */
+  effectVariants: {args: {names: string[]}; result: Record<string, number>};
+  /** Render the video with these per-object effects as an MP4 (no editing aids). */
+  exportVideo: {args: {effects: Record<number, {name: string; variant: number}>}; result: ArrayBuffer};
 };
 
 export type StudioMethod = keyof StudioMethods;
@@ -132,6 +136,7 @@ export type StudioEvent =
   | {type: 'jobStarted'; key: number; jobId: string | null; selected: number[]}
   | {type: 'trackFrame'; key: number; frameIndex: number}
   | {type: 'repaint'; active: boolean}
+  | {type: 'exportProgress'; done: number}
   | {type: 'warning'; message: string};
 
 export type StudioEventMessage = {action: 'studioEvent'; event: StudioEvent};

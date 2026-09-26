@@ -15,14 +15,17 @@
  */
 // Modified by sam-ui: adapted from VideoWorker.ts in Meta's SAM 2 demo frontend;
 // the video messages are Meta's, the tracker is replaced by studio's RPC calls,
-// and highlight effects go through FocusedHighlight (the focused object only).
+// highlight effects are per object (ObjectHighlight), and the export is
+// studio's own encoder (exportVideo.ts).
 import AllEffects, {type Effects} from '@/common/components/video/effects/Effects';
 import VideoWorkerContext from '@/common/components/video/VideoWorkerContext';
 import type {VideoWorkerRequestMessageEvent} from '@/common/components/video/VideoWorkerTypes';
 import {registerSerializableConstructors} from '@/common/error/ErrorSerializationUtils';
+import type {CanvasForm} from 'pts';
 import {serializeError} from 'serialize-error';
-import FocusedHighlight from './FocusedHighlight';
+import {encodeMp4} from './exportVideo';
 import MaskOverlayEffect from './MaskOverlayEffect';
+import ObjectHighlight from './ObjectHighlight';
 import type {
   StudioCall,
   StudioEvent,
@@ -35,41 +38,59 @@ import StudioSession from './StudioSession';
 
 registerSerializableConstructors();
 
-// Meta's context draws [Original, Overlay]. Its Overlay shader holds three
-// masks and its other highlights apply to every object, so the highlight slot
-// gets studio's FocusedHighlight instead, before the context reads it. Meta's
-// highlight effects stay in `metaEffects` for FocusedHighlight to run.
+// Meta's context draws [background, highlight]. Its highlight effects apply
+// one effect to every object (and its Overlay shader holds three masks), so
+// the highlight slot gets studio's ObjectHighlight, which draws each object
+// with its own effect, before the context reads it. Meta's highlight effects
+// stay in `metaEffects` for ObjectHighlight to run.
 const metaEffects: Effects = {...AllEffects};
 const overlay = new MaskOverlayEffect();
-const highlight = new FocusedHighlight(overlay);
+const highlight = new ObjectHighlight(overlay, metaEffects, () => ({width: context.width, height: context.height}));
 AllEffects.Overlay = highlight;
 
 const context = new VideoWorkerContext();
 
-const HIGHLIGHT = 1; // Meta's EffectIndex.HIGHLIGHT
+/** The effects the preview shows; an export swaps in its own, then restores these. */
+let previewEffects: Record<number, {name: string; variant: number}> = {};
+let exporting = false;
 
-/** A highlight effect, applied through FocusedHighlight; Overlay means none. */
-async function setHighlight(name: keyof Effects, options?: {variant: number}): Promise<void> {
-  // Meta's context keeps its WebGL highlight canvas private; bracket access
-  // reads it without copying the class. Present once the first frame decoded.
-  const canvas = context['_canvasHighlights'];
-  const gl = context['_glObjects'];
-  const init = canvas != null && gl != null ? {width: context.width, height: context.height, canvas, gl} : null;
-  await highlight.use(name === 'Overlay' ? null : metaEffects[name], init, options);
-  const shown = highlight.current;
-  self.postMessage({
-    action: 'effectUpdate',
-    name,
-    index: HIGHLIGHT,
-    variant: shown.variant,
-    numVariants: shown.numVariants,
-  });
-  context.goToFrame(context.frameIndex);
+async function exportVideo(effects: Record<number, {name: string; variant: number}>): Promise<ArrayBuffer> {
+  // Meta's context keeps its decoded frames and its frame renderer private;
+  // bracket access uses them without copying the class.
+  const decoded = context['_decodedVideo'];
+  if (decoded == null || decoded.frames.length < decoded.numFrames) {
+    throw new Error('the video is still decoding');
+  }
+  if (exporting) {
+    throw new Error('an export is already running');
+  }
+  exporting = true;
+  const active = overlay.activeObjectId;
+  overlay.activeObjectId = null; // no editing aids in the file
+  try {
+    await highlight.setEffects(effects);
+    return await encodeMp4({
+      width: context.width,
+      height: context.height,
+      fps: decoded.fps,
+      numFrames: decoded.frames.length,
+      // the renderer the preview uses, without Meta's watermark
+      draw: (form: CanvasForm, index: number) => context['_drawFrameImpl'](form, index, false),
+      onProgress: done => emit({type: 'exportProgress', done}),
+    });
+  } finally {
+    overlay.activeObjectId = active;
+    await highlight.setEffects(previewEffects);
+    exporting = false;
+    context.goToFrame(context.frameIndex);
+  }
 }
-const session = new StudioSession(context, overlay, (event: StudioEvent) => {
+
+function emit(event: StudioEvent): void {
   const message: StudioEventMessage = {action: 'studioEvent', event};
   self.postMessage(message);
-});
+}
+const session = new StudioSession(context, overlay, emit);
 
 type Handlers = {
   [M in StudioMethod]: (
@@ -96,10 +117,15 @@ const handlers: Handlers = {
   setEngine: ({engine}) => session.setEngine(engine),
   engines: () => session.engines(),
   disagreement: ({a, b, objectIds}) => session.disagreement(a, b, objectIds),
-  setEffectFocus: ({objectId}) => {
-    highlight.focusId = objectId;
-    context.goToFrame(context.frameIndex);
+  setObjectEffects: async ({effects}) => {
+    previewEffects = effects;
+    if (!exporting) {
+      await highlight.setEffects(effects);
+      context.goToFrame(context.frameIndex);
+    }
   },
+  effectVariants: ({names}) => highlight.variantCounts(names),
+  exportVideo: ({effects}) => exportVideo(effects),
 };
 
 async function handleCall(call: StudioCall): Promise<void> {
@@ -151,14 +177,8 @@ self.addEventListener(
           await context.createFilmstrip(data.width, data.height);
           break;
         case 'setEffect':
-          if (data.index === HIGHLIGHT) {
-            await setHighlight(data.name, data.options);
-          } else {
-            await context.setEffect(data.name, data.index, data.options);
-          }
-          break;
-        case 'encode':
-          await context.encode();
+          // the background; highlights are per object (setObjectEffects)
+          await context.setEffect(data.name, data.index, data.options);
           break;
       }
     } catch (error) {

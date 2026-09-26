@@ -6,7 +6,6 @@ import {
   StudioState,
   canAddObject,
   comparableIds,
-  effectFocusId,
   preferredEngine,
   dirtyIds,
   initialState,
@@ -286,29 +285,6 @@ describe('engines', () => {
     expect([s.objects[0].engines.sam2.state, s.objects[0].engines.sam3.state]).toEqual(['tracked', 'untracked']);
     s = reducer(s, {type: 'trackCleared', id: 0, engine: null});
     expect(s.objects[0].engines.sam2.state).toBe('untracked');
-  });
-
-  it('focuses effects by the engine on screen, for a restore with SAM 3 tracks only', () => {
-    // the upload Nate reported: three objects, SAM 3 tracks only (one stale)
-    const restored = [
-      twoEngines(0, 'untracked', 'tracked'),
-      twoEngines(1, 'untracked', 'tracked'),
-      twoEngines(2, 'untracked', 'stale'),
-    ];
-    let s = run([{type: 'restore', objects: restored}, {type: 'select', id: 0}]);
-    expect(effectFocusId(s)).toBeNull(); // on SAM 2 there is no track to draw an effect on
-    s = reducer(s, {type: 'setEngine', engine: 'sam3'});
-    expect(effectFocusId(s)).toBe(0);
-    s = reducer(s, {type: 'select', id: 1});
-    expect(effectFocusId(s)).toBe(1);
-    s = reducer(s, {type: 'select', id: 2});
-    expect(effectFocusId(s)).toBeNull(); // stale: its masks are not its clicks' any more
-    // the ids, colours and states stay with their own objects through the restore
-    expect(s.objects.map(o => [o.id, o.color, o.engines.sam3.state])).toEqual([
-      [0, '#3880F3', 'tracked'],
-      [1, '#F0AA19', 'tracked'],
-      [2, '#00D2BE', 'stale'],
-    ]);
   });
 
   it('opens a SAM 3-only video on SAM 3, and keeps an engine that has tracks', () => {

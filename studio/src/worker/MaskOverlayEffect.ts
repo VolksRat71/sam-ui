@@ -19,8 +19,10 @@ const CACHE_FRAMES = 24;
 const VARIANT_FILL = [FILL_ALPHA, 0.7, 0.25, 0.9];
 
 export default class MaskOverlayEffect extends AbstractEffect {
-  /** The object being edited is drawn a little stronger. */
+  /** The object being edited is drawn a little stronger (off in exports). */
   public activeObjectId: number | null = null;
+  /** Each object's own Overlay variant (per-object effects); `variant` otherwise. */
+  public variantOf: (objectId: number) => number | undefined = () => undefined;
 
   private _ids = new WeakMap<object, number>();
   private _nextId = 1;
@@ -44,10 +46,11 @@ export default class MaskOverlayEffect extends AbstractEffect {
     if (masks.length === 0 || width < 1 || height < 1) {
       return;
     }
+    const variants = tracklets.map(t => this.variantOf(t.id) ?? this.variant);
     const key =
-      `${width}x${height}:${this.variant}:${this.activeObjectId}:` +
+      `${width}x${height}:${this.activeObjectId}:` +
       masks
-        .map((m, i) => `${this._idOf(m.bitmap)}${maskColors[i]}`)
+        .map((m, i) => `${this._idOf(m.bitmap)}${maskColors[i]}v${variants[i]}`)
         .join(',');
     let canvas = this._cache.get(key);
     if (canvas == null) {
@@ -58,8 +61,8 @@ export default class MaskOverlayEffect extends AbstractEffect {
       }
       const image = ctx.createImageData(width, height);
       const pixels = new Uint32Array(image.data.buffer);
-      const fill = VARIANT_FILL[this.variant % VARIANT_FILL.length];
       masks.forEach((m, i) => {
+        const fill = VARIANT_FILL[variants[i] % VARIANT_FILL.length];
         const active = tracklets[i]?.id === this.activeObjectId;
         paintMask(
           pixels,
