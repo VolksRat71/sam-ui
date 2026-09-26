@@ -6,9 +6,9 @@
 import {TrashCan, Upload} from '@carbon/icons-react';
 import {useRef, useState} from 'react';
 import {graphql, useMutation} from 'react-relay';
+import {explainGraphQLError} from '~/lib/errors';
 import {isDeletable} from '~/state/media';
 import type {VideoItem} from '~/workspace/useStudioSession';
-import DeleteVideoModal from './DeleteVideoModal';
 import type {MediaSectionUploadMutation} from './__generated__/MediaSectionUploadMutation.graphql';
 
 const ACCEPT = 'video/mp4,video/quicktime,.mp4,.mov';
@@ -20,8 +20,8 @@ type Props = {
   locked: boolean;
   onSelect: (video: VideoItem) => void;
   onUploaded: (video: VideoItem) => void;
-  /** Delete an upload; rejects with the backend's reason. */
-  onDelete: (video: VideoItem, purgeTracks: boolean) => Promise<void>;
+  /** Ask to delete an upload (the app confirms it, above this pane). */
+  onDelete: (video: VideoItem) => void;
   toVideoItem: (v: {path: string; width: number; height: number; posterPath?: string | null}) => VideoItem;
 };
 
@@ -30,7 +30,6 @@ function fileName(path: string): string {
 }
 
 export default function MediaSection({videos, current, locked, onSelect, onUploaded, onDelete, toVideoItem}: Props) {
-  const [deleting, setDeleting] = useState<VideoItem | null>(null);
   const input = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [commit, uploading] = useMutation<MediaSectionUploadMutation>(graphql`
@@ -56,12 +55,12 @@ export default function MediaSection({videos, current, locked, onSelect, onUploa
       uploadables: {file},
       onCompleted: (response, errors) => {
         if (errors != null && errors.length > 0) {
-          setError(errors[0].message);
+          setError(explainGraphQLError(errors[0].message));
           return;
         }
         onUploaded(toVideoItem(response.uploadVideo));
       },
-      onError: err => setError(err.message || 'Upload failed.'),
+      onError: err => setError(explainGraphQLError(err.message || 'Upload failed.')),
     });
   }
 
@@ -119,7 +118,7 @@ export default function MediaSection({videos, current, locked, onSelect, onUploa
                 <button
                   className="icon-button media-remove"
                   disabled={locked && selected}
-                  onClick={() => setDeleting(v)}
+                  onClick={() => onDelete(v)}
                   title={locked && selected ? 'Wait for the running track jobs' : 'Delete this upload'}
                   aria-label={`Delete ${fileName(v.path)}`}>
                   <TrashCan size={16} />
@@ -129,14 +128,6 @@ export default function MediaSection({videos, current, locked, onSelect, onUploa
           );
         })}
       </ul>
-      {deleting != null && (
-        <DeleteVideoModal
-          video={deleting}
-          isOpen={deleting.path === current?.path}
-          onDelete={onDelete}
-          onClose={() => setDeleting(null)}
-        />
-      )}
     </div>
   );
 }

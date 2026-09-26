@@ -207,6 +207,37 @@ export function dirtyIds(state: StudioState): number[] {
     .sort((a, b) => a - b);
 }
 
+/**
+ * The object a selected-object effect applies to: the selected one, if the
+ * engine on screen has a current track of it (its masks are what the effect
+ * draws). Null otherwise.
+ */
+export function effectFocusId(state: StudioState): number | null {
+  const o = state.objects.find(x => x.id === state.activeId);
+  return o != null && o.engines[state.engine]?.state === 'tracked' ? o.id : null;
+}
+
+/**
+ * The engine to show after a restore: the current one if any object has a
+ * track on it, else an available engine that does (the one with the most
+ * tracked objects), else the current one. A video tracked only with SAM 3
+ * then opens on SAM 3 instead of showing nothing.
+ */
+export function preferredEngine(
+  objects: ReadonlyArray<ServerObject>,
+  current: string,
+  available: ReadonlyArray<string>,
+): string {
+  const tracks = (o: ServerObject, e: string) =>
+    toTrackState(o.tracks?.find(t => t.engine === e)?.state ?? (e === DEFAULT_ENGINE ? o.state : undefined));
+  const count = (e: string) => objects.filter(o => tracks(o, e) !== 'untracked').length;
+  if (count(current) > 0) {
+    return current;
+  }
+  const best = [...available].sort((a, b) => count(b) - count(a))[0];
+  return best != null && count(best) > 0 ? best : current;
+}
+
 /** Objects both engines track with their current clicks: the ones worth comparing. */
 export function comparableIds(state: StudioState, a: string, b: string): number[] {
   return state.objects

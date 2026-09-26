@@ -11,7 +11,9 @@ import type {
 } from '@/common/components/video/VideoWorkerBridge';
 import {useCallback, useEffect, useMemo, useReducer, useRef, useState} from 'react';
 import StudioBridge from '~/bridge/StudioBridge';
-import {recordClose} from '~/lib/sessionClose';
+import {explainGraphQLError} from '~/lib/errors';
+import {closeSessionOnUnload, recordClose, recordOpen} from '~/lib/sessionClose';
+import {readJson, writeJson} from '~/lib/storage';
 import {API_ENDPOINT, OBJECT_LIMIT} from '~/config';
 import {
   DEFAULT_ENGINE,
@@ -19,6 +21,8 @@ import {
   canAddObject,
   comparableIds,
   dirtyIds,
+  effectFocusId,
+  preferredEngine,
   hasSeeds,
   initialState,
   nextObjectId,
@@ -28,6 +32,8 @@ import type {EngineInfo, RunningJob, TrackletSummary} from '~/worker/protocol';
 
 /** Where two engines disagree on one object: frames under the IoU threshold. */
 export type ObjectDisagreement = {flagged: number[]; meanIou: number | null};
+
+const ENGINE_KEY = 'sam-ui-studio:engine';
 
 /** The engine studio compares SAM 2 with when both have tracks. */
 const COMPARE_ENGINE = 'sam3';
@@ -45,12 +51,16 @@ export type SessionStatus = 'starting' | 'ready' | 'failed';
 export type Metadata = {numFrames: number; fps: number; width: number; height: number; decoded: boolean};
 
 function message(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return explainGraphQLError(error instanceof Error ? error.message : String(error));
 }
 
 export default function useStudioSession(video: VideoItem) {
   const [bridge, setBridge] = useState<StudioBridge | null>(null);
-  const [state, dispatch] = useReducer(reducer, initialState);
+  // the engine is remembered per browser: a reload keeps showing the tracks you chose
+  const [state, dispatch] = useReducer(reducer, initialState, s => ({
+    ...s,
+    engine: readJson<string>(ENGINE_KEY, s.engine),
+  }));
   const [status, setStatus] = useState<SessionStatus>('starting');
   const [statusError, setStatusError] = useState<string | null>(null);
   const [frame, setFrame] = useState(0);
@@ -75,11 +85,29 @@ export default function useStudioSession(video: VideoItem) {
   stateRef.current = state;
   const queue = useRef<Promise<unknown>>(Promise.resolve());
   const nextJobKey = useRef(1);
+  const sessionIdRef = useRef<string | null>(null);
+
+  // A reload or a closed tab never unmounts the Workspace, so its session
+  // would linger on the backend (and keep the video from being deleted) until
+  // the idle expiry. Close it as the page goes, with a keepalive request that
+  // outlives the page.
+  useEffect(() => {
+    const onHide = () => {
+      const id = sessionIdRef.current;
+      if (id != null) {
+        closeSessionOnUnload(id);
+        sessionIdRef.current = null;
+      }
+    };
+    window.addEventListener('pagehide', onHide);
+    return () => window.removeEventListener('pagehide', onHide);
+  }, []);
 
   // one worker per video; the canvas mounts once the bridge exists
   useEffect(() => {
     const b = StudioBridge.createStudio();
     setBridge(b);
+    recordOpen(video.path);
     return () => {
       // recorded, so deleting this video can wait for the session to close
       recordClose(
@@ -143,14 +171,30 @@ export default function useStudioSession(video: VideoItem) {
     bridge.setSource(video.url);
     try {
       await bridge.call('init', {endpoint: API_ENDPOINT});
-      bridge
-        .call('engines', {})
-        .then(setEngines)
-        .catch(() => setEngines([]));
+      const list = await bridge.call('engines', {}).catch(() => [] as EngineInfo[]);
+      setEngines(list);
+      // a remembered engine the backend cannot run (any more) falls back to the default
+      const wanted = stateRef.current.engine;
+      const usable = list.length === 0 || list.some(e => e.name === wanted && e.available);
+      const engine = usable ? wanted : (list.find(e => e.default)?.name ?? DEFAULT_ENGINE);
+      if (engine !== wanted) {
+        dispatch({type: 'setEngine', engine});
+      }
+      await bridge.call('setEngine', {engine});
       const info = await bridge.call('startSession', {path: video.path});
+      sessionIdRef.current = info.sessionId;
       dispatch({type: 'restore', objects: info.objects});
       setStatus('ready');
-      if (info.objects.some(o => o.state !== 'untracked')) {
+      // show an engine that has tracks: a SAM 3-only video opens on SAM 3
+      const shown = preferredEngine(
+        info.objects,
+        engine,
+        list.filter(e => e.available).map(e => e.name),
+      );
+      if (shown !== engine) {
+        dispatch({type: 'setEngine', engine: shown});
+        await bridge.call('setEngine', {engine: shown}); // repaints that engine's cache
+      } else if (info.objects.length > 0) {
         await bridge.call('repaint', {});
       }
     } catch (error) {
@@ -378,14 +422,14 @@ export default function useStudioSession(video: VideoItem) {
         return;
       }
       dispatch({type: 'setEngine', engine});
+      writeJson(ENGINE_KEY, engine);
       bridge.call('setEngine', {engine}).catch(error => setWarning(message(error)));
     },
     [bridge],
   );
 
   // Selected-object effects apply to the focused object, once it is tracked.
-  const active = state.objects.find(o => o.id === state.activeId);
-  const effectFocus = active != null && active.state === 'tracked' ? active.id : null;
+  const effectFocus = effectFocusId(state);
   useEffect(() => {
     bridge?.call('setEffectFocus', {objectId: effectFocus}).catch(() => {});
   }, [bridge, effectFocus]);

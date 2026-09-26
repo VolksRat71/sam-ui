@@ -1,6 +1,7 @@
 // sam-ui (Apache-2.0). New file, not from SAM 2.
 import {useCallback, useMemo, useState} from 'react';
 import {graphql, useLazyLoadQuery, useMutation} from 'react-relay';
+import DeleteVideoModal from '~/components/DeleteVideoModal';
 import MediaSection from '~/components/MediaSection';
 import Workspace from '~/components/Workspace';
 import {API_ENDPOINT} from '~/config';
@@ -85,6 +86,10 @@ export default function App() {
    * Delete an upload. If it is the open video, move off it first and wait for
    * its session to close: the backend refuses to delete an open video.
    */
+  // the dialog lives here, above the Workspace, so it outlives the switch away
+  // from the video being deleted
+  const [deleting, setDeleting] = useState<VideoItem | null>(null);
+
   const deleteVideo = useCallback(
     async (v: VideoItem, purgeTracks: boolean) => {
       if (current?.path === v.path) {
@@ -93,8 +98,7 @@ export default function App() {
         if (next != null) {
           writeJson(LAST_VIDEO_KEY, next.path);
         }
-        await new Promise(r => setTimeout(r, 0)); // let the Workspace unmount
-        await whenClosed(v.path);
+        await whenClosed(v.path); // the Workspace unmounts and closes its session
       }
       await new Promise<void>((resolve, reject) =>
         commitDelete({
@@ -117,12 +121,22 @@ export default function App() {
         locked={locked}
         onSelect={select}
         onUploaded={uploaded}
-        onDelete={deleteVideo}
+        onDelete={setDeleting}
         toVideoItem={toVideoItem}
       />
     ),
-    [videos, current, select, uploaded, deleteVideo],
+    [videos, current, select, uploaded],
   );
+
+  const dialog =
+    deleting != null ? (
+      <DeleteVideoModal
+        video={deleting}
+        isOpen={deleting.path === current?.path}
+        onDelete={deleteVideo}
+        onClose={() => setDeleting(null)}
+      />
+    ) : null;
 
   if (current == null) {
     return (
@@ -132,10 +146,16 @@ export default function App() {
           <p>No videos yet. Upload one to start, or put an .mp4 in the backend&apos;s gallery folder.</p>
           {renderMedia(false)}
         </div>
+        {dialog}
       </div>
     );
   }
 
   // a new Workspace (new worker, canvas and session) per video
-  return <Workspace key={current.path} video={current} renderMedia={renderMedia} />;
+  return (
+    <>
+      <Workspace key={current.path} video={current} renderMedia={renderMedia} />
+      {dialog}
+    </>
+  );
 }

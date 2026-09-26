@@ -5,6 +5,7 @@
 // "also delete its tracks" is unticked. A refusal from the backend (the video
 // is open in another tab, say) is shown here, and nothing is lost.
 import {useEffect, useRef, useState} from 'react';
+import {explainGraphQLError} from '~/lib/errors';
 import type {VideoItem} from '~/workspace/useStudioSession';
 
 type Props = {
@@ -35,7 +36,7 @@ export default function DeleteVideoModal({video, isOpen, onDelete, onClose}: Pro
       await onDelete(video, purge);
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(explainGraphQLError(err instanceof Error ? err.message : String(err)));
       setBusy(false);
     }
   }
@@ -51,8 +52,17 @@ export default function DeleteVideoModal({video, isOpen, onDelete, onClose}: Pro
         <h2 id="delete-title">Delete this upload?</h2>
         <div className="modal-body">
           <p>
-            This deletes <code>{name}</code> from the backend
-            {purge ? ', with its objects, clicks and cached tracks' : ''}. It cannot be undone.
+            {purge ? (
+              <>
+                This deletes the video <code>{name}</code> <strong>and its objects, clicks and cached tracks</strong>.
+              </>
+            ) : (
+              <>
+                This deletes the video <code>{name}</code> only. <strong>Its objects, clicks and cached tracks
+                are kept</strong> on the backend.
+              </>
+            )}{' '}
+            It cannot be undone.
           </p>
           {isOpen && <p className="muted">It is open now: its session closes first, and studio moves to another video.</p>}
           <label className="check">
@@ -70,8 +80,10 @@ export default function DeleteVideoModal({video, isOpen, onDelete, onClose}: Pro
               <>
                 <span className="spinner small" /> Deleting…
               </>
+            ) : purge ? (
+              'Delete video and tracks'
             ) : (
-              'Delete'
+              'Delete video, keep tracks'
             )}
           </button>
         </div>
