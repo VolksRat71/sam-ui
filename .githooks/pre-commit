@@ -1,0 +1,8 @@
+#!/bin/sh
+# POC footage guard: refuse media, project data, and anything named for a client or show.
+bad=$(git diff --cached --name-only --diff-filter=AM | grep -E -i '\.(mp4|mov|mkv|m4v|avi|jpg|jpeg|png|webm)$|(^|/)(products|anchors|review|shots)\.json$|hacks|kerv' || true)
+if [ -n "$bad" ]; then
+  echo "pre-commit: refusing footage or project data in the public fork:" >&2
+  echo "$bad" >&2
+  exit 1
+fi

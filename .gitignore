@@ -9,3 +9,17 @@ _C.*
 outputs/*
 checkpoints/*.pt
 demo/backend/checkpoints/*.pt
+
+# POC: footage and project data never enter this public fork
+*.mp4
+*.mov
+*.mkv
+*.m4v
+*.avi
+*.jpg
+*.png
+demo/data/uploads/
+products.json
+anchors.json
+review.json
+shots.json
