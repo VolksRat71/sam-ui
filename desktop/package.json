@@ -1,0 +1,43 @@
+{
+  "name": "sam-ui",
+  "productName": "sam-ui",
+  "version": "0.1.0",
+  "private": true,
+  "description": "sam-ui desktop: studio and the SAM 2 / SAM 3 backend in one app",
+  "author": "Nate Ryan",
+  "license": "Apache-2.0",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "build:studio": "cd ../studio && VITE_API_ENDPOINT=same-origin npm run build",
+    "build:python": "bash scripts/build-python.sh",
+    "dist": "electron-builder --mac dmg --arm64"
+  },
+  "dependencies": {
+    "ffmpeg-static": "^5.2.0"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "io.github.volksrat71.samui",
+    "productName": "sam-ui",
+    "directories": {"output": "dist"},
+    "files": ["src/**", "package.json"],
+    "asarUnpack": ["node_modules/ffmpeg-static/**"],
+    "extraResources": [
+      {"from": "build/python", "to": "python"},
+      {"from": "../demo/backend/server", "to": "backend/server", "filter": ["**/*", "!**/__pycache__/**"]},
+      {"from": "../studio/dist", "to": "studio"},
+      {"from": "../demo/data/gallery", "to": "gallery"},
+      {"from": "../LICENSE", "to": "LICENSE"},
+      {"from": "../NOTICE-sam-ui.md", "to": "NOTICE-sam-ui.md"}
+    ],
+    "mac": {
+      "target": [{"target": "dmg", "arch": ["arm64"]}],
+      "category": "public.app-category.video",
+      "identity": null
+    }
+  }
+}
