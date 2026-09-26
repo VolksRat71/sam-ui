@@ -25,3 +25,6 @@ review.json
 shots.json
 # agent worktrees
 .claude/
+
+# README screenshot (Meta sample clip only; also allowlisted in .githooks/media-allowlist)
+!docs/images/studio.jpg

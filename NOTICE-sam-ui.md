@@ -11,6 +11,10 @@ that carry Meta's header: those come from Meta's SAM 2 demo frontend (see below)
 
 ## Changes
 
+- Docs: `README.md` is rewritten for sam-ui. Meta's original README moved to
+  `docs/SAM2_UPSTREAM.md`, with its relative links adjusted, and `training/README.md`
+  points its image-prediction link there. The README screenshot
+  (`docs/images/studio.jpg`) shows Meta's own juggle sample.
 - Footage guard: `.gitignore` rules and a pre-commit hook (`.githooks/`) that keep
   media and project data out of the repo. Enable with
   `git config core.hooksPath .githooks`.

@@ -1,227 +1,147 @@
-# SAM 2: Segment Anything in Images and Videos
+<!-- sam-ui (Apache-2.0). New file; Meta's original README is docs/SAM2_UPSTREAM.md. -->
+# sam-ui
 
-> **sam-ui:** this is a modified copy of SAM 2. The web UI is [`studio/`](studio/README.md), which replaces the demo's original frontend; the backend is [`demo/backend`](demo/README.md). See [`NOTICE-sam-ui.md`](NOTICE-sam-ui.md).
-<!-- Modified by sam-ui: the note above. -->
+Interactive video segmentation on [SAM 2](https://github.com/facebookresearch/sam2)
+and SAM 3, where **every object keeps its own cached track**. Click an object, press
+Track, and only the objects that are new or changed get tracked again. Everything
+else stays as it was, including after a reload or a server restart.
 
-**[AI at Meta, FAIR](https://ai.meta.com/research/)**
+![studio tracking a player and a ball on Meta's juggle sample](docs/images/studio.jpg)
 
-[Nikhila Ravi](https://nikhilaravi.com/), [Valentin Gabeur](https://gabeur.github.io/), [Yuan-Ting Hu](https://scholar.google.com/citations?user=E8DVVYQAAAAJ&hl=en), [Ronghang Hu](https://ronghanghu.com/), [Chaitanya Ryali](https://scholar.google.com/citations?user=4LWx24UAAAAJ&hl=en), [Tengyu Ma](https://scholar.google.com/citations?user=VeTSl0wAAAAJ&hl=en), [Haitham Khedr](https://hkhedr.com/), [Roman Rädle](https://scholar.google.de/citations?user=Tpt57v0AAAAJ&hl=en), [Chloe Rolland](https://scholar.google.com/citations?hl=fr&user=n-SnMhoAAAAJ), [Laura Gustafson](https://scholar.google.com/citations?user=c8IpF9gAAAAJ&hl=en), [Eric Mintun](https://ericmintun.github.io/), [Junting Pan](https://junting.github.io/), [Kalyan Vasudev Alwala](https://scholar.google.co.in/citations?user=m34oaWEAAAAJ&hl=en), [Nicolas Carion](https://www.nicolascarion.com/), [Chao-Yuan Wu](https://chaoyuan.org/), [Ross Girshick](https://www.rossgirshick.info/), [Piotr Dollár](https://pdollar.github.io/), [Christoph Feichtenhofer](https://feichtenhofer.github.io/)
+sam-ui began as a fork of Meta's SAM 2 web demo. The backend keeps Meta's model code
+and adds a track cache, a second engine (SAM 3), exports and a job system. The
+frontend, **studio**, replaces the demo UI with an editor layout.
 
-[[`Paper`](https://ai.meta.com/research/publications/sam-2-segment-anything-in-images-and-videos/)] [[`Project`](https://ai.meta.com/sam2)] [[`Demo`](https://sam2.metademolab.com/)] [[`Dataset`](https://ai.meta.com/datasets/segment-anything-video)] [[`Blog`](https://ai.meta.com/blog/segment-anything-2)] [[`BibTeX`](#citing-sam-2)]
+> **Coming next:** a desktop app (Electron, with the full models bundled) published
+> as a GitHub release, and a lighter in-browser demo on GitHub Pages that runs SAM 2.1
+> tiny on WebGPU with no server. Neither is released yet.
 
-![SAM 2 architecture](assets/model_diagram.png?raw=true)
+## What it does
 
-**Segment Anything Model 2 (SAM 2)** is a foundation model towards solving promptable visual segmentation in images and videos. We extend SAM to video by considering images as a video with a single frame. The model design is a simple transformer architecture with streaming memory for real-time video processing. We build a model-in-the-loop data engine, which improves model and data via user interaction, to collect [**our SA-V dataset**](https://ai.meta.com/datasets/segment-anything-video), the largest video segmentation dataset to date. SAM 2 trained on our data provides strong performance across a wide range of tasks and visual domains.
+- **Per-object track cache.** Your clicks are saved as seeds, with the mask you
+  approved on each clicked frame. Each object keeps one track per engine, in one of
+  four states: untracked, stale (its clicks changed since), tracked, or tracking (a
+  job holds it). Track runs only what isn't current.
+- **Corrections that stick.** Click on any frame to fix a mask; the next Track uses
+  your corrected mask on that frame. (As in SAM 2 itself, a frame needs at least one
+  positive click. A lone negative click empties the mask.)
+- **Keep working while it tracks.** A track job holds the model one frame at a time,
+  so clicks come back in about 0.1 s even while a job runs. Jobs can overlap, and
+  each has its own cancel.
+- **Two engines.** SAM 2 (default, and used for clicks) and SAM 3's video tracker
+  (opt-in per Track, loaded on first use). Each engine's track is cached separately,
+  and studio marks the frames where the two disagree.
+- **Fast re-tracks.** Image-backbone features are cached per video and shared by
+  every job, so a re-track skips the backbone (about 35% faster, same masks).
+- **Studio:**
+  - up to 16 objects;
+  - per-object effects from Meta's demo;
+  - a timeline with a lane per object;
+  - uploads, and deleting uploads;
+  - zoom, with click markers that stay sharp at any zoom.
+- **Exports:**
+  - **Video:** an MP4 with each object's effect, encoded in the browser.
+  - **Rotoscoping working folder:** `products.json`, `anchors.json`, `shots.json`
+    and per-object mattes (`data/mattes_tracked/<id>/%05d.png`), optionally with
+    the frames.
 
-![SA-V dataset](assets/sa_v_dataset.jpg?raw=true)
+## Quick start
 
-## Latest updates
+Needs Python 3.11+, Node 20+ and ffmpeg. Tested on Apple Silicon (MPS); CUDA and
+CPU work as they do in SAM 2.
 
-**12/11/2024 -- full model compilation for a major VOS speedup and a new `SAM2VideoPredictor` to better handle multi-object tracking**
-
-- We now support `torch.compile` of the entire SAM 2 model on videos, which can be turned on by setting `vos_optimized=True` in `build_sam2_video_predictor`, leading to a major speedup for VOS inference.
-- We update the implementation of `SAM2VideoPredictor` to support independent per-object inference, allowing us to relax the assumption of prompting for multi-object tracking and adding new objects after tracking starts.
-- See [`RELEASE_NOTES.md`](RELEASE_NOTES.md) for full details.
-
-**09/30/2024 -- SAM 2.1 Developer Suite (new checkpoints, training code, web demo) is released**
-
-- A new suite of improved model checkpoints (denoted as **SAM 2.1**) are released. See [Model Description](#model-description) for details.
-  * To use the new SAM 2.1 checkpoints, you need the latest model code from this repo. If you have installed an earlier version of this repo, please first uninstall the previous version via `pip uninstall SAM-2`, pull the latest code from this repo (with `git pull`), and then reinstall the repo following [Installation](#installation) below.
-- The training (and fine-tuning) code has been released. See [`training/README.md`](training/README.md) on how to get started.
-- The frontend + backend code for the SAM 2 web demo has been released. See [`demo/README.md`](demo/README.md) for details.
-
-## Installation
-
-SAM 2 needs to be installed first before use. The code requires `python>=3.10`, as well as `torch>=2.5.1` and `torchvision>=0.20.1`. Please follow the instructions [here](https://pytorch.org/get-started/locally/) to install both PyTorch and TorchVision dependencies. You can install SAM 2 on a GPU machine using:
-
-```bash
-git clone https://github.com/facebookresearch/sam2.git && cd sam2
-
-pip install -e .
-```
-If you are installing on Windows, it's strongly recommended to use [Windows Subsystem for Linux (WSL)](https://learn.microsoft.com/en-us/windows/wsl/install) with Ubuntu.
-
-To use the SAM 2 predictor and run the example notebooks, `jupyter` and `matplotlib` are required and can be installed by:
-
-```bash
-pip install -e ".[notebooks]"
-```
-
-Note:
-1. It's recommended to create a new Python environment via [Anaconda](https://www.anaconda.com/) for this installation and install PyTorch 2.5.1 (or higher) via `pip` following https://pytorch.org/. If you have a PyTorch version lower than 2.5.1 in your current environment, the installation command above will try to upgrade it to the latest PyTorch version using `pip`.
-2. The step above requires compiling a custom CUDA kernel with the `nvcc` compiler. If it isn't already available on your machine, please install the [CUDA toolkits](https://developer.nvidia.com/cuda-toolkit-archive) with a version that matches your PyTorch CUDA version.
-3. If you see a message like `Failed to build the SAM 2 CUDA extension` during installation, you can ignore it and still use SAM 2 (some post-processing functionality may be limited, but it doesn't affect the results in most cases).
-
-Please see [`INSTALL.md`](./INSTALL.md) for FAQs on potential issues and solutions.
-
-## Getting Started
-
-### Download Checkpoints
-
-First, we need to download a model checkpoint. All the model checkpoints can be downloaded by running:
-
-```bash
-cd checkpoints && \
-./download_ckpts.sh && \
-cd ..
+```sh
+git clone https://github.com/VolksRat71/sam-ui.git && cd sam-ui
+python3 -m venv .venv && . .venv/bin/activate
+SAM2_BUILD_CUDA=0 pip install -e '.[interactive-demo]'
+(cd checkpoints && ./download_ckpts.sh)          # SAM 2.1 checkpoints (Apache-2.0)
+git config core.hooksPath .githooks               # the footage guard, for contributors
 ```
 
-or individually from:
+**Backend.** Run it as a single process. Do not use gunicorn on macOS: a forked
+worker cannot reach the Metal compiler and fails on its first GPU call.
 
-- [sam2.1_hiera_tiny.pt](https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_tiny.pt)
-- [sam2.1_hiera_small.pt](https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_small.pt)
-- [sam2.1_hiera_base_plus.pt](https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_base_plus.pt)
-- [sam2.1_hiera_large.pt](https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_large.pt)
-
-(note that these are the improved checkpoints denoted as SAM 2.1; see [Model Description](#model-description) for details.)
-
-Then SAM 2 can be used in a few lines as follows for image and video prediction.
-
-### Image prediction
-
-SAM 2 has all the capabilities of [SAM](https://github.com/facebookresearch/segment-anything) on static images, and we provide image prediction APIs that closely resemble SAM for image use cases. The `SAM2ImagePredictor` class has an easy interface for image prompting.
-
-```python
-import torch
-from sam2.build_sam import build_sam2
-from sam2.sam2_image_predictor import SAM2ImagePredictor
-
-checkpoint = "./checkpoints/sam2.1_hiera_large.pt"
-model_cfg = "configs/sam2.1/sam2.1_hiera_l.yaml"
-predictor = SAM2ImagePredictor(build_sam2(model_cfg, checkpoint))
-
-with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
-    predictor.set_image(<your_image>)
-    masks, _, _ = predictor.predict(<input_prompts>)
+```sh
+mkdir -p ~/sam-ui-data && ln -s "$PWD/demo/data/gallery" ~/sam-ui-data/gallery
+cd demo/backend/server
+PYTORCH_ENABLE_MPS_FALLBACK=1 APP_ROOT="$(git rev-parse --show-toplevel)" \
+MODEL_SIZE=large DATA_PATH=~/sam-ui-data API_URL=http://localhost:7263 \
+DEFAULT_VIDEO_PATH=gallery/05_default_juggle.mp4 \
+python -m flask --app app run --host 127.0.0.1 --port 7263 --with-threads
 ```
 
-Please refer to the examples in [image_predictor_example.ipynb](./notebooks/image_predictor_example.ipynb) (also in Colab [here](https://colab.research.google.com/github/facebookresearch/sam2/blob/main/notebooks/image_predictor_example.ipynb)) for static image use cases.
+**Studio:**
 
-SAM 2 also supports automatic mask generation on images just like SAM. Please see [automatic_mask_generator_example.ipynb](./notebooks/automatic_mask_generator_example.ipynb) (also in Colab [here](https://colab.research.google.com/github/facebookresearch/sam2/blob/main/notebooks/automatic_mask_generator_example.ipynb)) for automatic mask generation in images.
-
-### Video prediction
-
-For promptable segmentation and tracking in videos, we provide a video predictor with APIs for example to add prompts and propagate masklets throughout a video. SAM 2 supports video inference on multiple objects and uses an inference state to keep track of the interactions in each video.
-
-```python
-import torch
-from sam2.build_sam import build_sam2_video_predictor
-
-checkpoint = "./checkpoints/sam2.1_hiera_large.pt"
-model_cfg = "configs/sam2.1/sam2.1_hiera_l.yaml"
-predictor = build_sam2_video_predictor(model_cfg, checkpoint)
-
-with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
-    state = predictor.init_state(<your_video>)
-
-    # add new prompts and instantly get the output on the same frame
-    frame_idx, object_ids, masks = predictor.add_new_points_or_box(state, <your_prompts>):
-
-    # propagate the prompts to get masklets throughout the video
-    for frame_idx, object_ids, masks in predictor.propagate_in_video(state):
-        ...
+```sh
+cd studio && npm ci
+VITE_API_ENDPOINT=http://127.0.0.1:7263 npm run dev -- --port 7262   # http://localhost:7262
 ```
 
-Please refer to the examples in [video_predictor_example.ipynb](./notebooks/video_predictor_example.ipynb) (also in Colab [here](https://colab.research.google.com/github/facebookresearch/sam2/blob/main/notebooks/video_predictor_example.ipynb)) for details on how to add click or box prompts, make refinements, and track multiple objects in videos.
+**SAM 3 (optional).** `pip install "transformers==5.17.0"`, then put the SAM 3 weights
+(from [facebook/sam3](https://huggingface.co/facebook/sam3), after accepting Meta's
+SAM License) in a folder and set `SAM_UI_SAM3_WEIGHTS=/path/to/sam3`. The SAM 3
+option in studio stays disabled, with the reason shown, until they're found.
 
-## Load from 🤗 Hugging Face
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `SAM_UI_FEATURE_CACHE_GB` | 6 | backbone feature cache budget (0 turns it off) |
+| `SAM_UI_SESSION_TTL_MIN` | 30 | idle sessions are freed after this long (0 keeps them) |
+| `SAM_UI_EXPORT_ROOT` | `~/Movies` | rotoscoping exports may only write under this folder |
+| `SAM_UI_SAM3_WEIGHTS` | `~/.cache/rotoscoping-video-subjects/weights/sam3-hf` | where the SAM 3 weights are |
 
-Alternatively, models can also be loaded from [Hugging Face](https://huggingface.co/models?search=facebook/sam2) (requires `pip install huggingface_hub`).
+## How it fits together
 
-For image prediction:
-
-```python
-import torch
-from sam2.sam2_image_predictor import SAM2ImagePredictor
-
-predictor = SAM2ImagePredictor.from_pretrained("facebook/sam2-hiera-large")
-
-with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
-    predictor.set_image(<your_image>)
-    masks, _, _ = predictor.predict(<input_prompts>)
+```
+studio (React, Vite, WebCodecs)                 demo/backend/server (Flask)
+  UI ── StudioMethods ── studio.worker ── HTTP ──►  GraphQL: sessions, clicks, objects, uploads
+                         decode, masks,             tracks/: seeds, track store, engines,
+                         effects, export                     jobs, feature cache, export
+                                                    sam2/  (Meta's model code)
 ```
 
-For video prediction:
+- **`demo/backend/server/tracks/`:**
+  - `seeds.py` and `store.py`: seeds and per-engine tracks on disk, under
+    `DATA_PATH/tracks/<video sha256>/<object>/`;
+  - `service.py`: selects what to track, caches the results, computes disagreement;
+  - `engine.py` / `sam3_engine.py`: the engines;
+  - `jobs.py`: job claims and cancel;
+  - `features.py`: the backbone cache;
+  - `export.py` and `routes.py`: exports and the HTTP routes.
+- **`studio/`.** The UI talks to the backend only through the `StudioMethods` table
+  (`src/worker/protocol.ts`), which the upcoming in-browser engine will implement
+  as well. Meta's demo code it reuses is vendored under `src/meta/`.
 
-```python
-import torch
-from sam2.sam2_video_predictor import SAM2VideoPredictor
+### API, in brief
 
-predictor = SAM2VideoPredictor.from_pretrained("facebook/sam2-hiera-large")
+| Kind | Endpoints |
+| --- | --- |
+| GraphQL, `POST /graphql` | `startSession` (returns the objects already known for the video), `addPoints` (points normalised 0–1), `clearPointsInFrame`, `removeObject`, `clearPointsInVideo`, `objectTracks`, `clearTrack`, `uploadVideo`, `deleteVideo`, `videos`, `defaultVideo` |
+| Streams, `multipart/x-savi-stream` | `POST /track_objects {session_id, object_ids?, engine?}` streams one part per frame and ends with a `done` or `error` part. `POST /track_masks` streams cached tracks. |
+| JSON | `POST /cancel_track`, `POST /track_jobs`, `GET /engines`, `POST /track_disagreement`, `POST /export` |
 
-with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
-    state = predictor.init_state(<your_video>)
+## Tests
 
-    # add new prompts and instantly get the output on the same frame
-    frame_idx, object_ids, masks = predictor.add_new_points_or_box(state, <your_prompts>):
-
-    # propagate the prompts to get masklets throughout the video
-    for frame_idx, object_ids, masks in predictor.propagate_in_video(state):
-        ...
+```sh
+pytest demo/backend/tests -q                         # backend, no model needed
+SAM_UI_SLOW=1 pytest demo/backend/tests -q -k slow   # + SAM 2 on synthetic video
+cd studio && npm test && npm run lint && npm run build
+npm run smoke                                        # end to end in headless Chrome
+python tools/track_cache_e2e.py --api http://127.0.0.1:7373   # live backend (use a scratch one)
 ```
 
-## Model Description
+`tools/track_cache_e2e.py` uploads its own synthetic clips and deletes them when it
+finishes. It also has `--after-restart`, `--correction` and `--responsive` checks.
 
-### SAM 2.1 checkpoints
+## Licences and credits
 
-The table below shows the improved SAM 2.1 checkpoints released on September 29, 2024.
-|      **Model**       | **Size (M)** |    **Speed (FPS)**     | **SA-V test (J&F)** | **MOSE val (J&F)** | **LVOS v2 (J&F)** |
-| :------------------: | :----------: | :--------------------: | :-----------------: | :----------------: | :---------------: |
-|   sam2.1_hiera_tiny <br /> ([config](sam2/configs/sam2.1/sam2.1_hiera_t.yaml), [checkpoint](https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_tiny.pt))    |     38.9     |          91.2          |        76.5         |        71.8        |       77.3        |
-|   sam2.1_hiera_small <br /> ([config](sam2/configs/sam2.1/sam2.1_hiera_s.yaml), [checkpoint](https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_small.pt))   |      46      |          84.8          |        76.6         |        73.5        |       78.3        |
-| sam2.1_hiera_base_plus <br /> ([config](sam2/configs/sam2.1/sam2.1_hiera_b+.yaml), [checkpoint](https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_base_plus.pt)) |     80.8     |        64.1          |        78.2         |        73.7        |       78.2        |
-|   sam2.1_hiera_large <br /> ([config](sam2/configs/sam2.1/sam2.1_hiera_l.yaml), [checkpoint](https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_large.pt))   |    224.4     |          39.5          |        79.5         |        74.6        |       80.6        |
-
-### SAM 2 checkpoints
-
-The previous SAM 2 checkpoints released on July 29, 2024 can be found as follows:
-
-|      **Model**       | **Size (M)** |    **Speed (FPS)**     | **SA-V test (J&F)** | **MOSE val (J&F)** | **LVOS v2 (J&F)** |
-| :------------------: | :----------: | :--------------------: | :-----------------: | :----------------: | :---------------: |
-|   sam2_hiera_tiny <br /> ([config](sam2/configs/sam2/sam2_hiera_t.yaml), [checkpoint](https://dl.fbaipublicfiles.com/segment_anything_2/072824/sam2_hiera_tiny.pt))   |     38.9     |          91.5          |        75.0         |        70.9        |       75.3        |
-|   sam2_hiera_small <br /> ([config](sam2/configs/sam2/sam2_hiera_s.yaml), [checkpoint](https://dl.fbaipublicfiles.com/segment_anything_2/072824/sam2_hiera_small.pt))   |      46      |          85.6          |        74.9         |        71.5        |       76.4        |
-| sam2_hiera_base_plus <br /> ([config](sam2/configs/sam2/sam2_hiera_b+.yaml), [checkpoint](https://dl.fbaipublicfiles.com/segment_anything_2/072824/sam2_hiera_base_plus.pt)) |     80.8     |     64.8    |        74.7         |        72.8        |       75.8        |
-|   sam2_hiera_large <br /> ([config](sam2/configs/sam2/sam2_hiera_l.yaml), [checkpoint](https://dl.fbaipublicfiles.com/segment_anything_2/072824/sam2_hiera_large.pt))   |    224.4     | 39.7 |        76.0         |        74.6        |       79.8        |
-
-Speed measured on an A100 with `torch 2.5.1, cuda 12.4`. See `benchmark.py` for an example on benchmarking (compiling all the model components). Compiling only the image encoder can be more flexible and also provide (a smaller) speed-up (set `compile_image_encoder: True` in the config).
-## Segment Anything Video Dataset
-
-See [sav_dataset/README.md](sav_dataset/README.md) for details.
-
-## Training SAM 2
-
-You can train or fine-tune SAM 2 on custom datasets of images, videos, or both. Please check the training [README](training/README.md) on how to get started.
-
-## Web demo for SAM 2
-
-We have released the frontend + backend code for the SAM 2 web demo (a locally deployable version similar to https://sam2.metademolab.com/demo). Please see the web demo [README](demo/README.md) for details.
-
-## License
-
-The SAM 2 model checkpoints, SAM 2 demo code (front-end and back-end), and SAM 2 training code are licensed under [Apache 2.0](./LICENSE), however the [Inter Font](https://github.com/rsms/inter?tab=OFL-1.1-1-ov-file) and [Noto Color Emoji](https://github.com/googlefonts/noto-emoji) used in the SAM 2 demo code are made available under the [SIL Open Font License, version 1.1](https://openfontlicense.org/open-font-license-official-text/).
-
-## Contributing
-
-See [contributing](CONTRIBUTING.md) and the [code of conduct](CODE_OF_CONDUCT.md).
-
-## Contributors
-
-The SAM 2 project was made possible with the help of many contributors (alphabetical):
-
-Karen Bergan, Daniel Bolya, Alex Bosenberg, Kai Brown, Vispi Cassod, Christopher Chedeau, Ida Cheng, Luc Dahlin, Shoubhik Debnath, Rene Martinez Doehner, Grant Gardner, Sahir Gomez, Rishi Godugu, Baishan Guo, Caleb Ho, Andrew Huang, Somya Jain, Bob Kamma, Amanda Kallet, Jake Kinney, Alexander Kirillov, Shiva Koduvayur, Devansh Kukreja, Robert Kuo, Aohan Lin, Parth Malani, Jitendra Malik, Mallika Malhotra, Miguel Martin, Alexander Miller, Sasha Mitts, William Ngan, George Orlin, Joelle Pineau, Kate Saenko, Rodrick Shepard, Azita Shokrpour, David Soofian, Jonathan Torres, Jenny Truong, Sagar Vaze, Meng Wang, Claudette Ward, Pengchuan Zhang.
-
-Third-party code: we use a GPU-based connected component algorithm adapted from [`cc_torch`](https://github.com/zsef123/Connected_components_PyTorch) (with its license in [`LICENSE_cctorch`](./LICENSE_cctorch)) as an optional post-processing step for the mask predictions.
-
-## Citing SAM 2
-
-If you use SAM 2 or the SA-V dataset in your research, please use the following BibTeX entry.
-
-```bibtex
-@article{ravi2024sam2,
-  title={SAM 2: Segment Anything in Images and Videos},
-  author={Ravi, Nikhila and Gabeur, Valentin and Hu, Yuan-Ting and Hu, Ronghang and Ryali, Chaitanya and Ma, Tengyu and Khedr, Haitham and R{\"a}dle, Roman and Rolland, Chloe and Gustafson, Laura and Mintun, Eric and Pan, Junting and Alwala, Kalyan Vasudev and Carion, Nicolas and Wu, Chao-Yuan and Girshick, Ross and Doll{\'a}r, Piotr and Feichtenhofer, Christoph},
-  journal={arXiv preprint arXiv:2408.00714},
-  url={https://arxiv.org/abs/2408.00714},
-  year={2024}
-}
-```
+- sam-ui is **Apache-2.0**, like SAM 2. It is a modified version of
+  [SAM 2](https://github.com/facebookresearch/sam2) by Meta Platforms, Inc.
+  [`NOTICE-sam-ui.md`](NOTICE-sam-ui.md) lists what changed. Files we modified carry
+  a notice, and Meta's copyright headers are kept.
+- **SAM 3 is not included.** Its code and weights are under Meta's
+  [SAM License](https://huggingface.co/facebook/sam3), not Apache. sam-ui imports
+  Hugging Face `transformers` at run time and loads weights you download yourself.
+- The Inter font is under the SIL Open Font License; the licence ships with it in
+  `studio/public/fonts/`.
+- Meta's original README, with the model details, checkpoints and training, is
+  [`docs/SAM2_UPSTREAM.md`](docs/SAM2_UPSTREAM.md).
