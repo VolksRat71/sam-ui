@@ -19,10 +19,22 @@ the app, and studio is served by it, so nothing else needs installing.
    checks its SHA-256 before using it.
 
 **SAM 3 (optional).** SAM 3 is under Meta's SAM License and does not ship with the
-app. Accept the licence and download the weights from
-[facebook/sam3](https://huggingface.co/facebook/sam3), then choose
-**SAM 3 → Choose SAM 3 weights folder…**. The app restarts, and the SAM 3 switch in
-studio becomes available.
+app. To add it:
+1. Open [facebook/sam3](https://huggingface.co/facebook/sam3) and accept the licence.
+   Meta approves access, sometimes after a wait.
+2. Create a **read** token on your
+   [Hugging Face token page](https://huggingface.co/settings/tokens).
+3. In the app, choose **SAM 3 → Download SAM 3 with a Hugging Face token…** and
+   paste the token.
+   - The app downloads about 3.5 GB into its data folder and checks every file's hash
+     before keeping it. It skips `sam3.pt`, a pickle it doesn't need.
+   - The token is used for that download only, sent only to huggingface.co, and
+     never saved.
+4. Restart when it says so. The SAM 3 switch in studio is then available.
+
+If you already have the weights, **SAM 3 → Choose SAM 3 weights folder…** uses that
+folder instead. SAM 3 needs a lot of GPU memory; 32 GB of RAM or more is
+recommended.
 
 **Where things are:**
 - Everything lives in `~/Library/Application Support/sam-ui/`: `checkpoints/`;

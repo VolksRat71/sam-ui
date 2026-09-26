@@ -10,13 +10,13 @@
 // weights (Meta's SAM License) are never shipped; SAM 3 > Choose weights folder.
 'use strict';
 
-const {app, BrowserWindow, Menu, dialog, shell} = require('electron');
+const {app, BrowserWindow, Menu, dialog, ipcMain, shell} = require('electron');
 const {spawn} = require('node:child_process');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
-const https = require('node:https');
 const net = require('node:net');
 const path = require('node:path');
+const {downloadRepo, downloadVerified} = require('./hf-download');
 
 const CHECKPOINT_URL = 'https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_large.pt';
 const CHECKPOINT_NAME = 'sam2.1_hiera_large.pt';
@@ -112,46 +112,6 @@ function splash() {
   return {win, say};
 }
 
-function download(url, dest, expectedSha256, onProgress) {
-  return new Promise((resolve, reject) => {
-    const part = dest + '.part';
-    const get = u =>
-      https
-        .get(u, res => {
-          if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-            const next = new URL(res.headers.location, u).toString();
-            if (!isHttps(next)) return reject(new Error(`refusing a non-https redirect to ${next}`));
-            return get(next);
-          }
-          if (res.statusCode !== 200) return reject(new Error(`download failed: HTTP ${res.statusCode}`));
-          const total = Number(res.headers['content-length']) || 0;
-          let got = 0;
-          const hash = crypto.createHash('sha256');
-          const out = fs.createWriteStream(part);
-          res.on('data', c => {
-            got += c.length;
-            hash.update(c);
-            onProgress(got, total);
-          });
-          res.pipe(out);
-          out.on('finish', () =>
-            out.close(() => {
-              if (total && got !== total) return reject(new Error('download incomplete'));
-              const digest = hash.digest('hex');
-              if (digest !== expectedSha256) {
-                fs.rmSync(part, {force: true});
-                return reject(new Error(`checksum mismatch (got ${digest}); the download was deleted`));
-              }
-              resolve();
-            }),
-          );
-          res.on('error', reject);
-        })
-        .on('error', reject);
-    get(url);
-  }).then(() => fs.renameSync(dest + '.part', dest));
-}
-
 async function ensureCheckpoint(p, say) {
   if (fs.existsSync(p.checkpoint)) return;
   fs.mkdirSync(path.dirname(p.checkpoint), {recursive: true});
@@ -163,9 +123,10 @@ async function ensureCheckpoint(p, say) {
     return;
   }
   say('Downloading SAM 2.1 large (about 900 MB, once)…', 0);
-  await download(CHECKPOINT_URL, p.checkpoint, CHECKPOINT_SHA256, (got, total) =>
-    say(`Downloading SAM 2.1 large: ${(got / 2 ** 20).toFixed(0)} of ${(total / 2 ** 20).toFixed(0)} MB`, total ? got / total : null),
-  );
+  await downloadVerified(CHECKPOINT_URL, p.checkpoint, {sha256: CHECKPOINT_SHA256}, {
+    onProgress: (got, total) =>
+      say(`Downloading SAM 2.1 large: ${(got / 2 ** 20).toFixed(0)} of ${(total / 2 ** 20).toFixed(0)} MB`, total ? got / total : null),
+  });
 }
 
 // -- backend ---------------------------------------------------------------
@@ -266,6 +227,7 @@ function menu(p) {
             app.quit(); // the backend reads the setting when it starts
           },
         },
+        {label: 'Download SAM 3 with a Hugging Face token…', click: () => openSam3Window()},
         {label: 'Get SAM 3 weights (Hugging Face)', click: () => shell.openExternal('https://huggingface.co/facebook/sam3')},
       ],
     },
@@ -324,7 +286,51 @@ async function main() {
     return {action: 'deny'};
   });
   await mainWindow.loadURL(`${appOrigin}/`);
+  if (!app.isPackaged && process.env.SAM_UI_OPEN_SAM3) openSam3Window(); // dev and tests only
 }
+
+// -- SAM 3 download --------------------------------------------------------
+
+const SAM3_REPO = 'facebook/sam3';
+const SAM3_LINKS = {model: 'https://huggingface.co/facebook/sam3', tokens: 'https://huggingface.co/settings/tokens'};
+let sam3Window = null;
+
+function openSam3Window() {
+  if (sam3Window && !sam3Window.isDestroyed()) return sam3Window.focus();
+  sam3Window = new BrowserWindow({
+    width: 580, height: 440, resizable: false, title: 'Download SAM 3', parent: mainWindow || undefined,
+    webPreferences: {...WEB_PREFERENCES, preload: path.join(__dirname, 'sam3-preload.js')},
+  });
+  sam3Window.setMenuBarVisibility(false);
+  sam3Window.webContents.on('will-navigate', e => e.preventDefault());
+  sam3Window.webContents.setWindowOpenHandler(() => ({action: 'deny'}));
+  sam3Window.loadFile(path.join(__dirname, 'sam3-download.html'));
+}
+
+const fromSam3Window = event => sam3Window && !sam3Window.isDestroyed() && event.sender === sam3Window.webContents;
+
+ipcMain.handle('sam3:download', async (event, token) => {
+  if (!fromSam3Window(event) || typeof token !== 'string' || !token.trim()) return {ok: false, error: 'refused'};
+  const dir = path.join(paths().userData, 'weights', 'sam3');
+  try {
+    await downloadRepo(SAM3_REPO, token.trim(), dir, {
+      onProgress: (done, total, file) => !event.sender.isDestroyed() && event.sender.send('sam3:progress', {done, total, file}),
+    });
+    writeSettings({sam3Weights: dir});
+    return {ok: true};
+  } catch (err) {
+    return {ok: false, error: err.message};
+  }
+  // the token only ever lived in this call's arguments; nothing stores it
+});
+ipcMain.on('sam3:open', (event, which) => {
+  if (fromSam3Window(event) && SAM3_LINKS[which]) shell.openExternal(SAM3_LINKS[which]);
+});
+ipcMain.on('sam3:restart', event => {
+  if (!fromSam3Window(event)) return;
+  app.relaunch();
+  app.quit();
+});
 
 app.on('before-quit', () => {
   quitting = true;

@@ -38,6 +38,7 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
         run: |
           npm ci
+          npm test
           npx electron-builder --mac dmg --arm64 --publish never
           ls -la dist/*.dmg
 

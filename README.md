@@ -12,9 +12,22 @@ sam-ui began as a fork of Meta's SAM 2 web demo. The backend keeps Meta's model 
 and adds a track cache, a second engine (SAM 3), exports and a job system. The
 frontend, **studio**, replaces the demo UI with an editor layout.
 
-> **Coming next:** a desktop app (Electron, with the full models bundled) published
-> as a GitHub release, and a lighter in-browser demo on GitHub Pages that runs SAM 2.1
-> tiny on WebGPU with no server. Neither is released yet.
+## Download the app
+
+**macOS (Apple Silicon):** get `sam-ui-<version>-arm64.dmg` from the
+[latest release](https://github.com/VolksRat71/sam-ui/releases/latest) and drag it
+into Applications.
+- On first launch it downloads SAM 2.1 large (about 900 MB, hash-checked). The app
+  runs the full model locally on your GPU, with no other install.
+- The build is **not signed yet**: the first time, right-click the app and choose
+  **Open**, or run `xattr -dr com.apple.quarantine /Applications/sam-ui.app`.
+- **SAM 3 (optional):** accept Meta's SAM License on
+  [facebook/sam3](https://huggingface.co/facebook/sam3), then choose
+  **SAM 3 → Download SAM 3 with a Hugging Face token…**. See
+  [`desktop/README.md`](desktop/README.md).
+
+A lighter in-browser demo, SAM 2.1 tiny on WebGPU with no install, is planned for
+GitHub Pages. Or run it from source, below.
 
 ## What it does
 

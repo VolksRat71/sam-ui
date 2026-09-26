@@ -1,0 +1,37 @@
+<!doctype html>
+<!-- sam-ui (Apache-2.0). New file, not from SAM 2. -->
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'">
+<title>Download SAM 3</title>
+<style>
+  body { margin: 0; padding: 24px 28px; background: #111; color: #e8e8e8; font: 14px -apple-system, system-ui, sans-serif; }
+  h1 { font-size: 16px; margin: 0 0 12px; }
+  ol { padding-left: 20px; margin: 0 0 16px; line-height: 1.6; }
+  a { color: #6ea8fe; cursor: pointer; }
+  input { width: 100%; box-sizing: border-box; padding: 8px 10px; background: #1c1c1c; color: #eee; border: 1px solid #333; border-radius: 6px; font: 13px ui-monospace, monospace; }
+  button { margin-top: 12px; padding: 8px 14px; background: #2b5bd7; color: #fff; border: 0; border-radius: 6px; font: inherit; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  .note { color: #999; font-size: 12px; margin-top: 10px; }
+  .bar { height: 6px; background: #333; border-radius: 3px; margin-top: 14px; display: none; }
+  .bar > div { height: 6px; width: 0; background: #6ea8fe; border-radius: 3px; }
+  #status { margin-top: 10px; min-height: 18px; }
+  .error { color: #ff8a80; }
+</style>
+</head>
+<body>
+  <h1>Download SAM 3</h1>
+  <ol>
+    <li>Open <a id="model">facebook/sam3</a> on Hugging Face and accept Meta's SAM License. Access is granted by Meta, sometimes after a wait.</li>
+    <li>Create a <b>read</b> token on your <a id="tokens">Hugging Face token page</a>.</li>
+    <li>Paste it here. The app downloads about 3.5 GB and checks every file's hash.</li>
+  </ol>
+  <input id="token" type="password" placeholder="hf_…" autocomplete="off" spellcheck="false">
+  <button id="go">Download</button>
+  <div class="note">The token is used only for this download, sent only to huggingface.co, and never saved.</div>
+  <div class="bar" id="bar"><div id="fill"></div></div>
+  <div id="status"></div>
+  <script src="sam3-download.js"></script>
+</body>
+</html>
