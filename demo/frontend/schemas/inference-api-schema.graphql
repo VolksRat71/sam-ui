@@ -87,6 +87,8 @@ type SeedFrame {
   frameIndex: Int!
   points: [[Float!]!]!
   labels: [Int!]!
+  # the approved mask on this frame, if recorded
+  mask: RLEMask
 }
 
 type ObjectTrack {

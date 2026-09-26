@@ -2,6 +2,7 @@
 # All rights reserved.
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
+# Modified by sam-ui: read the display rotation on PyAV 18, which dropped Stream.side_data.
 
 import ast
 import math
@@ -61,6 +62,23 @@ def transcode(
     )
 
 
+def _rotation_deg(cont, video_stream) -> float:
+    """sam-ui: the display rotation. PyAV < 14 had it as stream side data;
+    later versions (18 here) dropped Stream.side_data and report it on each
+    decoded frame as `frame.rotation`."""
+    side_data = getattr(video_stream, "side_data", None)
+    if side_data is not None:
+        return side_data.get("DISPLAYMATRIX", 0)
+    try:
+        for frame in cont.decode(video_stream):
+            return float(getattr(frame, "rotation", 0) or 0)
+    except av.FFmpegError:
+        return 0
+    finally:
+        cont.seek(0)
+    return 0
+
+
 def get_video_metadata(path: str) -> VideoMetadata:
     with av.open(path) as cont:
         num_video_streams = len(cont.streams.video)
@@ -75,7 +93,7 @@ def get_video_metadata(path: str) -> VideoMetadata:
             assert video_stream.time_base is not None
 
             # for rotation, see: https://github.com/PyAV-Org/PyAV/pull/1249
-            rotation_deg = video_stream.side_data.get("DISPLAYMATRIX", 0)
+            rotation_deg = _rotation_deg(cont, video_stream)
             num_video_frames = video_stream.frames
             video_start_time = float(video_stream.start_time * video_stream.time_base)
             width, height = video_stream.width, video_stream.height

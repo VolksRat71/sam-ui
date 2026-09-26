@@ -78,6 +78,10 @@ class Query:
                 return v
 
         # Fallback is returning the first video
+        if not all_videos:  # sam-ui: a clear error, not a bare StopIteration
+            raise ValueError(
+                f"no videos: put an .mp4 in {DATA_PATH}/gallery or upload one"
+            )
         return next(iter(all_videos.values()))
 
     @relay.connection(relay.ListConnection[Video])
@@ -126,6 +130,7 @@ class Mutation:
             height=vm.height,
             generate_poster=False,
         )
+        get_videos()[video.code] = video  # sam-ui: list it in `videos` right away
         return video
 
     @strawberry.mutation

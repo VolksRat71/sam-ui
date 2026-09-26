@@ -80,6 +80,7 @@ class SeedFrame:
     frame_index: int
     points: List[List[float]]
     labels: List[int]
+    mask: Optional[RLEMask] = None  # the approved mask on this frame, if recorded
 
 
 @strawberry.type
@@ -117,7 +118,14 @@ class ObjectTrack:
             frames=info["frames"],
             n_frames=info["n_frames"],
             seeds=[
-                SeedFrame(frame_index=f, points=v["points"], labels=v["labels"])
+                SeedFrame(
+                    frame_index=f,
+                    points=v["points"],
+                    labels=v["labels"],
+                    mask=RLEMask(size=v["mask"]["size"], counts=v["mask"]["counts"], order="F")
+                    if v.get("mask")
+                    else None,
+                )
                 for f, v in sorted(info["seeds"].items())
             ],
             tracks=[
