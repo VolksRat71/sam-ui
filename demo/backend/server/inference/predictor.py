@@ -445,6 +445,17 @@ class InferenceAPI:
                     f"propagation ended in session {session_id}; {self.__get_session_stats()}"
                 )
 
+    # -- sam-ui: videos ----------------------------------------------------------
+    def video_in_use(self, path: str) -> bool:
+        """Whether an open session holds this video file."""
+        target = Path(path).resolve()
+        return any(Path(s["path"]).resolve() == target for s in self.session_states.values())
+
+    def purge_video(self, path: str) -> None:
+        """Drop a video's seeds and cached tracks (keyed by its sha256)."""
+        with self.inference_lock:
+            self.tracks.clear_video(self.tracks.video_key(path))
+
     # -- sam-ui: per-object tracks -------------------------------------------
     def object_tracks(self, session_id: str) -> List[Dict]:
         session = self.__get_session(session_id)
