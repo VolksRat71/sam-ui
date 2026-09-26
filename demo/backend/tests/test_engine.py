@@ -1,0 +1,134 @@
+# sam-ui (Apache-2.0). New file, not from SAM 2.
+import os
+import time
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+from tracks.engine import FakeEngine, Sam2Engine
+
+REPO = Path(__file__).resolve().parents[3]
+CKPT = REPO / "checkpoints" / "sam2.1_hiera_large.pt"
+N, H, W, S = 30, 240, 320, 56  # frames, height, width, square side
+
+
+def test_fake_engine_tracks_only_the_objects_asked_for():
+    e = FakeEngine(n_frames=3)
+    frames = list(e.track("unused.mp4", {2: {0: {"points": [[0.5, 0.5]], "labels": [1]}}, 5: {}}))
+    assert [f for f, _ in frames] == [0, 1, 2]
+    assert all(set(m) == {2, 5} for _, m in frames)
+    assert e.calls == [[2, 5]]
+
+
+class _StubPredictor:
+    """Just enough of SAM2VideoPredictor to check how Sam2Engine drives it."""
+
+    def __init__(self, n=4):
+        self.n, self.added, self.reset = n, [], 0
+
+    def init_state(self, path, offload_video_to_cpu=False):
+        return {"obj_ids": []}
+
+    def add_new_points_or_box(self, inference_state, frame_idx, obj_id, points, labels, clear_old_points,
+                              normalize_coords):
+        assert normalize_coords is False and clear_old_points is True
+        self.added.append((obj_id, frame_idx, points.tolist(), labels.tolist()))
+        if obj_id not in inference_state["obj_ids"]:
+            inference_state["obj_ids"].append(obj_id)
+
+    def propagate_in_video(self, state, start_frame_idx, reverse=False):
+        import torch
+        frames = range(start_frame_idx, -1, -1) if reverse else range(start_frame_idx, self.n)
+        for f in frames:
+            yield f, list(state["obj_ids"]), torch.ones(len(state["obj_ids"]), 1, 2, 2)
+
+    def reset_state(self, state):
+        self.reset += 1
+
+
+def test_sam2_engine_seeds_only_its_objects_and_yields_each_frame_once():
+    p = _StubPredictor(n=4)
+    e = Sam2Engine(p, model="stub")
+    seeds = {7: {2: {"points": [[0.1, 0.2]], "labels": [1]}}, 9: {1: {"points": [[0.5, 0.5], [0.6, 0.6]], "labels": [1, 0]}}}
+    frames = list(e.track("v.mp4", seeds))
+    assert sorted(f for f, _ in frames) == [0, 1, 2, 3]  # start frame 1 not repeated by the reverse pass
+    assert sorted(a[0] for a in p.added) == [7, 9]
+    assert all(set(m) == {7, 9} and all(v.dtype == bool for v in m.values()) for _, m in frames)
+    assert p.reset == 1
+
+
+def test_sam2_engine_skips_objects_without_points_and_releases_state_on_cancel():
+    p = _StubPredictor(n=10)
+    e = Sam2Engine(p, model="stub")
+    seeds = {1: {0: {"points": [[0.5, 0.5]], "labels": [1]}}, 2: {3: {"points": [], "labels": []}}}
+    it = e.track("v.mp4", seeds)
+    next(it)
+    it.close()  # a cancelled job
+    assert [a[0] for a in p.added] == [1] and p.reset == 1
+    assert list(e.track("v.mp4", {2: {}})) == []  # nothing to seed: no job at all
+
+
+def _synthetic_video(path):
+    """Two squares moving across a noisy background: no footage involved."""
+    import av
+    rng = np.random.default_rng(0)
+    bg = rng.integers(90, 140, (H, W, 3), dtype=np.uint8)
+    truth = {1: [], 2: []}
+    out = av.open(str(path), "w")
+    st = out.add_stream("libx264", rate=24, options={"crf": "12"})
+    st.width, st.height, st.pix_fmt = W, H, "yuv420p"
+    for i in range(N):
+        img = bg.copy()
+        for obj, (y, x0, color) in {1: (40, 10, (220, 40, 40)), 2: (140, 250, (40, 60, 220))}.items():
+            x = x0 + 5 * i if obj == 1 else x0 - 5 * i
+            img[y:y + S, x:x + S] = color
+            m = np.zeros((H, W), bool)
+            m[y:y + S, x:x + S] = True
+            truth[obj].append(m)
+        for pkt in st.encode(av.VideoFrame.from_ndarray(img, format="rgb24")):
+            out.mux(pkt)
+    for pkt in st.encode():
+        out.mux(pkt)
+    out.close()
+    return truth
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(not CKPT.exists() or os.environ.get("SAM_UI_SLOW") != "1",
+                    reason="set SAM_UI_SLOW=1 with the large checkpoint in checkpoints/")
+def test_sam2_engine_tracks_a_synthetic_square_and_reports_backbone_share(tmp_path):
+    import torch
+    from sam2.build_sam import build_sam2_video_predictor
+
+    truth = _synthetic_video(tmp_path / "squares.mp4")
+    dev = "mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu")
+    pred = build_sam2_video_predictor("configs/sam2.1/sam2.1_hiera_l.yaml", str(CKPT), device=dev)
+    sync = {"mps": torch.mps.synchronize, "cuda": torch.cuda.synchronize}.get(dev, lambda: None)
+
+    backbone_s = [0.0]
+    orig = pred.forward_image
+
+    def timed_forward_image(img):
+        sync()
+        t0 = time.perf_counter()
+        out = orig(img)
+        sync()
+        backbone_s[0] += time.perf_counter() - t0
+        return out
+
+    pred.forward_image = timed_forward_image
+    e = Sam2Engine(pred, model="hiera_l", offload_video_to_cpu=dev == "mps")
+    seeds = {1: {0: {"points": [[(10 + S / 2) / W, (40 + S / 2) / H]], "labels": [1]}}}
+    t0 = time.perf_counter()
+    frames = dict(e.track(str(tmp_path / "squares.mp4"), seeds))
+    total = time.perf_counter() - t0
+
+    ious = []
+    for i in range(N):
+        a, b = frames[i][1], truth[1][i]
+        ious.append((a & b).sum() / (a | b).sum())
+    print(f"\nsam2 engine: {N} frames in {total:.1f} s, backbone {backbone_s[0]:.1f} s "
+          f"({100 * backbone_s[0] / total:.0f}%), min IoU {min(ious):.3f}, mean {np.mean(ious):.3f}")
+    assert sorted(frames) == list(range(N)) and set(frames[0]) == {1}
+    assert min(ious) > 0.9
