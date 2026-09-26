@@ -48,6 +48,7 @@ type Mutation {
     input: CancelPropagateInVideoInput!
   ): CancelPropagateInVideo!
   clearTrack(input: ClearTrackInput!): ObjectTrack!
+  deleteVideo(input: DeleteVideoInput!): DeleteVideo!
   createDeletionId: String!
   acceptTos: Boolean!
   acceptTermsOfService: String!
@@ -58,6 +59,16 @@ type Mutation {
   ): Video!
   uploadSharedVideo(file: Upload!): SharedVideo!
   uploadAnnotations(file: Upload!): Boolean!
+}
+
+input DeleteVideoInput {
+  path: String!
+  purgeTracks: Boolean! = true
+}
+
+type DeleteVideo {
+  path: String!
+  purged: Boolean!
 }
 
 input ClearTrackInput {

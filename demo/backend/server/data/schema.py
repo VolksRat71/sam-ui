@@ -28,6 +28,8 @@ from data.data_types import (
     ClearPointsInVideo,
     ClearPointsInVideoInput,
     ClearTrackInput,
+    DeleteVideo,
+    DeleteVideoInput,
     CloseSession,
     CloseSessionInput,
     ObjectTrack,
@@ -153,6 +155,21 @@ class Mutation:
                 for o in inference_api.object_tracks(response.session_id)
             ],
         )
+
+    @strawberry.mutation
+    def delete_video(self, input: DeleteVideoInput, info: strawberry.Info) -> DeleteVideo:
+        """sam-ui: delete an uploaded video, and with purgeTracks its seeds and
+        tracks. Refused for gallery videos and for a video open in a session."""
+        from data.uploads import delete_upload
+
+        inference_api: InferenceAPI = info.context["inference_api"]
+        out = delete_upload(
+            input.path,
+            in_use=inference_api.video_in_use,
+            purge=inference_api.purge_video,
+            do_purge=input.purge_tracks,
+        )
+        return DeleteVideo(path=out["path"], purged=out["purged"])
 
     @strawberry.mutation
     def clear_track(self, input: ClearTrackInput, info: strawberry.Info) -> ObjectTrack:

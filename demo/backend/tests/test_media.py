@@ -66,3 +66,72 @@ def test_seed_frames_carry_their_approved_mask():
     seeds = run('{ objectTracks(sessionId: "s1") { seeds { frameIndex mask { size counts } } } }',
                 WithMask())["objectTracks"][0]["seeds"]
     assert seeds == [{"frameIndex": 4, "mask": {"size": [2, 2], "counts": "04"}}]
+
+
+class Api:
+    """InferenceAPI's two video hooks, recorded."""
+
+    def __init__(self, busy=()):
+        self.busy, self.purged = {str(Path(p).resolve()) for p in busy}, []
+
+    def video_in_use(self, path):
+        return str(Path(path).resolve()) in self.busy
+
+    def purge_video(self, path):
+        self.purged.append(Path(path).name)
+
+
+def delete(api, path, purge=True):
+    from data.schema import schema
+
+    q = 'mutation($p: String!, $g: Boolean!) { deleteVideo(input: {path: $p, purgeTracks: $g}) { path purged } }'
+    return schema.execute_sync(q, variable_values={"p": path, "g": purge}, context_value={"inference_api": api})
+
+
+def upload(name):
+    from app_conf import UPLOADS_PATH
+    from data.loader import get_video
+    from data.store import get_videos, set_videos
+
+    if not isinstance(get_videos(), dict):  # Meta's store starts as [] until app.py sets it
+        set_videos({})
+    p = clip(Path(UPLOADS_PATH) / name)
+    v = get_video(p, Path(UPLOADS_PATH), generate_poster=False, width=320, height=240)
+    get_videos()[v.code] = v
+    return p, v
+
+
+def test_delete_video_removes_an_upload_its_listing_and_its_tracks():
+    from data.store import get_videos
+
+    p, v = upload("del1.mp4")
+    api = Api()
+    r = delete(api, v.path)
+    assert r.errors is None and r.data["deleteVideo"] == {"path": "uploads/del1.mp4", "purged": True}
+    assert not p.exists() and v.code not in get_videos() and api.purged == ["del1.mp4"]
+
+
+def test_delete_video_can_keep_the_tracks():
+    p, v = upload("del2.mp4")
+    api = Api()
+    assert delete(api, v.path, purge=False).data["deleteVideo"]["purged"] is False
+    assert api.purged == [] and not p.exists()
+
+
+def test_delete_video_refuses_gallery_videos_escapes_missing_files_and_open_ones(tmp_path):
+    from app_conf import GALLERY_PATH
+
+    g = clip(Path(GALLERY_PATH) / "keep.mp4")
+    try:
+        for path, why in (("gallery/keep.mp4", "only uploaded videos"),
+                          ("uploads/../gallery/keep.mp4", "only uploaded videos"),
+                          ("uploads/nope.mp4", "no uploaded video")):
+            r = delete(Api(), path)
+            assert r.errors and why in r.errors[0].message, path
+        assert g.exists()
+        p, v = upload("busy.mp4")
+        r = delete(Api(busy=[p]), v.path)
+        assert r.errors and "open in a session" in r.errors[0].message and p.exists()
+        p.unlink()
+    finally:
+        g.unlink()

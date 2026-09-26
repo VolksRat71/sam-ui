@@ -142,6 +142,20 @@ class ObjectTrack:
 
 
 @strawberry.input
+class DeleteVideoInput:
+    """sam-ui: delete an uploaded video (never a gallery one)."""
+
+    path: str  # as `videos` lists it, e.g. uploads/<hash>.mp4
+    purge_tracks: bool = True  # also drop its seeds and cached tracks
+
+
+@strawberry.type
+class DeleteVideo:
+    path: str
+    purged: bool
+
+
+@strawberry.input
 class ClearTrackInput:
     session_id: str
     object_id: int

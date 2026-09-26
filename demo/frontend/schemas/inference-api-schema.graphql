@@ -64,6 +64,21 @@ type Mutation {
   ): CancelPropagateInVideo!
   # sam-ui: drop one object's cached track; its seeds stay
   clearTrack(input: ClearTrackInput!): ObjectTrack!
+  # sam-ui: delete an uploaded video (never a gallery one)
+  deleteVideo(input: DeleteVideoInput!): DeleteVideo!
+}
+
+# sam-ui: deleting uploads
+input DeleteVideoInput {
+  # as `videos` lists it, e.g. uploads/<hash>.mp4
+  path: String!
+  # also drop its seeds and cached tracks
+  purgeTracks: Boolean! = true
+}
+
+type DeleteVideo {
+  path: String!
+  purged: Boolean!
 }
 
 # sam-ui: per-object tracks
