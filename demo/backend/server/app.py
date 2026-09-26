@@ -2,9 +2,11 @@
 # All rights reserved.
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
-# Modified by sam-ui: registers the track routes (tracks/routes.py).
+# Modified by sam-ui: registers the track routes (tracks/routes.py) and, with
+# SAM_UI_STUDIO_DIST, serves a built studio (studio_static.py).
 
 import logging
+import os
 from typing import Any, Generator
 
 from app_conf import (
@@ -36,6 +38,12 @@ set_videos(videos)
 
 inference_api = InferenceAPI()
 app.register_blueprint(make_track_routes(inference_api.track_context, inference_api.tracks))
+
+# sam-ui: serve a built studio from this server (the desktop app), when asked
+if os.environ.get("SAM_UI_STUDIO_DIST"):
+    from studio_static import make_studio_blueprint
+
+    app.register_blueprint(make_studio_blueprint(os.environ["SAM_UI_STUDIO_DIST"]))
 
 
 @app.route("/healthy")
