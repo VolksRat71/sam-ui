@@ -4,6 +4,7 @@
 // its track state, and its own Clear track / Remove actions.
 import {Add, Export, TrashCan, Reset} from '@carbon/icons-react';
 import {OBJECT_LIMIT} from '~/config';
+import {engineLabel} from '~/state/engines';
 import {isTracking, needsPositiveClick, seedFrames, type StudioObject} from '~/state/objects';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
 
@@ -67,6 +68,32 @@ export default function ObjectsSection({session, onExport}: Props) {
                   <StateBadge o={o} />
                 </div>
                 <div className="object-meta">{describe(o)}</div>
+                {session.engines.length > 1 && (
+                  <div className="engine-badges">
+                    {session.engines.map(e => {
+                      const t = o.engines[e.name];
+                      const st = t?.state ?? 'untracked';
+                      return (
+                        <span
+                          key={e.name}
+                          className={`engine-badge ${st}${e.name === state.engine ? ' current' : ''}`}
+                          title={`${engineLabel(e.name)}: ${st}${t?.frames ? `, frames ${t.frames[0] + 1}-${t.frames[1] + 1}` : ''}`}>
+                          {engineLabel(e.name)} {st}
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
+                {session.disagreement.get(o.id) != null && (
+                  <div
+                    className={session.disagreement.get(o.id)!.flagged.length > 0 ? 'object-hint' : 'object-meta'}
+                    title="Mask IoU between the SAM 2 and SAM 3 tracks; flagged frames are marked on the timeline">
+                    SAM 2 vs SAM 3: mean IoU {session.disagreement.get(o.id)!.meanIou?.toFixed(2) ?? '?'}
+                    {session.disagreement.get(o.id)!.flagged.length > 0
+                      ? ` · ${session.disagreement.get(o.id)!.flagged.length} frames disagree`
+                      : ' · they agree'}
+                  </div>
+                )}
                 {active && needsPositiveClick(o, frame) && (
                   <div className="object-hint">Add a positive click to keep part of the object</div>
                 )}
@@ -76,7 +103,7 @@ export default function ObjectsSection({session, onExport}: Props) {
                     className="link-button"
                     disabled={busy || isTracking(o) || o.state === 'untracked'}
                     onClick={() => session.clearTrack(o.id)}
-                    title="Forget this object's cached track; its clicks stay">
+                    title={`Forget this object's cached ${engineLabel(state.engine)} track; its clicks stay`}>
                     <Reset size={14} /> Clear track
                   </button>
                   <button

@@ -1,5 +1,5 @@
 /**
- * @generated SignedSource<<3ad306ebceb5460918cfc9261fa6688b>>
+ * @generated SignedSource<<782edc31771779d539f96684045b530f>>
  * @lightSyntaxTransform
  * @nogrep
  */
@@ -20,9 +20,19 @@ export type StudioSessionObjectTracksQuery$data = {
     readonly seeds: ReadonlyArray<{
       readonly frameIndex: number;
       readonly labels: ReadonlyArray<number>;
+      readonly mask: {
+        readonly counts: string;
+        readonly size: ReadonlyArray<number>;
+      } | null | undefined;
       readonly points: ReadonlyArray<ReadonlyArray<number>>;
     }>;
     readonly state: string;
+    readonly tracks: ReadonlyArray<{
+      readonly engine: string;
+      readonly frames: ReadonlyArray<number> | null | undefined;
+      readonly nFrames: number;
+      readonly state: string;
+    }>;
   }>;
 };
 export type StudioSessionObjectTracksQuery = {
@@ -38,7 +48,28 @@ var v0 = [
     "name": "sessionId"
   }
 ],
-v1 = [
+v1 = {
+  "alias": null,
+  "args": null,
+  "kind": "ScalarField",
+  "name": "state",
+  "storageKey": null
+},
+v2 = {
+  "alias": null,
+  "args": null,
+  "kind": "ScalarField",
+  "name": "frames",
+  "storageKey": null
+},
+v3 = {
+  "alias": null,
+  "args": null,
+  "kind": "ScalarField",
+  "name": "nFrames",
+  "storageKey": null
+},
+v4 = [
   {
     "alias": null,
     "args": [
@@ -60,27 +91,9 @@ v1 = [
         "name": "objectId",
         "storageKey": null
       },
-      {
-        "alias": null,
-        "args": null,
-        "kind": "ScalarField",
-        "name": "state",
-        "storageKey": null
-      },
-      {
-        "alias": null,
-        "args": null,
-        "kind": "ScalarField",
-        "name": "frames",
-        "storageKey": null
-      },
-      {
-        "alias": null,
-        "args": null,
-        "kind": "ScalarField",
-        "name": "nFrames",
-        "storageKey": null
-      },
+      (v1/*: any*/),
+      (v2/*: any*/),
+      (v3/*: any*/),
       {
         "alias": null,
         "args": null,
@@ -109,7 +122,53 @@ v1 = [
             "kind": "ScalarField",
             "name": "labels",
             "storageKey": null
+          },
+          {
+            "alias": null,
+            "args": null,
+            "concreteType": "RLEMask",
+            "kind": "LinkedField",
+            "name": "mask",
+            "plural": false,
+            "selections": [
+              {
+                "alias": null,
+                "args": null,
+                "kind": "ScalarField",
+                "name": "size",
+                "storageKey": null
+              },
+              {
+                "alias": null,
+                "args": null,
+                "kind": "ScalarField",
+                "name": "counts",
+                "storageKey": null
+              }
+            ],
+            "storageKey": null
           }
+        ],
+        "storageKey": null
+      },
+      {
+        "alias": null,
+        "args": null,
+        "concreteType": "EngineTrack",
+        "kind": "LinkedField",
+        "name": "tracks",
+        "plural": true,
+        "selections": [
+          {
+            "alias": null,
+            "args": null,
+            "kind": "ScalarField",
+            "name": "engine",
+            "storageKey": null
+          },
+          (v1/*: any*/),
+          (v2/*: any*/),
+          (v3/*: any*/)
         ],
         "storageKey": null
       }
@@ -123,7 +182,7 @@ return {
     "kind": "Fragment",
     "metadata": null,
     "name": "StudioSessionObjectTracksQuery",
-    "selections": (v1/*: any*/),
+    "selections": (v4/*: any*/),
     "type": "Query",
     "abstractKey": null
   },
@@ -132,19 +191,19 @@ return {
     "argumentDefinitions": (v0/*: any*/),
     "kind": "Operation",
     "name": "StudioSessionObjectTracksQuery",
-    "selections": (v1/*: any*/)
+    "selections": (v4/*: any*/)
   },
   "params": {
-    "cacheID": "a29425e5f0de7a77ed0bef655a63c474",
+    "cacheID": "73383ce392e0b80c5bf5c1e253cb6f2a",
     "id": null,
     "metadata": {},
     "name": "StudioSessionObjectTracksQuery",
     "operationKind": "query",
-    "text": "query StudioSessionObjectTracksQuery(\n  $sessionId: String!\n) {\n  objectTracks(sessionId: $sessionId) {\n    objectId\n    state\n    frames\n    nFrames\n    seeds {\n      frameIndex\n      points\n      labels\n    }\n  }\n}\n"
+    "text": "query StudioSessionObjectTracksQuery(\n  $sessionId: String!\n) {\n  objectTracks(sessionId: $sessionId) {\n    objectId\n    state\n    frames\n    nFrames\n    seeds {\n      frameIndex\n      points\n      labels\n      mask {\n        size\n        counts\n      }\n    }\n    tracks {\n      engine\n      state\n      frames\n      nFrames\n    }\n  }\n}\n"
   }
 };
 })();
 
-(node as any).hash = "918a48ce571e5d2d90ab686c90a6cd42";
+(node as any).hash = "d420842ec706540425552ccd099a721e";
 
 export default node;

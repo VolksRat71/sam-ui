@@ -1,5 +1,5 @@
 /**
- * @generated SignedSource<<e508f8b483378a260f24d384f1d430ce>>
+ * @generated SignedSource<<9f16d8efd338f28885ed0c55f7fa12aa>>
  * @lightSyntaxTransform
  * @nogrep
  */
@@ -10,6 +10,7 @@
 
 import { ConcreteRequest, Mutation } from 'relay-runtime';
 export type ClearTrackInput = {
+  engine?: string | null | undefined;
   objectId: number;
   sessionId: string;
 };
@@ -24,9 +25,19 @@ export type StudioSessionClearTrackMutation$data = {
     readonly seeds: ReadonlyArray<{
       readonly frameIndex: number;
       readonly labels: ReadonlyArray<number>;
+      readonly mask: {
+        readonly counts: string;
+        readonly size: ReadonlyArray<number>;
+      } | null | undefined;
       readonly points: ReadonlyArray<ReadonlyArray<number>>;
     }>;
     readonly state: string;
+    readonly tracks: ReadonlyArray<{
+      readonly engine: string;
+      readonly frames: ReadonlyArray<number> | null | undefined;
+      readonly nFrames: number;
+      readonly state: string;
+    }>;
   };
 };
 export type StudioSessionClearTrackMutation = {
@@ -42,7 +53,28 @@ var v0 = [
     "name": "input"
   }
 ],
-v1 = [
+v1 = {
+  "alias": null,
+  "args": null,
+  "kind": "ScalarField",
+  "name": "state",
+  "storageKey": null
+},
+v2 = {
+  "alias": null,
+  "args": null,
+  "kind": "ScalarField",
+  "name": "frames",
+  "storageKey": null
+},
+v3 = {
+  "alias": null,
+  "args": null,
+  "kind": "ScalarField",
+  "name": "nFrames",
+  "storageKey": null
+},
+v4 = [
   {
     "alias": null,
     "args": [
@@ -64,27 +96,9 @@ v1 = [
         "name": "objectId",
         "storageKey": null
       },
-      {
-        "alias": null,
-        "args": null,
-        "kind": "ScalarField",
-        "name": "state",
-        "storageKey": null
-      },
-      {
-        "alias": null,
-        "args": null,
-        "kind": "ScalarField",
-        "name": "frames",
-        "storageKey": null
-      },
-      {
-        "alias": null,
-        "args": null,
-        "kind": "ScalarField",
-        "name": "nFrames",
-        "storageKey": null
-      },
+      (v1/*: any*/),
+      (v2/*: any*/),
+      (v3/*: any*/),
       {
         "alias": null,
         "args": null,
@@ -113,7 +127,53 @@ v1 = [
             "kind": "ScalarField",
             "name": "labels",
             "storageKey": null
+          },
+          {
+            "alias": null,
+            "args": null,
+            "concreteType": "RLEMask",
+            "kind": "LinkedField",
+            "name": "mask",
+            "plural": false,
+            "selections": [
+              {
+                "alias": null,
+                "args": null,
+                "kind": "ScalarField",
+                "name": "size",
+                "storageKey": null
+              },
+              {
+                "alias": null,
+                "args": null,
+                "kind": "ScalarField",
+                "name": "counts",
+                "storageKey": null
+              }
+            ],
+            "storageKey": null
           }
+        ],
+        "storageKey": null
+      },
+      {
+        "alias": null,
+        "args": null,
+        "concreteType": "EngineTrack",
+        "kind": "LinkedField",
+        "name": "tracks",
+        "plural": true,
+        "selections": [
+          {
+            "alias": null,
+            "args": null,
+            "kind": "ScalarField",
+            "name": "engine",
+            "storageKey": null
+          },
+          (v1/*: any*/),
+          (v2/*: any*/),
+          (v3/*: any*/)
         ],
         "storageKey": null
       }
@@ -127,7 +187,7 @@ return {
     "kind": "Fragment",
     "metadata": null,
     "name": "StudioSessionClearTrackMutation",
-    "selections": (v1/*: any*/),
+    "selections": (v4/*: any*/),
     "type": "Mutation",
     "abstractKey": null
   },
@@ -136,19 +196,19 @@ return {
     "argumentDefinitions": (v0/*: any*/),
     "kind": "Operation",
     "name": "StudioSessionClearTrackMutation",
-    "selections": (v1/*: any*/)
+    "selections": (v4/*: any*/)
   },
   "params": {
-    "cacheID": "675a7e7439441954931d787fe34e1a41",
+    "cacheID": "db50188053362b581385651c5cd6e256",
     "id": null,
     "metadata": {},
     "name": "StudioSessionClearTrackMutation",
     "operationKind": "mutation",
-    "text": "mutation StudioSessionClearTrackMutation(\n  $input: ClearTrackInput!\n) {\n  clearTrack(input: $input) {\n    objectId\n    state\n    frames\n    nFrames\n    seeds {\n      frameIndex\n      points\n      labels\n    }\n  }\n}\n"
+    "text": "mutation StudioSessionClearTrackMutation(\n  $input: ClearTrackInput!\n) {\n  clearTrack(input: $input) {\n    objectId\n    state\n    frames\n    nFrames\n    seeds {\n      frameIndex\n      points\n      labels\n      mask {\n        size\n        counts\n      }\n    }\n    tracks {\n      engine\n      state\n      frames\n      nFrames\n    }\n  }\n}\n"
   }
 };
 })();
 
-(node as any).hash = "038589e32e8a93a25dca156212d19cec";
+(node as any).hash = "62e1b431a687f2d58c46580a9deabe65";
 
 export default node;

@@ -146,6 +146,19 @@ export default function Timeline({session}: Props) {
                     style={{background: o.color, left: pos(a), width: Math.max(2, pos(b) - pos(a))}}
                   />
                 ))}
+                {session.disagreement.get(o.id)?.flagged.map(f => (
+                  <button
+                    key={`flag-${f}`}
+                    className="swimlane-flag"
+                    title={`Frame ${f + 1}: SAM 2 and SAM 3 disagree`}
+                    style={{left: pos(f) - 1}}
+                    onClick={e => {
+                      e.stopPropagation();
+                      session.selectObject(o.id);
+                      seek(f);
+                    }}
+                  />
+                ))}
                 {seedFrames(o).map(f => (
                   <button
                     key={f}

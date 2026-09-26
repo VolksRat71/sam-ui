@@ -59,6 +59,7 @@ export default function ExportPanel({session, videoName, onClose}: Props) {
     try {
       setManifest(
         await bridge.call('export', {
+          engine: state.engine,
           out_dir: outDir.trim(),
           objects: toExportObjects(chosen),
           include_stale: includeStale,

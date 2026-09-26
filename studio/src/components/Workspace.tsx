@@ -8,6 +8,7 @@ import {useEffect, useState, type ReactNode} from 'react';
 import {Panel, PanelGroup, PanelResizeHandle} from 'react-resizable-panels';
 import {OBJECT_LIMIT} from '~/config';
 import {panelStorage} from '~/lib/storage';
+import {engineLabel} from '~/state/engines';
 import useStudioSession, {type VideoItem} from '~/workspace/useStudioSession';
 import ConfirmModal from './ConfirmModal';
 import EffectsSection from './EffectsSection';
@@ -69,6 +70,10 @@ export default function Workspace({video, renderMedia}: Props) {
             <span key={job.key} className="job-chip">
               <span className="spinner small" />
               {job.canceling ? 'Cancelling' : 'Tracking'} {job.ids.map(id => `Object ${id + 1}`).join(', ')}
+              <span className="engine-tag">{engineLabel(job.engine)}</span>
+              {job.frames === 0 && session.engines.find(e => e.name === job.engine)?.loading && (
+                <span className="muted">loading the model…</span>
+              )}
               <span className="job-progress">
                 <span style={{width: n > 0 ? `${Math.min(100, (job.frames / n) * 100)}%` : '0%'}} />
               </span>
@@ -114,6 +119,24 @@ export default function Workspace({video, renderMedia}: Props) {
             <button className="button" onClick={() => session.cancelTrack()} title="Cancel every job of this session">
               <Close size={16} /> Cancel all
             </button>
+          )}
+          {session.engines.length > 1 && (
+            <div className="engine-picker" role="group" aria-label="Track with">
+              {session.engines.map(e => (
+                <button
+                  key={e.name}
+                  className={state.engine === e.name ? 'toggle selected' : 'toggle'}
+                  disabled={!e.available}
+                  onClick={() => session.setEngine(e.name)}
+                  title={
+                    e.available
+                      ? `Track with and show ${engineLabel(e.name)} (${e.model})${e.loaded ? '' : '; loads on first use, about 30 s'}`
+                      : `${engineLabel(e.name)} cannot run here: ${e.reason ?? 'unavailable'}`
+                  }>
+                  {engineLabel(e.name)}
+                </button>
+              ))}
+            </div>
           )}
           <div className="gradient-border">
             <button

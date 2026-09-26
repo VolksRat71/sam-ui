@@ -44,6 +44,15 @@ schema is `demo/frontend/schema.graphql`).
   clicking, adding objects and correcting while one runs, and pressing Track
   again starts a second job for the objects the first does not hold. Each job
   shows its progress in the top bar and has its own cancel button.
+- **Engines**: the SAM 2 / SAM 3 picker next to Track chooses which engine
+  Track runs and which engine's tracks the preview shows (switching repaints
+  from that engine's cache). An engine the backend cannot run is disabled,
+  with the reason as its tooltip. SAM 3 loads on its first job (about 30 s,
+  shown on the job). Clicks always go through SAM 2's session. Each object
+  shows a badge per engine; *Clear track* clears the engine on screen. When
+  both engines track an object with its current clicks, studio asks
+  `/track_disagreement` and shows the mean IoU, and marks the frames that
+  disagree in red on the object's swimlane.
 - **Track state** is a badge on each object: untracked, stale, tracked, or
   tracking (a job holds it, possibly in another tab). *Clear track* forgets the
   cached track and keeps the clicks. *Remove* deletes the object.
@@ -51,8 +60,10 @@ schema is `demo/frontend/schema.graphql`).
   and their cached tracks, repainted.
 - **Start over** removes every object and cached track for the video. It asks
   first, in an in-app dialog.
-- **Effects** are Meta's: a highlight for the objects and a background, and
-  clicking the active one again cycles its variants. *Export video with
+- **Effects** are Meta's: a selected-object effect and a background, and
+  clicking the active one again cycles its variants. The selected-object
+  effect applies only to the focused object, and only once it is tracked;
+  every other object keeps the overlay. Both groups start collapsed. *Export video with
   effects* renders an MP4 through Meta's encoder.
 - **Export for rotoscoping** (bottom of Objects) writes the tracked objects as
   a rotoscoping working folder (`POST /export`), with a product id, prompt and
@@ -69,7 +80,8 @@ schema is `demo/frontend/schema.graphql`).
 | Meta demo feature | studio |
 | --- | --- |
 | Gallery of videos, pick one | done (Media) |
-| Upload a video (mp4/mov, 70 MB) | done (click or drop), but the backend's `uploadVideo` currently fails with PyAV 18 (`data/transcoder.py` reads `video_stream.side_data`, which PyAV removed), in Meta's UI too. Uploads are listed only in the browser that made them: the backend's `videos` query lists the gallery only |
+| Upload a video (mp4/mov, 70 MB) | done (click or drop); uploads are listed with the gallery |
+| Remove a video | missing: the backend has no mutation for it (nor does Meta's demo) |
 | Default video (`defaultVideo`) | partial: the last video you used, else the first in the gallery |
 | Click adds a positive point, right click a negative one | done |
 | Add / Remove point toggle | done |
@@ -82,7 +94,7 @@ schema is `demo/frontend/schema.graphql`).
 | Cancel tracking | done (per job, or all) |
 | Start over | done, behind a confirmation |
 | Remove object | done |
-| Highlight and background effects, with variants | done. Meta's WebGL highlights (every one except Overlay) draw only the first 3 objects, because their shaders have three mask slots. studio's Overlay draws all of them |
+| Highlight and background effects, with variants | done, and changed: a selected-object effect applies only to the focused object once it is tracked (Meta applies it to every object); the others keep the overlay. Both effect groups start collapsed |
 | Download the video with effects | done (Meta's encoder, and Meta's watermark) |
 | Share section and "try another video" step | missing |
 | First-click onboarding, snackbar tips, tooltips | partial: an empty-state line and the negative-click hint |
@@ -92,7 +104,7 @@ schema is `demo/frontend/schema.graphql`).
 | Close the session on unload | missing: the backend expires idle sessions (30 min). A visible tab touches its session every 5 minutes to keep it |
 | Stats overlay (debug) | missing |
 
-Studio only: objects restored on reload, track-state badges, Clear track,
+Studio only: SAM 3 engine, per-engine badges and disagreement flags, objects restored on reload (with their seed masks), track-state badges, Clear track,
 concurrent jobs, jobs from other tabs shown, zoom and pan, export for
 rotoscoping, and keyboard shortcuts.
 

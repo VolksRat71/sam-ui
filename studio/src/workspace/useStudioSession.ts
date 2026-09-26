@@ -13,15 +13,23 @@ import {useCallback, useEffect, useMemo, useReducer, useRef, useState} from 'rea
 import StudioBridge from '~/bridge/StudioBridge';
 import {API_ENDPOINT, OBJECT_LIMIT} from '~/config';
 import {
+  DEFAULT_ENGINE,
   NormPoint,
   canAddObject,
+  comparableIds,
   dirtyIds,
   hasSeeds,
   initialState,
   nextObjectId,
   reducer,
 } from '~/state/objects';
-import type {RunningJob, TrackletSummary} from '~/worker/protocol';
+import type {EngineInfo, RunningJob, TrackletSummary} from '~/worker/protocol';
+
+/** Where two engines disagree on one object: frames under the IoU threshold. */
+export type ObjectDisagreement = {flagged: number[]; meanIou: number | null};
+
+/** The engine studio compares SAM 2 with when both have tracks. */
+const COMPARE_ENGINE = 'sam3';
 
 export type VideoItem = {
   path: string;
@@ -59,6 +67,8 @@ export default function useStudioSession(video: VideoItem) {
   const [warning, setWarning] = useState<string | null>(null);
   /** Jobs on this video that this page did not start (another tab's). */
   const [foreignJobs, setForeignJobs] = useState<RunningJob[]>([]);
+  const [engines, setEngines] = useState<EngineInfo[]>([]);
+  const [disagreement, setDisagreement] = useState<Map<number, ObjectDisagreement>>(new Map());
 
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -125,6 +135,10 @@ export default function useStudioSession(video: VideoItem) {
     bridge.setSource(video.url);
     try {
       await bridge.call('init', {endpoint: API_ENDPOINT});
+      bridge
+        .call('engines', {})
+        .then(setEngines)
+        .catch(() => setEngines([]));
       const info = await bridge.call('startSession', {path: video.path});
       dispatch({type: 'restore', objects: info.objects});
       setStatus('ready');
@@ -258,9 +272,13 @@ export default function useStudioSession(video: VideoItem) {
       return;
     }
     const key = nextJobKey.current++;
-    dispatch({type: 'trackStarted', key, ids});
+    const engine = stateRef.current.engine;
+    dispatch({type: 'trackStarted', key, ids, engine});
+    // the first SAM 3 job loads its model (about 30 s): show that it is loading
+    setEngines(list => list.map(e => (e.name === engine && !e.loaded ? {...e, loading: true} : e)));
     try {
-      const {outcome} = await bridge.call('track', {objectIds: ids, key});
+      const {outcome} = await bridge.call('track', {objectIds: ids, key, engine});
+      setEngines(list => list.map(e => (e.name === engine ? {...e, loaded: outcome.ok || e.loaded, loading: false} : e)));
       if (outcome.ok) {
         dispatch({type: 'trackFinished', key, tracked: outcome.tracked, failed: outcome.failed});
       } else {
@@ -330,19 +348,70 @@ export default function useStudioSession(video: VideoItem) {
     };
   }, [bridge, foreignIds]);
 
+  /** Clear one engine's track (the one on screen by default), or all with null. */
   const clearTrack = useCallback(
-    (objectId: number) => {
+    (objectId: number, engine: string | null = stateRef.current.engine) => {
       if (bridge == null) {
         return;
       }
       serial(async () => {
-        await bridge.call('clearTrack', {objectId});
-        dispatch({type: 'trackCleared', id: objectId});
+        await bridge.call('clearTrack', {objectId, engine});
+        dispatch({type: 'trackCleared', id: objectId, engine});
         await sync();
       });
     },
     [bridge, serial, sync],
   );
+
+  /** Track with, and show, another engine. */
+  const setEngine = useCallback(
+    (engine: string) => {
+      if (bridge == null || engine === stateRef.current.engine) {
+        return;
+      }
+      dispatch({type: 'setEngine', engine});
+      bridge.call('setEngine', {engine}).catch(error => setWarning(message(error)));
+    },
+    [bridge],
+  );
+
+  // Selected-object effects apply to the focused object, once it is tracked.
+  const active = state.objects.find(o => o.id === state.activeId);
+  const effectFocus = active != null && active.state === 'tracked' ? active.id : null;
+  useEffect(() => {
+    bridge?.call('setEffectFocus', {objectId: effectFocus}).catch(() => {});
+  }, [bridge, effectFocus]);
+
+  // Where SAM 2 and SAM 3 disagree, for objects both track with current
+  // clicks: fetched again whenever that set, or any of its tracks, changes.
+  const compare = comparableIds(state, DEFAULT_ENGINE, COMPARE_ENGINE);
+  const compareKey = state.objects
+    .filter(o => compare.includes(o.id))
+    .map(o => `${o.id}:${o.engines[DEFAULT_ENGINE]?.nFrames}:${o.engines[COMPARE_ENGINE]?.nFrames}`)
+    .join(',');
+  useEffect(() => {
+    if (bridge == null || compareKey === '') {
+      setDisagreement(new Map());
+      return;
+    }
+    let stale = false;
+    const ids = compareKey.split(',').map(k => Number(k.split(':')[0]));
+    bridge
+      .call('disagreement', {a: DEFAULT_ENGINE, b: COMPARE_ENGINE, objectIds: ids})
+      .then(res => {
+        if (!stale) {
+          setDisagreement(
+            new Map(
+              Object.entries(res.objects).map(([id, d]) => [Number(id), {flagged: d.flagged, meanIou: d.mean_iou}]),
+            ),
+          );
+        }
+      })
+      .catch(error => setWarning(`could not compare engines: ${message(error)}`));
+    return () => {
+      stale = true;
+    };
+  }, [bridge, compareKey]);
 
   const removeObject = useCallback(
     (objectId: number) => {
@@ -412,6 +481,10 @@ export default function useStudioSession(video: VideoItem) {
     dirty,
     busy,
     canAdd: canAddObject(state, OBJECT_LIMIT),
+    engines,
+    setEngine,
+    disagreement,
+    effectFocus,
     dismissWarning: () => setWarning(null),
     start,
     addPoint,

@@ -37,10 +37,12 @@ import {
   readTrackStream,
 } from '~/api/trackStream';
 import {maskSegments} from '~/state/segments';
-import {colorFor, type NormPoint, type ServerObject} from '~/state/objects';
+import {colorFor, DEFAULT_ENGINE, type NormPoint, type ServerObject} from '~/state/objects';
 import type MaskOverlayEffect from './MaskOverlayEffect';
 import {paintAlpha} from './maskPixels';
 import type {
+  Disagreement,
+  EngineInfo,
   ExportManifest,
   ExportRequest,
   RunningJob,
@@ -78,6 +80,16 @@ const START = graphql`
           frameIndex
           points
           labels
+          mask {
+            size
+            counts
+          }
+        }
+        tracks {
+          engine
+          state
+          frames
+          nFrames
         }
       }
     }
@@ -141,6 +153,16 @@ const CLEAR_TRACK = graphql`
         frameIndex
         points
         labels
+        mask {
+          size
+          counts
+        }
+      }
+      tracks {
+        engine
+        state
+        frames
+        nFrames
       }
     }
   }
@@ -173,6 +195,16 @@ const OBJECT_TRACKS = graphql`
         frameIndex
         points
         labels
+        mask {
+          size
+          counts
+        }
+      }
+      tracks {
+        engine
+        state
+        frames
+        nFrames
       }
     }
   }
@@ -231,6 +263,8 @@ export default class StudioSession {
   /** Per object, the mask each seed frame's last click produced. */
   private _seedMasks = new Map<number, Map<number, Mask>>();
   private _seedPoints = new Map<number, Map<number, NormPoint[]>>();
+  /** The engine whose tracks the preview shows (and Track runs). */
+  private _engine = DEFAULT_ENGINE;
 
   constructor(
     private readonly _context: VideoWorkerContext,
@@ -266,11 +300,21 @@ export default class StudioSession {
     const objects = plain(res.startSession.objects) as ServerObject[];
     for (const o of objects) {
       const t = this._tracklet(o.objectId);
+      const masks = new Map<number, Mask>();
       for (const s of o.seeds) {
         this._setSeedPoints(t, s.frameIndex, s.points.map((p, i) => [p[0], p[1], s.labels[i] === 0 ? 0 : 1]));
+        // the mask each seed frame's last click approved: shown even with no track
+        const mask = s.mask == null ? undefined : toMask(s.mask);
+        if (mask != null) {
+          masks.set(s.frameIndex, mask);
+          this._setMask(t, s.frameIndex, mask);
+        }
       }
+      this._seedMasks.set(o.objectId, masks);
     }
     this._render(false);
+    // thumbnails from the seed masks, once the decoder reaches those frames
+    void this._thumbnails(objects.map(o => o.objectId)).then(() => this._render(true));
     return {sessionId: this._sessionId, objects};
   }
 
@@ -362,12 +406,13 @@ export default class StudioSession {
     return plain(res?.objectTracks ?? []) as ServerObject[];
   }
 
-  async clearTrack(objectId: number): Promise<ServerObject> {
+  /** Drop one engine's cached track (engine null: every engine's). */
+  async clearTrack(objectId: number, engine: string | null): Promise<ServerObject> {
     const res = await mutate<StudioSessionClearTrackMutation>(this.env, CLEAR_TRACK, {
-      input: {sessionId: this.sessionId, objectId},
+      input: {sessionId: this.sessionId, objectId, engine},
     });
     const t = this._tracklets.get(objectId);
-    if (t != null) {
+    if (t != null && (engine == null || engine === this._engine)) {
       this._keepSeedMasksOnly(t);
     }
     this._render(true);
@@ -448,27 +493,32 @@ export default class StudioSession {
    * finish caches nothing on the backend, so its objects are repainted from
    * their cached tracks instead.
    */
-  async track(objectIds: number[], key: number): Promise<TrackResult> {
+  async track(objectIds: number[], key: number, engine: string): Promise<TrackResult> {
     const response = await fetch(`${this._endpoint}/track_objects`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({session_id: this.sessionId, object_ids: objectIds}),
+      body: JSON.stringify({session_id: this.sessionId, object_ids: objectIds, engine}),
     });
     if (!response.ok) {
+      // an unknown or unavailable engine is a 400 {error}, before any stream
+      const body = (await response.json().catch(() => null)) as {error?: string} | null;
       return {
         selected: [],
         jobId: null,
-        outcome: {ok: false, error: `track_objects: HTTP ${response.status}`, objects: []},
+        outcome: {ok: false, error: body?.error ?? `track_objects: HTTP ${response.status}`, objects: []},
       };
     }
     const selected = parseObjectsHeader(response.headers.get('Objects-Tracked'));
     const jobId = response.headers.get('Job-Id');
     this._emit({type: 'jobStarted', key, jobId, selected});
-    for (const id of selected) {
-      const t = this._tracklet(id);
-      this._keepSeedMasksOnly(t);
+    // a job's masks are drawn only while its engine is the one on screen
+    const shown = () => engine === this._engine;
+    if (shown()) {
+      for (const id of selected) {
+        this._keepSeedMasksOnly(this._tracklet(id));
+      }
+      this._render(true);
     }
-    this._render(true);
 
     let closing: DonePart | ErrorPart | null = null;
     let streamError: string | null = null;
@@ -482,6 +532,10 @@ export default class StudioSession {
           closing = part;
           continue;
         }
+        this._emit({type: 'trackFrame', key, frameIndex: part.frameIndex});
+        if (!shown()) {
+          continue;
+        }
         for (const r of part.results) {
           this._setMask(this._tracklet(r.objectId), part.frameIndex, toMask(r.mask));
         }
@@ -491,7 +545,6 @@ export default class StudioSession {
           this._list(),
           part.frameIndex === this._context.frameIndex,
         );
-        this._emit({type: 'trackFrame', key, frameIndex: part.frameIndex});
         if (++n % 12 === 0) {
           this._emitTracklets();
         }
@@ -504,6 +557,10 @@ export default class StudioSession {
       streamError != null
         ? ({ok: false, error: streamError, objects: selected} as const)
         : jobOutcome(closing);
+    if (!shown()) {
+      // the view moved to another engine meanwhile: nothing of this job is on screen
+      return {selected, jobId, outcome};
+    }
     if (!outcome.ok || Object.keys(outcome.failed).length > 0) {
       const lost = outcome.ok ? Object.keys(outcome.failed).map(Number) : selected;
       for (const id of lost) {
@@ -531,7 +588,7 @@ export default class StudioSession {
       const response = await fetch(`${this._endpoint}/track_masks`, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({session_id: this.sessionId, object_ids: objectIds ?? null}),
+        body: JSON.stringify({session_id: this.sessionId, object_ids: objectIds ?? null, engine: this._engine}),
       });
       if (!response.ok) {
         throw new Error(`track_masks: HTTP ${response.status}`);
@@ -553,6 +610,47 @@ export default class StudioSession {
     } finally {
       this._emit({type: 'repaint', active: false});
     }
+  }
+
+  /**
+   * Show another engine's tracks: every object falls back to its seed masks,
+   * then the engine's cached tracks stream in.
+   */
+  async setEngine(engine: string): Promise<void> {
+    if (engine === this._engine) {
+      return;
+    }
+    this._engine = engine;
+    for (const t of this._tracklets.values()) {
+      this._keepSeedMasksOnly(t);
+    }
+    this._render(true);
+    if (this._sessionId != null) {
+      await this.repaint();
+    }
+  }
+
+  /** GET /engines: every engine the backend knows, and whether it can run. */
+  async engines(): Promise<EngineInfo[]> {
+    const response = await fetch(`${this._endpoint}/engines`);
+    if (!response.ok) {
+      throw new Error(`engines: HTTP ${response.status}`);
+    }
+    return ((await response.json()) as {engines?: EngineInfo[]}).engines ?? [];
+  }
+
+  /** POST /track_disagreement: frames where two engines' current tracks differ. */
+  async disagreement(a: string, b: string, objectIds?: number[]): Promise<Disagreement> {
+    const response = await fetch(`${this._endpoint}/track_disagreement`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({session_id: this.sessionId, a, b, object_ids: objectIds ?? null}),
+    });
+    const body = (await response.json().catch(() => null)) as (Disagreement & {error?: string}) | null;
+    if (!response.ok || body == null) {
+      throw new Error(body?.error ?? `track_disagreement: HTTP ${response.status}`);
+    }
+    return body;
   }
 
   setActiveObject(objectId: number | null): void {

@@ -5,6 +5,7 @@ import {
   ServerObject,
   StudioState,
   canAddObject,
+  comparableIds,
   dirtyIds,
   initialState,
   needsPositiveClick,
@@ -132,7 +133,7 @@ describe('track selection', () => {
       {type: 'trackStarted', key: 7, ids: [0, 1]},
       {type: 'trackAttached', key: 7, jobId: 'abc', selected: [1]},
     ]);
-    expect(s.jobs).toEqual([{key: 7, jobId: 'abc', ids: [1], frames: 0, canceling: false}]);
+    expect(s.jobs).toEqual([{key: 7, jobId: 'abc', engine: 'sam2', ids: [1], frames: 0, canceling: false}]);
     expect(dirtyIds(s)).toEqual([0]);
   });
 });
@@ -161,7 +162,7 @@ describe('state transitions', () => {
       {type: 'trackProgress', key: 3},
       {type: 'trackProgress', key: 3},
     ]);
-    expect(s.jobs).toEqual([{key: 3, jobId: null, ids: [0, 1], frames: 2, canceling: false}]);
+    expect(s.jobs).toEqual([{key: 3, jobId: null, engine: 'sam2', ids: [0, 1], frames: 2, canceling: false}]);
     expect(byId(s, 0).running).toBe(true);
     expect(byId(s, 2).running).toBe(false);
     const done = reducer(s, {type: 'trackFinished', key: 3, tracked: [0], failed: {1: 'OSError'}});
@@ -237,5 +238,58 @@ describe('limits and hints', () => {
     expect(needsPositiveClick(byId(s, 0), 3)).toBe(false);
     expect(needsPositiveClick(byId(s, 0), 4)).toBe(false);
     expect(needsPositiveClick(undefined, 2)).toBe(false);
+  });
+});
+
+describe('engines', () => {
+  /** An object with a track per engine, as objectTracks sends it. */
+  function twoEngines(objectId: number, sam2: string, sam3: string): ServerObject {
+    const t = (engine: string, state: string) => ({
+      engine,
+      state,
+      frames: state === 'untracked' ? null : [0, 23],
+      nFrames: state === 'untracked' ? 0 : 24,
+    });
+    return {...server(objectId, sam2), tracks: [t('sam2', sam2), t('sam3', sam3)]};
+  }
+
+  it('shows and selects by the current engine', () => {
+    let s = run([{type: 'restore', objects: [twoEngines(0, 'tracked', 'untracked'), twoEngines(1, 'stale', 'tracked')]}]);
+    expect(s.objects.map(o => o.state)).toEqual(['tracked', 'stale']);
+    expect(dirtyIds(s)).toEqual([1]);
+    s = reducer(s, {type: 'setEngine', engine: 'sam3'});
+    expect(s.objects.map(o => o.state)).toEqual(['untracked', 'tracked']);
+    expect(dirtyIds(s)).toEqual([0]);
+  });
+
+  it('a job on one engine neither blocks nor marks the other', () => {
+    let s = run([
+      {type: 'restore', objects: [twoEngines(0, 'untracked', 'untracked')]},
+      {type: 'trackStarted', key: 1, ids: [0], engine: 'sam3'},
+    ]);
+    expect(s.objects[0].running).toBe(false); // viewing sam2; the sam3 job holds it there only
+    expect(dirtyIds(s)).toEqual([0]);
+    s = run([{type: 'trackFinished', key: 1, tracked: [0], failed: {}}], s);
+    expect(s.objects[0].state).toBe('untracked');
+    expect(s.objects[0].engines.sam3.state).toBe('tracked');
+  });
+
+  it('a click makes every engine stale; clearing one engine keeps the other', () => {
+    let s = run([
+      {type: 'restore', objects: [twoEngines(0, 'tracked', 'tracked')]},
+      {type: 'setPoints', id: 0, frame: 5, points: [[0.1, 0.1, 1]]},
+    ]);
+    expect([s.objects[0].engines.sam2.state, s.objects[0].engines.sam3.state]).toEqual(['stale', 'stale']);
+    s = run([{type: 'restore', objects: [twoEngines(0, 'tracked', 'tracked')]}, {type: 'trackCleared', id: 0, engine: 'sam3'}]);
+    expect([s.objects[0].engines.sam2.state, s.objects[0].engines.sam3.state]).toEqual(['tracked', 'untracked']);
+    s = reducer(s, {type: 'trackCleared', id: 0, engine: null});
+    expect(s.objects[0].engines.sam2.state).toBe('untracked');
+  });
+
+  it('compares only objects both engines track', () => {
+    const s = run([
+      {type: 'restore', objects: [twoEngines(0, 'tracked', 'tracked'), twoEngines(1, 'tracked', 'stale')]},
+    ]);
+    expect(comparableIds(s, 'sam2', 'sam3')).toEqual([0]);
   });
 });

@@ -9,7 +9,6 @@ import type {VideoItem} from '~/workspace/useStudioSession';
 import type {AppVideosQuery} from './__generated__/AppVideosQuery.graphql';
 
 const LAST_VIDEO_KEY = 'sam-ui-studio:video';
-const UPLOADS_KEY = 'sam-ui-studio:uploads';
 
 /**
  * Video URLs are built from the configured endpoint rather than the backend's
@@ -27,6 +26,8 @@ function toVideoItem(v: {path: string; width: number; height: number; posterPath
 }
 
 export default function App() {
+  // bumped after an upload, so the list is fetched again with the new video
+  const [fetchKey, setFetchKey] = useState(0);
   const data = useLazyLoadQuery<AppVideosQuery>(
     graphql`
       query AppVideosQuery {
@@ -44,15 +45,11 @@ export default function App() {
       }
     `,
     {},
+    {fetchKey, fetchPolicy: fetchKey === 0 ? 'store-or-network' : 'network-only'},
   );
 
-  // the backend's videos query lists the gallery only; uploads are remembered here
-  const [uploads, setUploads] = useState<VideoItem[]>(() => readJson(UPLOADS_KEY, []));
-  const videos = useMemo(() => {
-    const gallery = data.videos.edges.map(e => toVideoItem(e.node));
-    const known = new Set(gallery.map(v => v.path));
-    return [...gallery, ...uploads.filter(u => !known.has(u.path))];
-  }, [data, uploads]);
+  // the gallery and every upload, as the backend lists them
+  const videos = useMemo(() => data.videos.edges.map(e => toVideoItem(e.node)), [data]);
 
   const [current, setCurrent] = useState<VideoItem | null>(() => {
     const last = readJson<string | null>(LAST_VIDEO_KEY, null);
@@ -66,11 +63,7 @@ export default function App() {
 
   const uploaded = useCallback(
     (v: VideoItem) => {
-      setUploads(prev => {
-        const next = [...prev.filter(u => u.path !== v.path), v];
-        writeJson(UPLOADS_KEY, next);
-        return next;
-      });
+      setFetchKey(k => k + 1);
       select(v);
     },
     [select],

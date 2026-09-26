@@ -28,8 +28,29 @@ export type RunningJob = {
   elapsedS: number;
 };
 
+/** GET /engines, one entry. */
+export type EngineInfo = {
+  name: string;
+  model: string;
+  default: boolean;
+  available: boolean;
+  reason: string | null;
+  loaded: boolean;
+  /** Set by the UI while a first job on it loads the model. */
+  loading?: boolean;
+};
+
+/** POST /track_disagreement's answer. */
+export type Disagreement = {
+  engines: [string, string];
+  threshold: number;
+  objects: Record<string, {flagged: number[]; iou: Record<string, number>; mean_iou: number | null}>;
+  skipped: Record<string, Record<string, string | null>>;
+};
+
 /** POST /export's body, less the session. */
 export type ExportRequest = {
+  engine: string;
   out_dir: string;
   objects: Record<string, {id: string; prompt: string; color: string}>;
   include_stale: boolean;
@@ -60,13 +81,13 @@ export type StudioMethods = {
     result: void;
   };
   removeObject: {args: {objectId: number}; result: void};
-  clearTrack: {args: {objectId: number}; result: ServerObject};
+  clearTrack: {args: {objectId: number; engine: string | null}; result: ServerObject};
   objectTracks: {args: Record<string, never>; result: ServerObject[]};
   /**
    * Run a track job for these ids (the backend skips any another job holds);
    * resolves when its stream closes. `key` names the job in events.
    */
-  track: {args: {objectIds: number[]; key: number}; result: TrackResult};
+  track: {args: {objectIds: number[]; key: number; engine: string}; result: TrackResult};
   /** Cancel one job, or with jobId null every job of the session. */
   cancelTrack: {args: {jobId: string | null}; result: boolean};
   trackJobs: {args: Record<string, never>; result: RunningJob[]};
@@ -76,6 +97,12 @@ export type StudioMethods = {
   /** Write tracked objects as a rotoscoping working folder; a refusal rejects with its reason. */
   export: {args: ExportRequest; result: ExportManifest};
   setActiveObject: {args: {objectId: number | null}; result: void};
+  /** The engine the preview shows; its cached tracks are repainted. */
+  setEngine: {args: {engine: string}; result: void};
+  engines: {args: Record<string, never>; result: EngineInfo[]};
+  disagreement: {args: {a: string; b: string; objectIds?: number[]}; result: Disagreement};
+  /** Selected-object effects apply to this object only (null: to none). */
+  setEffectFocus: {args: {objectId: number | null}; result: void};
 };
 
 export type StudioMethod = keyof StudioMethods;
