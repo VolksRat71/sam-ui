@@ -3,7 +3,8 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 # Modified by sam-ui: registers the track routes (tracks/routes.py) and, with
-# SAM_UI_STUDIO_DIST, serves a built studio (studio_static.py).
+# SAM_UI_STUDIO_DIST, serves a built studio (studio_static.py); SAM_UI_CORS and
+# SAM_UI_ALLOWED_HOST lock it to its own page (local_guard.py).
 
 import logging
 import os
@@ -31,7 +32,12 @@ from tracks.routes import make_blueprint as make_track_routes
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-cors = CORS(app, supports_credentials=True)
+# sam-ui: the desktop app turns CORS off and pins Host/Origin (local_guard.py)
+if os.environ.get("SAM_UI_CORS", "on") != "off":
+    cors = CORS(app, supports_credentials=True)
+import local_guard  # noqa: E402
+
+local_guard.install(app, os.environ.get("SAM_UI_ALLOWED_HOST"))
 
 videos = preload_data()
 set_videos(videos)

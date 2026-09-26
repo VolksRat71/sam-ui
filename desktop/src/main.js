@@ -12,6 +12,7 @@
 
 const {app, BrowserWindow, Menu, dialog, shell} = require('electron');
 const {spawn} = require('node:child_process');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const https = require('node:https');
 const net = require('node:net');
@@ -19,7 +20,30 @@ const path = require('node:path');
 
 const CHECKPOINT_URL = 'https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_large.pt';
 const CHECKPOINT_NAME = 'sam2.1_hiera_large.pt';
+// The checkpoint is a Python pickle: loading a tampered one runs code. Only a
+// file with this exact hash (Meta's release, 092824) is ever used.
+const CHECKPOINT_SHA256 = '2647878d5dfa5098f2f8649825738a9345572bae2d4350a2468587ece47dd318';
+// Every window: no Node in the page, isolated preload world, OS sandbox.
+const WEB_PREFERENCES = {contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true};
+
+function isHttps(url) {
+  try {
+    return new URL(url).protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+function sha256File(file) {
+  return new Promise((resolve, reject) => {
+    const h = crypto.createHash('sha256');
+    fs.createReadStream(file).on('data', c => h.update(c)).on('end', () => resolve(h.digest('hex'))).on('error', reject);
+  });
+}
 const REPO = path.resolve(__dirname, '..', '..'); // dev only
+
+// A separate data folder (tests, a second profile): set before anything reads userData.
+if (process.env.SAM_UI_USER_DATA) app.setPath('userData', process.env.SAM_UI_USER_DATA);
 
 let backend = null;
 let backendPort = null;
@@ -68,7 +92,7 @@ function ensureGallery(p) {
 }
 
 function splash() {
-  const win = new BrowserWindow({width: 520, height: 220, resizable: false, show: true, title: 'sam-ui'});
+  const win = new BrowserWindow({width: 520, height: 220, resizable: false, show: true, title: 'sam-ui', webPreferences: WEB_PREFERENCES});
   const html = `<!doctype html><meta charset="utf-8"><body style="margin:0;background:#111;color:#eee;
     font:14px -apple-system,system-ui,sans-serif;display:grid;place-items:center;height:100vh">
     <div style="width:420px"><div style="font-weight:600;margin-bottom:10px">sam-ui</div>
@@ -88,23 +112,39 @@ function splash() {
   return {win, say};
 }
 
-function download(url, dest, onProgress) {
+function download(url, dest, expectedSha256, onProgress) {
   return new Promise((resolve, reject) => {
     const part = dest + '.part';
     const get = u =>
       https
         .get(u, res => {
-          if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) return get(res.headers.location);
+          if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+            const next = new URL(res.headers.location, u).toString();
+            if (!isHttps(next)) return reject(new Error(`refusing a non-https redirect to ${next}`));
+            return get(next);
+          }
           if (res.statusCode !== 200) return reject(new Error(`download failed: HTTP ${res.statusCode}`));
           const total = Number(res.headers['content-length']) || 0;
           let got = 0;
+          const hash = crypto.createHash('sha256');
           const out = fs.createWriteStream(part);
           res.on('data', c => {
             got += c.length;
+            hash.update(c);
             onProgress(got, total);
           });
           res.pipe(out);
-          out.on('finish', () => out.close(() => (total && got !== total ? reject(new Error('download incomplete')) : resolve())));
+          out.on('finish', () =>
+            out.close(() => {
+              if (total && got !== total) return reject(new Error('download incomplete'));
+              const digest = hash.digest('hex');
+              if (digest !== expectedSha256) {
+                fs.rmSync(part, {force: true});
+                return reject(new Error(`checksum mismatch (got ${digest}); the download was deleted`));
+              }
+              resolve();
+            }),
+          );
           res.on('error', reject);
         })
         .on('error', reject);
@@ -117,11 +157,13 @@ async function ensureCheckpoint(p, say) {
   fs.mkdirSync(path.dirname(p.checkpoint), {recursive: true});
   const local = process.env.SAM_UI_CHECKPOINT; // dev: reuse a checkpoint already on disk
   if (local && fs.existsSync(local)) {
+    say('Checking the local checkpoint…', null);
+    if ((await sha256File(local)) !== CHECKPOINT_SHA256) throw new Error(`SAM_UI_CHECKPOINT ${local} is not Meta's SAM 2.1 large`);
     fs.symlinkSync(local, p.checkpoint);
     return;
   }
   say('Downloading SAM 2.1 large (about 900 MB, once)…', 0);
-  await download(CHECKPOINT_URL, p.checkpoint, (got, total) =>
+  await download(CHECKPOINT_URL, p.checkpoint, CHECKPOINT_SHA256, (got, total) =>
     say(`Downloading SAM 2.1 large: ${(got / 2 ** 20).toFixed(0)} of ${(total / 2 ** 20).toFixed(0)} MB`, total ? got / total : null),
   );
 }
@@ -156,6 +198,9 @@ function startBackend(p, port) {
     DEFAULT_VIDEO_PATH: 'gallery/05_default_juggle.mp4',
     SAM_UI_STUDIO_DIST: p.studioDist,
     SAM_UI_EXPORT_ROOT: app.getPath('home'),
+    // lock the backend to this app's page: no CORS, only our Host and Origin (local_guard.py)
+    SAM_UI_CORS: 'off',
+    SAM_UI_ALLOWED_HOST: `127.0.0.1:${port}`,
     ...(settings.sam3Weights ? {SAM_UI_SAM3_WEIGHTS: settings.sam3Weights} : {}),
   };
   const child = spawn(
@@ -258,16 +303,27 @@ async function main() {
     app.quit();
     return;
   }
-  mainWindow = new BrowserWindow({width: 1600, height: 1000, show: false, title: 'sam-ui', backgroundColor: '#000000'});
+  const appOrigin = `http://127.0.0.1:${backendPort}`;
+  mainWindow = new BrowserWindow({
+    width: 1600, height: 1000, show: false, title: 'sam-ui', backgroundColor: '#000000', webPreferences: WEB_PREFERENCES,
+  });
+  // the window only ever shows the app; links go to the browser, https only
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (new URL(url).origin !== appOrigin) {
+      event.preventDefault();
+      if (isHttps(url)) shell.openExternal(url);
+    }
+  });
+  mainWindow.webContents.session.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
     if (!splashWin.isDestroyed()) splashWin.close();
   });
   mainWindow.webContents.setWindowOpenHandler(({url}) => {
-    shell.openExternal(url);
+    if (isHttps(url)) shell.openExternal(url);
     return {action: 'deny'};
   });
-  await mainWindow.loadURL(`http://127.0.0.1:${backendPort}/`);
+  await mainWindow.loadURL(`${appOrigin}/`);
 }
 
 app.on('before-quit', () => {
