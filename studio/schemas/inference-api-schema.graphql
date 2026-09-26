@@ -11,7 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# Modified by sam-ui: ObjectTrack, EngineTrack, SeedFrame, objectTracks, clearTrack, StartSession.objects.
+# Modified by sam-ui: ObjectTrack, EngineTrack, SeedFrame, objectTracks, clearTrack, StartSession.objects,
+# deleteVideo (closeIdleSessions, sessionsClosed).
 
 input AddPointsInput {
   sessionId: String!
@@ -74,11 +75,15 @@ input DeleteVideoInput {
   path: String!
   # also drop its seeds and cached tracks
   purgeTracks: Boolean! = true
+  # first close sessions on it idle over 60 s with no running job (tabs that went away)
+  closeIdleSessions: Boolean! = false
 }
 
 type DeleteVideo {
   path: String!
   purged: Boolean!
+  # how many idle sessions closeIdleSessions closed
+  sessionsClosed: Int!
 }
 
 # sam-ui: per-object tracks

@@ -64,11 +64,13 @@ type Mutation {
 input DeleteVideoInput {
   path: String!
   purgeTracks: Boolean! = true
+  closeIdleSessions: Boolean! = false
 }
 
 type DeleteVideo {
   path: String!
   purged: Boolean!
+  sessionsClosed: Int!
 }
 
 input ClearTrackInput {

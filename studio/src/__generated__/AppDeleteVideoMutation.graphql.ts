@@ -1,5 +1,5 @@
 /**
- * @generated SignedSource<<b4ac26630c41da57f45f6f307bdb177c>>
+ * @generated SignedSource<<245a05badec22cf4f404be93e1708377>>
  * @lightSyntaxTransform
  * @nogrep
  */
@@ -10,6 +10,7 @@
 
 import { ConcreteRequest, Mutation } from 'relay-runtime';
 export type DeleteVideoInput = {
+  closeIdleSessions?: boolean;
   path: string;
   purgeTracks?: boolean;
 };
@@ -20,6 +21,7 @@ export type AppDeleteVideoMutation$data = {
   readonly deleteVideo: {
     readonly path: string;
     readonly purged: boolean;
+    readonly sessionsClosed: number;
   };
 };
 export type AppDeleteVideoMutation = {
@@ -63,6 +65,13 @@ v1 = [
         "kind": "ScalarField",
         "name": "purged",
         "storageKey": null
+      },
+      {
+        "alias": null,
+        "args": null,
+        "kind": "ScalarField",
+        "name": "sessionsClosed",
+        "storageKey": null
       }
     ],
     "storageKey": null
@@ -86,16 +95,16 @@ return {
     "selections": (v1/*: any*/)
   },
   "params": {
-    "cacheID": "f7b2fe1dc41c437f28a9c3a246d3110f",
+    "cacheID": "b4f978ed3b920a8b90b9e75f45839643",
     "id": null,
     "metadata": {},
     "name": "AppDeleteVideoMutation",
     "operationKind": "mutation",
-    "text": "mutation AppDeleteVideoMutation(\n  $input: DeleteVideoInput!\n) {\n  deleteVideo(input: $input) {\n    path\n    purged\n  }\n}\n"
+    "text": "mutation AppDeleteVideoMutation(\n  $input: DeleteVideoInput!\n) {\n  deleteVideo(input: $input) {\n    path\n    purged\n    sessionsClosed\n  }\n}\n"
   }
 };
 })();
 
-(node as any).hash = "99228cbbba933a4024fe4336d6180079";
+(node as any).hash = "e1474b075fbee1ec7e5d39c8cefd9c1e";
 
 export default node;

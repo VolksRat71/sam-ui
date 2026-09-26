@@ -78,6 +78,7 @@ export default function App() {
       deleteVideo(input: $input) {
         path
         purged
+        sessionsClosed
       }
     }
   `);
@@ -102,7 +103,8 @@ export default function App() {
       }
       await new Promise<void>((resolve, reject) =>
         commitDelete({
-          variables: {input: {path: v.path, purgeTracks}},
+          // the user is deleting it: sessions abandoned on it (vanished tabs) must not block that
+          variables: {input: {path: v.path, purgeTracks, closeIdleSessions: true}},
           onCompleted: (_, errors) =>
             errors != null && errors.length > 0 ? reject(new Error(errors[0].message)) : resolve(),
           onError: reject,
