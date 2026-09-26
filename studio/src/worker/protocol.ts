@@ -28,6 +28,27 @@ export type RunningJob = {
   elapsedS: number;
 };
 
+/** POST /export's body, less the session. */
+export type ExportRequest = {
+  out_dir: string;
+  objects: Record<string, {id: string; prompt: string; color: string}>;
+  include_stale: boolean;
+  frames: boolean;
+  force: boolean;
+};
+
+/** POST /export's manifest (tracks/export.py). */
+export type ExportManifest = {
+  out_dir: string;
+  exported: string;
+  products: Record<string, {object_id: number; state: string; n_frames: number; frames: number[] | null}>;
+  skipped: Record<string, string>;
+  n_frames: number;
+  frames_extracted: boolean;
+  frames_on_disk?: number;
+  warning?: string;
+};
+
 /** Each studio call: its arguments and what it resolves to. */
 export type StudioMethods = {
   init: {args: {endpoint: string}; result: void};
@@ -52,6 +73,8 @@ export type StudioMethods = {
   /** Stream cached tracks back into the preview (after a restore). */
   repaint: {args: {objectIds?: number[]}; result: void};
   startOver: {args: Record<string, never>; result: void};
+  /** Write tracked objects as a rotoscoping working folder; a refusal rejects with its reason. */
+  export: {args: ExportRequest; result: ExportManifest};
   setActiveObject: {args: {objectId: number | null}; result: void};
 };
 

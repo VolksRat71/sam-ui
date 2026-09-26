@@ -2,12 +2,12 @@
 //
 // The Objects list: one row per object with Meta's colour-block thumbnail,
 // its track state, and its own Clear track / Remove actions.
-import {Add, TrashCan, Reset} from '@carbon/icons-react';
+import {Add, Export, TrashCan, Reset} from '@carbon/icons-react';
 import {OBJECT_LIMIT} from '~/config';
 import {isTracking, needsPositiveClick, seedFrames, type StudioObject} from '~/state/objects';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
 
-type Props = {session: StudioSessionApi};
+type Props = {session: StudioSessionApi; onExport: () => void};
 
 function StateBadge({o}: {o: StudioObject}) {
   if (isTracking(o)) {
@@ -30,7 +30,7 @@ function describe(o: StudioObject): string {
   return clicks + track;
 }
 
-export default function ObjectsSection({session}: Props) {
+export default function ObjectsSection({session, onExport}: Props) {
   const {state, tracklets, frame, canAdd, busy} = session;
   return (
     <div className="objects">
@@ -92,6 +92,15 @@ export default function ObjectsSection({session}: Props) {
           );
         })}
       </ul>
+      <div className="objects-footer">
+        <button
+          className="button"
+          onClick={onExport}
+          disabled={!state.objects.some(o => o.state === 'tracked' || o.state === 'stale')}
+          title="Write tracked objects as a rotoscoping working folder">
+          <Export size={16} /> Export for rotoscoping…
+        </button>
+      </div>
     </div>
   );
 }

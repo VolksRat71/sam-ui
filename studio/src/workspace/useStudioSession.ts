@@ -145,6 +145,23 @@ export default function useStudioSession(video: VideoItem) {
     dispatch({type: 'sync', objects});
   }, [bridge]);
 
+  // The backend frees sessions idle past SAM_UI_SESSION_TTL_MIN (30 min). An
+  // open, visible tab keeps its session by touching it now and then; a hidden
+  // or closed one lets it go.
+  useEffect(() => {
+    if (bridge == null || status !== 'ready') {
+      return;
+    }
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        sync().catch(error =>
+          setWarning(`${message(error)}. Reload the page to start a new session.`),
+        );
+      }
+    }, 5 * 60_000);
+    return () => clearInterval(timer);
+  }, [bridge, status, sync]);
+
   /** Run seed-changing calls one after another, in the order they were made. */
   const serial = useCallback(
     (fn: () => Promise<void>) => {

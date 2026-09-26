@@ -40,7 +40,14 @@ import {maskSegments} from '~/state/segments';
 import {colorFor, type NormPoint, type ServerObject} from '~/state/objects';
 import type MaskOverlayEffect from './MaskOverlayEffect';
 import {paintAlpha} from './maskPixels';
-import type {RunningJob, SessionInfo, StudioEvent, TrackResult} from './protocol';
+import type {
+  ExportManifest,
+  ExportRequest,
+  RunningJob,
+  SessionInfo,
+  StudioEvent,
+  TrackResult,
+} from './protocol';
 import type {StudioSessionAddPointsMutation} from './__generated__/StudioSessionAddPointsMutation.graphql';
 import type {StudioSessionCancelMutation} from './__generated__/StudioSessionCancelMutation.graphql';
 import type {StudioSessionClearFrameMutation} from './__generated__/StudioSessionClearFrameMutation.graphql';
@@ -395,6 +402,20 @@ export default class StudioSession {
       throw new Error(`cancel_track: HTTP ${response.status}`);
     }
     return Boolean(((await response.json()) as {canceled?: boolean}).canceled);
+  }
+
+  /** POST /export: a 400 carries the reason ({error}), which is what the user sees. */
+  async exportFolder(request: ExportRequest): Promise<ExportManifest> {
+    const response = await fetch(`${this._endpoint}/export`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({session_id: this.sessionId, ...request}),
+    });
+    const body = (await response.json().catch(() => null)) as (ExportManifest & {error?: string}) | null;
+    if (!response.ok || body == null) {
+      throw new Error(body?.error ?? `export: HTTP ${response.status}`);
+    }
+    return body;
   }
 
   /** Every job running on this video (POST /track_jobs), other tabs' included. */

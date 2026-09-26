@@ -356,11 +356,14 @@ button {
 .stage {
   overflow: hidden;
 }
-.stage-box {
+.stage-frame {
   position: relative;
   flex: none;
+}
+.stage-box {
+  position: absolute;
+  inset: 0;
   transform-origin: center;
-  will-change: transform;
 }
 .zoom-controls {
   display: flex;
@@ -410,14 +413,16 @@ button {
 }
 .point circle {
   stroke: #fff;
-  stroke-width: 2;
 }
 .point:hover circle {
   stroke: var(--gray-300);
 }
 .point line {
   stroke: #fff;
-  stroke-width: 2;
+}
+/* zoomed in, show real pixels so a click can land on one */
+.stage-box.pixelated .stage-canvas {
+  image-rendering: pixelated;
 }
 
 .stage-hint {
@@ -751,6 +756,91 @@ button {
 }
 .effect-export {
   margin-top: 4px;
+}
+
+/* export panel */
+.objects-footer {
+  margin-top: 12px;
+}
+.modal.wide {
+  width: min(760px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  overflow: auto;
+}
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.field {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0 14px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.field input,
+.export-table input:not([type='checkbox']):not([type='color']) {
+  height: 32px;
+  padding: 0 8px;
+  border-radius: var(--radius);
+  border: 1px solid var(--gray-700);
+  background: #000;
+  color: #fff;
+  font: inherit;
+  font-size: 13px;
+  width: 100%;
+}
+.export-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.export-table th {
+  text-align: left;
+  font-weight: 500;
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 4px 6px;
+}
+.export-table td {
+  padding: 4px 6px;
+  white-space: nowrap;
+}
+.export-table tr.off {
+  opacity: 0.5;
+}
+.export-table input[type='color'] {
+  width: 36px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  background: none;
+}
+.export-options {
+  display: grid;
+  gap: 6px;
+  margin-top: 14px;
+  font-size: 13px;
+}
+.export-problems {
+  margin: 12px 0 0;
+  padding-left: 18px;
+  color: #ffd29e;
+  font-size: 12px;
+}
+.manifest-list {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: 13px;
+  display: grid;
+  gap: 4px;
+}
+code {
+  font-size: 12px;
+  background: #000;
+  padding: 1px 5px;
+  border-radius: 4px;
 }
 
 /* -- timeline --------------------------------------------------------------- */

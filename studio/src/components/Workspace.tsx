@@ -11,6 +11,7 @@ import {panelStorage} from '~/lib/storage';
 import useStudioSession, {type VideoItem} from '~/workspace/useStudioSession';
 import ConfirmModal from './ConfirmModal';
 import EffectsSection from './EffectsSection';
+import ExportPanel from './ExportPanel';
 import ObjectsSection from './ObjectsSection';
 import Preview, {type LabelMode} from './Preview';
 import Sidebar from './Sidebar';
@@ -26,6 +27,8 @@ export default function Workspace({video, renderMedia}: Props) {
   const {state, dirty, meta} = session;
   const [mode, setMode] = useState<LabelMode>('positive');
   const [confirmStartOver, setConfirmStartOver] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const videoName = video.path.split('/').pop() ?? 'video';
   const jobs = state.jobs;
   const n = meta.numFrames;
 
@@ -155,13 +158,13 @@ export default function Workspace({video, renderMedia}: Props) {
                     id: 'objects',
                     title: 'Objects',
                     badge: `${state.objects.length}/${OBJECT_LIMIT}`,
-                    content: <ObjectsSection session={session} />,
+                    content: <ObjectsSection session={session} onExport={() => setExportOpen(true)} />,
                   },
                   {
                     id: 'effects',
                     title: 'Effects',
                     content: (
-                      <EffectsSection session={session} videoName={video.path.split('/').pop() ?? 'video'} />
+                      <EffectsSection session={session} videoName={videoName} />
                     ),
                   },
                 ]}
@@ -174,6 +177,8 @@ export default function Workspace({video, renderMedia}: Props) {
           <Timeline session={session} />
         </Panel>
       </PanelGroup>
+
+      {exportOpen && <ExportPanel session={session} videoName={videoName} onClose={() => setExportOpen(false)} />}
 
       {confirmStartOver && (
         <ConfirmModal

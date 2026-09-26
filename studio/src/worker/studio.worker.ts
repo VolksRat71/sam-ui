@@ -64,6 +64,7 @@ const handlers: Handlers = {
   trackJobs: () => session.trackJobs(),
   repaint: ({objectIds}) => session.repaint(objectIds),
   startOver: () => session.startOver(),
+  export: request => session.exportFolder(request),
   setActiveObject: ({objectId}) => session.setActiveObject(objectId),
 };
 
