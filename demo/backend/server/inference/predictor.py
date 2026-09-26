@@ -171,6 +171,7 @@ class InferenceAPI:
             # sam-ui: a first click on a frame SAM 2 holds no mask for (a frame
             # tracked by a job, not in this state) refines that frame's cached
             # mask, as a correction should, instead of starting from nothing.
+            primed = False
             if not self.__has_output(inference_state, obj_id, frame_idx):
                 prime = self.tracks.prime_mask(session["video"], obj_id, frame_idx)
                 if prime is not None:
@@ -180,17 +181,23 @@ class InferenceAPI:
                         obj_id=obj_id,
                         mask=track_rle.decode(prime),
                     )
+                    primed = True
 
             # add new prompts and instantly get the output on the same frame
-            frame_idx, object_ids, masks = self.predictor.add_new_points_or_box(
-                inference_state=inference_state,
-                frame_idx=frame_idx,
-                obj_id=obj_id,
-                points=points,
-                labels=labels,
-                clear_old_points=clear_old_points,
-                normalize_coords=False,
-            )
+            try:
+                frame_idx, object_ids, masks = self.predictor.add_new_points_or_box(
+                    inference_state=inference_state,
+                    frame_idx=frame_idx,
+                    obj_id=obj_id,
+                    points=points,
+                    labels=labels,
+                    clear_old_points=clear_old_points,
+                    normalize_coords=False,
+                )
+            except Exception:
+                if primed:  # keep the session in step with the seed store, which records nothing
+                    self.predictor.clear_all_prompts_in_frame(inference_state, frame_idx, obj_id)
+                raise
 
             masks_binary = (masks > self.score_thresh)[:, 0].cpu().numpy()
             self.tracks.record_points(

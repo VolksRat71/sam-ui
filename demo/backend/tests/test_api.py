@@ -23,6 +23,7 @@ def parse_all(body: bytes):
         d = json.loads(body[start:start + n])
         if "done" in d:
             assert closing is None, "one closing part, at the end"
+            assert d.pop("frame_index") == -1 and d.pop("results") == []  # safe for a frames-only parser
             closing = d
         else:
             assert closing is None, "no frames after the closing part"

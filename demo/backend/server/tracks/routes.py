@@ -1,6 +1,9 @@
 # sam-ui (Apache-2.0). New file, not from SAM 2.
 """HTTP routes for track jobs, streamed in the demo's multipart format (the
-same parts /propagate_in_video sends), so the frontend's parser is reused.
+same parts /propagate_in_video sends). The closing part also carries
+`frame_index: -1` and `results: []`, so a parser that expects every part to be
+a frame (Meta's SAM2Model) reads it as an empty frame instead of throwing; a
+parser that knows the format checks `done` first.
 
 POST /track_objects {session_id, object_ids?}: run the untracked and stale
   objects (or exactly object_ids). The last part is {"done": true, "objects",
@@ -46,6 +49,10 @@ def part(frame: int, masks) -> bytes:
                               for o, r in sorted(masks.items())]})
 
 
+def _closing(body: dict) -> bytes:
+    return _part({"frame_index": -1, "results": [], **body})
+
+
 def _part(body: dict) -> bytes:
     return MultipartResponseBuilder.build(
         boundary=BOUNDARY,
@@ -67,19 +74,19 @@ def _stream(ctx: TrackContext, frames: Callable[[], Iterator[FrameRle]],
                 if ctx.canceled():
                     it.close()
                     if result is not None:
-                        yield _part({"done": False, "error": "canceled", "objects": result.objects})
+                        yield _closing({"done": False, "error": "canceled", "objects": result.objects})
                     return
                 yield part(frame, masks)
         except Exception as err:
             logger.exception("track job failed")
             if result is not None:
-                yield _part({"done": False, "error": f"{type(err).__name__}: {err}", "objects": result.objects})
+                yield _closing({"done": False, "error": f"{type(err).__name__}: {err}", "objects": result.objects})
             return
         finally:
             it.close()  # a cancel or a dropped client: the job caches nothing
         if result is not None:
-            yield _part({"done": True, "objects": result.objects, "tracked": result.tracked,
-                         "failed": {str(o): e for o, e in result.failed.items()}})
+            yield _closing({"done": True, "objects": result.objects, "tracked": result.tracked,
+                            "failed": {str(o): e for o, e in result.failed.items()}})
 
 
 def make_blueprint(resolve: Callable[[str], TrackContext]) -> Blueprint:

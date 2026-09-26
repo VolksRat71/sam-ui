@@ -148,7 +148,6 @@ def test_a_correction_on_a_tracked_frame_refines_the_cached_mask(world):
     a = make()
     sid = start(a, path)
     click(a, sid, 1, 0, [[0.5, 0.5]], [1])
-    body = __import__("flask").Flask("x")
     ctx = a.track_context(sid)
     list(ctx.service.track(ctx.video, ctx.path, [1], video_handle=ctx.video_handle))
     cached = rle.decode(a.tracks.tracks.mask_at(ctx.video, 1, "fake", 4))
@@ -161,7 +160,7 @@ def test_a_correction_on_a_tracked_frame_refines_the_cached_mask(world):
     assert a.object_tracks(sid)[0]["state"] != TRACKED  # the correction made it stale
 
 
-def test_a_job_shares_the_sessions_decoded_video(world):
+def test_a_job_shares_the_sessions_decoded_video_and_seeds_with_masks(world):
     make, stub, path = world
     a = make()
     sid = start(a, path)
@@ -169,11 +168,57 @@ def test_a_job_shares_the_sessions_decoded_video(world):
     from tracks.engine import Sam2Engine
 
     a.tracks.engine = Sam2Engine(stub, model="stub")
-    stub.propagate_in_video = lambda st, start_frame_idx, reverse=False: iter(())
+    job_states = []
+
+    def propagate(st, start_frame_idx, reverse=False):
+        job_states.append(st)
+        return iter(())
+
+    stub.propagate_in_video = propagate
+    stub.mask_calls.clear()
     ctx = a.track_context(sid)
     list(ctx.service.track(ctx.video, ctx.path, [1], video_handle=ctx.video_handle))
+    session_state = a.session_states[sid]["state"]
     assert stub.init_calls == 1  # the session's; the job cloned it
-    assert a.session_states[sid]["state"]["obj_ids"] == [1]  # and left the session's objects alone
+    assert job_states and job_states[0] is not session_state
+    assert job_states[0]["images"] is session_state["images"]  # the same decoded frames, not a copy
+    assert stub.mask_calls == [(0, 1)]  # conditioned on the approved mask, not replayed clicks
+    assert session_state["obj_ids"] == [1]  # and the session's objects were left alone
+
+
+def test_a_stale_track_is_not_used_to_prime_a_click(world):
+    make, stub, path = world
+    a = make()
+    sid = start(a, path)
+    click(a, sid, 1, 0, [[0.2, 0.2]], [1])
+    ctx = a.track_context(sid)
+    list(ctx.service.track(ctx.video, ctx.path, [1]))
+    click(a, sid, 1, 0, [[0.8, 0.8]], [1])  # the object moved: its track is stale now
+    stub.mask_calls.clear()
+    out = click(a, sid, 1, 3, [[0.8, 0.8]], [1])
+    assert stub.mask_calls == []  # no prime from the stale track
+    assert out[1].sum() == (2 * R) ** 2  # just the new click's square
+
+
+def test_a_click_that_fails_after_a_prime_leaves_no_prime_behind(world):
+    make, stub, path = world
+    a = make()
+    sid = start(a, path)
+    click(a, sid, 1, 0, [[0.5, 0.5]], [1])
+    ctx = a.track_context(sid)
+    list(ctx.service.track(ctx.video, ctx.path, [1]))
+    real = stub.add_new_points_or_box
+
+    def boom(*args, **kw):
+        raise RuntimeError("MPS backend out of memory")
+
+    stub.add_new_points_or_box = boom
+    with pytest.raises(RuntimeError):
+        click(a, sid, 1, 4, [[0.5, 0.5]], [1])
+    stub.add_new_points_or_box = real
+    st = a.session_states[sid]["state"]
+    assert 4 not in st["temp_output_dict_per_obj"][st["obj_id_to_idx"][1]]["cond_frame_outputs"]
+    assert 4 not in a.object_tracks(sid)[0]["seeds"]
 
 
 def test_clear_frame_remove_object_and_start_over_keep_the_store_in_step(world):

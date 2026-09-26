@@ -103,6 +103,8 @@ class TrackStore:
         obj_dir = self.root / video / str(int(obj_id))
         if engine is not None:
             shutil.rmtree(obj_dir / engine, ignore_errors=True)
+            for stray in obj_dir.glob(f".{engine}.*-*"):  # or _recover would bring an old track back
+                shutil.rmtree(stray, ignore_errors=True)
         elif obj_dir.is_dir():
             for p in obj_dir.iterdir():
                 if p.is_dir():

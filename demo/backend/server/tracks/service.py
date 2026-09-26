@@ -64,6 +64,10 @@ class TrackService:
         seed = self.seeds.seeds(video, obj_id).get(frame)
         if seed and seed.get("mask"):
             return seed["mask"]
+        # only a current track: a stale one follows old seeds, and refining it
+        # would save the wrong region as this frame's approved mask
+        if self.object_info(video, obj_id)["state"] != TRACKED:
+            return None
         return self.tracks.mask_at(video, obj_id, self.engine.name, frame)
 
     def remove_object(self, video: str, obj_id: int):

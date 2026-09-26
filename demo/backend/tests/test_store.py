@@ -35,6 +35,22 @@ def test_seeds_hash_ignores_dict_order_and_sees_any_change():
     assert len({seeds_hash(a), seeds_hash(moved), seeds_hash(relabelled), seeds_hash(other_frame)}) == 4
 
 
+def test_seeds_hash_of_seeds_without_masks_is_unchanged_and_a_mask_changes_it():
+    a = {3: {"points": [[0.1, 0.2]], "labels": [1]}}
+    assert seeds_hash(a) == seeds_hash({3: {**a[3], "mask": None}})  # tracks from before masks stay tracked
+    with_mask = {3: {**a[3], "mask": {"size": [2, 2], "counts": "04"}}}
+    other_mask = {3: {**a[3], "mask": {"size": [2, 2], "counts": "13"}}}
+    assert len({seeds_hash(a), seeds_hash(with_mask), seeds_hash(other_mask)}) == 3
+
+
+def test_clearing_a_track_also_drops_leftovers_a_crash_could_resurrect(tmp_path):
+    t = TrackStore(tmp_path)
+    t.save(V, 1, "sam2", "m", "h1", {0: square()}, 0.1)
+    (tmp_path / V / "1" / ".sam2.old-deadbeef").mkdir()  # a crash after the swap, before the rmtree
+    t.clear(V, 1, "sam2")
+    assert t.meta(V, 1, "sam2") is None
+
+
 def test_seeds_hash_ignores_a_frame_left_with_no_points():
     a = {3: {"points": [[0.1, 0.2]], "labels": [1]}}
     assert seeds_hash(a) == seeds_hash({**a, 9: {"points": [], "labels": []}})

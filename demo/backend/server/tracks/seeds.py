@@ -27,10 +27,14 @@ Seeds = Dict[int, Dict[str, list]]
 def seeds_hash(seeds: Seeds) -> str:
     """sha256 of the seeds as canonical JSON: independent of dict order, and
     changed by any point, label or frame."""
-    canon = {str(int(f)): {"points": [[float(x), float(y)] for x, y in v["points"]],
-                           "labels": [int(l) for l in v["labels"]],
-                           "mask": (v.get("mask") or {}).get("counts")}
-             for f, v in seeds.items() if v["points"]}
+    canon = {}
+    for f, v in seeds.items():
+        if not v["points"]:
+            continue
+        c = {"points": [[float(x), float(y)] for x, y in v["points"]], "labels": [int(l) for l in v["labels"]]}
+        if v.get("mask"):  # only when present: seeds stored before masks keep their hash
+            c["mask"] = v["mask"]["counts"]
+        canon[str(int(f))] = c
     blob = json.dumps(canon, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(blob.encode()).hexdigest()
 
