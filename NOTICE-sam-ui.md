@@ -7,7 +7,7 @@ The original copyright notices are kept in every file.
 Files we changed carry a one-line "Modified by sam-ui" notice at the top, as
 section 4(b) of the licence requires. New files under `demo/backend/server/tracks/`,
 `demo/backend/tests/`, `tools/` and `studio/` are ours, except the `studio/` files
-that carry Meta's header (adapted from `demo/frontend`).
+that carry Meta's header: those come from Meta's SAM 2 demo frontend (see below).
 
 ## Changes
 
@@ -36,13 +36,21 @@ that carry Meta's header (adapted from `demo/frontend`).
   `data/clip.mp4` + `data/frames/`), which the rotoscoping-video-subjects pipeline
   loads and traces unchanged. Writes only under `SAM_UI_EXPORT_ROOT` (default
   ~/Movies) and never replaces confirmed decision files without `force`.
-- studio (`studio/`, a sandbox beside `demo/frontend`, which is unchanged and still
-  served): a Vite + React + TypeScript editor UI with resizable panes, preview,
-  timeline, and Media / Objects / Effects sections, built on the per-object track
-  API. It imports Meta's demo modules from `demo/frontend/src` (decoder, renderer,
-  worker bridge, effects, RLE, multipart parser, Relay environment). Two files are
-  adapted from Meta's (`src/worker/studio.worker.ts` from `VideoWorker.ts`,
-  `src/worker/StudioSession.ts` from `SAM2Model.ts`). See `studio/README.md`.
+- studio (`studio/`) is the served UI: a Vite + React + TypeScript editor with
+  resizable panes, preview, timeline, and Media / Objects / Effects sections, built
+  on the per-object track API. **Meta's demo frontend (`demo/frontend`) was
+  removed.** The parts of it studio uses are vendored, with Meta's headers, under
+  `studio/src/meta/` in their original layout (from `demo/frontend/src` as of
+  upstream commit 2b90b9f): the video decoder and renderer, worker bridge, effects
+  and shaders, RLE code (jscocotools), multipart parser, Relay environment, logger
+  and theme colours. `studio/scripts/meta-imports.py` lists what studio reaches.
+  Changed there: `common/tracker/Trackers.ts` (no SAM2Model). Adapted from Meta's
+  files: `studio/src/worker/studio.worker.ts` (from `VideoWorker.ts`),
+  `studio/src/worker/StudioSession.ts` (from `SAM2Model.ts`) and `studio/Dockerfile`
+  (from `frontend.Dockerfile`). The GraphQL schema moved with it
+  (`studio/schema.graphql`, `studio/schemas/`). The Inter font in
+  `studio/public/fonts/` is under the SIL Open Font License (`Inter-OFL.txt`).
+  See `studio/README.md`.
 - Engines (`tracks/service.py`, `tracks/sam3_engine.py`): SAM 2 is the default and
   serves clicks; SAM 3's video tracker (Hugging Face transformers
   `Sam3TrackerVideoModel`, which runs on MPS) is opt-in per track job
@@ -53,8 +61,9 @@ that carry Meta's header (adapted from `demo/frontend`).
   weights from a local folder (`SAM_UI_SAM3_WEIGHTS`); no SAM 3 code or weights are
   in this repository.
 - Changed upstream files: `demo/backend/server/app.py`, `inference/predictor.py`,
-  `data/schema.py`, `data/data_types.py`, `demo/frontend/schemas/inference-api-schema.graphql`
-  (and the generated `demo/frontend/schema.graphql`).
+  `data/schema.py`, `data/data_types.py`, `studio/schemas/inference-api-schema.graphql`
+  (and the generated `studio/schema.graphql`), `docker-compose.yaml`, `README.md`,
+  `demo/README.md`.
 - Tests: `demo/backend/tests/` (`pytest demo/backend/tests`; `SAM_UI_SLOW=1` also runs
   the SAM 2 engine on a synthetic video) and `tools/track_cache_e2e.py` against a live
   backend.

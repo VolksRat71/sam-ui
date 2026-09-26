@@ -1,13 +1,15 @@
 # SAM 2 Demo
 
-Welcome to the SAM 2 Demo! This project consists of a frontend built with React TypeScript and Vite and a backend service using Python Flask and Strawberry GraphQL. Both components can be run in Docker containers or locally on MPS (Metal Performance Shaders) or CPU. However, running the backend service on MPS or CPU devices may result in significantly slower performance (FPS).
+<!-- Modified by sam-ui: the frontend is now studio/ (Meta's demo/frontend was removed). -->
+
+Welcome to the SAM 2 Demo! This project consists of a frontend built with React TypeScript and Vite (in sam-ui, the `studio/` app at the repository root) and a backend service using Python Flask and Strawberry GraphQL. Both components can be run in Docker containers or locally on MPS (Metal Performance Shaders) or CPU. However, running the backend service on MPS or CPU devices may result in significantly slower performance (FPS).
 
 ## Prerequisites
 
 Before you begin, ensure you have the following installed on your system:
 
 - Docker and Docker Compose
-- [OPTIONAL] Node.js and Yarn for running frontend locally
+- [OPTIONAL] Node.js and npm for running the frontend locally
 - [OPTIONAL] Anaconda for running backend locally
 
 ### Installing Docker
@@ -17,17 +19,12 @@ To install Docker, follow these steps:
 1. Go to the [Docker website](https://www.docker.com/get-started)
 2. Follow the installation instructions for your operating system.
 
-### [OPTIONAL] Installing Node.js and Yarn
+### [OPTIONAL] Installing Node.js
 
-To install Node.js and Yarn, follow these steps:
+To install Node.js (npm comes with it), follow these steps:
 
 1. Go to the [Node.js website](https://nodejs.org/en/download/).
 2. Follow the installation instructions for your operating system.
-3. Once Node.js is installed, open a terminal or command prompt and run the following command to install Yarn:
-
-```
-npm install -g yarn
-```
 
 ### [OPTIONAL] Installing Anaconda
 
@@ -126,25 +123,25 @@ Options for the `MODEL_SIZE` argument are "tiny", "small", "base_plus" (default)
 
 If you wish to run the frontend separately (useful for development), follow these steps:
 
-1. **Navigate to demo frontend directory:**
+1. **Navigate to the studio directory** (at the repository root):
 
    ```bash
-   cd demo/frontend
+   cd studio
    ```
 
 2. **Install dependencies:**
 
    ```bash
-   yarn install
+   npm ci
    ```
 
 3. **Start the development server:**
 
    ```bash
-   yarn dev --port 7262
+   VITE_API_ENDPOINT=http://localhost:7263 npm run dev -- --port 7262
    ```
 
-This will start the frontend development server on [http://localhost:7262](http://localhost:7262).
+This will start the frontend development server on [http://localhost:7262](http://localhost:7262). See [`studio/README.md`](../studio/README.md) for its features and scripts.
 
 ## Docker Tips
 

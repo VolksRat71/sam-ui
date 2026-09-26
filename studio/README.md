@@ -1,36 +1,37 @@
 <!-- sam-ui (Apache-2.0). New file, not from SAM 2. -->
 # sam-ui studio
 
-An editor-style frontend for the sam-ui backend: resizable panes, the video on
-the left, collapsible Media, Objects and Effects sections on the right, and a
-timeline along the bottom. It uses Meta's demo palette and interactions, and
-it reuses Meta's demo code where it can: the video decoder and renderer
-(`VideoWorkerContext`), the worker bridge, the effects, the RLE code, the
-multipart parser and the Relay environment. It imports them from
-`demo/frontend/src` through the `@/` alias, so nothing is copied.
+sam-ui's web UI, an editor-style frontend for the backend in `demo/backend`:
+resizable panes, the video on the left, collapsible Media, Objects and Effects
+sections on the right, and a timeline along the bottom. It uses Meta's demo
+palette and interactions, and it reuses Meta's demo code: the video decoder and
+renderer (`VideoWorkerContext`), the worker bridge, the effects, the RLE code,
+the multipart parser and the Relay environment, vendored under `src/meta/`.
 
-**studio is a sandbox.** Meta's demo (`demo/frontend`) is still the UI that
-gets served, and studio changes nothing in `demo/`. The two run side by side.
+It replaces Meta's demo frontend (`demo/frontend`), which was removed.
 
-## Run it side by side
+## Run it
 
-| What | Port | Command |
-| --- | --- | --- |
-| Backend (unchanged) | 7263 | as today |
-| Meta's demo UI (unchanged) | 7262 | as today |
-| **studio** | 7362 | `cd studio && npm install && npm run dev` |
+```sh
+cd studio
+npm ci
+npm run dev            # http://localhost:7362, against the backend on :7263
+```
 
-studio talks to `http://localhost:7263` by default. To point it at another
-backend, or change the object cap (16 by default), set these when you start it:
+To point it at another backend, or change the object cap (16 by default), set
+these when you start or build it:
 
 ```sh
 VITE_API_ENDPOINT=http://127.0.0.1:7363 VITE_OBJECT_LIMIT=24 npm run dev
 ```
 
+`docker compose up` from the repository root builds it (`studio/Dockerfile`)
+and serves it on port 7262, next to the backend on 7263.
+
 Other scripts: `npm test` (vitest, the pure logic), `npm run lint`,
-`npm run build` (tsc and vite; the output goes to `studio/dist`),
-`npm run relay` (regenerates `__generated__/` after a GraphQL change; the
-schema is `demo/frontend/schema.graphql`).
+`npm run build` (tsc and vite; the output goes to `studio/dist`), and
+`npm run relay` (after a GraphQL change: merges `schemas/*.graphql` into
+`schema.graphql`, then regenerates the `__generated__/` artifacts).
 
 ## Using it
 
@@ -75,9 +76,11 @@ schema is `demo/frontend/schema.graphql`).
   shows real pixels.
 - **Keys**: Space plays and pauses, and the arrow keys step one frame.
 
-## Parity with Meta's demo UI
+## Features
 
-| Meta demo feature | studio |
+Compared with Meta's demo UI, which studio replaced:
+
+| Feature | studio |
 | --- | --- |
 | Gallery of videos, pick one | done (Media) |
 | Upload a video (mp4/mov, 70 MB) | done (click or drop); uploads are listed with the gallery |
@@ -108,25 +111,6 @@ Studio only: SAM 3 engine, per-engine badges and disagreement flags, objects res
 concurrent jobs, jobs from other tabs shown, zoom and pan, export for
 rotoscoping, and keyboard shortcuts.
 
-## Swap checklist
-
-To make studio the served UI in place of `demo/frontend` (a description, not
-done):
-
-1. Serve `studio/dist` where `demo/frontend`'s build is served now: the
-   frontend Dockerfile and the `frontend` service in `docker-compose.yaml`
-   copy the build, or run `npm run dev` / `vite preview` on port 7262.
-2. Build with `VITE_API_ENDPOINT` set to the backend's public URL (the demo has
-   it hard-coded in `DemoConfig.tsx`).
-3. studio imports `demo/frontend/src` at build time. Either keep that folder
-   (as a source library, no longer served), or move the modules studio uses
-   into studio with their headers kept.
-4. Check the backend's `API_URL`. studio builds video URLs from its own
-   endpoint and does not read `Video.url`, but other clients might.
-5. Decide what happens to uploads after a reload: add them to the `videos`
-   query (a backend change), or keep studio's per-browser list.
-6. Update `NOTICE-sam-ui.md` and the top-level README to say which UI is served.
-
 ## Layout of the code
 
 - `src/state/`: pure logic, with tests. The Objects reducer (`objects.ts`),
@@ -142,4 +126,9 @@ done):
 - `src/workspace/useStudioSession.ts`: one video's session: the calls, the
   reducer, and syncing from `objectTracks`.
 - `src/components/`: the panes.
+- `src/meta/`: Meta's demo frontend code that studio uses, in its original
+  layout and with Meta's headers (`@/` points here). `scripts/meta-imports.py`
+  lists what studio reaches; `--unused` lists vendored files nothing uses.
+- `schema.graphql`, `schemas/`: the backend's GraphQL schema.
+- `public/fonts/`: the Inter font, under the SIL Open Font License.
 - `__generated__/` folders are relay-compiler output.
