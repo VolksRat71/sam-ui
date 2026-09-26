@@ -6,7 +6,8 @@ The original copyright notices are kept in every file.
 
 Files we changed carry a one-line "Modified by sam-ui" notice at the top, as
 section 4(b) of the licence requires. New files under `demo/backend/server/tracks/`,
-`demo/backend/tests/` and `tools/` are ours.
+`demo/backend/tests/`, `tools/` and `studio/` are ours, except the `studio/` files
+that carry Meta's header (adapted from `demo/frontend`).
 
 ## Changes
 
@@ -35,6 +36,13 @@ section 4(b) of the licence requires. New files under `demo/backend/server/track
   `data/clip.mp4` + `data/frames/`), which the rotoscoping-video-subjects pipeline
   loads and traces unchanged. Writes only under `SAM_UI_EXPORT_ROOT` (default
   ~/Movies) and never replaces confirmed decision files without `force`.
+- studio (`studio/`, a sandbox beside `demo/frontend`, which is unchanged and still
+  served): a Vite + React + TypeScript editor UI with resizable panes, preview,
+  timeline, and Media / Objects / Effects sections, built on the per-object track
+  API. It imports Meta's demo modules from `demo/frontend/src` (decoder, renderer,
+  worker bridge, effects, RLE, multipart parser, Relay environment). Two files are
+  adapted from Meta's (`src/worker/studio.worker.ts` from `VideoWorker.ts`,
+  `src/worker/StudioSession.ts` from `SAM2Model.ts`). See `studio/README.md`.
 - Changed upstream files: `demo/backend/server/app.py`, `inference/predictor.py`,
   `data/schema.py`, `data/data_types.py`, `demo/frontend/schemas/inference-api-schema.graphql`
   (and the generated `demo/frontend/schema.graphql`).
