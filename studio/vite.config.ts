@@ -1,16 +1,15 @@
 // sam-ui (Apache-2.0). New file, not from SAM 2.
 //
-// studio/ reuses Meta's demo modules in place: "@/..." resolves to
-// ../demo/frontend/src, exactly as it does inside the demo. Their bare imports
-// (relay-runtime, pts, mp4box, ...) are deduped to studio/node_modules, so the
-// demo's own node_modules is never needed and never mixed in.
+// "@/..." resolves to src/meta, the Meta demo modules studio vendors, laid out
+// as they were in the demo's src/, so their own "@/" imports work unchanged.
+// Shared packages are deduped so each is bundled once.
 /// <reference types="vitest" />
 import react from '@vitejs/plugin-react';
 import path from 'node:path';
 import {defineConfig} from 'vite';
 import relay from 'vite-plugin-relay';
 
-const DEMO_SRC = path.resolve(__dirname, '../demo/frontend/src');
+const META_SRC = path.resolve(__dirname, './src/meta');
 
 const SHARED_PACKAGES = [
   'react',
@@ -28,7 +27,7 @@ const SHARED_PACKAGES = [
 export default defineConfig({
   resolve: {
     alias: {
-      '@': DEMO_SRC,
+      '@': META_SRC,
       '~': path.resolve(__dirname, './src'),
     },
     dedupe: SHARED_PACKAGES,
@@ -41,7 +40,6 @@ export default defineConfig({
   server: {
     port: 7362,
     strictPort: true,
-    fs: {allow: [path.resolve(__dirname, '..')]},
   },
   preview: {port: 7362, strictPort: true},
   test: {

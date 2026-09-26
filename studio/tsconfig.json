@@ -1,7 +1,7 @@
 // sam-ui (Apache-2.0). New file, not from SAM 2.
-// Type-checks studio/src and the Meta demo modules it imports through "@/"
-// (../demo/frontend/src). The packages those modules import are pinned to
-// studio/node_modules below, so they never resolve from the demo's own tree.
+// Type-checks studio/src, including the Meta demo modules vendored under
+// src/meta and imported through "@/". The packages they use are pinned to
+// studio/node_modules below.
 {
   "compilerOptions": {
     "target": "ES2020",
@@ -25,9 +25,9 @@
 
     "baseUrl": ".",
     "paths": {
-      "@/*": ["../demo/frontend/src/*"],
+      "@/*": ["./src/meta/*"],
       "~/*": ["./src/*"],
-      "mp4box": ["../demo/frontend/src/types/mp4box"],
+      "mp4box": ["./src/meta/types/mp4box"],
       "@carbon/icons-react": ["./node_modules/@carbon/icons-react/lib/index.d.ts"],
       "invariant": ["./node_modules/@types/invariant/index.d.ts"],
       "pts": ["./node_modules/pts/dist/index.d.ts"],

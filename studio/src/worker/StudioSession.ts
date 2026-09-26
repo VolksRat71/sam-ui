@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-// Modified by sam-ui: adapted from demo/frontend/src/common/tracker/SAM2Model.ts
+// Modified by sam-ui: adapted from SAM2Model.ts in Meta's SAM 2 demo frontend
 // for per-object track jobs (/track_objects, /track_masks), restored objects
 // and client-assigned ids; a job only ever replaces the masks of its own objects.
 import {generateThumbnail} from '@/common/components/video/editor/VideoEditorUtils';

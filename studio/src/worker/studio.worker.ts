@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-// Modified by sam-ui: adapted from demo/frontend/src/common/components/video/VideoWorker.ts;
+// Modified by sam-ui: adapted from VideoWorker.ts in Meta's SAM 2 demo frontend;
 // the video messages are Meta's, the tracker is replaced by studio's RPC calls,
 // and highlight effects go through FocusedHighlight (the focused object only).
 import AllEffects, {type Effects} from '@/common/components/video/effects/Effects';
