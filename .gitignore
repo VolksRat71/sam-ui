@@ -23,3 +23,5 @@ products.json
 anchors.json
 review.json
 shots.json
+# agent worktrees
+.claude/

@@ -24,6 +24,11 @@ section 4(b) of the licence requires. New files under `demo/backend/server/track
   cached per video on the CPU and shared by the session and every track job, so a
   re-track skips the backbone (35% faster on the large model, masks identical).
   Budget `SAM_UI_FEATURE_CACHE_GB` (default 6, 0 turns it off); about 16 MB a frame.
+- Track jobs hold the model lock one frame at a time, so clicks are served between
+  frames (0.12 s during a job, where they used to wait for the whole job). Jobs can
+  overlap; each claims its objects (state "tracking") so no two share one.
+  `Job-Id` header, `POST /cancel_track {session_id, job_id}`, `POST /track_jobs
+  {session_id}` for progress; `cancelPropagateInVideo` also cancels a session's jobs.
 - Changed upstream files: `demo/backend/server/app.py`, `inference/predictor.py`,
   `data/schema.py`, `data/data_types.py`, `demo/frontend/schemas/inference-api-schema.graphql`
   (and the generated `demo/frontend/schema.graphql`).

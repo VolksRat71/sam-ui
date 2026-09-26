@@ -447,10 +447,9 @@ class InferenceAPI:
             service=self.tracks,
             video=session["video"],
             path=session["path"],
+            session_id=session_id,
             lock=self.inference_lock,
             autocast=self.autocast_context,
-            canceled=lambda: session["canceled"],
-            reset_cancel=lambda: session.__setitem__("canceled", False),
             video_handle=session["state"],
         )
 
@@ -473,6 +472,7 @@ class InferenceAPI:
     ) -> CancelPorpagateResponse:
         session = self.__get_session(request.session_id)
         session["canceled"] = True
+        self.tracks.jobs.cancel_session(request.session_id)  # sam-ui: and its track jobs
         return CancelPorpagateResponse(success=True)
 
     def __get_rle_mask_list(

@@ -24,6 +24,7 @@ def parse_all(body: bytes):
         if "done" in d:
             assert closing is None, "one closing part, at the end"
             assert d.pop("frame_index") == -1 and d.pop("results") == []  # safe for a frames-only parser
+            assert d.pop("job_id").startswith("job-")
             closing = d
         else:
             assert closing is None, "no frames after the closing part"
@@ -42,7 +43,6 @@ class Harness:
         self.video_path.write_bytes(b"not really a video")
         self.root = tmp_path / "tracks"
         self.engine = engine or FakeEngine(n_frames=4)
-        self.canceled = False
         self.new_service()
 
     def new_service(self):
@@ -50,13 +50,10 @@ class Harness:
         self.service = TrackService(str(self.root), self.engine)
         self.video = self.service.video_key(str(self.video_path))
         app = Flask(__name__)
+        self.lock = threading.Lock()  # one model lock, as in production
         app.register_blueprint(make_blueprint(lambda sid: TrackContext(
-            self.service, self.video, str(self.video_path), lock=threading.Lock(),
-            canceled=lambda: self.canceled, reset_cancel=self._reset_cancel)))
+            self.service, self.video, str(self.video_path), session_id=sid, lock=self.lock)))
         self.client = app.test_client()
-
-    def _reset_cancel(self):  # as production does at the start of every stream
-        self.canceled = False
 
     def click(self, obj, frame=0, points=P, labels=(1,), clear=True):
         self.service.record_points(self.video, obj, frame, points, list(labels), clear)
@@ -64,6 +61,7 @@ class Harness:
     def track(self, object_ids=None):
         body = {"session_id": "s"} if object_ids is None else {"session_id": "s", "object_ids": object_ids}
         r = self.client.post("/track_objects", json=body)
+        self.job_id = r.headers.get("Job-Id")
         frames, self.closing = parse_all(r.data)
         return r.headers["Objects-Tracked"], frames
 
@@ -135,12 +133,13 @@ def test_a_job_canceled_mid_stream_caches_nothing_and_says_so(h):
     def cancel_after_two(path, objects, video_handle=None):
         for i, fm in enumerate(real(path, objects)):
             if i == 2:
-                h.canceled = True  # the user presses cancel mid-job
+                h.service.jobs.cancel_session("s")  # the user presses cancel mid-job
             yield fm
 
     h.engine.track = cancel_after_two
     ids, frames = h.track()
-    assert len(frames) == 2 and h.closing == {"done": False, "error": "canceled", "objects": [1]}
+    # the frame being computed when cancel landed still streams; nothing after it
+    assert len(frames) == 3 and h.closing == {"done": False, "error": "canceled", "objects": [1]}
     assert h.state(1) == UNTRACKED
 
 

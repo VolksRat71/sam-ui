@@ -14,6 +14,7 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from tracks import rle
 from tracks.engine import Engine
+from tracks.jobs import TRACKING, JobRegistry
 from tracks.seeds import SeedStore, seeds_hash, video_key
 from tracks.store import TRACKED, TrackStore
 
@@ -36,6 +37,7 @@ class TrackService:
         self.seeds = SeedStore(root)
         self.tracks = TrackStore(root)
         self.engine = engine
+        self.jobs = JobRegistry()
         self._keys: Dict[str, Tuple[float, int, str]] = {}
 
     def video_key(self, path: str) -> str:
@@ -81,8 +83,11 @@ class TrackService:
         seeds = self.seeds.seeds(video, obj_id)
         e = self.engine
         meta = self.tracks.meta(video, obj_id, e.name)
+        state = self.tracks.state(video, obj_id, e.name, e.model, seeds_hash(seeds) if seeds else None)
+        if obj_id in self.jobs.held(video):
+            state = TRACKING
         return {"object_id": obj_id,
-                "state": self.tracks.state(video, obj_id, e.name, e.model, seeds_hash(seeds) if seeds else None),
+                "state": state,
                 "engine": e.name, "model": e.model,
                 "frames": meta["frames"] if meta else None, "n_frames": meta["n_frames"] if meta else 0,
                 "seeds": seeds}
@@ -92,10 +97,12 @@ class TrackService:
 
     def select(self, video: str, obj_ids: Optional[List[int]] = None) -> List[int]:
         """The objects a Track press runs: the ids given, else every object not
-        tracked. Objects without seeds are dropped (there is nothing to track)."""
-        known = [o for o in self.seeds.objects(video) if self.seeds.seeds(video, o)]
+        tracked. Objects without seeds are dropped (there is nothing to track),
+        and so are objects a running job holds."""
+        held = self.jobs.held(video)
+        known = [o for o in self.seeds.objects(video) if self.seeds.seeds(video, o) and o not in held]
         if obj_ids is None:
-            return [o for o in known if self.object_info(video, o)["state"] != TRACKED]
+            return [o for o in known if self.object_info(video, o)["state"] not in (TRACKED, TRACKING)]
         return sorted({int(o) for o in obj_ids} & set(known))
 
     def clear_track(self, video: str, obj_id: int) -> Dict:

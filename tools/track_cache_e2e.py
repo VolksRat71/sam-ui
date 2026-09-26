@@ -8,6 +8,8 @@ Uses a synthetic video (three moving squares, generated here), never footage.
     python tools/track_cache_e2e.py --data-path "$DATA_PATH" --after-restart
 
     python tools/track_cache_e2e.py --data-path "$DATA_PATH" --correction   # any time
+    python tools/track_cache_e2e.py --data-path "$DATA_PATH" --responsive   # any time
+    (--api http://127.0.0.1:PORT for a backend other than 7263)
 
 Phase 1: track A and B; add C and Track again (only C may run); clear B.
 Phase 2: a new session must bring back A and C tracked and B untracked.
@@ -16,6 +18,8 @@ tracked, a negative click on one half plus a positive on the other must keep
 just that half, and the re-track must carry it to later frames. (A lone
 negative click empties the mask in SAM 2, in Meta's own flow too: a
 correction frame needs a positive click.)
+Responsive: while a track job runs, a click on another object must answer in
+well under a frame's worth of the job, and the job must still finish.
 """
 import argparse
 import json
@@ -177,16 +181,43 @@ def correction(data_path: Path):
         check(red > 2400 and orange < 100, f"after the correction, frame {g} is red only ({red} red, {orange} orange px)")
 
 
+def responsive():
+    import threading
+    sid, _ = start()
+    gql('mutation($s: String!) { clearPointsInVideo(input: {sessionId: $s}) { success } }', {"s": sid})
+    click(sid, A), click(sid, B)
+    box = {}
+
+    def run():
+        box["ids"], box["frames"], box["t"] = post_stream("/track_objects", {"session_id": sid})
+
+    t = threading.Thread(target=run)
+    t.start()
+    time.sleep(4)  # the job is propagating by now
+    t0 = time.time()
+    click(sid, C)
+    waited = time.time() - t0
+    t.join()
+    check(len(box["frames"]) == N, f"the job ran all {N} frames ({box['t']:.1f} s)")
+    check(waited < 2.0, f"a click during the job answered in {waited:.2f} s")
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--data-path", required=True, help="the backend's DATA_PATH")
     ap.add_argument("--after-restart", action="store_true")
     ap.add_argument("--correction", action="store_true")
+    ap.add_argument("--responsive", action="store_true")
+    ap.add_argument("--api", default=API)
     a = ap.parse_args()
-    if a.correction:
-        correction(Path(a.data_path))
-        sys.exit(0)
+    API = a.api
     video = Path(a.data_path) / REL
     if not video.exists():
         make_video(video)
+    if a.responsive:
+        responsive()
+        sys.exit(0)
+    if a.correction:
+        correction(Path(a.data_path))
+        sys.exit(0)
     phase2() if a.after_restart else phase1()
