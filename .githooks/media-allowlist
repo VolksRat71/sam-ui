@@ -4,3 +4,5 @@ studio/src/meta/assets/icons/angery.png
 studio/src/meta/assets/icons/heart.png
 studio/src/meta/assets/icons/whistle.png
 docs/images/studio.jpg
+studio/e2e/fixtures/parity/squares.mp4
+studio/e2e/fixtures/parity/twotone.mp4

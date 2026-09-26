@@ -28,3 +28,5 @@ shots.json
 
 # README screenshot (Meta sample clip only; also allowlisted in .githooks/media-allowlist)
 !docs/images/studio.jpg
+# browser-engine parity fixtures (synthetic clips from tools/make_parity_fixtures.py)
+!studio/e2e/fixtures/parity/*.mp4
