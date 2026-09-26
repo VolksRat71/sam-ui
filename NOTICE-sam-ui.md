@@ -29,6 +29,12 @@ section 4(b) of the licence requires. New files under `demo/backend/server/track
   overlap; each claims its objects (state "tracking") so no two share one.
   `Job-Id` header, `POST /cancel_track {session_id, job_id}`, `POST /track_jobs
   {session_id}` for progress; `cancelPropagateInVideo` also cancels a session's jobs.
+- Export (`tracks/export.py`, `POST /export`): tracked objects become a
+  rotoscoping working folder (`products.json`, `anchors.json` in full-res pixels,
+  `shots.json`, `data/mattes_tracked/<pid>/%05d.png` numbered from 1, optionally
+  `data/clip.mp4` + `data/frames/`), which the rotoscoping-video-subjects pipeline
+  loads and traces unchanged. Writes only under `SAM_UI_EXPORT_ROOT` (default
+  ~/Movies) and never replaces confirmed decision files without `force`.
 - Changed upstream files: `demo/backend/server/app.py`, `inference/predictor.py`,
   `data/schema.py`, `data/data_types.py`, `demo/frontend/schemas/inference-api-schema.graphql`
   (and the generated `demo/frontend/schema.graphql`).
