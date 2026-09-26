@@ -73,6 +73,10 @@ class JobRegistry:
                 j.canceled = True
             return len(jobs)
 
+    def session_busy(self, session_id: str) -> bool:
+        with self._lock:
+            return any(j.session_id == session_id for j in self._jobs.values())
+
     def running(self, video: Optional[str] = None) -> List[Dict]:
         with self._lock:
             return [j.info() for j in self._jobs.values() if video is None or j.video == video]

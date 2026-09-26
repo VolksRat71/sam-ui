@@ -16,6 +16,9 @@ POST /cancel_track {session_id, job_id}: cancel one job. (cancelPropagateInVideo
   cancels every job of its session.)
 POST /track_jobs {session_id}: the running jobs on the session's video, with
   progress.
+POST /export {session_id, out_dir, objects?, include_stale?, frames?, force?}:
+  write tracked objects as a rotoscoping working folder (see tracks/export.py);
+  out_dir must be under SAM_UI_EXPORT_ROOT (default ~/Movies). 400 on a refusal.
 
 The routes get everything through `resolve(session_id)`, so tests can mount
 them with a fake engine and no model.
@@ -29,6 +32,7 @@ from typing import Callable, Iterator, Optional
 from flask import Blueprint, Response, jsonify, request
 
 from inference.multipart import MultipartResponseBuilder
+from tracks.export import ExportError, export
 from tracks.jobs import Job
 from tracks.service import FrameRle, JobResult, TrackService
 
@@ -152,5 +156,17 @@ def make_blueprint(resolve: Callable[[str], TrackContext]) -> Blueprint:
     def track_jobs() -> Response:
         ctx = resolve(request.json["session_id"])
         return jsonify({"jobs": ctx.service.jobs.running(ctx.video)})
+
+    @bp.route("/export", methods=["POST"])
+    def export_route() -> Response:
+        data = request.json
+        ctx = resolve(data["session_id"])
+        try:
+            manifest = export(ctx.service, ctx.video, ctx.path, data["out_dir"], objects=data.get("objects"),
+                              include_stale=bool(data.get("include_stale")), frames=bool(data.get("frames")),
+                              force=bool(data.get("force")))
+        except ExportError as err:
+            return jsonify({"error": str(err)}), 400
+        return jsonify(manifest)
 
     return bp
