@@ -5,6 +5,7 @@ import {
   ServerObject,
   StudioState,
   canAddObject,
+  clearTarget,
   comparableIds,
   preferredEngine,
   dirtyIds,
@@ -302,6 +303,27 @@ describe('engines', () => {
     ]);
     expect(s.engine).toBe('sam3');
     expect(s.objects[0].state).toBe('tracked');
+  });
+
+  it('Clear track clears the engine on screen, or the engine that has the track', () => {
+    const s = run([
+      {
+        type: 'restore',
+        objects: [
+          twoEngines(0, 'tracked', 'untracked'),
+          twoEngines(1, 'untracked', 'tracked'), // SAM 3 only, SAM 2 on screen
+          twoEngines(2, 'untracked', 'untracked'),
+          twoEngines(3, 'tracked', 'stale'),
+        ],
+      },
+    ]);
+    const [a, b, c, d] = s.objects;
+    expect(clearTarget(a, 'sam2')).toEqual({engine: 'sam2', others: false});
+    expect(clearTarget(b, 'sam2')).toEqual({engine: 'sam3', others: false}); // was disabled
+    expect(clearTarget(c, 'sam2')).toBeNull();
+    expect(clearTarget(d, 'sam2')).toEqual({engine: 'sam2', others: true});
+    const held = run([{type: 'trackStarted', key: 1, ids: [0]}], s).objects[0];
+    expect(clearTarget(held, 'sam2')).toBeNull();
   });
 
   it('compares only objects both engines track', () => {

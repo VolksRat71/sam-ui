@@ -228,6 +228,30 @@ export function preferredEngine(
   return best != null && count(best) > 0 ? best : current;
 }
 
+/**
+ * What an object's Clear track button clears: the track on the engine on
+ * screen if there is one, else the track another engine holds (a video
+ * tracked with SAM 3 while SAM 2 is on screen), else, with several, all of
+ * them. Null when there is nothing to clear, or a job holds the object.
+ */
+export function clearTarget(o: StudioObject, engine: string): {engine: string | null; others: boolean} | null {
+  if (isTracking(o)) {
+    return null;
+  }
+  const has = (e: string) => {
+    const s = o.engines[e]?.state;
+    return s === 'tracked' || s === 'stale';
+  };
+  const others = Object.keys(o.engines).filter(e => e !== engine && has(e));
+  if (has(engine)) {
+    return {engine, others: others.length > 0};
+  }
+  if (others.length === 1) {
+    return {engine: others[0], others: false};
+  }
+  return others.length > 1 ? {engine: null, others: false} : null;
+}
+
 /** Objects both engines track with their current clicks: the ones worth comparing. */
 export function comparableIds(state: StudioState, a: string, b: string): number[] {
   return state.objects

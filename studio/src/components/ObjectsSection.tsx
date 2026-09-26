@@ -5,7 +5,7 @@
 import {Add, Export, TrashCan, Reset} from '@carbon/icons-react';
 import {OBJECT_LIMIT} from '~/config';
 import {engineLabel} from '~/state/engines';
-import {isTracking, needsPositiveClick, seedFrames, type StudioObject} from '~/state/objects';
+import {clearTarget, isTracking, needsPositiveClick, seedFrames, type StudioObject} from '~/state/objects';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
 
 type Props = {session: StudioSessionApi; onExport: () => void};
@@ -99,13 +99,32 @@ export default function ObjectsSection({session, onExport}: Props) {
                 )}
                 {o.error != null && <div className="object-error">Track failed: {o.error}</div>}
                 <div className="object-actions" onClick={e => e.stopPropagation()}>
-                  <button
-                    className="link-button"
-                    disabled={busy || isTracking(o) || o.state === 'untracked'}
-                    onClick={() => session.clearTrack(o.id)}
-                    title={`Forget this object's cached ${engineLabel(state.engine)} track; its clicks stay`}>
-                    <Reset size={14} /> Clear track
-                  </button>
+                  {(() => {
+                    const target = clearTarget(o, state.engine);
+                    const which =
+                      target == null
+                        ? 'track'
+                        : target.engine == null
+                          ? 'all tracks'
+                          : target.engine === state.engine && !target.others
+                            ? 'track'
+                            : `${engineLabel(target.engine)} track`;
+                    return (
+                      <button
+                        className="link-button"
+                        disabled={busy || target == null}
+                        onClick={() => target != null && session.clearTrack(o.id, target.engine)}
+                        title={
+                          target == null
+                            ? isTracking(o)
+                              ? 'A track job holds this object'
+                              : 'This object has no track to clear'
+                            : `Forget this object's cached ${which}; its clicks stay`
+                        }>
+                        <Reset size={14} /> Clear {which}
+                      </button>
+                    );
+                  })()}
                   <button
                     className="link-button danger"
                     disabled={busy || isTracking(o)}
