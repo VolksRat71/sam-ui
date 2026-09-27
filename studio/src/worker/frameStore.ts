@@ -37,9 +37,11 @@ export class FrameStore {
 
   /** Open a video (a URL, or a blob: URL), reading only what it needs to index the frames. */
   static async open(url: string, budget = DECODED_FRAME_BYTES): Promise<FrameStore> {
-    const source = url.startsWith('blob:')
-      ? new BlobSource(await (await fetch(url)).blob())
-      : new UrlSource(url, {requestInit: {credentials: 'same-origin', cache: 'no-store'}});
+    // a path ("/sam-ui/samples/x.mp4") is relative to the page; a worker has no base for it
+    const href = new URL(url, self.location.href).href;
+    const source = href.startsWith('blob:')
+      ? new BlobSource(await (await fetch(href)).blob())
+      : new UrlSource(href, {requestInit: {credentials: 'same-origin', cache: 'no-store'}});
     const input = new Input({source, formats: ALL_FORMATS});
     const track: InputVideoTrack | null = await input.getPrimaryVideoTrack();
     if (track == null) {
