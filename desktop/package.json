@@ -76,6 +76,7 @@
       "category": "public.app-category.video",
       "identity": null,
       "minimumSystemVersion": "14.0"
-    }
+    },
+    "afterPack": "scripts/adhoc-sign.js"
   }
 }
