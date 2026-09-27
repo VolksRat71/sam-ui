@@ -17,9 +17,8 @@
 // border is a piece and a hole border a hole; pieces are 8-connected, holes
 // 4-connected; points are the centres of the boundary pixels), measured
 // with cv2.contourArea (the shoelace area of those points), dropped under
-// minArea (150 px), and simplified with Douglas-Peucker at eps (1.2 px, as
-// cv2.approxPolyDP on a closed curve). Outlines of fewer than 3 points are
-// dropped.
+// minArea (150 px), and simplified with a port of cv2.approxPolyDP (closed,
+// eps 1.2 px). Outlines of fewer than 3 points are dropped.
 
 export type Point = [number, number];
 export type Outline = Point[];
@@ -155,61 +154,123 @@ export function outlineArea(points: Outline): number {
   return Math.abs(s) / 2;
 }
 
-function lineDistance(p: Point, a: Point, b: Point): number {
-  const dx = b[0] - a[0];
-  const dy = b[1] - a[1];
-  const len = Math.hypot(dx, dy);
-  if (len === 0) {
-    return Math.hypot(p[0] - a[0], p[1] - a[1]);
+/**
+ * cv2.approxPolyDP(points, eps, closed=True), ported from OpenCV's
+ * approx.cpp (approxPolyDP_): the two roughly farthest points (three
+ * passes), Douglas-Peucker between them, then its clean-up of points left
+ * on almost straight lines. The same vertices as OpenCV, in its order.
+ */
+export function simplifyClosed(src: Outline, epsilon: number): Outline {
+  let count = src.length;
+  if (count === 0) {
+    return [];
   }
-  return Math.abs(dy * (p[0] - a[0]) - dx * (p[1] - a[1])) / len;
-}
-
-/** Douglas-Peucker on points[from..to] (inclusive); marks the kept indices. */
-function dp(points: Outline, from: number, to: number, eps: number, keep: Uint8Array): void {
-  const stack: Array<[number, number]> = [[from, to]];
-  while (stack.length > 0) {
-    const [a, b] = stack.pop()!;
-    let worst = -1;
-    let at = -1;
-    for (let i = a + 1; i < b; i++) {
-      const d = lineDistance(points[i % points.length], points[a % points.length], points[b % points.length]);
-      if (d > worst) {
-        worst = d;
-        at = i;
+  const eps = epsilon * epsilon;
+  const dst: Outline = [];
+  const stack: Array<[number, number]> = [];
+  let pos = 0;
+  let rightStart = 0;
+  let startPt: Point = [-1e6, -1e6];
+  let leEps = false;
+  const read = (): Point => {
+    const pt = src[pos];
+    if (++pos >= count) {
+      pos = 0;
+    }
+    return pt;
+  };
+  // 1. two roughly farthest points
+  for (let i = 0; i < 3; i++) {
+    let maxDist = 0;
+    pos = (pos + rightStart) % count;
+    startPt = read();
+    for (let j = 1; j < count; j++) {
+      const pt = read();
+      const dx = pt[0] - startPt[0];
+      const dy = pt[1] - startPt[1];
+      const dist = dx * dx + dy * dy;
+      if (dist > maxDist) {
+        maxDist = dist;
+        rightStart = j;
       }
     }
-    if (at >= 0 && worst > eps) {
-      keep[at % points.length] = 1;
-      stack.push([a, at], [at, b]);
+    leEps = maxDist <= eps;
+  }
+  // 2. the stack
+  if (!leEps) {
+    const sliceStart = pos % count;
+    const mid = (rightStart + sliceStart) % count;
+    stack.push([mid, sliceStart], [sliceStart, mid]);
+  } else {
+    dst.push(startPt);
+  }
+  // 3. the recursion
+  while (stack.length > 0) {
+    const [sStart, sEnd] = stack.pop()!;
+    const endPt = src[sEnd];
+    pos = sStart;
+    startPt = read();
+    let split = 0;
+    if (pos !== sEnd) {
+      let maxDist = 0;
+      const dx = endPt[0] - startPt[0];
+      const dy = endPt[1] - startPt[1];
+      while (pos !== sEnd) {
+        const pt = read();
+        const dist = Math.abs((pt[1] - startPt[1]) * dx - (pt[0] - startPt[0]) * dy);
+        if (dist > maxDist) {
+          maxDist = dist;
+          split = (pos + count - 1) % count;
+        }
+      }
+      leEps = maxDist * maxDist <= eps * (dx * dx + dy * dy);
+    } else {
+      leEps = true;
+      startPt = src[sStart];
+    }
+    if (leEps) {
+      dst.push(startPt);
+    } else {
+      stack.push([split, sEnd], [sStart, split]);
     }
   }
-}
-
-/**
- * cv2.approxPolyDP(closed=True): split the ring at its first point and the
- * point farthest from it, and simplify each half.
- */
-export function simplifyClosed(points: Outline, eps: number): Outline {
-  const n = points.length;
-  if (n < 3) {
-    return points.slice();
-  }
-  let far = 0;
-  let best = -1;
-  for (let i = 1; i < n; i++) {
-    const d = Math.hypot(points[i][0] - points[0][0], points[i][1] - points[0][1]);
-    if (d > best) {
-      best = d;
-      far = i;
+  // 4. clean-up: drop points on almost straight lines
+  count = dst.length;
+  let newCount = count;
+  pos = count - 1;
+  const readDst = (): Point => {
+    const pt = dst[pos];
+    if (++pos >= count) {
+      pos = 0;
     }
+    return pt;
+  };
+  startPt = readDst();
+  let wpos = pos;
+  let pt = readDst();
+  for (let i = 0; i < count && newCount > 2; i++) {
+    const endPt = readDst();
+    const dx = endPt[0] - startPt[0];
+    const dy = endPt[1] - startPt[1];
+    const dist = Math.abs((pt[0] - startPt[0]) * dy - (pt[1] - startPt[1]) * dx);
+    const inner = (pt[0] - startPt[0]) * (endPt[0] - pt[0]) + (pt[1] - startPt[1]) * (endPt[1] - pt[1]);
+    if (dist * dist <= 0.5 * eps * (dx * dx + dy * dy) && dx !== 0 && dy !== 0 && inner >= 0) {
+      newCount--;
+      dst[wpos] = startPt = endPt;
+      if (++wpos >= count) {
+        wpos = 0;
+      }
+      pt = readDst();
+      i++;
+      continue;
+    }
+    dst[wpos] = startPt = pt;
+    if (++wpos >= count) {
+      wpos = 0;
+    }
+    pt = endPt;
   }
-  const keep = new Uint8Array(n);
-  keep[0] = 1;
-  keep[far] = 1;
-  dp(points, 0, far, eps, keep);
-  dp(points, far, n, eps, keep); // index n wraps to 0
-  return points.filter((_, i) => keep[i] === 1);
+  return dst.slice(0, newCount);
 }
 
 /** One frame's pieces and holes, each largest first, as contours.py keeps them. */
