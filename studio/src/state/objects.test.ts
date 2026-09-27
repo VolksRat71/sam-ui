@@ -47,12 +47,26 @@ describe('id allocation', () => {
     expect(nextObjectId(s2.objects)).toBe(7);
   });
 
-  it('reuses the top id only once that object is gone (the backend forgot it)', () => {
+  it('never reuses a deleted id when given the highest id ever used', () => {
     const s = run([
       {type: 'restore', objects: [server(0, 'tracked'), server(1, 'tracked')]},
       {type: 'removed', id: 1},
     ]);
-    expect(nextObjectId(s.objects)).toBe(1);
+    expect(nextObjectId(s.objects)).toBe(1); // what the objects alone allow
+    expect(nextObjectId(s.objects, 2)).toBe(2);
+  });
+});
+
+describe('names', () => {
+  it('start empty, take renames and backend names, and survive a sync', () => {
+    let s = run([{type: 'restore', objects: [server(0, 'tracked'), server(1, 'tracked')]}]);
+    expect(s.objects.map(o => o.name)).toEqual([null, null]);
+    s = run([{type: 'names', names: {1: 'cup', 9: 'gone'}}, {type: 'rename', id: 0, name: 'plate'}], s);
+    expect(s.objects.map(o => o.name)).toEqual(['plate', 'cup']);
+    s = run([{type: 'sync', objects: [server(0, 'tracked'), server(1, 'stale')]}], s);
+    expect(s.objects.map(o => o.name)).toEqual(['plate', 'cup']);
+    // a rename is metadata: the track state stays
+    expect(run([{type: 'rename', id: 0, name: 'bowl'}], s).objects[0].state).toBe('tracked');
   });
 });
 

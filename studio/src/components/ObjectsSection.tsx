@@ -2,9 +2,11 @@
 //
 // The Objects list: one row per object with Meta's colour-block thumbnail,
 // its track state, and its own Clear track / Remove actions.
-import {Add, Export, TrashCan, Reset} from '@carbon/icons-react';
+import {Add, Edit, Export, TrashCan, Reset} from '@carbon/icons-react';
+import {useEffect, useRef, useState} from 'react';
 import {OBJECT_LIMIT} from '~/config';
 import {BROWSER_ENGINE, engineLabel} from '~/state/engines';
+import {NAME_MAX, objectName} from '~/state/fileNames';
 import {clearTarget, isTracking, needsPositiveClick, seedFrames, type StudioObject} from '~/state/objects';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
 
@@ -19,6 +21,80 @@ function StateBadge({o}: {o: StudioObject}) {
     );
   }
   return <span className={`badge ${o.state}`}>{o.state}</span>;
+}
+
+/** The object's name; double-click it, or the pencil, to rename in place. */
+function ObjectName({o, onRename}: {o: StudioObject; onRename: (name: string) => void}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const done = useRef(false);
+  const input = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (editing) {
+      input.current?.focus();
+      input.current?.select();
+    }
+  }, [editing]);
+  const start = () => {
+    done.current = false;
+    setDraft(o.name ?? objectName(o));
+    setEditing(true);
+  };
+  const finish = (save: boolean) => {
+    if (done.current) {
+      return; // Enter, then the blur it causes
+    }
+    done.current = true;
+    setEditing(false);
+    if (save && draft.trim() !== (o.name ?? objectName(o))) {
+      onRename(draft);
+    }
+  };
+  if (editing) {
+    return (
+      <input
+        ref={input}
+        className="object-name-input"
+        value={draft}
+        maxLength={NAME_MAX}
+        aria-label={`Rename ${objectName(o)}`}
+        onClick={e => e.stopPropagation()}
+        onChange={e => setDraft(e.target.value)}
+        onBlur={() => finish(true)}
+        onKeyDown={e => {
+          e.stopPropagation(); // not the video's shortcuts
+          if (e.key === 'Enter') {
+            finish(true);
+          } else if (e.key === 'Escape') {
+            finish(false);
+          }
+        }}
+      />
+    );
+  }
+  return (
+    <span className="object-name">
+      <span
+        className="object-name-text"
+        title="Double-click to rename"
+        onDoubleClick={e => {
+          e.stopPropagation();
+          start();
+        }}>
+        {objectName(o)}
+      </span>
+      <button
+        className="icon-button small rename-button"
+        title="Rename"
+        aria-label={`Rename ${objectName(o)}`}
+        onClick={e => {
+          e.stopPropagation();
+          start();
+        }}>
+        <Edit size={14} />
+      </button>
+    </span>
+  );
 }
 
 function describe(o: StudioObject): string {
@@ -64,7 +140,7 @@ export default function ObjectsSection({session, onExport}: Props) {
               </div>
               <div className="object-body">
                 <div className="object-title">
-                  <span>Object {o.id + 1}</span>
+                  <ObjectName o={o} onRename={name => session.renameObject(o.id, name)} />
                   <StateBadge o={o} />
                 </div>
                 <div className="object-meta">{describe(o)}</div>

@@ -4,6 +4,7 @@
 // folder (POST /export), under what product id, prompt and colour. The
 // backend checks the same rules; checking here first keeps the round trip
 // for real refusals (a folder outside the export root, existing decisions).
+import {objectName, productId} from './fileNames';
 import type {StudioObject} from './objects';
 
 export const PRODUCT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
@@ -27,16 +28,26 @@ export type ExportOptions = {
 /** The request body's `objects`: {obj_id: {id, prompt, color}}. */
 export type ExportObjects = Record<string, {id: string; prompt: string; color: string}>;
 
+/** One row per object with a track; product ids from the objects' names, made unique. */
 export function defaultRows(objects: ReadonlyArray<StudioObject>): ExportRow[] {
+  const seen = new Set<string>();
   return objects
     .filter(o => o.state === 'tracked' || o.state === 'stale')
-    .map(o => ({
-      objectId: o.id,
-      include: true, // a stale row is sent only with include stale on
-      id: `object_${o.id + 1}`,
-      prompt: `object ${o.id + 1}`,
-      color: o.color.toLowerCase(),
-    }));
+    .map(o => {
+      const base = productId(objectName(o), o.id);
+      let id = base;
+      for (let k = 2; seen.has(id); k++) {
+        id = `${base}_${k}`;
+      }
+      seen.add(id);
+      return {
+        objectId: o.id,
+        include: true, // a stale row is sent only with include stale on
+        id,
+        prompt: o.name ?? `object ${o.id + 1}`,
+        color: o.color.toLowerCase(),
+      };
+    });
 }
 
 /** Rows that would be sent: included, and stale ones only when allowed. */

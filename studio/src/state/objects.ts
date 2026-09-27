@@ -53,6 +53,8 @@ export type EngineTrack = {
 
 export type StudioObject = {
   id: number;
+  /** The user's name for it; null shows the default ("Object N"). */
+  name: string | null;
   color: string;
   /** The current engine's track: a view of `engines[engine]`. */
   state: TrackState;
@@ -106,6 +108,9 @@ export type Action =
   /** engine null: every engine's track was cleared. */
   | {type: 'trackCleared'; id: number; engine?: string | null}
   | {type: 'removed'; id: number}
+  | {type: 'rename'; id: number; name: string | null}
+  /** Names from the backend (ids it does not name keep theirs). */
+  | {type: 'names'; names: Record<number, string>}
   | {type: 'reset'};
 
 export const initialState: StudioState = {
@@ -165,6 +170,7 @@ export function fromServer(o: ServerObject, engine: string = DEFAULT_ENGINE): St
   return viewed(
     {
       id: o.objectId,
+      name: null,
       color: colorFor(o.objectId),
       state: 'untracked',
       frames: null,
@@ -261,10 +267,12 @@ export function comparableIds(state: StudioState, a: string, b: string): number[
 
 /**
  * The id for a new object: one past the highest id known, restored ones
- * included, so a new object never lands on a restored object's seeds.
+ * included, so a new object never lands on a restored object's seeds, and
+ * at least `floor` (one past the highest id ever used on this video), so an
+ * id, and with it the default name "Object N", is never reused after a delete.
  */
-export function nextObjectId(objects: ReadonlyArray<{id: number}>): number {
-  return objects.reduce((max, o) => Math.max(max, o.id), -1) + 1;
+export function nextObjectId(objects: ReadonlyArray<{id: number}>, floor = 0): number {
+  return Math.max(objects.reduce((max, o) => Math.max(max, o.id), -1) + 1, floor);
 }
 
 export function canAddObject(state: StudioState, limit: number): boolean {
@@ -331,7 +339,7 @@ export function reducer(state: StudioState, action: Action): StudioState {
             return o;
           }
           server.delete(o.id);
-          return {...fromServer(s, state.engine), running: o.running, error: o.error};
+          return {...fromServer(s, state.engine), name: o.name, running: o.running, error: o.error};
         });
       const added = [...server.values()].map(o => fromServer(o, state.engine));
       const objects = [...kept, ...added].sort(byId);
@@ -352,6 +360,7 @@ export function reducer(state: StudioState, action: Action): StudioState {
       }
       const added: StudioObject = {
         id: action.id,
+        name: null,
         color: colorFor(action.id),
         state: 'untracked',
         frames: null,
@@ -464,6 +473,15 @@ export function reducer(state: StudioState, action: Action): StudioState {
         ...state,
         objects: state.objects.filter(o => o.id !== action.id),
         activeId: state.activeId === action.id ? null : state.activeId,
+      };
+
+    case 'rename':
+      return update(state, action.id, o => ({...o, name: action.name}));
+
+    case 'names':
+      return {
+        ...state,
+        objects: state.objects.map(o => (action.names[o.id] != null ? {...o, name: action.names[o.id]} : o)),
       };
 
     case 'reset':

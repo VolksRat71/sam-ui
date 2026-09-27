@@ -17,6 +17,7 @@ import {
 import type {EffectIndex, Effects} from '@/common/components/video/effects/Effects';
 import {ChevronDown, ChevronRight} from '@carbon/icons-react';
 import {useEffect, useState, type ReactNode} from 'react';
+import {objectName} from '~/state/fileNames';
 import {readJson, writeJson} from '~/lib/storage';
 import {effectOf} from '~/state/objectEffects';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
@@ -123,13 +124,15 @@ export default function EffectsSection({session}: Props) {
   const locked = session.exportProgress != null || !meta.decoded;
   const focused = state.activeId;
   const mine = focused == null ? null : effectOf(objectEffects, focused);
+  const focusedObject = focused == null ? undefined : session.state.objects.find(o => o.id === focused);
+  const focusedName = focused == null ? null : objectName(focusedObject ?? {id: focused});
   const active: Active | null =
     mine == null ? null : {...mine, numVariants: variantCounts[mine.name] ?? 1};
 
   return (
     <div className="effects">
       <EffectGrid
-        title={focused == null ? 'Selected object' : `Object ${focused + 1}`}
+        title={focusedName ?? 'Selected object'}
         effects={[...highlightEffects, ...moreEffects]}
         active={active}
         disabled={locked || focused == null}
@@ -139,7 +142,7 @@ export default function EffectsSection({session}: Props) {
         <div className="effect-note">
           {focused == null
             ? 'Select an object to choose its effect. Each object keeps its own.'
-            : `Object ${focused + 1}'s effect. Every object keeps its own until you change it.`}
+            : `${focusedName}'s effect. Every object keeps its own until you change it.`}
         </div>
       </EffectGrid>
       <EffectGrid

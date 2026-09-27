@@ -1350,3 +1350,34 @@ code {
 .engine-off:focus-within .engine-tip {
   display: block;
 }
+
+/* object names: rename in place (ObjectsSection) */
+.object-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.object-name-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rename-button {
+  opacity: 0;
+}
+.object-row:hover .rename-button,
+.rename-button:focus-visible {
+  opacity: 1;
+}
+.object-name-input {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid var(--gray-500);
+  border-radius: 4px;
+  background: var(--gray-900);
+  color: var(--text);
+  font: inherit;
+}

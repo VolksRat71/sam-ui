@@ -127,6 +127,8 @@ const handlers: Handlers = {
   effectVariants: ({names}) => highlight.variantCounts(names),
   exportVideo: ({effects}) => exportVideo(effects),
   setLocalOptions: options => session.setLocalOptions(options),
+  renameObject: ({objectId, name}) => session.renameObject(objectId, name),
+  objectNames: () => session.objectNames(),
 };
 
 async function handleCall(call: StudioCall): Promise<void> {

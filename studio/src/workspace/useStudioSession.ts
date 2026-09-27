@@ -26,6 +26,7 @@ import {API_ENDPOINT, OBJECT_LIMIT} from '~/config';
 import type {LocalModelStatus, LocalOptions} from '~/local/LocalEngine';
 import {parseQuality} from '~/local/sam2/config';
 import {BROWSER_ENGINE, pickerEngines} from '~/state/engines';
+import {cleanObjectName} from '~/state/fileNames';
 import {
   DEFAULT_ENGINE,
   NormPoint,
@@ -114,6 +115,11 @@ export default function useStudioSession(video: VideoItem) {
   const [localModel, setLocalModel] = useState<LocalModelStatus | null>(null);
   const localOptionsRef = useRef(localOptions);
   localOptionsRef.current = localOptions;
+  // one past the highest object id ever used on this video, so a deleted
+  // object's number is never handed out again (remembered per browser)
+  const nextIdKey = `sam-ui-studio:next-object:${video.path}`;
+  const idFloor = useRef<number>(readJson<number>(nextIdKey, 0));
+  const namesWarned = useRef(false);
 
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -236,6 +242,11 @@ export default function useStudioSession(video: VideoItem) {
       sessionIdRef.current = info.sessionId;
       dispatch({type: 'restore', objects: info.objects});
       setStatus('ready');
+      // names are plain metadata: an older backend has none, and that is fine
+      bridge
+        .call('objectNames', {})
+        .then(res => dispatch({type: 'names', names: res.names}))
+        .catch(() => {});
       // show an engine that has tracks: a SAM 3-only video opens on SAM 3
       const shown = preferredEngine(
         info.objects,
@@ -307,6 +318,17 @@ export default function useStudioSession(video: VideoItem) {
     [bridge, serial, sync],
   );
 
+  /** A new object's id: past every id this video has used, and remembered. */
+  const claimId = useCallback(
+    (objects: ReadonlyArray<{id: number}>) => {
+      const id = nextObjectId(objects, idFloor.current);
+      idFloor.current = id + 1;
+      writeJson(nextIdKey, idFloor.current);
+      return id;
+    },
+    [nextIdKey],
+  );
+
   const addPoint = useCallback(
     (x: number, y: number, label: 0 | 1) => {
       if (bridge == null || busy) {
@@ -323,14 +345,14 @@ export default function useStudioSession(video: VideoItem) {
           setWarning(`An object limit of ${OBJECT_LIMIT} is set. Remove one to add another.`);
           return;
         }
-        id = nextObjectId(s.objects);
+        id = claimId(s.objects);
         dispatch({type: 'add', id});
         bridge.call('setActiveObject', {objectId: id}).catch(() => {});
       }
       const current = s.objects.find(o => o.id === id)?.points[frame] ?? [];
       setPoints(id, frame, [...current, [x, y, label]]);
     },
-    [bridge, busy, playing, frame, setPoints],
+    [bridge, busy, playing, frame, setPoints, claimId],
   );
 
   const removePoint = useCallback(
@@ -351,10 +373,28 @@ export default function useStudioSession(video: VideoItem) {
     if (!canAddObject(s, OBJECT_LIMIT)) {
       return;
     }
-    const id = nextObjectId(s.objects);
+    const id = claimId(s.objects);
     dispatch({type: 'add', id});
     bridge?.call('setActiveObject', {objectId: id}).catch(() => {});
-  }, [bridge]);
+  }, [bridge, claimId]);
+
+  /** Rename an object (an empty name goes back to "Object N"). Metadata only: no track goes stale. */
+  const renameObject = useCallback(
+    (objectId: number, raw: string) => {
+      const name = cleanObjectName(raw);
+      dispatch({type: 'rename', id: objectId, name});
+      bridge
+        ?.call('renameObject', {objectId, name})
+        .then(res => {
+          if (!res.saved && !namesWarned.current) {
+            namesWarned.current = true;
+            setWarning("Names won't be saved until the backend is updated");
+          }
+        })
+        .catch(error => setWarning(message(error)));
+    },
+    [bridge],
+  );
 
   const selectObject = useCallback(
     (id: number | null) => {
@@ -600,9 +640,11 @@ export default function useStudioSession(video: VideoItem) {
       }
       const o = stateRef.current.objects.find(x => x.id === objectId);
       serial(async () => {
-        // an object never clicked exists only here
+        // an object never clicked exists only here (with, at most, a name)
         if (o != null && hasSeeds(o)) {
           await bridge.call('removeObject', {objectId});
+        } else if (o?.name != null) {
+          await bridge.call('renameObject', {objectId, name: null}).catch(() => {});
         }
         dispatch({type: 'removed', id: objectId});
         await sync();
@@ -677,6 +719,7 @@ export default function useStudioSession(video: VideoItem) {
     addPoint,
     removePoint,
     addObject,
+    renameObject,
     selectObject,
     track,
     cancelTrack,

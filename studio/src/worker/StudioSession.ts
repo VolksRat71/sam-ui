@@ -775,6 +775,41 @@ export default class StudioSession {
     return {selected, jobId, outcome};
   }
 
+  /** POST /rename_object. A backend from before names answers 404: not saved, no error. */
+  async renameObject(objectId: number, name: string | null): Promise<{saved: boolean}> {
+    // an older backend has no such route: its CORS preflight fails (a
+    // network error) or the call 404s; either way the name stays unsaved
+    const response = await fetch(`${this._endpoint}/rename_object`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({session_id: this.sessionId, object_id: objectId, name}),
+    }).catch(() => null);
+    if (response == null || response.status === 404 || response.status === 405) {
+      return {saved: false};
+    }
+    if (!response.ok) {
+      throw new Error(`rename_object: HTTP ${response.status}`);
+    }
+    return {saved: true};
+  }
+
+  /** POST /object_names; a backend from before names has none (404). */
+  async objectNames(): Promise<{names: Record<number, string>; supported: boolean}> {
+    const response = await fetch(`${this._endpoint}/object_names`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({session_id: this.sessionId}),
+    }).catch(() => null);
+    if (response == null || response.status === 404 || response.status === 405) {
+      return {names: {}, supported: false};
+    }
+    if (!response.ok) {
+      throw new Error(`object_names: HTTP ${response.status}`);
+    }
+    const body = (await response.json()) as {names?: Record<string, string>};
+    return {names: Object.fromEntries(Object.entries(body.names ?? {}).map(([k, v]) => [Number(k), v])), supported: true};
+  }
+
   /** The browser engine's model size and hole fill. */
   setLocalOptions(options: LocalOptions): void {
     this._local.setOptions(options);

@@ -11,6 +11,7 @@ import {
   PlayFilledAlt,
 } from '@carbon/icons-react';
 import {useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent} from 'react';
+import {objectName} from '~/state/fileNames';
 import {seedFrames} from '~/state/objects';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
 
@@ -104,7 +105,7 @@ export default function Timeline({session}: Props) {
           <div className="lane-label scrub-label">Video</div>
           {state.objects.map(o => (
             <div key={o.id} className="lane-label" style={{color: o.id === state.activeId ? '#fff' : undefined}}>
-              Object {o.id + 1}
+              {objectName(o)}
             </div>
           ))}
         </div>

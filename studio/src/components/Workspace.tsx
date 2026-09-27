@@ -9,6 +9,7 @@ import {Panel, PanelGroup, PanelResizeHandle} from 'react-resizable-panels';
 import {OBJECT_LIMIT} from '~/config';
 import {panelStorage} from '~/lib/storage';
 import {engineLabel} from '~/state/engines';
+import {objectName} from '~/state/fileNames';
 import useStudioSession, {type VideoItem} from '~/workspace/useStudioSession';
 import ConfirmModal from './ConfirmModal';
 import EnginePicker from './EnginePicker';
@@ -34,6 +35,7 @@ export default function Workspace({video, renderMedia}: Props) {
   const [exportVideoOpen, setExportVideoOpen] = useState(false);
   const videoName = video.path.split('/').pop() ?? 'video';
   const jobs = state.jobs;
+  const nameOf = (id: number) => objectName(state.objects.find(o => o.id === id) ?? {id});
   const n = meta.numFrames;
 
   // keyboard: space plays, arrows step (not while typing in a field)
@@ -72,7 +74,7 @@ export default function Workspace({video, renderMedia}: Props) {
           {jobs.map(job => (
             <span key={job.key} className="job-chip">
               <span className="spinner small" />
-              {job.canceling ? 'Cancelling' : 'Tracking'} {job.ids.map(id => `Object ${id + 1}`).join(', ')}
+              {job.canceling ? 'Cancelling' : 'Tracking'} {job.ids.map(nameOf).join(', ')}
               <span className="engine-tag">{engineLabel(job.engine)}</span>
               {job.frames === 0 && session.engines.find(e => e.name === job.engine)?.loading && (
                 <span className="muted">loading the model…</span>
@@ -96,7 +98,7 @@ export default function Workspace({video, renderMedia}: Props) {
           {session.foreignJobs.map(job => (
             <span key={job.jobId} className="job-chip foreign" title="A job started in another tab or session">
               <span className="spinner small" />
-              Elsewhere: {job.objects.map(id => `Object ${id + 1}`).join(', ')}
+              Elsewhere: {job.objects.map(nameOf).join(', ')}
               <span className="muted">
                 {job.framesDone}
                 {job.nFrames != null ? `/${job.nFrames}` : ''}

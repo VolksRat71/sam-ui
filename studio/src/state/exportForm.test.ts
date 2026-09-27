@@ -46,3 +46,14 @@ describe('export form', () => {
     });
   });
 });
+
+describe('defaultRows from names', () => {
+  it('uses each name as the product id and prompt, unique in order', () => {
+    const o = (id: number, name: string | null) => ({...fromServer({objectId: id, state: 'tracked', nFrames: 1, seeds: []}), name});
+    expect(defaultRows([o(0, 'Red cup'), o(1, 'red cup'), o(2, null)]).map(r => [r.id, r.prompt])).toEqual([
+      ['red_cup', 'Red cup'],
+      ['red_cup_2', 'red cup'],
+      ['object_3', 'object 3'],
+    ]);
+  });
+});

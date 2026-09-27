@@ -10,6 +10,7 @@
 // they stay crisp, keep their size, and never cover what they mark.
 import {AddFilled, SubtractFilled, ZoomIn, ZoomOut} from '@carbon/icons-react';
 import {useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type PointerEvent} from 'react';
+import {objectName} from '~/state/fileNames';
 import {needsPositiveClick} from '~/state/objects';
 import {FIT, panBy, toScreen, zoomAt, type View} from '~/state/view';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
@@ -174,7 +175,7 @@ export default function Preview({session, mode, onModeChange}: Props) {
           {active != null ? (
             <span className="chip">
               <span className="swatch" style={{background: active.color}} />
-              Object {active.id + 1}
+              {objectName(active)}
             </span>
           ) : (
             <span className="muted">

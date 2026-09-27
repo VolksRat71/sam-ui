@@ -112,6 +112,13 @@ export type StudioMethods = {
   effectVariants: {args: {names: string[]}; result: Record<string, number>};
   /** Render the video with these per-object effects as an MP4 (no editing aids). */
   exportVideo: {args: {effects: Record<number, {name: string; variant: number}>}; result: ArrayBuffer};
+  /**
+   * Name an object (null: back to its default). `saved` is false when the
+   * backend predates names (it keeps the name for this session only).
+   */
+  renameObject: {args: {objectId: number; name: string | null}; result: {saved: boolean}};
+  /** The backend's object names; `supported` is false on a backend without names. */
+  objectNames: {args: Record<string, never>; result: {names: Record<number, string>; supported: boolean}};
   /** The browser engine's model size and hole fill (tracks made otherwise go stale). */
   setLocalOptions: {args: LocalOptions; result: void};
 };
