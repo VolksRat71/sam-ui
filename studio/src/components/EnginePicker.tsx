@@ -18,6 +18,7 @@ import {type Quality, VARIANTS} from '~/local/sam2/config';
 import {BROWSER_ENGINE, engineLabel} from '~/state/engines';
 import type {EngineInfo} from '~/worker/protocol';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
+import {desktopBridge} from '~/lib/desktop';
 
 type Props = {session: StudioSessionApi};
 type Availability = Record<Quality, 'local' | 'cached' | 'download' | null>;
@@ -29,6 +30,7 @@ const labelOf = (e: EngineInfo) => e.label ?? engineLabel(e.name);
 
 /** Why an engine cannot run here, with its link: the tooltip of a disabled entry. */
 function Why({engine}: {engine: EngineInfo}) {
+  const desktop = desktopBridge();
   return (
     <span className="engine-tip" role="tooltip">
       {engine.reason ?? 'Not available here.'}
@@ -39,6 +41,11 @@ function Why({engine}: {engine: EngineInfo}) {
             Download the desktop app
           </a>
         </>
+      )}
+      {desktop != null && engine.name === 'sam3' && /weights/i.test(engine.reason ?? '') && (
+        <button type="button" className="button small engine-setup" onClick={() => desktop.setupSam3()}>
+          Set up SAM 3…
+        </button>
       )}
     </span>
   );

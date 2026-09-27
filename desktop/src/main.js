@@ -267,7 +267,8 @@ async function main() {
   }
   const appOrigin = `http://127.0.0.1:${backendPort}`;
   mainWindow = new BrowserWindow({
-    width: 1600, height: 1000, show: false, title: 'sam-ui', backgroundColor: '#000000', webPreferences: WEB_PREFERENCES,
+    width: 1600, height: 1000, show: false, title: 'sam-ui', backgroundColor: '#000000',
+    webPreferences: {...WEB_PREFERENCES, preload: path.join(__dirname, 'app-preload.js')},
   });
   // the window only ever shows the app; links go to the browser, https only
   mainWindow.webContents.on('will-navigate', (event, url) => {
@@ -322,6 +323,10 @@ ipcMain.handle('sam3:download', async (event, token) => {
     return {ok: false, error: err.message};
   }
   // the token only ever lived in this call's arguments; nothing stores it
+});
+// studio's engine picker, in the main window only, asks for the SAM 3 setup window
+ipcMain.on('app:setup-sam3', event => {
+  if (mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents) openSam3Window();
 });
 ipcMain.on('sam3:open', (event, which) => {
   if (fromSam3Window(event) && SAM3_LINKS[which]) shell.openExternal(SAM3_LINKS[which]);

@@ -1344,6 +1344,20 @@ code {
 .engine-off:focus-within .engine-tip {
   display: block;
 }
+/* the 6px between an entry and its tooltip still counts as hovering it, so
+   the pointer can reach the tooltip's link or button */
+.engine-tip::before {
+  content: '';
+  position: absolute;
+  top: -7px;
+  left: 0;
+  right: 0;
+  height: 7px;
+}
+.engine-setup {
+  display: block;
+  margin-top: 8px;
+}
 
 /* object names: rename in place (ObjectsSection) */
 .object-name {
