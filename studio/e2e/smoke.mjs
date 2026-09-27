@@ -49,7 +49,7 @@ const errors = [];
 page.on('pageerror', e => errors.push(String(e)));
 
 const rows = () => page.$$eval('.object-row', rs => rs.map(r => r.innerText.split('\n').slice(0, 2).join(' ')));
-const openName = () => page.$eval('.media-item.selected .media-name', e => e.innerText).catch(() => '(none)');
+const openName = () => page.$eval('.media-item.selected .media-name', e => e.title.split('/').pop()).catch(() => '(none)');
 const idle = () =>
   page.waitForFunction(() => !document.querySelector('.job-chip') && document.querySelector('.cta')?.innerText === 'Nothing to track', null, {
     timeout: 300000,

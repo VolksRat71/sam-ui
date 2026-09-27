@@ -8,6 +8,7 @@ import {useEffect, useState, type ReactNode} from 'react';
 import {Panel, PanelGroup, PanelResizeHandle} from 'react-resizable-panels';
 import {OBJECT_LIMIT} from '~/config';
 import {panelStorage} from '~/lib/storage';
+import {videoDisplayName} from '~/lib/uploadNames';
 import {BROWSER_ENGINE, engineLabel} from '~/state/engines';
 import {objectName} from '~/state/fileNames';
 import useStudioSession, {type VideoItem} from '~/workspace/useStudioSession';
@@ -35,7 +36,7 @@ export default function Workspace({video, renderMedia}: Props) {
   const [mode, setMode] = useState<LabelMode>('positive');
   const [confirmStartOver, setConfirmStartOver] = useState(false);
   const [exporting, setExporting] = useState<ExportChoice | null>(null);
-  const videoName = video.path.split('/').pop() ?? 'video';
+  const videoName = videoDisplayName(video.path);
   const jobs = state.jobs;
   // no backend, or none of its engines can run: the browser engine is all there is
   const browserOnly = session.engines.length > 0 && session.engines.every(e => e.local || !e.available);
@@ -201,7 +202,7 @@ export default function Workspace({video, renderMedia}: Props) {
         <ExportVideoModal session={session} videoName={videoName} onClose={() => setExporting(null)} />
       )}
       {(exporting === 'videos' || exporting === 'vectors') && (
-        <MaskExportModal session={session} kind={exporting} videoPath={video.path} onClose={() => setExporting(null)} />
+        <MaskExportModal session={session} kind={exporting} videoPath={videoName} onClose={() => setExporting(null)} />
       )}
       {exporting === 'folder' && (
         <ExportPanel

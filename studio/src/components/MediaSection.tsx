@@ -7,6 +7,7 @@ import {TrashCan, Upload} from '@carbon/icons-react';
 import {useRef, useState} from 'react';
 import {graphql, useMutation} from 'react-relay';
 import {explainGraphQLError} from '~/lib/errors';
+import {rememberUploadName, videoDisplayName} from '~/lib/uploadNames';
 import {isDeletable} from '~/state/media';
 import type {VideoItem} from '~/workspace/useStudioSession';
 import type {MediaSectionUploadMutation} from './__generated__/MediaSectionUploadMutation.graphql';
@@ -24,10 +25,6 @@ type Props = {
   onDelete: (video: VideoItem) => void;
   toVideoItem: (v: {path: string; width: number; height: number; posterPath?: string | null}) => VideoItem;
 };
-
-function fileName(path: string): string {
-  return path.split('/').pop() ?? path;
-}
 
 export default function MediaSection({videos, current, locked, onSelect, onUploaded, onDelete, toVideoItem}: Props) {
   const input = useRef<HTMLInputElement>(null);
@@ -58,6 +55,7 @@ export default function MediaSection({videos, current, locked, onSelect, onUploa
           setError(explainGraphQLError(errors[0].message));
           return;
         }
+        rememberUploadName(response.uploadVideo.path, file.name);
         onUploaded(toVideoItem(response.uploadVideo));
       },
       onError: err => setError(explainGraphQLError(err.message || 'Upload failed.')),
@@ -109,7 +107,7 @@ export default function MediaSection({videos, current, locked, onSelect, onUploa
                 ) : (
                   <video className="media-thumb" src={`${v.url}#t=0.001`} muted preload="metadata" />
                 )}
-                <span className="media-name">{fileName(v.path)}</span>
+                <span className="media-name" title={v.path}>{videoDisplayName(v.path)}</span>
                 <span className="media-dims">
                   {v.width}×{v.height}
                 </span>
@@ -120,7 +118,7 @@ export default function MediaSection({videos, current, locked, onSelect, onUploa
                   disabled={locked && selected}
                   onClick={() => onDelete(v)}
                   title={locked && selected ? 'Wait for the running track jobs' : 'Delete this upload'}
-                  aria-label={`Delete ${fileName(v.path)}`}>
+                  aria-label={`Delete ${videoDisplayName(v.path)}`}>
                   <TrashCan size={16} />
                 </button>
               )}

@@ -1471,7 +1471,7 @@ code {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin: 0 8px 8px;
+  flex: none;
   padding: 8px 12px;
   border: 1px solid #fa871966;
   border-radius: var(--radius);
