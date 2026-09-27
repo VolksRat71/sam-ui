@@ -55,15 +55,24 @@ swift e2e/avcheck.swift e2e/out/export.mp4   # decodes it with AVFoundation (Qui
   clicking, adding objects and correcting while one runs, and pressing Track
   again starts a second job for the objects the first does not hold. Each job
   shows its progress in the top bar and has its own cancel button.
-- **Engines**: the SAM 2 / SAM 3 picker next to Track chooses which engine
-  Track runs and which engine's tracks the preview shows (switching repaints
-  from that engine's cache). An engine the backend cannot run is disabled,
-  with the reason as its tooltip. SAM 3 loads on its first job (about 30 s,
+- **Engines**: the engine button next to Track chooses which engine Track
+  runs and which engine's tracks the preview shows (switching repaints from
+  that engine's cache). Its popover lists SAM 2, SAM 3 and the browser engine;
+  one that cannot run here is disabled, with the reason (and a link, when it
+  has one). SAM 3 loads on its first job (about 30 s,
   shown on the job). Clicks always go through SAM 2's session. Each object
   shows a badge per engine; *Clear track* clears the engine on screen. When
   both engines track an object with its current clicks, studio asks
   `/track_disagreement` and shows the mean IoU, and marks the frames that
   disagree in red on the object's swimlane.
+- **Browser · SAM 2.1 tiny** runs SAM 2.1 tiny in the browser, on WebGPU
+  (see *Browser engine* below). With it chosen, clicks and Track run in this
+  browser; the backend still stores the clicks. Its popover entry holds the
+  model size, 512 px (fp16, 83 MB) or 1024 px (fp32, 190 MB), and an optional
+  hole fill; tracks made with another setting show as stale. The model
+  downloads on first use (progress on the engine button) and is kept in the
+  browser's Cache Storage. Its tracks live in this tab for now (a reload
+  forgets them), and Export for rotoscoping needs a SAM 2 or SAM 3 track.
 - **Track state** is a badge on each object: untracked, stale, tracked, or
   tracking (a job holds it, possibly in another tab). *Clear track* forgets the
   cached track and keeps the clicks. *Remove* deletes the object.
@@ -124,9 +133,54 @@ Compared with Meta's demo UI, which studio replaced:
 | Close the session on unload | missing: the backend expires idle sessions (30 min). A visible tab touches its session every 5 minutes to keep it |
 | Stats overlay (debug) | missing |
 
-Studio only: SAM 3 engine, per-engine badges and disagreement flags, objects restored on reload (with their seed masks), track-state badges, Clear track,
+Studio only: SAM 3 engine, the in-browser SAM 2.1 tiny engine, per-engine badges and disagreement flags, objects restored on reload (with their seed masks), track-state badges, Clear track,
 concurrent jobs, jobs from other tabs shown, zoom and pan, export for
 rotoscoping, and keyboard shortcuts.
+
+## Browser engine
+
+`src/local/` runs SAM 2.1 tiny video tracking client side, with ONNX Runtime
+Web on WebGPU (`ort.env.wasm.numThreads = 1`, so no cross-origin isolation is
+needed). The models are the Apache-2.0 exports
+[square-zero-labs/sam2.1-tiny-video-onnx](https://huggingface.co/square-zero-labs/sam2.1-tiny-video-onnx)
+(1024 px, fp32) and
+[diffusionstudio/sam2.1-tiny-video-onnx-fp16](https://huggingface.co/diffusionstudio/sam2.1-tiny-video-onnx-fp16)
+(512 px), fetched from Hugging Face at run time and never committed. In dev,
+a copy in the gitignored `studio/.models/<repo>/` is used instead
+(`VITE_MODEL_BASE` points elsewhere).
+
+- `sam2/`: the propagation logic ported from `sam2/sam2_video_predictor.py` and
+  `sam2/modeling/sam2_base.py` (memory bank, object pointers, forward then
+  reverse pass, seeds), the pixel work (torch-exact resizes, RLE, hole fill),
+  and the five graphs on ORT (`ortModels.ts`, with a per-frame feature cache).
+- `model.worker.ts`: a worker nested in the video worker, fed the frames
+  studio already decodes. `LocalEngine.ts` is its host side, and
+  `localTracks.ts` the track store (in memory now).
+
+Where it differs from Python SAM 2:
+
+- The export's memory attention takes exactly 7 memory blocks and 16
+  pointers. Where SAM 2 has fewer, the newest is repeated. Where it has more
+  (an object with several seed frames, late in the clip), every seed frame is
+  kept and the oldest recent frames are dropped.
+- Before an object's first seed (in the forward pass), SAM 2 attends to no
+  object pointer. The export needs one, so the nearest seed's is used.
+- An approved-mask seed (the mask the user saw on a seed frame) is the
+  frame's output and its memory, as in SAM 2. But its object pointer comes
+  from the decoder run on the frame's clicks, since the exported decoder has
+  no mask input (SAM 2 runs it with the mask as its dense prompt).
+- Frames are resized to the model size by the browser, not by decord.
+
+Parity with Python SAM 2.1 tiny runs in headed Chrome (WebGPU needs a GPU):
+
+```sh
+node e2e/parity.mjs        # its own Vite on :7372; QUALITIES=1024 CLIPS=twotone to narrow
+```
+
+It tracks the fixtures in `e2e/fixtures/parity/` (made by
+`tools/make_parity_fixtures.py`, without hole fill) and requires, at 1024
+px, IoU >= 0.95 on every frame, and that the two-tone clip keeps only the red
+half after its frame-10 correction. Results go to `e2e/out/parity.json`.
 
 ## Layout of the code
 

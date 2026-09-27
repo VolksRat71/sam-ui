@@ -54,7 +54,9 @@ that carry Meta's header: those come from Meta's SAM 2 demo frontend (see below)
   (from `frontend.Dockerfile`). The GraphQL schema moved with it
   (`studio/schema.graphql`, `studio/schemas/`). The Inter font in
   `studio/public/fonts/` is under the SIL Open Font License (`Inter-OFL.txt`).
-  The browser engine (work in progress, `studio/src/local/`) depends on ONNX Runtime
+  The browser engine (`studio/src/local/`, "Browser · SAM 2.1 tiny") ports SAM 2's
+  video propagation (`sam2/sam2_video_predictor.py`, `sam2/modeling/sam2_base.py`)
+  to TypeScript. It depends on ONNX Runtime
   Web (`onnxruntime-web`, MIT, Microsoft), installed from npm and not vendored. It
   runs the Apache-2.0 SAM 2.1 tiny ONNX exports
   (`square-zero-labs/sam2.1-tiny-video-onnx`,
