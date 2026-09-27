@@ -109,6 +109,8 @@ function describe(o: StudioObject): string {
 
 export default function ObjectsSection({session}: Props) {
   const {state, tracklets, frame, canAdd, busy} = session;
+  // a badge per engine that could hold a track here (not the desktop-only entries of a browser-only build)
+  const badgeEngines = session.engines.filter(e => e.href == null);
   return (
     <div className="objects">
       <div className="objects-actions">
@@ -144,9 +146,9 @@ export default function ObjectsSection({session}: Props) {
                   <StateBadge o={o} />
                 </div>
                 <div className="object-meta">{describe(o)}</div>
-                {session.engines.length > 1 && (
+                {badgeEngines.length > 1 && (
                   <div className="engine-badges">
-                    {session.engines.map(e => {
+                    {badgeEngines.map(e => {
                       const t = o.engines[e.name];
                       const st = t?.state ?? 'untracked';
                       return (
