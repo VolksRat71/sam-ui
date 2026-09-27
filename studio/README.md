@@ -55,9 +55,10 @@ CLIP=e2e/out/clip.mp4 SMOKE=local NO_SERVER_URL=http://127.0.0.1:7390/sam-ui/ np
 
 ### Without a backend (the browser-only build)
 
-Studio also runs with no backend at all, on the browser engine alone. It
-does so when built with `VITE_API_ENDPOINT=none`, or when its backend does
-not answer at start. Then:
+Studio also runs with no backend at all, on the browser engine alone, when
+built with `VITE_API_ENDPOINT=none` (that is the only way: any other build
+waits for its backend, and shows an error with Retry if it never answers,
+rather than quietly turning into the browser demo). Then:
 
 - Media lists the videos opened into this browser (copied into the Origin
   Private File System under their sha256; nothing is uploaded) and any
