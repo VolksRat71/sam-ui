@@ -21,6 +21,7 @@ import {
   pruneEffects,
 } from '~/state/objectEffects';
 import {isOffline} from '~/lib/mode';
+import {requestPersistentStorage} from '~/lib/persist';
 import {closeSessionOnUnload, recordClose, recordOpen} from '~/lib/sessionClose';
 import {readJson, writeJson} from '~/lib/storage';
 import {API_ENDPOINT, OBJECT_LIMIT} from '~/config';
@@ -204,6 +205,9 @@ export default function useStudioSession(video: VideoItem) {
         case 'localModel': {
           const m = event.model;
           setLocalModel(m);
+          if (m.status === 'loading') {
+            requestPersistentStorage(); // keep the downloaded model across visits
+          }
           if (m.status === 'failed') {
             setWarning(`The browser engine could not load its ${m.quality} px model: ${m.error}`);
           }

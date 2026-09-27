@@ -2,6 +2,7 @@
 //
 // MediaApi with no backend: this browser's OPFS and the bundled samples.
 import {useCallback, useEffect, useMemo, useState} from 'react';
+import {requestPersistentStorage} from '~/lib/persist';
 import {OpfsKv} from '~/local/kv';
 import type {LocalMedia} from '~/local/localMedia';
 import type {VideoItem} from '~/workspace/useStudioSession';
@@ -16,6 +17,7 @@ export default function useLocalMedia(): MediaApi | null {
   const [videos, setVideos] = useState<VideoItem[] | null>(null);
   const [key, setKey] = useState(0);
   useEffect(() => {
+    requestPersistentStorage(); // the videos, seeds and tracks live in this browser
     let stale = false;
     media()
       .then(m => m.list())
