@@ -13,7 +13,8 @@ import {type Kv, readJson, writeJson} from './kv';
 import {OfflineService} from './offlineStores';
 
 type Entry = {key: string; name: string; width: number; height: number; added: string};
-type Sample = {file: string; name?: string; width: number; height: number};
+/** samples/index.json: the files, and their size when the build knows it. */
+type Sample = {file: string; width?: number; height?: number};
 
 const INDEX = 'videos/index.json';
 
@@ -77,7 +78,11 @@ export class LocalMedia {
       if (bytes == null) {
         continue;
       }
-      out.push({path: `samples/${s.file}`, url, width: s.width, height: s.height, posterUrl: null, key: await sha256Hex(bytes)});
+      const size = s.width != null && s.height != null ? {width: s.width, height: s.height} : await videoSize(new Blob([bytes], {type: 'video/mp4'})).catch(() => null);
+      if (size == null) {
+        continue;
+      }
+      out.push({path: `samples/${s.file}`, url, width: size.width, height: size.height, posterUrl: null, key: await sha256Hex(bytes)});
     }
     this._samples = out;
     return out;

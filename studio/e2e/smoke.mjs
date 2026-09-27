@@ -11,9 +11,16 @@
 // back), exports the video (saved as OUT/export.mp4 for ffprobe), and deletes
 // the upload. Any failed check exits non-zero. CHROME can point at a Chrome
 // binary (default: the macOS app).
+//
+// SMOKE=local runs the no-server check instead (e2e/smoke-local.mjs, headed
+// Chrome for WebGPU) against NO_SERVER_URL, a studio with no backend such as
+// the Pages build served under /sam-ui/; SMOKE=both runs the two:
+//
+//   CLIP=... SMOKE=local NO_SERVER_URL=http://127.0.0.1:7390/sam-ui/ npm run smoke
 import {chromium} from 'playwright-core';
 import fs from 'node:fs';
 import path from 'node:path';
+import {runNoServer} from './smoke-local.mjs';
 
 const STUDIO = process.env.STUDIO_URL ?? 'http://127.0.0.1:7362';
 const API = process.env.API ?? 'http://127.0.0.1:7363';
@@ -37,6 +44,14 @@ const check = (ok, what) => {
   console.log(`${ok ? 'PASS' : 'FAIL'} ${what}`);
   if (!ok) failed++;
 };
+const MODE = process.env.SMOKE ?? 'server';
+const noServer = () =>
+  runNoServer({url: process.env.NO_SERVER_URL ?? 'http://127.0.0.1:7390/sam-ui/', clip: CLIP, out: OUT, chrome: CHROME, check});
+if (MODE === 'local') {
+  await noServer();
+  console.log(failed === 0 ? 'SMOKE OK' : `SMOKE FAILED (${failed})`);
+  process.exit(failed === 0 ? 0 : 1);
+}
 
 const browser = await chromium.launch({
   executablePath: CHROME,
@@ -171,5 +186,8 @@ check(refusal == null && !listed, `delete removes ${uploaded}${refusal ? ` (refu
 const real = errors.filter(e => !/WebGL context|NetworkError|Inter-VariableFont/.test(e));
 check(real.length === 0, `no page errors${real.length ? `: ${real.slice(0, 3).join(' | ')}` : ''}`);
 await browser.close();
+if (MODE === 'both') {
+  await noServer();
+}
 console.log(failed === 0 ? 'SMOKE OK' : `SMOKE FAILED (${failed})`);
 process.exit(failed === 0 ? 0 : 1);
