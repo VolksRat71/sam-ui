@@ -125,7 +125,8 @@ await page.screenshot({path: path.join(OUT, 'preview.png')});
 
 // export: an MP4 with each object's own effect
 await page.waitForFunction(() => !/decoding/.test(document.querySelector('.frame-counter')?.innerText ?? ''), null, {timeout: 60000});
-await page.click('button:has-text("Export video")');
+await page.click('.export-menu > button');
+await page.click('.menu-item:has-text("Video with effects")');
 await page.waitForSelector('.modal');
 const [download] = await Promise.all([page.waitForEvent('download', {timeout: 180000}), page.click('.modal button:has-text("Export MP4")')]);
 const file = path.join(OUT, 'export.mp4');

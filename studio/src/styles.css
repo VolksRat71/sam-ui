@@ -1381,3 +1381,75 @@ code {
   color: var(--text);
   font: inherit;
 }
+
+/* the Export menu (ExportMenu.tsx); it reuses the engine popover's panel */
+.export-menu {
+  position: relative;
+}
+.menu {
+  width: 340px;
+}
+.menu-heading {
+  padding: 6px 10px 2px;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.menu-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: var(--radius);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.menu-item .muted {
+  font-size: 11px;
+}
+.menu-item:hover:not(:disabled):not(.disabled) {
+  background: #ffffff12;
+}
+.menu-item:disabled,
+.menu-item.disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+.menu-item.disabled:hover,
+.menu-item.disabled:focus-within {
+  opacity: 0.8;
+}
+.menu-item.engine-off .engine-tip {
+  right: auto;
+  left: 10px;
+}
+.menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--gray-700);
+}
+.export-files {
+  margin: 8px 0;
+  padding: 0;
+  list-style: none;
+  max-height: 180px;
+  overflow: auto;
+}
+.export-files li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+}
+.export-files .swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}

@@ -3,18 +3,20 @@
 // One video's editor: a top bar with the job controls, the preview on the
 // left, collapsible Media, Objects and Effects sections on the right, and the timeline
 // along the bottom. Every divider drags; sizes are remembered per browser.
-import {Close, Download, Renew} from '@carbon/icons-react';
+import {Close, Renew} from '@carbon/icons-react';
 import {useEffect, useState, type ReactNode} from 'react';
 import {Panel, PanelGroup, PanelResizeHandle} from 'react-resizable-panels';
 import {OBJECT_LIMIT} from '~/config';
 import {panelStorage} from '~/lib/storage';
-import {engineLabel} from '~/state/engines';
+import {BROWSER_ENGINE, engineLabel} from '~/state/engines';
 import {objectName} from '~/state/fileNames';
 import useStudioSession, {type VideoItem} from '~/workspace/useStudioSession';
 import ConfirmModal from './ConfirmModal';
 import EnginePicker from './EnginePicker';
 import EffectsSection from './EffectsSection';
+import ExportMenu, {type ExportChoice} from './ExportMenu';
 import ExportPanel from './ExportPanel';
+import MaskExportModal from './MaskExportModal';
 import ExportVideoModal from './ExportVideoModal';
 import ObjectsSection from './ObjectsSection';
 import Preview, {type LabelMode} from './Preview';
@@ -31,8 +33,7 @@ export default function Workspace({video, renderMedia}: Props) {
   const {state, dirty, meta} = session;
   const [mode, setMode] = useState<LabelMode>('positive');
   const [confirmStartOver, setConfirmStartOver] = useState(false);
-  const [exportOpen, setExportOpen] = useState(false);
-  const [exportVideoOpen, setExportVideoOpen] = useState(false);
+  const [exporting, setExporting] = useState<ExportChoice | null>(null);
   const videoName = video.path.split('/').pop() ?? 'video';
   const jobs = state.jobs;
   const nameOf = (id: number) => objectName(state.objects.find(o => o.id === id) ?? {id});
@@ -135,13 +136,7 @@ export default function Workspace({video, renderMedia}: Props) {
               {trackLabel}
             </button>
           </div>
-          <button
-            className="button"
-            onClick={() => setExportVideoOpen(true)}
-            disabled={!meta.decoded}
-            title="Export the video with each object's effect, as an MP4">
-            <Download size={16} /> Export video
-          </button>
+          <ExportMenu session={session} onChoose={setExporting} />
           <button
             className="button subtle"
             onClick={() => setConfirmStartOver(true)}
@@ -176,7 +171,7 @@ export default function Workspace({video, renderMedia}: Props) {
                     id: 'objects',
                     title: 'Objects',
                     badge: `${state.objects.length}/${OBJECT_LIMIT}`,
-                    content: <ObjectsSection session={session} onExport={() => setExportOpen(true)} />,
+                    content: <ObjectsSection session={session} />,
                   },
                   {
                     id: 'effects',
@@ -196,11 +191,20 @@ export default function Workspace({video, renderMedia}: Props) {
         </Panel>
       </PanelGroup>
 
-      {exportVideoOpen && (
-        <ExportVideoModal session={session} videoName={videoName} onClose={() => setExportVideoOpen(false)} />
+      {exporting === 'effects' && (
+        <ExportVideoModal session={session} videoName={videoName} onClose={() => setExporting(null)} />
       )}
-
-      {exportOpen && <ExportPanel session={session} videoName={videoName} onClose={() => setExportOpen(false)} />}
+      {(exporting === 'videos' || exporting === 'vectors') && (
+        <MaskExportModal session={session} kind={exporting} videoPath={video.path} onClose={() => setExporting(null)} />
+      )}
+      {exporting === 'folder' && (
+        <ExportPanel
+          session={session}
+          videoName={videoName}
+          mode={session.backend && state.engine !== BROWSER_ENGINE ? 'server' : 'zip'}
+          onClose={() => setExporting(null)}
+        />
+      )}
 
       {confirmStartOver && (
         <ConfirmModal

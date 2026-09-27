@@ -2,15 +2,15 @@
 //
 // The Objects list: one row per object with Meta's colour-block thumbnail,
 // its track state, and its own Clear track / Remove actions.
-import {Add, Edit, Export, TrashCan, Reset} from '@carbon/icons-react';
+import {Add, Edit, TrashCan, Reset} from '@carbon/icons-react';
 import {useEffect, useRef, useState} from 'react';
 import {OBJECT_LIMIT} from '~/config';
-import {BROWSER_ENGINE, engineLabel} from '~/state/engines';
+import {engineLabel} from '~/state/engines';
 import {NAME_MAX, objectName} from '~/state/fileNames';
 import {clearTarget, isTracking, needsPositiveClick, seedFrames, type StudioObject} from '~/state/objects';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
 
-type Props = {session: StudioSessionApi; onExport: () => void};
+type Props = {session: StudioSessionApi};
 
 function StateBadge({o}: {o: StudioObject}) {
   if (isTracking(o)) {
@@ -107,7 +107,7 @@ function describe(o: StudioObject): string {
   return clicks + track;
 }
 
-export default function ObjectsSection({session, onExport}: Props) {
+export default function ObjectsSection({session}: Props) {
   const {state, tracklets, frame, canAdd, busy} = session;
   return (
     <div className="objects">
@@ -214,19 +214,6 @@ export default function ObjectsSection({session, onExport}: Props) {
           );
         })}
       </ul>
-      <div className="objects-footer">
-        <button
-          className="button"
-          onClick={onExport}
-          disabled={state.engine === BROWSER_ENGINE || !state.objects.some(o => o.state === 'tracked' || o.state === 'stale')}
-          title={
-            state.engine === BROWSER_ENGINE
-              ? `${engineLabel(BROWSER_ENGINE)} tracks stay in this tab for now: switch to SAM 2 to export`
-              : 'Write tracked objects as a rotoscoping working folder'
-          }>
-          <Export size={16} /> Export for rotoscoping…
-        </button>
-      </div>
     </div>
   );
 }
