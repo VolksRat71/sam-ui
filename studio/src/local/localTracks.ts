@@ -111,7 +111,8 @@ export function withLocalTracks(
       return o;
     }
     // with no per-engine list, the top-level fields are the default engine's
-    const base = o.tracks != null && o.tracks.length > 0 ? o.tracks : [{engine: DEFAULT_ENGINE, state: o.state, frames: o.frames, nFrames: o.nFrames}];
+    // (an empty list is a no-server object: no server engines at all)
+    const base = o.tracks != null ? o.tracks : [{engine: DEFAULT_ENGINE, state: o.state, frames: o.frames, nFrames: o.nFrames}];
     return {...o, tracks: [...base.filter(t => t.engine !== entry.engine), entry]};
   });
 }
