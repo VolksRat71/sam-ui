@@ -2,27 +2,21 @@
 //
 // The no-server half of `npm run smoke` (NO_SERVER_URL set): studio with no
 // backend, e.g. the Pages build served under /sam-ui/. In headed Chrome
-// (the browser engine needs WebGPU), with a profile kept in OUT so the
-// models download once; this browser's studio data (OPFS) is wiped first.
+// (the browser engine needs WebGPU), with a fresh profile each run, so the
+// 512 px model downloads each time (83 MB; with a reused profile Playwright
+// lost track of its downloads).
 // It opens the clip from disk, adds three objects, tracks them, reloads
 // (restored from OPFS), renames an object, exports mask videos, Vector
 // JSON and the roto working folder (zips, checked with unzip), and deletes
 // the video.
 import {chromium} from 'playwright-core';
 import {execFileSync} from 'node:child_process';
-import fs from 'node:fs';
 import path from 'node:path';
 
 export async function runNoServer({url, clip, out, chrome, check}) {
-  const profile = path.join(out, 'chrome-local-profile');
-  const context = await chromium.launchPersistentContext(profile, {
-    executablePath: chrome,
-    headless: false,
-    args: ['--enable-unsafe-webgpu'],
-    viewport: {width: 1440, height: 900},
-    acceptDownloads: true,
-  });
-  const page = context.pages()[0] ?? (await context.newPage());
+  const browser = await chromium.launch({executablePath: chrome, headless: false, args: ['--enable-unsafe-webgpu']});
+  const context = await browser.newContext({viewport: {width: 1440, height: 900}, acceptDownloads: true});
+  const page = await context.newPage();
   const errors = [];
   page.on('pageerror', e => errors.push(String(e)));
   const rows = () => page.$$eval('.object-row .object-title', rs => rs.map(r => r.innerText.replace(/\n/g, ' ')));
@@ -60,15 +54,9 @@ export async function runNoServer({url, clip, out, chrome, check}) {
   };
 
   await page.goto(url);
-  // a clean slate: this browser's studio data only (the model cache stays)
-  await page.evaluate(async () => {
-    const root = await navigator.storage.getDirectory();
-    await root.removeEntry('sam-ui', {recursive: true}).catch(() => {});
-    localStorage.clear();
-  });
-  await page.reload();
   await page.waitForSelector('.dropzone', {timeout: 60000});
-  const banner = await page.$('.demo-banner');
+  // it shows once the first video's session is up
+  const banner = await page.waitForSelector('.demo-banner', {timeout: 60000}).catch(() => null);
   check(banner != null, 'no-server: the demo banner shows');
   const samples = await page.$$eval('.media-name', ns => ns.map(n => n.title));
   check(samples.every(p => p.startsWith('samples/')), `no-server: bundled samples listed (${samples.join(', ') || 'none'})`);
@@ -135,6 +123,5 @@ export async function runNoServer({url, clip, out, chrome, check}) {
 
   const real = errors.filter(e => !/WebGL context|NetworkError|Inter-VariableFont/.test(e));
   check(real.length === 0, `no-server: no page errors${real.length ? `: ${real.slice(0, 3).join(' | ')}` : ''}`);
-  await context.close();
-  fs.rmSync(path.join(out, 'chrome-local-profile', 'SingletonLock'), {force: true});
+  await browser.close();
 }
