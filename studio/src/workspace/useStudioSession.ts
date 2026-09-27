@@ -192,6 +192,9 @@ export default function useStudioSession(video: VideoItem) {
         case 'localModel': {
           const m = event.model;
           setLocalModel(m);
+          if (m.status === 'failed') {
+            setWarning(`The browser engine could not load its ${m.quality} px model: ${m.error}`);
+          }
           setEngines(list =>
             list.map(e => (e.name === BROWSER_ENGINE ? {...e, loaded: m.status === 'ready', loading: m.status === 'loading'} : e)),
           );

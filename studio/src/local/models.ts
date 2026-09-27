@@ -102,3 +102,19 @@ export async function isCached(variant: Variant): Promise<boolean> {
   const hits = await Promise.all(files.map(f => cache.match(hubUrl(variant.repo, f)).catch(() => undefined)));
   return hits.every(h => h != null);
 }
+
+/**
+ * Where a variant's files would come from right now: a local copy (dev, or
+ * VITE_MODEL_BASE), this browser's cache, or a download. For the picker's
+ * status line; the loader decides again when it runs.
+ */
+export async function modelAvailability(variant: Variant): Promise<'local' | 'cached' | 'download'> {
+  const local = localBase();
+  if (local != null) {
+    const response = await fetch(`${local}/${variant.repo}/constants.json`, {method: 'HEAD'}).catch(() => null);
+    if (response?.ok && !(response.headers.get('Content-Type') ?? '').includes('text/html')) {
+      return 'local';
+    }
+  }
+  return (await isCached(variant)) ? 'cached' : 'download';
+}

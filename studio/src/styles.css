@@ -1085,16 +1085,10 @@ code {
 
 /* engines */
 .engine-picker {
+  position: relative;
   display: flex;
-  gap: 1px;
-}
-.engine-picker .toggle {
-  height: 34px;
-  padding: 0 12px;
-}
-.engine-picker .toggle:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
+  align-items: center;
+  gap: 6px;
 }
 .engine-tag {
   padding: 0 6px;
@@ -1209,20 +1203,138 @@ code {
   font-size: 20px;
 }
 
-/* a disabled engine says why (and may link somewhere) on hover or focus */
+/* the engine picker: one button, the rest in a popover (EnginePicker.tsx) */
+.engine-button {
+  position: relative;
+  overflow: hidden;
+}
+.engine-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: #ffffff1a;
+}
+.engine-progress > span {
+  display: block;
+  height: 100%;
+  background: var(--primary);
+}
+.engine-label {
+  display: inline-flex;
+  align-items: center;
+  height: 34px;
+  padding: 0 4px;
+}
+.engine-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  width: 320px;
+  padding: 6px;
+  border: 1px solid var(--gray-700);
+  border-radius: var(--radius);
+  background: var(--panel-raised);
+  box-shadow: 0 8px 24px #0009;
+}
+.engine-option {
+  border-radius: var(--radius);
+  padding: 2px;
+}
+.engine-option.selected {
+  background: #ffffff0d;
+}
+.engine-option-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 8px;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.engine-option.disabled .engine-option-head {
+  cursor: default;
+  opacity: 0.5;
+}
+.engine-option-head .muted {
+  margin-left: auto;
+  font-size: 11px;
+}
+.engine-radio {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border: 1px solid var(--gray-400);
+  border-radius: 50%;
+}
+.engine-option.selected .engine-radio {
+  border-color: #fff;
+  background: radial-gradient(circle, #fff 45%, transparent 50%);
+}
+.engine-suboptions {
+  padding: 0 8px 8px 26px;
+}
+.engine-menu > .engine-suboptions {
+  padding: 8px;
+}
+.segmented {
+  display: flex;
+  gap: 1px;
+}
+.segmented .toggle {
+  height: 28px;
+  padding: 0 12px;
+}
+.segmented .toggle:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.engine-status {
+  margin: 6px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.engine-option.disabled .engine-status {
+  padding: 0 8px 8px 26px;
+  margin: 0;
+}
+.engine-status a,
+.engine-tip a {
+  color: #8ab4ff;
+}
+.engine-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--gray-300);
+}
+/* a disabled engine beside a single-engine label: why, and a link, on hover or focus */
 .engine-off {
   position: relative;
   display: inline-flex;
 }
-.engine-off .toggle:disabled {
-  pointer-events: none;
+.engine-chip {
+  padding: 2px 8px;
+  border: 1px dashed var(--gray-600);
+  border-radius: var(--radius);
+  color: var(--gray-400);
+  font-size: 12px;
 }
 .engine-tip {
   display: none;
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
-  z-index: 20;
+  z-index: 30;
   width: max-content;
   max-width: 260px;
   padding: 8px 10px;
@@ -1237,10 +1349,4 @@ code {
 .engine-off:hover .engine-tip,
 .engine-off:focus-within .engine-tip {
   display: block;
-}
-.engine-tip a {
-  color: #8ab4ff;
-}
-.engine-picker label.toggle input {
-  margin: 0;
 }

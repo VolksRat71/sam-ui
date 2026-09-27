@@ -1,7 +1,7 @@
 // sam-ui (Apache-2.0). New file, not from SAM 2.
 import {describe, expect, it} from 'vitest';
 import type {EngineInfo} from '~/worker/protocol';
-import {BROWSER_ENGINE, engineLabel, pickerEngines, RELEASES_URL} from './engines';
+import {BROWSER_ENGINE, engineLabel, pickerEngines, pickerLayout, RELEASES_URL} from './engines';
 
 const sam2: EngineInfo = {name: 'sam2', model: 'sam2.1_hiera_large', default: true, available: true, reason: null, loaded: true};
 const sam3: EngineInfo = {name: 'sam3', model: 'sam3', default: false, available: false, reason: 'no weights', loaded: false};
@@ -38,5 +38,15 @@ describe('pickerEngines', () => {
     expect(list.map(e => e.name)).toEqual(['sam3', BROWSER_ENGINE]);
     expect(list[0]).toMatchObject({available: false, href: RELEASES_URL});
     expect(list[1].default).toBe(true);
+  });
+});
+
+describe('pickerLayout', () => {
+  it('is a menu with a choice, and a label beside the disabled ones without', () => {
+    expect(pickerLayout(pickerEngines([sam2, sam3], {webgpu: true})).single).toBe(false);
+    const pages = pickerLayout(pickerEngines([], {webgpu: true, pages: true}));
+    expect(pages.single).toBe(true);
+    expect(pages.available.map(e => e.name)).toEqual([BROWSER_ENGINE]);
+    expect(pages.disabled.map(e => [e.name, e.href])).toEqual([['sam3', RELEASES_URL]]);
   });
 });

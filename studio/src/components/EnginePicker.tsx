@@ -1,83 +1,239 @@
 // sam-ui (Apache-2.0). New file, not from SAM 2.
 //
-// The engine picker beside Track: which engine Track runs and the preview
-// shows. A disabled engine says why on hover or focus, and links to where to
-// get it when it has somewhere to go (a Pages build's SAM 3 entry points at
-// the desktop release). With the browser engine chosen, its model size
-// (512 fp16 or 1024 fp32) and hole fill sit next to it.
-import {BROWSER_ENGINE, engineLabel} from '~/state/engines';
+// The one engine control, beside Track: which engine Track runs and the
+// preview shows. The top bar shows only the current engine (with the browser
+// engine's model size, and its download progress while it loads); the rest
+// is in a popover:
+//   - every engine of this mode, as a radio list; one that cannot run is
+//     listed disabled with its reason, and a link when it has one;
+//   - inside the browser entry: its model size (512 fp16 or 1024 fp32) and
+//     hole fill, and a status line (download size, cached, loading, WebGPU).
+// With a single engine (a Pages build) the control is a plain label, with
+// the disabled entries beside it as chips whose tooltip carries the link.
+import {ChevronDown} from '@carbon/icons-react';
+import {useEffect, useRef, useState} from 'react';
+import {modelAvailability} from '~/local/models';
 import {type Quality, VARIANTS} from '~/local/sam2/config';
+import {BROWSER_ENGINE, engineLabel, pickerLayout} from '~/state/engines';
+import type {EngineInfo} from '~/worker/protocol';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
 
 type Props = {session: StudioSessionApi};
+type Availability = Record<Quality, 'local' | 'cached' | 'download' | null>;
 
 const MB = (bytes: number) => `${Math.round(bytes / 1e6)} MB`;
+const QUALITIES: Quality[] = [512, 1024];
+
+function DisabledChip({engine}: {engine: EngineInfo}) {
+  return (
+    <span className="engine-off" tabIndex={0} aria-disabled="true">
+      <span className="engine-chip">{engineLabel(engine.name)}</span>
+      <span className="engine-tip" role="tooltip">
+        {engineLabel(engine.name)} cannot run here: {engine.reason ?? 'unavailable'}.
+        {engine.href != null && (
+          <>
+            {' '}
+            <a href={engine.href} target="_blank" rel="noreferrer">
+              Get it
+            </a>
+          </>
+        )}
+      </span>
+    </span>
+  );
+}
 
 export default function EnginePicker({session}: Props) {
-  const {state, engines, localOptions} = session;
-  if (engines.length < 2) {
+  const {state, engines, localOptions, localModel} = session;
+  const [open, setOpen] = useState(false);
+  const [availability, setAvailability] = useState<Availability>({512: null, 1024: null});
+  const root = useRef<HTMLDivElement>(null);
+
+  // the popover closes on a click outside it, or Escape
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const onDown = (e: MouseEvent) => {
+      if (root.current != null && !root.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false);
+    window.addEventListener('mousedown', onDown);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('mousedown', onDown);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  // where each browser model would load from, looked up when the popover opens
+  const readyQuality = localModel?.status === 'ready' ? localModel.quality : null;
+  useEffect(() => {
+    if (!open || !engines.some(e => e.local && e.available)) {
+      return;
+    }
+    let stale = false;
+    void Promise.all(QUALITIES.map(q => modelAvailability(VARIANTS[q]).catch(() => null))).then(([a, b]) => {
+      if (!stale) {
+        setAvailability({512: a, 1024: b});
+      }
+    });
+    return () => {
+      stale = true;
+    };
+  }, [open, engines, readyQuality]);
+
+  const layout = pickerLayout(engines);
+  if (engines.length === 0) {
     return null;
   }
+  const isBrowser = state.engine === BROWSER_ENGINE;
   const browserBusy = state.jobs.some(j => j.engine === BROWSER_ENGINE);
-  return (
-    <>
-      <div className="engine-picker" role="group" aria-label="Track with">
-        {engines.map(e =>
-          e.available ? (
-            <button
-              key={e.name}
-              className={state.engine === e.name ? 'toggle selected' : 'toggle'}
-              onClick={() => session.setEngine(e.name)}
-              title={
-                e.local
-                  ? `Track and click in this browser with ${engineLabel(e.name)} (WebGPU)${e.loaded ? '' : '; downloads its model on first use'}`
-                  : `Track with and show ${engineLabel(e.name)} (${e.model})${e.loaded ? '' : '; loads on first use, about 30 s'}`
-              }>
-              {engineLabel(e.name)}
-            </button>
-          ) : (
-            <span key={e.name} className="engine-off" tabIndex={0} aria-disabled="true">
-              <button className="toggle" disabled>
-                {engineLabel(e.name)}
-              </button>
-              <span className="engine-tip" role="tooltip">
-                {engineLabel(e.name)} cannot run here: {e.reason ?? 'unavailable'}.
-                {e.href != null && (
-                  <>
-                    {' '}
-                    <a href={e.href} target="_blank" rel="noreferrer">
-                      Get it
-                    </a>
-                  </>
-                )}
-              </span>
-            </span>
-          ),
+  const loading = localModel?.status === 'loading' ? localModel : null;
+  const summary = `${engineLabel(state.engine)}${isBrowser ? ` · ${localOptions.quality}` : ''}`;
+
+  const choose = (name: string) => {
+    session.setEngine(name);
+    if (name !== BROWSER_ENGINE) {
+      setOpen(false);
+    }
+  };
+
+  const statusLine = (q: Quality): string => {
+    if (localModel?.quality === q) {
+      if (localModel.status === 'loading') {
+        return `Loading: ${MB(localModel.loaded)} of ${MB(localModel.total)}`;
+      }
+      if (localModel.status === 'ready') {
+        return 'Loaded';
+      }
+      if (localModel.status === 'failed') {
+        return `Could not load: ${localModel.error}`;
+      }
+    }
+    const a = availability[q];
+    return a === 'local' ? 'From studio/.models' : a === 'cached' ? 'Cached in this browser' : `${MB(VARIANTS[q].bytes)} download on first use`;
+  };
+
+  const browserOptions = (
+    <div className="engine-suboptions">
+      <div className="segmented" role="radiogroup" aria-label="Browser model size">
+        {QUALITIES.map(q => (
+          <button
+            key={q}
+            role="radio"
+            aria-checked={localOptions.quality === q}
+            className={localOptions.quality === q ? 'toggle selected' : 'toggle'}
+            disabled={browserBusy}
+            title={browserBusy ? 'Not while a browser job runs' : VARIANTS[q].label}
+            onClick={() => {
+              session.setEngine(BROWSER_ENGINE);
+              if (q !== localOptions.quality) {
+                session.setLocalOptions({...localOptions, quality: q});
+              }
+            }}>
+            {q} px
+          </button>
+        ))}
+      </div>
+      <p className="engine-status">
+        {VARIANTS[localOptions.quality].label}. {statusLine(localOptions.quality)}.
+      </p>
+      <label className="engine-check" title="Fill background holes of 8 px or less in each mask, as upstream SAM 2 does">
+        <input
+          type="checkbox"
+          checked={localOptions.fillHoleArea > 0}
+          disabled={browserBusy}
+          onChange={e => session.setLocalOptions({...localOptions, fillHoleArea: e.target.checked ? 8 : 0})}
+        />
+        Fill small holes
+      </label>
+    </div>
+  );
+
+  const button = (
+    <button
+      className="button engine-button"
+      aria-haspopup="dialog"
+      aria-expanded={open}
+      onClick={() => setOpen(o => !o)}
+      title="Choose the engine Track runs and the preview shows">
+      <span>{summary}</span>
+      {loading != null && (
+        <span className="muted">
+          {MB(loading.loaded)}/{MB(loading.total)}
+        </span>
+      )}
+      <ChevronDown size={16} />
+      {loading != null && (
+        <span className="engine-progress">
+          <span style={{width: `${Math.min(100, (loading.loaded / Math.max(loading.total, 1)) * 100)}%`}} />
+        </span>
+      )}
+    </button>
+  );
+
+  if (layout.single) {
+    // one engine (Pages): a label, and the ones that cannot run as chips
+    const only = layout.available[0];
+    return (
+      <div className="engine-picker" ref={root}>
+        {only?.local ? button : <span className="engine-label">{only != null ? engineLabel(only.name) : 'No engine'}</span>}
+        {layout.disabled.map(e => (
+          <DisabledChip key={e.name} engine={e} />
+        ))}
+        {open && only?.local && (
+          <div className="engine-menu" role="dialog" aria-label="Browser model">
+            {browserOptions}
+          </div>
         )}
       </div>
-      {state.engine === BROWSER_ENGINE && (
-        <div className="engine-picker" role="group" aria-label="Browser model size">
-          {([512, 1024] as Quality[]).map(q => (
-            <button
-              key={q}
-              className={localOptions.quality === q ? 'toggle selected' : 'toggle'}
-              disabled={browserBusy}
-              onClick={() => session.setLocalOptions({...localOptions, quality: q})}
-              title={`${VARIANTS[q].label}, ${MB(VARIANTS[q].bytes)} download${browserBusy ? ' (not while a browser job runs)' : ''}`}>
-              {q}
-            </button>
-          ))}
-          <label className="toggle" title="Fill background holes of 8 px or less in each mask, as SAM 2 does upstream">
-            <input
-              type="checkbox"
-              checked={localOptions.fillHoleArea > 0}
-              disabled={browserBusy}
-              onChange={e => session.setLocalOptions({...localOptions, fillHoleArea: e.target.checked ? 8 : 0})}
-            />
-            Fill holes
-          </label>
+    );
+  }
+
+  return (
+    <div className="engine-picker" ref={root}>
+      {button}
+      {open && (
+        <div className="engine-menu" role="dialog" aria-label="Engine">
+          <div role="radiogroup" aria-label="Track with">
+            {engines.map(e =>
+              e.available ? (
+                <div key={e.name} className={state.engine === e.name ? 'engine-option selected' : 'engine-option'}>
+                  <button role="radio" aria-checked={state.engine === e.name} className="engine-option-head" onClick={() => choose(e.name)}>
+                    <span className="engine-radio" />
+                    <span className="engine-name">{engineLabel(e.name)}</span>
+                    <span className="muted">
+                      {e.local ? 'in this browser' : e.loaded ? e.model : `${e.model}, loads on first use`}
+                    </span>
+                  </button>
+                  {e.local && browserOptions}
+                </div>
+              ) : (
+                <div key={e.name} className="engine-option disabled" aria-disabled="true">
+                  <div className="engine-option-head">
+                    <span className="engine-radio" />
+                    <span className="engine-name">{engineLabel(e.name)}</span>
+                  </div>
+                  <p className="engine-status">
+                    Cannot run here: {e.reason ?? 'unavailable'}.
+                    {e.href != null && (
+                      <>
+                        {' '}
+                        <a href={e.href} target="_blank" rel="noreferrer">
+                          Get it
+                        </a>
+                      </>
+                    )}
+                  </p>
+                </div>
+              ),
+            )}
+          </div>
         </div>
       )}
-    </>
+    </div>
   );
 }

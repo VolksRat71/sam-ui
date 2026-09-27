@@ -8,7 +8,7 @@ import {useEffect, useState, type ReactNode} from 'react';
 import {Panel, PanelGroup, PanelResizeHandle} from 'react-resizable-panels';
 import {OBJECT_LIMIT} from '~/config';
 import {panelStorage} from '~/lib/storage';
-import {BROWSER_ENGINE, engineLabel} from '~/state/engines';
+import {engineLabel} from '~/state/engines';
 import useStudioSession, {type VideoItem} from '~/workspace/useStudioSession';
 import ConfirmModal from './ConfirmModal';
 import EnginePicker from './EnginePicker';
@@ -103,18 +103,6 @@ export default function Workspace({video, renderMedia}: Props) {
               </span>
             </span>
           ))}
-          {session.localModel?.status === 'loading' && (
-            <span className="job-chip" title="The browser engine's model, kept in this browser after the first download">
-              <span className="spinner small" />
-              Loading {engineLabel(BROWSER_ENGINE)} ({session.localModel.quality} px)
-              <span className="muted">
-                {Math.round(session.localModel.loaded / 1e6)}/{Math.round(session.localModel.total / 1e6)} MB
-              </span>
-            </span>
-          )}
-          {session.localModel?.status === 'failed' && (
-            <span className="error">{engineLabel(BROWSER_ENGINE)} could not load: {session.localModel.error}</span>
-          )}
           {jobs.length === 0 && session.foreignJobs.length === 0 && (
             session.repainting ? (
               <span>
