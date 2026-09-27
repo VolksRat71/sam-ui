@@ -8,6 +8,7 @@ does it and once streamed and pruned, gives identical masks on every frame
 while the stored state stays bounded.
 """
 import os
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -205,3 +206,25 @@ def test_objects_first_seeded_on_different_frames_run_as_separate_groups():
     pts = {"points": [[0.5, 0.5]], "labels": [1]}
     objects = {1: {30: pts, 55: pts}, 2: {40: pts}, 3: {30: pts}, 4: {10: {"points": [], "labels": []}}}
     assert [sorted(g) for g in groups_by_first_seed(objects)] == [[1, 3], [2]]  # 4 has no points
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="counts decoded-frame blocks with macOS vmmap")
+def test_decord_never_keeps_the_whole_clip(tmp_path):
+    """A decord reader, once read, decodes the whole clip in a background thread
+    and keeps every frame. Sam2Frames must only ever hold about one run."""
+    import subprocess
+    import time
+
+    from tracks.streaming import RUN
+
+    def blocks():  # 1024x1024x3 uint8 frames, one malloc region each
+        out = subprocess.run(["vmmap", str(os.getpid())], capture_output=True, text=True).stdout
+        return sum(1 for l in out.splitlines() if l.startswith("MALLOC_LARGE ") and "3088K" in l)
+
+    clip = _clip(tmp_path / "c.mp4", n=90)
+    before = blocks()
+    f = Sam2Frames(str(clip), 1024)
+    for i in list(range(0, 40)) + list(range(80, 60, -1)):  # forward, then a reverse stretch
+        f[i]
+    time.sleep(3)  # long enough for a leftover reader to decode the other 50 frames
+    assert blocks() - before <= RUN + 2, blocks() - before

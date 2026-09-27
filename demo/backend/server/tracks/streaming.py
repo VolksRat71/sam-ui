@@ -14,6 +14,12 @@ Here:
   - Sam2Frames / Sam3Frames stand in for those frame stores. They decode one
     frame on request with exactly upstream's resize and normalisation, keeping
     a few recent ones, so the model sees bit-identical input.
+  - decord is only ever open for one short run of frames: after its first read,
+    a decord reader decodes the WHOLE clip in a background thread and keeps
+    every frame (3 MiB each at 1024x1024; num_threads does not stop it), which
+    silently put the whole clip back in memory. _DecordRuns opens a reader,
+    decodes up to RUN frames in the direction tracking moves, copies them out
+    and deletes the reader, which stops that thread and frees what it held.
   - prune_behind drops the non-seeded outputs a propagation has moved past by
     more than the model's window. Seeded (cond) frames are never touched, and
     neither are the frames just after the start, which the reverse pass reads.
@@ -25,6 +31,7 @@ from typing import Dict, Optional
 import torch
 
 KEEP_DECODED = 4  # recent frames kept decoded (tracking asks for each once, in order)
+RUN = 16  # frames decoded per decord reader, which is then deleted
 
 
 def _tensor(frame) -> torch.Tensor:
@@ -51,6 +58,39 @@ class _Lru:
             self._d.popitem(last=False)
 
 
+class _DecordRuns:
+    """Frames of a video, decoded by short-lived decord readers, RUN at a time
+    in the direction the reader is moving (so the reverse pass is cheap too),
+    keeping only the current run. Same decoder and resize as upstream's."""
+
+    def __init__(self, video_path: str, width: int = -1, height: int = -1, run: int = RUN):
+        import decord
+
+        self._path, self._w, self._h, self._run = video_path, width, height, run
+        vr = decord.VideoReader(video_path, width=width, height=height)  # no read: no prefetch yet
+        self.n = len(vr)
+        del vr
+        self._raw: Dict[int, torch.Tensor] = {}
+        self._last = -1
+
+    def get(self, i: int) -> torch.Tensor:
+        """Frame i as an HxWx3 uint8 tensor (the caller must not modify it)."""
+        if i not in self._raw:
+            import decord
+
+            backward = i < self._last
+            start, end = (max(0, i - self._run + 1), i + 1) if backward else (i, min(self.n, i + self._run))
+            vr = decord.VideoReader(self._path, width=self._w, height=self._h)
+            try:
+                batch = vr.get_batch(list(range(start, end)))
+                batch = batch.clone() if isinstance(batch, torch.Tensor) else torch.from_numpy(batch.asnumpy())
+            finally:
+                del vr  # stops its prefetch thread and frees what it decoded
+            self._raw = {start + k: batch[k] for k in range(end - start)}
+        self._last = i
+        return self._raw[i]
+
+
 class Sam2Frames:
     """SAM 2's `inference_state["images"]`, decoded on request: frame i is
     exactly what upstream's load_video_frames_from_video_file stacks at i
@@ -58,14 +98,12 @@ class Sam2Frames:
 
     def __init__(self, video_path: str, image_size: int, img_mean=(0.485, 0.456, 0.406),
                  img_std=(0.229, 0.224, 0.225), keep: int = KEEP_DECODED):
-        import decord
-
-        self._vr = decord.VideoReader(video_path, width=image_size, height=image_size)
-        self._n = len(self._vr)
+        self._runs = _DecordRuns(video_path, image_size, image_size)
+        self._n = self._runs.n
         self._mean = torch.tensor(img_mean, dtype=torch.float32)[:, None, None]
         self._std = torch.tensor(img_std, dtype=torch.float32)[:, None, None]
         self._cache = _Lru(keep)
-        self._lock = threading.Lock()  # decord readers are not thread safe; jobs share this
+        self._lock = threading.Lock()  # jobs share this
 
     def __len__(self) -> int:
         return self._n
@@ -77,7 +115,7 @@ class Sam2Frames:
         with self._lock:
             hit = self._cache.get(i)
             if hit is None:
-                frame = _tensor(self._vr[i]).permute(2, 0, 1)
+                frame = self._runs.get(i).permute(2, 0, 1)
                 hit = (frame.float() / 255.0 - self._mean) / self._std
                 self._cache.put(i, hit)
             return hit
@@ -98,7 +136,9 @@ def install_sam2_streaming() -> None:
         if isinstance(video_path, str) and not _is_dir(video_path) and offload_video_to_cpu:
             import decord
 
-            h, w, _ = decord.VideoReader(video_path).next().shape
+            vr = decord.VideoReader(video_path)
+            h, w, _ = vr.next().shape
+            del vr  # a reader left open decodes the whole clip in the background
             return Sam2Frames(video_path, image_size, img_mean, img_std), h, w
         return upstream(video_path, image_size, offload_video_to_cpu, img_mean=img_mean, img_std=img_std,
                         async_loading_frames=async_loading_frames,
@@ -120,15 +160,13 @@ class Sam3Frames:
     frames independently), stored as the session would store it."""
 
     def __init__(self, video_path: str, processor, dtype=torch.float32, keep: int = KEEP_DECODED):
-        import decord
-
-        self._vr = decord.VideoReader(video_path)
-        self._n = len(self._vr)
+        self._runs = _DecordRuns(video_path)
+        self._n = self._runs.n
         self._proc = processor
         self._dtype = dtype
         self._cache = _Lru(keep)
         self._lock = threading.Lock()
-        first = _tensor(self._vr[0]).numpy()
+        first = self._runs.get(0).numpy()
         self.height, self.width = first.shape[:2]
 
     def __len__(self) -> int:
@@ -141,7 +179,7 @@ class Sam3Frames:
         with self._lock:
             hit = self._cache.get(i)
             if hit is None:
-                frame = _tensor(self._vr[i]).numpy()
+                frame = self._runs.get(i).numpy()
                 out = self._proc.video_processor(videos=[frame[None]], return_tensors="pt")
                 hit = out.pixel_values_videos[0][0].to("cpu", dtype=self._dtype)
                 self._cache.put(i, hit)
