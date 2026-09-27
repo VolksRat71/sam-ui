@@ -113,8 +113,8 @@ python3 -m http.server 7390 --bind 127.0.0.1 --directory /tmp/pages   # http://1
   model size, 512 px (fp16, 83 MB) or 1024 px (fp32, 190 MB), and an optional
   hole fill; tracks made with another setting show as stale. The model
   downloads on first use (progress on the engine button) and is kept in the
-  browser's Cache Storage. Its tracks live in this tab for now (a reload
-  forgets them), and Export for rotoscoping needs a SAM 2 or SAM 3 track.
+  browser's Cache Storage. With a backend its tracks live in this tab (a
+  reload forgets them); with no backend they are kept in the browser.
 - **Track state** is a badge on each object: untracked, stale, tracked, or
   tracking (a job holds it, possibly in another tab). *Clear track* forgets the
   cached track and keeps the clicks. *Remove* deletes the object.
