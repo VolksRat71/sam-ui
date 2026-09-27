@@ -60,6 +60,14 @@ export async function runNoServer({url, clip, out, chrome, check}) {
   check(banner != null, 'no-server: the demo banner shows');
   const samples = await page.$$eval('.media-name', ns => ns.map(n => n.title));
   check(samples.every(p => p.startsWith('samples/')), `no-server: bundled samples listed (${samples.join(', ') || 'none'})`);
+  if (samples.length > 0) {
+    // the first one opens: its frames are read (a relative URL, from a worker)
+    const opened = await page
+      .waitForFunction(() => /\/ [1-9]/.test(document.querySelector('.frame-counter')?.innerText ?? ''), null, {timeout: 60000})
+      .then(() => true)
+      .catch(() => false);
+    check(opened, 'no-server: a bundled sample opens');
+  }
 
   await page.setInputFiles('.dropzone input[type=file]', clip);
   await page.waitForFunction(() => document.querySelector('.media-item.selected .media-name')?.title?.startsWith('local/'), null, {timeout: 120000});
