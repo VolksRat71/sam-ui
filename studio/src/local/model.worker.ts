@@ -4,6 +4,7 @@
 // SAM 2.1 tiny graphs, the per-frame feature cache and the tracker. It has no
 // video of its own: it asks its host for frames (needFrame) as it needs them.
 import * as ort from 'onnxruntime-web/webgpu';
+import {FEATURE_CACHE_BYTES} from './budgets';
 import {loadModelFile} from './models';
 import type {FromWorker, ModelMethod, ModelMethods, ToWorker, VideoShape} from './modelProtocol';
 import {type Quality, VARIANTS} from './sam2/config';
@@ -59,7 +60,7 @@ async function load(q: Quality, wanted: 'webgpu' | 'wasm'): Promise<OrtSam2Model
     load: file =>
       loadModelFile(variant, file, p => post({type: 'event', event: {type: 'progress', quality: q, ...p}})),
     frames: framePixels,
-    cacheBytes: q === 1024 ? 1.5e9 : 0.75e9,
+    cacheBytes: FEATURE_CACHE_BYTES[q],
   });
   models = created;
   quality = q;

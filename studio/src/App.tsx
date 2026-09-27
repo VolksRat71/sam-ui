@@ -84,6 +84,7 @@ function App({media}: {media: MediaApi}) {
         current={current}
         locked={locked}
         offline={media.offline}
+        limits={media.limits}
         onSelect={select}
         onAdd={media.add}
         onAdded={added}

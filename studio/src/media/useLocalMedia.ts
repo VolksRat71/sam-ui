@@ -3,6 +3,7 @@
 // MediaApi with no backend: this browser's OPFS and the bundled samples.
 import {useCallback, useEffect, useMemo, useState} from 'react';
 import {requestPersistentStorage} from '~/lib/persist';
+import {BROWSER_LIMITS} from '~/local/budgets';
 import {OpfsKv} from '~/local/kv';
 import type {LocalMedia} from '~/local/localMedia';
 import type {VideoItem} from '~/workspace/useStudioSession';
@@ -30,5 +31,5 @@ export default function useLocalMedia(): MediaApi | null {
   const add = useCallback(async (file: File) => (await media()).open(file), []);
   const remove = useCallback(async (v: VideoItem, purge: boolean) => (await media()).remove(v, purge), []);
   const refresh = useCallback(() => setKey(k => k + 1), []);
-  return useMemo(() => (videos == null ? null : {offline: true, videos, add, remove, refresh}), [videos, add, remove, refresh]);
+  return useMemo(() => (videos == null ? null : {offline: true, videos, limits: BROWSER_LIMITS, add, remove, refresh}), [videos, add, remove, refresh]);
 }

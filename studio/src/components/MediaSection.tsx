@@ -6,11 +6,13 @@
 import {TrashCan, Upload} from '@carbon/icons-react';
 import {useRef, useState} from 'react';
 import {videoDisplayName} from '~/lib/uploadNames';
+import {readDuration} from '~/lib/videoDuration';
+import {RELEASES_URL} from '~/state/engines';
+import {checkUpload, FALLBACK_LIMITS, type UploadLimits} from '~/state/uploadLimits';
 import {isDeletable} from '~/state/media';
 import type {VideoItem} from '~/workspace/useStudioSession';
 
 const ACCEPT = 'video/mp4,video/quicktime,.mp4,.mov';
-const MAX_UPLOAD_MB = 70; // Meta's demo limit
 
 type Props = {
   videos: VideoItem[];
@@ -18,6 +20,8 @@ type Props = {
   locked: boolean;
   /** No backend: the file is opened into this browser, not uploaded. */
   offline: boolean;
+  /** The backend's (or the browser build's) limits; null while they are fetched. */
+  limits: UploadLimits | null;
   onSelect: (video: VideoItem) => void;
   /** Upload (or, offline, store) a file. */
   onAdd: (file: File) => Promise<VideoItem>;
@@ -26,21 +30,28 @@ type Props = {
   onDelete: (video: VideoItem) => void;
 };
 
-export default function MediaSection({videos, current, locked, offline, onSelect, onAdd, onAdded, onDelete}: Props) {
+export default function MediaSection({videos, current, locked, offline, limits, onSelect, onAdd, onAdded, onDelete}: Props) {
   const input = useRef<HTMLInputElement>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{text: string; desktop: boolean} | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
 
-  function upload(file: File) {
+  async function upload(file: File) {
     setError(null);
-    if (file.size > MAX_UPLOAD_MB * 1024 ** 2) {
-      setError(`File too large. Try a video under ${MAX_UPLOAD_MB} MB.`);
+    setNotice(null);
+    setUploading(true);
+    // the size and length first: a long clip is trimmed (backend) or refused
+    // (browser build), and either way the user hears it before it happens
+    const check = checkUpload(file.size, await readDuration(file), limits ?? FALLBACK_LIMITS);
+    if (check.error != null) {
+      setError({text: check.error, desktop: check.desktop});
+      setUploading(false);
       return;
     }
-    setUploading(true);
+    setNotice(check.notice);
     onAdd(file)
       .then(onAdded)
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
+      .catch((err: unknown) => setError({text: err instanceof Error ? err.message : String(err), desktop: false}))
       .finally(() => setUploading(false));
   }
 
@@ -54,7 +65,7 @@ export default function MediaSection({videos, current, locked, offline, onSelect
           e.preventDefault();
           const file = e.dataTransfer.files[0];
           if (file != null && !uploading && !locked) {
-            upload(file);
+            void upload(file);
           }
         }}>
         <Upload size={18} />
@@ -76,12 +87,32 @@ export default function MediaSection({videos, current, locked, offline, onSelect
             const file = e.target.files?.[0];
             e.target.value = '';
             if (file != null) {
-              upload(file);
+              void upload(file);
             }
           }}
         />
       </div>
-      {error != null && <div className="media-error">{error}</div>}
+      {error != null && (
+        <div className="media-error">
+          {error.text}
+          {error.desktop && (
+            <>
+              {' '}
+              <a href={RELEASES_URL} target="_blank" rel="noreferrer">
+                Download the desktop app
+              </a>
+            </>
+          )}
+        </div>
+      )}
+      {notice != null && (
+        <div className="media-notice" role="status">
+          <span>{notice}</span>
+          <button className="link-button" onClick={() => setNotice(null)}>
+            Dismiss
+          </button>
+        </div>
+      )}
       <ul className="media-list">
         {videos.map(v => {
           const selected = v.path === current?.path;

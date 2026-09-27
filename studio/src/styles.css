@@ -1498,3 +1498,23 @@ code {
   border-color: #fa871999;
   color: #ffb870;
 }
+
+/* an upload's notice (a long clip is trimmed to the backend's limit) */
+.media-notice {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 6px 0;
+  padding: 6px 8px;
+  border: 1px solid #fa871966;
+  border-radius: var(--radius);
+  background: #fa87191a;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.media-notice > span {
+  flex: 1;
+}
+.media-error a {
+  color: #8ab4ff;
+}
