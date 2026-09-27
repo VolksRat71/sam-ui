@@ -5,13 +5,18 @@
 // nothing the user did not choose ends up in the file; "keep as shown" keeps
 // their Overlay instead. No point markers, selection emphasis or watermark.
 import {useEffect, useState} from 'react';
+import {saveBlob} from '~/lib/download';
+import {defaultExportName, exportFileName} from '~/state/fileNames';
 import type {UntouchedMode} from '~/state/objectEffects';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
+import FileNameField from './FileNameField';
 
 type Props = {session: StudioSessionApi; videoName: string; onClose: () => void};
 
 export default function ExportVideoModal({session, videoName, onClose}: Props) {
   const [untouched, setUntouched] = useState<UntouchedMode>('original');
+  const fallback = defaultExportName(videoName, 'video');
+  const [file, setFile] = useState(fallback);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<{name: string; size: number} | null>(null);
   const busy = session.exportProgress != null;
@@ -28,13 +33,8 @@ export default function ExportVideoModal({session, videoName, onClose}: Props) {
     setDone(null);
     try {
       const blob = await session.exportVideo(untouched);
-      const name = `${videoName.replace(/\.[^.]+$/, '')}-effects.mp4`;
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = name;
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(url), 30_000);
+      const name = exportFileName(file, fallback, '.mp4');
+      saveBlob(blob, name);
       setDone({name, size: blob.size});
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -50,6 +50,7 @@ export default function ExportVideoModal({session, videoName, onClose}: Props) {
             An MP4 of the whole video, each object with its own effect and the background effect. Point markers and
             selection highlights are not included.
           </p>
+          <FileNameField value={file} onChange={setFile} disabled={busy} />
           <fieldset className="radio-group" disabled={busy}>
             <legend>
               Objects without a chosen effect{untouchedCount > 0 ? ` (${untouchedCount})` : ''}

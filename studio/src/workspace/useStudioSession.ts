@@ -24,9 +24,10 @@ import {closeSessionOnUnload, recordClose, recordOpen} from '~/lib/sessionClose'
 import {readJson, writeJson} from '~/lib/storage';
 import {API_ENDPOINT, OBJECT_LIMIT} from '~/config';
 import type {LocalModelStatus, LocalOptions} from '~/local/LocalEngine';
-import {parseQuality} from '~/local/sam2/config';
-import {BROWSER_ENGINE, pickerEngines} from '~/state/engines';
-import {cleanObjectName} from '~/state/fileNames';
+import {browserModelName, parseQuality} from '~/local/sam2/config';
+import {BROWSER_ENGINE, engineLabel, pickerEngines} from '~/state/engines';
+import {cleanObjectName, objectName, uniqueFileNames} from '~/state/fileNames';
+import type {ExportedObject, ExportKind} from '~/state/maskExport';
 import {
   DEFAULT_ENGINE,
   NormPoint,
@@ -110,6 +111,8 @@ export default function useStudioSession(video: VideoItem) {
   /** Jobs on this video that this page did not start (another tab's). */
   const [foreignJobs, setForeignJobs] = useState<RunningJob[]>([]);
   const [engines, setEngines] = useState<EngineInfo[]>([]);
+  /** A backend answered GET /engines (studio without one is the browser-only build). */
+  const [backend, setBackend] = useState(false);
   const [disagreement, setDisagreement] = useState<Map<number, ObjectDisagreement>>(new Map());
   const [localOptions, setLocalOptionsState] = useState<LocalOptions>(readLocalOptions);
   const [localModel, setLocalModel] = useState<LocalModelStatus | null>(null);
@@ -227,6 +230,7 @@ export default function useStudioSession(video: VideoItem) {
       await bridge.call('init', {endpoint: API_ENDPOINT});
       await bridge.call('setLocalOptions', localOptionsRef.current);
       const server = await bridge.call('engines', {}).catch(() => [] as EngineInfo[]);
+      setBackend(server.length > 0);
       // the backend's engines, then the browser engine (WebGPU only)
       const list = pickerEngines(server, {webgpu: typeof navigator !== 'undefined' && 'gpu' in navigator});
       setEngines(list);
@@ -580,6 +584,66 @@ export default function useStudioSession(video: VideoItem) {
   );
 
   const [exportProgress, setExportProgress] = useState<number | null>(null);
+
+  /** The model an export names: the backend's for its engines, the chosen export for the browser one. */
+  const modelOf = useCallback(
+    (engine: string) =>
+      engine === BROWSER_ENGINE
+        ? browserModelName(localOptions.quality, localOptions.fillHoleArea)
+        : (engines.find(e => e.name === engine)?.model ?? 'unknown'),
+    [engines, localOptions],
+  );
+
+  /**
+   * A mask export (zip) of `ids` (default: every object with a track on the
+   * engine on screen), each file named after its object.
+   */
+  const exportMasks = useCallback(
+    async (kind: ExportKind, rows?: Array<{objectId: number; name?: string; prompt?: string; color?: string}>): Promise<Blob> => {
+      if (bridge == null) {
+        throw new Error('no session');
+      }
+      const s = stateRef.current;
+      type Row = {objectId: number; name?: string; prompt?: string; color?: string};
+      const chosen: Row[] =
+        rows ?? s.objects.filter(o => o.state === 'tracked' || o.state === 'stale').map(o => ({objectId: o.id}));
+      const objs = chosen
+        .map(r => s.objects.find(o => o.id === r.objectId))
+        .filter((o): o is (typeof s.objects)[number] => o != null);
+      if (objs.length === 0) {
+        throw new Error('No object has a track on this engine yet.');
+      }
+      const files = uniqueFileNames(
+        objs.map(o => chosen.find(r => r.objectId === o.id)?.name ?? objectName(o)),
+        i => objectName(objs[i]),
+      );
+      const objects: ExportedObject[] = objs.map((o, i) => {
+        const row = chosen.find(r => r.objectId === o.id);
+        return {
+          objectId: o.id,
+          label: objectName(o),
+          name: files[i],
+          state: o.state,
+          prompt: row?.prompt ?? objectName(o),
+          color: (row?.color ?? o.color).toLowerCase(),
+        };
+      });
+      setExportProgress(0);
+      try {
+        const buffer = await bridge.call('exportMasks', {
+          kind,
+          objects,
+          engine: s.engine,
+          engineLabel: engineLabel(s.engine),
+          model: modelOf(s.engine),
+        });
+        return new Blob([buffer], {type: 'application/zip'});
+      } finally {
+        setExportProgress(null);
+      }
+    },
+    [bridge, modelOf],
+  );
   /** Render the video with every object's own effect, as an MP4 file. */
   const exportVideo = useCallback(
     async (untouched: UntouchedMode): Promise<Blob> => {
@@ -713,7 +777,10 @@ export default function useStudioSession(video: VideoItem) {
     pickObjectEffect,
     variantCounts,
     exportVideo,
+    exportMasks,
+    modelOf,
     exportProgress,
+    backend,
     dismissWarning: () => setWarning(null),
     start,
     addPoint,
