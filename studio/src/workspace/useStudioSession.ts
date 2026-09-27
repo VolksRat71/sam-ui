@@ -21,6 +21,7 @@ import {
   pruneEffects,
 } from '~/state/objectEffects';
 import {isOffline} from '~/lib/mode';
+import {webGpuAvailable} from '~/lib/webgpu';
 import {requestPersistentStorage} from '~/lib/persist';
 import {closeSessionOnUnload, recordClose, recordOpen} from '~/lib/sessionClose';
 import {readJson, writeJson} from '~/lib/storage';
@@ -117,6 +118,8 @@ export default function useStudioSession(video: VideoItem) {
   const [engines, setEngines] = useState<EngineInfo[]>([]);
   /** A backend answered GET /engines (studio without one is the browser-only build). */
   const [backend, setBackend] = useState(false);
+  /** WebGPU works here (null until checked). */
+  const [webgpu, setWebgpu] = useState<boolean | null>(null);
   const [disagreement, setDisagreement] = useState<Map<number, ObjectDisagreement>>(new Map());
   const [localOptions, setLocalOptionsState] = useState<LocalOptions>(readLocalOptions);
   const [localModel, setLocalModel] = useState<LocalModelStatus | null>(null);
@@ -252,7 +255,9 @@ export default function useStudioSession(video: VideoItem) {
       const server = await bridge.call('engines', {}).catch(() => [] as EngineInfo[]);
       setBackend(server.length > 0);
       // the backend's engines, then the browser engine (WebGPU only)
-      const list = pickerEngines(server, {webgpu: typeof navigator !== 'undefined' && 'gpu' in navigator, backend: server.length > 0});
+      const gpu = await webGpuAvailable();
+      setWebgpu(gpu);
+      const list = pickerEngines(server, {webgpu: gpu, backend: server.length > 0});
       setEngines(list);
       // a remembered engine the backend cannot run (any more) falls back to the default
       const wanted = stateRef.current.engine;
@@ -326,7 +331,9 @@ export default function useStudioSession(video: VideoItem) {
   );
 
   // clicks stay open while jobs run; only a session start or a repaint holds them
-  const busy = repainting || status !== 'ready';
+  // no engine can run (the browser-only build without WebGPU): nothing to click or track
+  const noEngine = engines.length > 0 && engines.every(e => !e.available);
+  const busy = repainting || status !== 'ready' || noEngine;
 
   const setPoints = useCallback(
     (objectId: number, frameIndex: number, points: NormPoint[]) => {
@@ -786,7 +793,7 @@ export default function useStudioSession(video: VideoItem) {
     foreignJobs,
     dirty,
     busy,
-    canAdd: canAddObject(state, OBJECT_LIMIT),
+    canAdd: canAddObject(state, OBJECT_LIMIT) && !noEngine,
     engines,
     setEngine,
     localOptions,
@@ -801,6 +808,8 @@ export default function useStudioSession(video: VideoItem) {
     modelOf,
     exportProgress,
     backend,
+    webgpu,
+    noEngine,
     dismissWarning: () => setWarning(null),
     start,
     addPoint,

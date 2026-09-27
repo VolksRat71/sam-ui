@@ -14,7 +14,8 @@ import {objectName} from '~/state/fileNames';
 import {jobProgress} from '~/state/objects';
 import useStudioSession, {type VideoItem} from '~/workspace/useStudioSession';
 import ConfirmModal from './ConfirmModal';
-import {DemoBanner, DemoTag} from './DemoNotice';
+import {DemoBanner, DemoTag, UnsupportedNotice} from './DemoNotice';
+import {pageNotice} from '~/state/notices';
 import EnginePicker from './EnginePicker';
 import EffectsSection from './EffectsSection';
 import ExportMenu, {type ExportChoice} from './ExportMenu';
@@ -41,6 +42,7 @@ export default function Workspace({video, renderMedia}: Props) {
   const jobs = state.jobs;
   // no backend, or none of its engines can run: the browser engine is all there is
   const browserOnly = session.engines.length > 0 && session.engines.every(e => e.local || !e.available);
+  const notice = pageNotice({backend: session.backend, webgpu: session.webgpu, browserOnly});
   const nameOf = (id: number) => objectName(state.objects.find(o => o.id === id) ?? {id});
   const n = meta.numFrames;
 
@@ -153,7 +155,7 @@ export default function Workspace({video, renderMedia}: Props) {
         </div>
       </header>
 
-      <DemoBanner show={session.status === 'ready' && browserOnly} />
+      {notice === 'unsupported' ? <UnsupportedNotice /> : <DemoBanner show={session.status === 'ready' && notice === 'demo'} />}
 
       {session.warning != null && (
         <div className="toast" role="status">

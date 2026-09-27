@@ -1,4 +1,5 @@
 // sam-ui (Apache-2.0). New file, not from SAM 2.
+import {NEEDS_WEBGPU} from '~/lib/webgpu';
 import type {EngineInfo} from '~/worker/protocol';
 
 /** The in-browser SAM 2.1 tiny engine (studio/src/local). */
@@ -17,7 +18,7 @@ export function engineLabel(name: string): string {
 }
 
 export type PickerOptions = {
-  /** navigator.gpu exists (the browser engine needs WebGPU). */
+  /** WebGPU works here: an adapter, not just navigator.gpu (lib/webgpu.ts). */
   webgpu: boolean;
   /**
    * A backend answered GET /engines. Without one (the browser-only build)
@@ -56,7 +57,7 @@ export function pickerEngines(server: ReadonlyArray<EngineInfo>, opts: PickerOpt
     model: 'sam2.1_hiera_tiny (ONNX, WebGPU)',
     default: !opts.backend,
     available: opts.webgpu,
-    reason: opts.webgpu ? null : 'This browser has no WebGPU, which the browser engine needs.',
+    reason: opts.webgpu ? null : NEEDS_WEBGPU,
     loaded: false,
     local: true,
     hint: opts.backend ? 'Lower quality, for quick previews' : undefined,

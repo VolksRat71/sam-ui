@@ -1518,3 +1518,7 @@ code {
 .media-error a {
   color: #8ab4ff;
 }
+.demo-banner.unsupported {
+  border-color: #e6193b88;
+  background: #e6193b1f;
+}

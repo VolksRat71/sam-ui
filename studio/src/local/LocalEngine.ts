@@ -7,6 +7,7 @@
 // backend's jobs do, so two jobs never hold one object.
 import type {RLEObject} from '@/jscocotools/mask';
 import type {NormPoint} from '~/state/objects';
+import {NEEDS_WEBGPU, webGpuAvailable} from '~/lib/webgpu';
 import {modelBitmap} from './frames';
 import {MemoryTrackStore, type LocalTrackStore, variantKey} from './localTracks';
 import {ModelClient, spawnModelWorker} from './modelClient';
@@ -105,6 +106,9 @@ export class LocalEngine {
 
   /** The model loaded at the current size, and told about the open video. */
   private async _ready(): Promise<ModelClient> {
+    if (!(await webGpuAvailable())) {
+      throw new Error(NEEDS_WEBGPU); // never a broken engine: no WebGPU, no model
+    }
     const client = this._clientOrSpawn();
     const quality = this._opts.quality;
     if (this._loaded?.quality !== quality) {
@@ -112,7 +116,7 @@ export class LocalEngine {
       const ready = (async () => {
         this._host.onModel({status: 'loading', quality, loaded: 0, total: VARIANTS[quality].bytes});
         try {
-          const res = await client.call('load', {quality});
+          const res = await client.call('load', {quality, ep: 'webgpu'});
           this._host.onModel({status: 'ready', quality, ms: res.ms});
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);

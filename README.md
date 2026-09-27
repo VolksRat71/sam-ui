@@ -29,7 +29,8 @@ into Applications.
   [`desktop/README.md`](desktop/README.md).
 
 A lighter in-browser demo, SAM 2.1 tiny on WebGPU with no install, is planned for
-GitHub Pages. Or run it from source, below.
+GitHub Pages: Chrome or Edge on desktop (WebGPU). Safari and Firefox are
+untested. Or run it from source, below.
 
 ## What it does
 

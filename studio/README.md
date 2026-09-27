@@ -58,7 +58,13 @@ CLIP=e2e/out/clip.mp4 SMOKE=local NO_SERVER_URL=http://127.0.0.1:7390/sam-ui/ np
 Studio also runs with no backend at all, on the browser engine alone, when
 built with `VITE_API_ENDPOINT=none` (that is the only way: any other build
 waits for its backend, and shows an error with Retry if it never answers,
-rather than quietly turning into the browser demo). Then:
+rather than quietly turning into the browser demo). It needs Chrome or Edge
+on desktop (WebGPU). Safari and Firefox are untested. Then:
+
+- Studio asks for a WebGPU adapter at start. Without a working one, a notice
+  (not dismissible) says the browser can't run the demo and points at Chrome,
+  Edge or the desktop app, and nothing can be clicked or tracked. With a
+  backend, the browser engine's entry is disabled instead: "Needs WebGPU".
 
 - Media lists the videos opened into this browser (copied into the Origin
   Private File System under their sha256; nothing is uploaded) and any
@@ -67,7 +73,8 @@ rather than quietly turning into the browser demo). Then:
   OPFS, keyed by the video's sha256 as the backend keys them, so a reload
   restores them. Effects stay in localStorage, as with a backend.
 - The picker lists SAM 2.1 large and SAM 3 disabled, linking to the desktop
-  app, and a banner (once, dismissible) says the browser version is a demo.
+  app, and a banner (once, dismissible) says the browser version is a demo,
+  tested in Chrome.
 - Every export works: mask videos, Vector JSON and the roto working folder as zips.
 
 `npm run build:pages` makes that build for GitHub Pages: base `/sam-ui/`,

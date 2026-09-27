@@ -12,7 +12,22 @@ import {RELEASES_URL} from '~/state/engines';
 const DISMISSED_KEY = 'sam-ui-studio:demo-banner-dismissed';
 
 export const DEMO_TEXT =
-  'The browser version runs SAM 2.1 tiny and is mainly a demo. The desktop app runs SAM 2.1 large and SAM 3 (SAM 3 needs access approval on Hugging Face), with much better masks.';
+  'The browser version runs SAM 2.1 tiny and is mainly a demo. The desktop app runs SAM 2.1 large and SAM 3 (SAM 3 needs access approval on Hugging Face), with much better masks. Tested in Chrome.';
+
+/** Where the demo banner sits, when this browser cannot run the browser engine at all. */
+export function UnsupportedNotice() {
+  return (
+    <div className="demo-banner unsupported" role="alert">
+      <span>
+        This browser can&apos;t run the browser demo (it needs WebGPU). Use Chrome or Edge on a desktop, or{' '}
+        <a href={RELEASES_URL} target="_blank" rel="noreferrer">
+          download the desktop app
+        </a>
+        .
+      </span>
+    </div>
+  );
+}
 
 function dismissed(): boolean {
   try {

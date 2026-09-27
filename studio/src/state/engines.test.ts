@@ -37,7 +37,7 @@ describe('pickerEngines', () => {
   it('disables the browser engine without WebGPU, and says why', () => {
     const e = pickerEngines([sam2], {webgpu: false, backend: true}).find(x => x.name === BROWSER_ENGINE)!;
     expect(e.available).toBe(false);
-    expect(e.reason).toMatch(/WebGPU/);
+    expect(e.reason).toBe('Needs WebGPU (Chrome or Edge on desktop)');
   });
 
   it('with no backend: SAM 2.1 large and SAM 3 listed, disabled, linking to the desktop app; the browser is the one', () => {
