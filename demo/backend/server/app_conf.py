@@ -22,9 +22,14 @@ FFMPEG_NUM_THREADS = int(os.getenv("FFMPEG_NUM_THREADS", "1"))
 # Path for all data used in API
 DATA_PATH = Path(os.getenv("DATA_PATH", "/data"))
 
-# Max duration an uploaded video can have in seconds. The default is 10
-# seconds.
-MAX_UPLOAD_VIDEO_DURATION = float(os.environ.get("MAX_UPLOAD_VIDEO_DURATION", "10"))
+# Max duration an uploaded video can have in seconds; longer uploads keep
+# their start. sam-ui: 5 minutes (Meta's demo used 10 s, because both engines
+# held the whole clip in memory; tracks/streaming.py made memory flat, so length
+# now costs tracking time, not RAM).
+MAX_UPLOAD_VIDEO_DURATION = float(os.environ.get("MAX_UPLOAD_VIDEO_DURATION", "300"))
+
+# sam-ui: largest upload accepted, MB (Flask refuses bigger requests).
+MAX_UPLOAD_MB = float(os.environ.get("MAX_UPLOAD_MB", "2048"))
 
 # If set, it will define which video is returned by the default video query for
 # desktop

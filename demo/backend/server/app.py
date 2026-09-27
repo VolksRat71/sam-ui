@@ -13,6 +13,8 @@ from typing import Any, Generator
 from app_conf import (
     GALLERY_PATH,
     GALLERY_PREFIX,
+    MAX_UPLOAD_MB,
+    MAX_UPLOAD_VIDEO_DURATION,
     POSTERS_PATH,
     POSTERS_PREFIX,
     UPLOADS_PATH,
@@ -32,6 +34,7 @@ from tracks.routes import make_blueprint as make_track_routes
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = int(MAX_UPLOAD_MB * 2 ** 20)  # sam-ui
 # sam-ui: the desktop app turns CORS off and pins Host/Origin (local_guard.py)
 if os.environ.get("SAM_UI_CORS", "on") != "off":
     cors = CORS(app, supports_credentials=True)
@@ -55,6 +58,15 @@ if os.environ.get("SAM_UI_STUDIO_DIST"):
 @app.route("/healthy")
 def healthy() -> Response:
     return make_response("OK", 200)
+
+
+@app.route("/limits")
+def limits() -> Response:
+    """sam-ui: what an upload may be. Longer videos are trimmed to their first
+    max_upload_seconds; bigger files are refused."""
+    from flask import jsonify
+
+    return jsonify({"max_upload_seconds": MAX_UPLOAD_VIDEO_DURATION, "max_upload_mb": MAX_UPLOAD_MB})
 
 
 @app.route(f"/{GALLERY_PREFIX}/<path:path>", methods=["GET"])
