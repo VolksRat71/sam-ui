@@ -255,10 +255,14 @@ export function rleIou(a: RLEObject, b: RLEObject): number {
 }
 
 /**
- * An approved mask as the memory encoder's high-res mask input, the way
- * add_new_mask and _use_mask_as_output build it: resized to the model size
- * with antialias, >= 0.5, then scaled to +10 / -10 logits. `appearing` is
- * whether any pixel is set (SAM 2 derives the object score from that: +10 or -10).
+ * An approved mask as the memory encoder's high-res mask input, the way SAM 2
+ * builds a mask seed's memory:
+ *   - add_new_mask: resized to the model size with antialias, then >= 0.5;
+ *   - _use_mask_as_output: scaled to +10 / -10 logits, and stored as the
+ *     low-res mask (a quarter of the size, antialiased);
+ *   - propagate_in_video_preflight: that low-res mask, bilinear back to the
+ *     model size, is what the memory encoder binarises.
+ * `appearing` is whether any pixel is set (SAM 2's object score: +10 or -10).
  */
 export function maskInput(rle: RLEObject, size: number): {logits: Float32Array; appearing: boolean} {
   const {mask, width, height} = rleToMask(rle);
@@ -267,14 +271,21 @@ export function maskInput(rle: RLEObject, size: number): {logits: Float32Array; 
     src[i] = mask[i];
   }
   const fit = width === size && height === size ? src : resizeAntialias(src, width, height, size, size);
-  const logits = new Float32Array(size * size);
+  const high = new Float32Array(size * size);
   let appearing = false;
-  for (let i = 0; i < logits.length; i++) {
+  for (let i = 0; i < high.length; i++) {
     const on = fit[i] >= 0.5;
-    logits[i] = on ? 10 : -10;
+    high[i] = on ? 10 : -10;
     appearing ||= on;
   }
+  const low = size / 4;
+  const logits = resizeBilinear(resizeAntialias(high, size, size, low, low), low, low, size, size);
   return {logits, appearing};
+}
+
+/** Low-res logits (lowSize^2) at the model size, as SAM 2 upsamples a stored mask for its memory. */
+export function upsampleLogits(lowRes: Float32Array, lowSize: number, size: number): Float32Array {
+  return resizeBilinear(lowRes, lowSize, lowSize, size, size);
 }
 
 /**

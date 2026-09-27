@@ -31,7 +31,7 @@
 import type {RLEObject} from '@/jscocotools/mask';
 import type {NormPoint} from '~/state/objects';
 import type {Sam2Constants} from './config';
-import {fillHoles, logitsToRle, maskInput} from './masks';
+import {fillHoles, logitsToRle, maskInput, upsampleLogits} from './masks';
 import {assembleMemory, type HeldMemory, planMemory} from './memoryBank';
 
 export interface Releasable {
@@ -161,7 +161,12 @@ export class Sam2Tracker {
         const memory = await this._models.encodeMemory(features, input.logits, input.appearing ? 10 : -10, true);
         state.cond.set(seed.frame, {memory, pointer: out.pointer, rle: seed.mask});
       } else {
-        const memory = await this._models.encodeMemory(features, out.highRes, out.objectScore, true);
+        // SAM 2 encodes a seed from its stored (hole-filled) low-res mask; with
+        // no fill that is the decoder's own high-res mask
+        const fill = this._opts.fillHoleArea ?? 0;
+        const mask =
+          fill > 0 ? upsampleLogits(fillHoles(out.lowRes, out.lowSize, out.lowSize, fill), out.lowSize, this._c.imageSize) : out.highRes;
+        const memory = await this._models.encodeMemory(features, mask, out.objectScore, true);
         state.cond.set(seed.frame, {memory, pointer: out.pointer, rle: this._rle(out)});
       }
     } finally {

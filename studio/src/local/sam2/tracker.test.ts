@@ -171,6 +171,18 @@ describe('Sam2Tracker', () => {
     expect(models.open).toBe(0);
   });
 
+  it('encodes a click seed from its hole-filled mask when hole fill is on, and tracked frames from the decoder', async () => {
+    const models = new FakeModels();
+    const tracker = new Sam2Tracker(models, {numFrames: 2, width: 16, height: 12, fillHoleArea: 8});
+    await run(tracker, [{id: 0, seeds: [{frame: 0, points: [[0.5, 0.5, 1]]}]}]);
+    const memories = models.calls.filter(c => c.kind === 'memory');
+    expect(memories).toEqual([
+      {kind: 'memory', frame: 0, binarize: true, fromLogits: true, score: 3},
+      {kind: 'memory', frame: 1, binarize: false, fromLogits: false, score: 3},
+    ]);
+    expect(models.open).toBe(0);
+  });
+
   it('answers a click from the clicks alone', async () => {
     const models = new FakeModels();
     const tracker = new Sam2Tracker(models, {numFrames: 4, width: 16, height: 12});

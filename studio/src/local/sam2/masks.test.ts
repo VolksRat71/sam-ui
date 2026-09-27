@@ -102,15 +102,24 @@ describe('fillHoles', () => {
 });
 
 describe('maskInput', () => {
-  it('turns an approved mask into +/-10 logits at the model size', () => {
+  it('turns an approved mask into +/-10 logits at the model size, through the low-res round trip', () => {
     const m = new Uint8Array(8 * 4);
     for (let y = 0; y < 4; y++) for (let x = 0; x < 4; x++) m[y * 8 + x] = 1; // left half
     const {logits, appearing} = maskInput(maskToRle(m, 8, 4), 16);
     expect(appearing).toBe(true);
-    expect(logits[0]).toBe(10);
-    expect(logits[15]).toBe(-10);
-    expect(logits[16 * 15 + 3]).toBe(10);
-    expect(maskInput(maskToRle(new Uint8Array(32), 8, 4), 16).appearing).toBe(false);
+    expect(logits[0]).toBeCloseTo(10, 5);
+    expect(logits[15]).toBeCloseTo(-10, 5);
+    expect(logits[16 * 15 + 1]).toBeCloseTo(10, 5);
+    // the edge is soft after 16 -> 4 -> 16, and still splits at the mask's own edge
+    for (let y = 0; y < 16; y++) {
+      for (let x = 0; x < 16; x++) {
+        expect(logits[y * 16 + x] > 0).toBe(x < 8);
+      }
+    }
+    expect(Math.abs(logits[7])).toBeLessThan(10);
+    const empty = maskInput(maskToRle(new Uint8Array(32), 8, 4), 16);
+    expect(empty.appearing).toBe(false);
+    expect(Math.max(...empty.logits)).toBeCloseTo(-10, 5);
   });
 });
 
