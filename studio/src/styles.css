@@ -1426,9 +1426,13 @@ code {
 .menu-item.disabled:focus-within {
   opacity: 0.8;
 }
-.menu-item.engine-off .engine-tip {
-  right: auto;
-  left: 10px;
+/* inside a popover, a disabled item's tooltip opens to the popover's left */
+.menu-item.engine-off .engine-tip,
+.engine-option.engine-off .engine-tip {
+  top: 0;
+  right: calc(100% + 14px);
+  left: auto;
+  width: 240px;
 }
 .menu-sep {
   height: 1px;
@@ -1456,11 +1460,7 @@ code {
 .engine-option.engine-off {
   display: block;
 }
-.engine-option.engine-off .engine-tip {
-  left: 26px;
-  right: auto;
-  top: calc(100% - 4px);
-}
+
 .engine-option.disabled:hover .engine-option-head,
 .engine-option.disabled:focus-within .engine-option-head {
   opacity: 0.8;

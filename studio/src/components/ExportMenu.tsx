@@ -28,7 +28,7 @@ function Unavailable({label, why, href}: {label: string; why: string; href?: str
           <>
             {' '}
             <a href={href} target="_blank" rel="noreferrer">
-              Get it
+              Download the desktop app
             </a>
           </>
         )}
