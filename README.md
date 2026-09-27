@@ -14,13 +14,15 @@ frontend, **studio**, replaces the demo UI with an editor layout.
 
 ## Download the app
 
-**macOS (Apple Silicon):** get `sam-ui-<version>-arm64.dmg` from the
+**macOS 14 or newer, Apple Silicon (M1 or later):** get `sam-ui-<version>-arm64.dmg` from the
 [latest release](https://github.com/VolksRat71/sam-ui/releases/latest) and drag it
 into Applications.
 - On first launch it downloads SAM 2.1 large (about 900 MB, hash-checked). The app
   runs the full model locally on your GPU, with no other install.
 - The build is **not signed yet**: the first time, right-click the app and choose
-  **Open**, or run `xattr -dr com.apple.quarantine /Applications/sam-ui.app`.
+  **Open** (macOS 14), or open it once and click **Open Anyway** in System Settings →
+  Privacy & Security (macOS 15 and later), or run
+  `xattr -dr com.apple.quarantine /Applications/sam-ui.app`.
 - **SAM 3 (optional):** accept Meta's SAM License on
   [facebook/sam3](https://huggingface.co/facebook/sam3), then choose
   **SAM 3 → Download SAM 3 with a Hugging Face token…**. See

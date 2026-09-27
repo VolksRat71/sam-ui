@@ -74,7 +74,8 @@
         }
       ],
       "category": "public.app-category.video",
-      "identity": null
+      "identity": null,
+      "minimumSystemVersion": "14.0"
     }
   }
 }

@@ -5,13 +5,18 @@ The desktop app packages studio and the Python backend into one app, and runs th
 full models locally on your GPU (Apple's MPS on macOS). The backend runs inside
 the app, and studio is served by it, so nothing else needs installing.
 
-## Install (macOS, Apple Silicon)
+## Install (macOS 14 Sonoma or newer, Apple Silicon)
+
+Any M-series Mac (M1 or later). macOS 14 is the floor because the bundled
+PyTorch needs it.
 
 1. Download `sam-ui-<version>-arm64.dmg` from the
    [releases](https://github.com/VolksRat71/sam-ui/releases) and drag **sam-ui**
    into Applications.
 2. The app is **not signed or notarised yet**, so macOS will refuse to open it the
-   first time. Right-click the app and choose **Open**, then **Open** again. Or run:
+   first time. On macOS 14, right-click the app and choose **Open**, then **Open**
+   again. On macOS 15 and later, open it once, then go to **System Settings →
+   Privacy & Security** and click **Open Anyway**. Or, on any version, run:
    ```sh
    xattr -dr com.apple.quarantine /Applications/sam-ui.app
    ```
