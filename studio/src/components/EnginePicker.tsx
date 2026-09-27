@@ -24,21 +24,30 @@ type Availability = Record<Quality, 'local' | 'cached' | 'download' | null>;
 const MB = (bytes: number) => `${Math.round(bytes / 1e6)} MB`;
 const QUALITIES: Quality[] = [512, 1024];
 
+const labelOf = (e: EngineInfo) => e.label ?? engineLabel(e.name);
+
+/** Why an engine cannot run here, with its link: the tooltip of a disabled entry. */
+function Why({engine}: {engine: EngineInfo}) {
+  return (
+    <span className="engine-tip" role="tooltip">
+      {engine.reason ?? 'Not available here.'}
+      {engine.href != null && (
+        <>
+          {' '}
+          <a href={engine.href} target="_blank" rel="noreferrer">
+            Download the desktop app
+          </a>
+        </>
+      )}
+    </span>
+  );
+}
+
 function DisabledChip({engine}: {engine: EngineInfo}) {
   return (
     <span className="engine-off" tabIndex={0} aria-disabled="true">
-      <span className="engine-chip">{engineLabel(engine.name)}</span>
-      <span className="engine-tip" role="tooltip">
-        {engineLabel(engine.name)} cannot run here: {engine.reason ?? 'unavailable'}.
-        {engine.href != null && (
-          <>
-            {' '}
-            <a href={engine.href} target="_blank" rel="noreferrer">
-              Get it
-            </a>
-          </>
-        )}
-      </span>
+      <span className="engine-chip">{labelOf(engine)}</span>
+      <Why engine={engine} />
     </span>
   );
 }
@@ -180,7 +189,7 @@ export default function EnginePicker({session}: Props) {
     const only = layout.available[0];
     return (
       <div className="engine-picker" ref={root}>
-        {only?.local ? button : <span className="engine-label">{only != null ? engineLabel(only.name) : 'No engine'}</span>}
+        {only?.local ? button : <span className="engine-label">{only != null ? labelOf(only) : 'No engine'}</span>}
         {layout.disabled.map(e => (
           <DisabledChip key={e.name} engine={e} />
         ))}
@@ -204,30 +213,21 @@ export default function EnginePicker({session}: Props) {
                 <div key={e.name} className={state.engine === e.name ? 'engine-option selected' : 'engine-option'}>
                   <button role="radio" aria-checked={state.engine === e.name} className="engine-option-head" onClick={() => choose(e.name)}>
                     <span className="engine-radio" />
-                    <span className="engine-name">{engineLabel(e.name)}</span>
+                    <span className="engine-name">{labelOf(e)}</span>
                     <span className="muted">
-                      {e.local ? 'in this browser' : e.loaded ? e.model : `${e.model}, loads on first use`}
+                      {e.local ? (e.hint ?? 'in this browser') : e.loaded ? e.model : `${e.model}, loads on first use`}
                     </span>
                   </button>
                   {e.local && browserOptions}
                 </div>
               ) : (
-                <div key={e.name} className="engine-option disabled" aria-disabled="true">
+                <div key={e.name} className="engine-option disabled engine-off" tabIndex={0} aria-disabled="true">
                   <div className="engine-option-head">
                     <span className="engine-radio" />
-                    <span className="engine-name">{engineLabel(e.name)}</span>
+                    <span className="engine-name">{labelOf(e)}</span>
+                    <span className="muted">{e.href != null ? 'desktop app' : 'not available'}</span>
                   </div>
-                  <p className="engine-status">
-                    Cannot run here: {e.reason ?? 'unavailable'}.
-                    {e.href != null && (
-                      <>
-                        {' '}
-                        <a href={e.href} target="_blank" rel="noreferrer">
-                          Get it
-                        </a>
-                      </>
-                    )}
-                  </p>
+                  <Why engine={e} />
                 </div>
               ),
             )}

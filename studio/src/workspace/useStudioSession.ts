@@ -232,7 +232,7 @@ export default function useStudioSession(video: VideoItem) {
       const server = await bridge.call('engines', {}).catch(() => [] as EngineInfo[]);
       setBackend(server.length > 0);
       // the backend's engines, then the browser engine (WebGPU only)
-      const list = pickerEngines(server, {webgpu: typeof navigator !== 'undefined' && 'gpu' in navigator});
+      const list = pickerEngines(server, {webgpu: typeof navigator !== 'undefined' && 'gpu' in navigator, backend: server.length > 0});
       setEngines(list);
       // a remembered engine the backend cannot run (any more) falls back to the default
       const wanted = stateRef.current.engine;

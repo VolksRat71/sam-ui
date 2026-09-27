@@ -1453,3 +1453,15 @@ code {
   height: 10px;
   border-radius: 2px;
 }
+.engine-option.engine-off {
+  display: block;
+}
+.engine-option.engine-off .engine-tip {
+  left: 26px;
+  right: auto;
+  top: calc(100% - 4px);
+}
+.engine-option.disabled:hover .engine-option-head,
+.engine-option.disabled:focus-within .engine-option-head {
+  opacity: 0.8;
+}

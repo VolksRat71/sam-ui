@@ -44,6 +44,10 @@ export type EngineInfo = {
   local?: boolean;
   /** For a disabled engine: where to get it (shown with the reason). */
   href?: string;
+  /** A short note beside the engine's name in the picker. */
+  hint?: string;
+  /** The picker's name for it, when not engineLabel(name). */
+  label?: string;
 };
 
 /** POST /track_disagreement's answer. */
