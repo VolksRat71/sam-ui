@@ -23,6 +23,9 @@ import {
 import {closeSessionOnUnload, recordClose, recordOpen} from '~/lib/sessionClose';
 import {readJson, writeJson} from '~/lib/storage';
 import {API_ENDPOINT, OBJECT_LIMIT} from '~/config';
+import type {LocalModelStatus, LocalOptions} from '~/local/LocalEngine';
+import {parseQuality} from '~/local/sam2/config';
+import {BROWSER_ENGINE, pickerEngines} from '~/state/engines';
 import {
   DEFAULT_ENGINE,
   NormPoint,
@@ -41,6 +44,13 @@ import type {EngineInfo, RunningJob, TrackletSummary} from '~/worker/protocol';
 export type ObjectDisagreement = {flagged: number[]; meanIou: number | null};
 
 const ENGINE_KEY = 'sam-ui-studio:engine';
+const LOCAL_OPTIONS_KEY = 'sam-ui-studio:browserEngine';
+
+/** The browser engine's settings as remembered (512 px and no hole fill by default). */
+function readLocalOptions(): LocalOptions {
+  const raw = readJson<Partial<LocalOptions>>(LOCAL_OPTIONS_KEY, {});
+  return {quality: parseQuality(raw.quality ?? 512), fillHoleArea: raw.fillHoleArea === 8 ? 8 : 0};
+}
 
 /** Meta's selected-object effects (EffectsUtils' highlight and "more" lists). */
 const HIGHLIGHT_NAMES = [
@@ -100,6 +110,10 @@ export default function useStudioSession(video: VideoItem) {
   const [foreignJobs, setForeignJobs] = useState<RunningJob[]>([]);
   const [engines, setEngines] = useState<EngineInfo[]>([]);
   const [disagreement, setDisagreement] = useState<Map<number, ObjectDisagreement>>(new Map());
+  const [localOptions, setLocalOptionsState] = useState<LocalOptions>(readLocalOptions);
+  const [localModel, setLocalModel] = useState<LocalModelStatus | null>(null);
+  const localOptionsRef = useRef(localOptions);
+  localOptionsRef.current = localOptions;
 
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -175,6 +189,14 @@ export default function useStudioSession(video: VideoItem) {
         case 'exportProgress':
           setExportProgress(event.done);
           break;
+        case 'localModel': {
+          const m = event.model;
+          setLocalModel(m);
+          setEngines(list =>
+            list.map(e => (e.name === BROWSER_ENGINE ? {...e, loaded: m.status === 'ready', loading: m.status === 'loading'} : e)),
+          );
+          break;
+        }
       }
     });
     return () => {
@@ -194,7 +216,10 @@ export default function useStudioSession(video: VideoItem) {
     bridge.setSource(video.url);
     try {
       await bridge.call('init', {endpoint: API_ENDPOINT});
-      const list = await bridge.call('engines', {}).catch(() => [] as EngineInfo[]);
+      await bridge.call('setLocalOptions', localOptionsRef.current);
+      const server = await bridge.call('engines', {}).catch(() => [] as EngineInfo[]);
+      // the backend's engines, then the browser engine (WebGPU only)
+      const list = pickerEngines(server, {webgpu: typeof navigator !== 'undefined' && 'gpu' in navigator});
       setEngines(list);
       // a remembered engine the backend cannot run (any more) falls back to the default
       const wanted = stateRef.current.engine;
@@ -451,6 +476,22 @@ export default function useStudioSession(video: VideoItem) {
     [bridge],
   );
 
+  /** The browser engine's model size and hole fill; its tracks made otherwise go stale. */
+  const setLocalOptions = useCallback(
+    (next: LocalOptions) => {
+      if (bridge == null) {
+        return;
+      }
+      serial(async () => {
+        await bridge.call('setLocalOptions', next);
+        setLocalOptionsState(next);
+        writeJson(LOCAL_OPTIONS_KEY, next);
+        await sync();
+      });
+    },
+    [bridge, serial, sync],
+  );
+
   // Per-object effects: each object keeps its own until the user changes it;
   // saved per video in this browser.
   const effectsKey = `sam-ui-studio:effects:${video.path}`;
@@ -619,6 +660,9 @@ export default function useStudioSession(video: VideoItem) {
     canAdd: canAddObject(state, OBJECT_LIMIT),
     engines,
     setEngine,
+    localOptions,
+    setLocalOptions,
+    localModel,
     disagreement,
     objectEffects,
     pickObjectEffect,

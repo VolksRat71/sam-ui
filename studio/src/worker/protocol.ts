@@ -5,6 +5,7 @@
 // unchanged. Studio calls are request/response RPCs; the worker also pushes
 // events (tracklet summaries, track progress).
 import type {JobOutcome} from '~/api/trackStream';
+import type {LocalModelStatus, LocalOptions} from '~/local/LocalEngine';
 import type {NormPoint, ServerObject} from '~/state/objects';
 
 export type SessionInfo = {
@@ -38,6 +39,10 @@ export type EngineInfo = {
   loaded: boolean;
   /** Set by the UI while a first job on it loads the model. */
   loading?: boolean;
+  /** Runs in this browser (studio/src/local), not on the backend. */
+  local?: boolean;
+  /** For a disabled engine: where to get it (shown with the reason). */
+  href?: string;
 };
 
 /** POST /track_disagreement's answer. */
@@ -107,6 +112,8 @@ export type StudioMethods = {
   effectVariants: {args: {names: string[]}; result: Record<string, number>};
   /** Render the video with these per-object effects as an MP4 (no editing aids). */
   exportVideo: {args: {effects: Record<number, {name: string; variant: number}>}; result: ArrayBuffer};
+  /** The browser engine's model size and hole fill (tracks made otherwise go stale). */
+  setLocalOptions: {args: LocalOptions; result: void};
 };
 
 export type StudioMethod = keyof StudioMethods;
@@ -137,6 +144,7 @@ export type StudioEvent =
   | {type: 'trackFrame'; key: number; frameIndex: number}
   | {type: 'repaint'; active: boolean}
   | {type: 'exportProgress'; done: number}
+  | {type: 'localModel'; model: LocalModelStatus}
   | {type: 'warning'; message: string};
 
 export type StudioEventMessage = {action: 'studioEvent'; event: StudioEvent};

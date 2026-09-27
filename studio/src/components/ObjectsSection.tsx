@@ -4,7 +4,7 @@
 // its track state, and its own Clear track / Remove actions.
 import {Add, Export, TrashCan, Reset} from '@carbon/icons-react';
 import {OBJECT_LIMIT} from '~/config';
-import {engineLabel} from '~/state/engines';
+import {BROWSER_ENGINE, engineLabel} from '~/state/engines';
 import {clearTarget, isTracking, needsPositiveClick, seedFrames, type StudioObject} from '~/state/objects';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
 
@@ -142,8 +142,12 @@ export default function ObjectsSection({session, onExport}: Props) {
         <button
           className="button"
           onClick={onExport}
-          disabled={!state.objects.some(o => o.state === 'tracked' || o.state === 'stale')}
-          title="Write tracked objects as a rotoscoping working folder">
+          disabled={state.engine === BROWSER_ENGINE || !state.objects.some(o => o.state === 'tracked' || o.state === 'stale')}
+          title={
+            state.engine === BROWSER_ENGINE
+              ? `${engineLabel(BROWSER_ENGINE)} tracks stay in this tab for now: switch to SAM 2 to export`
+              : 'Write tracked objects as a rotoscoping working folder'
+          }>
           <Export size={16} /> Export for rotoscoping…
         </button>
       </div>

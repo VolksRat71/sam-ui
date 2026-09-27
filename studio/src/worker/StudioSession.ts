@@ -16,6 +16,8 @@
 // Modified by sam-ui: adapted from SAM2Model.ts in Meta's SAM 2 demo frontend
 // for per-object track jobs (/track_objects, /track_masks), restored objects
 // and client-assigned ids; a job only ever replaces the masks of its own objects.
+// The browser engine (src/local, "browser-sam2") runs clicks and track jobs in
+// this worker's nested model worker; its tracks stay in this tab.
 import {generateThumbnail} from '@/common/components/video/editor/VideoEditorUtils';
 import type VideoWorkerContext from '@/common/components/video/VideoWorkerContext';
 import type {Mask, SegmentationPoint, Tracklet} from '@/common/tracker/Tracker';
@@ -36,6 +38,10 @@ import {
   parseObjectsHeader,
   readTrackStream,
 } from '~/api/trackStream';
+import {LocalEngine, type LocalOptions} from '~/local/LocalEngine';
+import {localTrackEntry, seedsKey, withLocalTracks, type LocalTrackEntry} from '~/local/localTracks';
+import type {TrackObject} from '~/local/sam2/tracker';
+import {BROWSER_ENGINE, engineLabel} from '~/state/engines';
 import {maskSegments} from '~/state/segments';
 import {colorFor, DEFAULT_ENGINE, type NormPoint, type ServerObject} from '~/state/objects';
 import type MaskOverlayEffect from './MaskOverlayEffect';
@@ -255,6 +261,17 @@ function toMask(rle: {readonly size: ReadonlyArray<number>; readonly counts: str
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
+/** A server object's clicks, per frame. */
+function seedPointsOf(o: ServerObject): Map<number, NormPoint[]> {
+  const out = new Map<number, NormPoint[]>();
+  for (const s of o.seeds) {
+    if (s.points.length > 0) {
+      out.set(s.frameIndex, s.points.map((p, i): NormPoint => [p[0], p[1], s.labels[i] === 0 ? 0 : 1]));
+    }
+  }
+  return out;
+}
+
 export default class StudioSession {
   private _endpoint = '';
   private _env: IEnvironment | null = null;
@@ -265,12 +282,31 @@ export default class StudioSession {
   private _seedPoints = new Map<number, Map<number, NormPoint[]>>();
   /** The engine whose tracks the preview shows (and Track runs). */
   private _engine = DEFAULT_ENGINE;
+  /** The open video's path: the key of its browser tracks. */
+  private _videoPath: string | null = null;
+  private readonly _local: LocalEngine;
 
   constructor(
     private readonly _context: VideoWorkerContext,
     private readonly _overlay: MaskOverlayEffect,
     private readonly _emit: (event: StudioEvent) => void,
-  ) {}
+  ) {
+    this._local = new LocalEngine({
+      frame: index => this._frameAt(index),
+      video: () => {
+        const decoded = this._context['_decodedVideo'];
+        if (decoded == null || this._videoPath == null || !(this._context.width > 0)) {
+          return null;
+        }
+        return {key: this._videoPath, numFrames: decoded.numFrames, width: this._context.width, height: this._context.height};
+      },
+      onModel: model => this._emit({type: 'localModel', model}),
+    });
+  }
+
+  private get _isLocal(): boolean {
+    return this._engine === BROWSER_ENGINE;
+  }
 
   // -- setup -----------------------------------------------------------------
 
@@ -297,6 +333,7 @@ export default class StudioSession {
     this._reset();
     const res = await mutate<StudioSessionStartMutation>(this.env, START, {input: {path}});
     this._sessionId = res.startSession.sessionId;
+    this._videoPath = path;
     const objects = plain(res.startSession.objects) as ServerObject[];
     for (const o of objects) {
       const t = this._tracklet(o.objectId);
@@ -346,7 +383,9 @@ export default class StudioSession {
       list = res.clearPointsInFrame.rleMaskList;
       this._seedMasks.get(objectId)?.delete(frameIndex);
     } else {
-      const res = await mutate<StudioSessionAddPointsMutation>(this.env, ADD_POINTS, {
+      // the backend stores the seeds either way; with the browser engine on
+      // screen, the mask shown (and approved) is the browser's own
+      const server = mutate<StudioSessionAddPointsMutation>(this.env, ADD_POINTS, {
         input: {
           sessionId: this.sessionId,
           frameIndex,
@@ -356,7 +395,14 @@ export default class StudioSession {
           clearOldPoints: true,
         },
       });
+      const local = this._isLocal ? this._local.click(frameIndex, points) : null;
+      const [res, mine] = await Promise.all([server, local?.catch((error: unknown) => error instanceof Error ? error : new Error(String(error)))]);
       list = res.addPoints.rleMaskList;
+      if (mine instanceof Error) {
+        this._emit({type: 'warning', message: `${engineLabel(BROWSER_ENGINE)} could not segment this click (${mine.message}); showing the backend's SAM 2 mask`});
+      } else if (mine != null) {
+        list = [{objectId, rleMask: mine.rle}];
+      }
     }
     this._setSeedPoints(t, frameIndex, points);
     // addPoints answers with every object on this frame; only the clicked
@@ -388,6 +434,9 @@ export default class StudioSession {
     this._tracklets.delete(objectId);
     this._seedMasks.delete(objectId);
     this._seedPoints.delete(objectId);
+    if (this._videoPath != null) {
+      await this._local.store.delete(this._videoPath, objectId);
+    }
     if (t != null) {
       this._context.clearTrackletMasks(t);
     }
@@ -396,7 +445,12 @@ export default class StudioSession {
 
   // -- tracks ----------------------------------------------------------------
 
+  /** The backend's objects, each with its browser track (this tab's) added. */
   async objectTracks(): Promise<ServerObject[]> {
+    return this._withLocal(await this._serverObjectTracks());
+  }
+
+  private async _serverObjectTracks(): Promise<ServerObject[]> {
     const res = await fetchQuery<StudioSessionObjectTracksQuery>(
       this.env,
       OBJECT_TRACKS,
@@ -406,23 +460,57 @@ export default class StudioSession {
     return plain(res?.objectTracks ?? []) as ServerObject[];
   }
 
+  private async _withLocal(objects: ServerObject[]): Promise<ServerObject[]> {
+    if (this._videoPath == null) {
+      return objects;
+    }
+    const held = this._local.heldIds();
+    const entries = new Map<number, LocalTrackEntry>();
+    for (const o of objects) {
+      const track = await this._local.store.get(this._videoPath, o.objectId);
+      entries.set(
+        o.objectId,
+        localTrackEntry(track, {seedsKey: seedsKey(seedPointsOf(o)), variant: this._local.variant, running: held.has(o.objectId)}),
+      );
+    }
+    return withLocalTracks(objects, entries);
+  }
+
   /** Drop one engine's cached track (engine null: every engine's). */
   async clearTrack(objectId: number, engine: string | null): Promise<ServerObject> {
-    const res = await mutate<StudioSessionClearTrackMutation>(this.env, CLEAR_TRACK, {
-      input: {sessionId: this.sessionId, objectId, engine},
-    });
+    if (engine == null || engine === BROWSER_ENGINE) {
+      if (this._videoPath != null) {
+        await this._local.store.delete(this._videoPath, objectId);
+      }
+    }
+    let result: ServerObject | undefined;
+    if (engine === BROWSER_ENGINE) {
+      result = (await this.objectTracks()).find(o => o.objectId === objectId);
+    } else {
+      const res = await mutate<StudioSessionClearTrackMutation>(this.env, CLEAR_TRACK, {
+        input: {sessionId: this.sessionId, objectId, engine},
+      });
+      result = (await this._withLocal([plain(res.clearTrack) as ServerObject]))[0];
+    }
     const t = this._tracklets.get(objectId);
     if (t != null && (engine == null || engine === this._engine)) {
       this._keepSeedMasksOnly(t);
     }
     this._render(true);
-    return plain(res.clearTrack) as ServerObject;
+    if (result == null) {
+      throw new Error(`object ${objectId} has no clicks`);
+    }
+    return result;
   }
 
   async startOver(): Promise<void> {
     await mutate<StudioSessionClearVideoMutation>(this.env, CLEAR_VIDEO, {
       input: {sessionId: this.sessionId},
     });
+    await this._local.cancel(null);
+    if (this._videoPath != null) {
+      await this._local.store.clear(this._videoPath);
+    }
     this._tracklets.clear();
     this._seedMasks.clear();
     this._seedPoints.clear();
@@ -432,11 +520,15 @@ export default class StudioSession {
 
   /** Cancel one job (POST /cancel_track), or every job of the session. */
   async cancelTrack(jobId: string | null): Promise<boolean> {
+    if (this._local.isLocalJob(jobId)) {
+      return this._local.cancel(jobId);
+    }
     if (jobId == null) {
-      const res = await mutate<StudioSessionCancelMutation>(this.env, CANCEL, {
-        input: {sessionId: this.sessionId},
-      });
-      return res.cancelPropagateInVideo.success;
+      const [res, local] = await Promise.all([
+        mutate<StudioSessionCancelMutation>(this.env, CANCEL, {input: {sessionId: this.sessionId}}),
+        this._local.cancel(null),
+      ]);
+      return res.cancelPropagateInVideo.success || local;
     }
     const response = await fetch(`${this._endpoint}/cancel_track`, {
       method: 'POST',
@@ -451,6 +543,11 @@ export default class StudioSession {
 
   /** POST /export: a 400 carries the reason ({error}), which is what the user sees. */
   async exportFolder(request: ExportRequest): Promise<ExportManifest> {
+    if (request.engine === BROWSER_ENGINE) {
+      throw new Error(
+        `Export for rotoscoping writes tracks the backend holds, and ${engineLabel(BROWSER_ENGINE)} tracks stay in this tab for now. Track with SAM 2 to export.`,
+      );
+    }
     const response = await fetch(`${this._endpoint}/export`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
@@ -494,6 +591,9 @@ export default class StudioSession {
    * their cached tracks instead.
    */
   async track(objectIds: number[], key: number, engine: string): Promise<TrackResult> {
+    if (engine === BROWSER_ENGINE) {
+      return this._trackLocal(objectIds, key);
+    }
     const response = await fetch(`${this._endpoint}/track_objects`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
@@ -581,8 +681,110 @@ export default class StudioSession {
     return {selected, jobId, outcome};
   }
 
+  /**
+   * A browser track job, the local twin of the server path above: it claims
+   * its objects, tracks them from the backend's seeds with each seed frame's
+   * approved mask (the mask its latest click showed, from either engine),
+   * streams frames into the preview while the browser engine is on screen,
+   * and keeps the track only when the whole job finishes.
+   */
+  private async _trackLocal(objectIds: number[], key: number): Promise<TrackResult> {
+    const video = this._videoPath;
+    if (video == null) {
+      throw new Error('no active session');
+    }
+    const objects = await this._serverObjectTracks();
+    const held = this._local.heldIds();
+    const byId = new Map(objects.map(o => [o.objectId, o]));
+    const selected = [...new Set(objectIds)]
+      .filter(id => !held.has(id) && (byId.get(id)?.seeds.some(s => s.points.length > 0) ?? false))
+      .sort((a, b) => a - b);
+    const jobId = this._local.claim(selected);
+    this._emit({type: 'jobStarted', key, jobId, selected});
+    if (selected.length === 0) {
+      this._local.release(jobId);
+      return {selected, jobId, outcome: {ok: true, objects: [], tracked: [], failed: {}}};
+    }
+    // taken at the start, as the backend does: clicks edited mid-job leave the track stale
+    const keys = new Map<number, string>();
+    const variant = this._local.variant;
+    const jobObjects: TrackObject[] = selected.map(id => {
+      const points = seedPointsOf(byId.get(id)!);
+      keys.set(id, seedsKey(points));
+      const approved = this._seedMasks.get(id);
+      return {
+        id,
+        seeds: [...points].map(([frame, pts]) => ({frame, points: pts, mask: (approved?.get(frame)?.data as RLEObject | undefined) ?? null})),
+      };
+    });
+    const shown = () => this._isLocal;
+    if (shown()) {
+      for (const id of selected) {
+        this._keepSeedMasksOnly(this._tracklet(id));
+      }
+      this._render(true);
+    }
+    const masks = new Map(selected.map(id => [id, new Map<number, RLEObject>()]));
+    let n = 0;
+    let error: string | null = null;
+    let canceled = false;
+    try {
+      const res = await this._local.run(jobId, jobObjects, (frame, frameMasks) => {
+        this._emit({type: 'trackFrame', key, frameIndex: frame});
+        for (const [id, rle] of frameMasks) {
+          masks.get(id)?.set(frame, rle);
+        }
+        if (!shown()) {
+          return;
+        }
+        for (const [id, rle] of frameMasks) {
+          this._setMask(this._tracklet(id), frame, toMask(rle));
+        }
+        this._context.updateTracklets(this._context.frameIndex, this._list(), frame === this._context.frameIndex);
+        if (++n % 12 === 0) {
+          this._emitTracklets();
+        }
+      });
+      canceled = res.canceled;
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    }
+    if (error == null && !canceled) {
+      for (const id of selected) {
+        const m = masks.get(id)!;
+        await this._local.store.put(video, {objectId: id, seedsKey: keys.get(id)!, variant, masks: m, nFrames: m.size});
+      }
+    }
+    const outcome =
+      error != null
+        ? ({ok: false, error, objects: selected} as const)
+        : canceled
+          ? ({ok: false, error: 'cancelled', objects: selected} as const)
+          : ({ok: true, objects: selected, tracked: selected, failed: {}} as const);
+    if (shown()) {
+      if (!outcome.ok) {
+        for (const id of selected) {
+          this._keepSeedMasksOnly(this._tracklet(id));
+        }
+        await this.repaint(selected);
+      } else {
+        await this._thumbnails(selected);
+      }
+      this._render(true);
+    }
+    return {selected, jobId, outcome};
+  }
+
+  /** The browser engine's model size and hole fill. */
+  setLocalOptions(options: LocalOptions): void {
+    this._local.setOptions(options);
+  }
+
   /** Stream cached tracks (all objects, or `objectIds`) into the preview. */
   async repaint(objectIds?: number[]): Promise<void> {
+    if (this._isLocal) {
+      return this._repaintLocal(objectIds);
+    }
     this._emit({type: 'repaint', active: true});
     try {
       const response = await fetch(`${this._endpoint}/track_masks`, {
@@ -610,6 +812,29 @@ export default class StudioSession {
     } finally {
       this._emit({type: 'repaint', active: false});
     }
+  }
+
+  /** repaint() for the browser engine: from this tab's store. */
+  private async _repaintLocal(objectIds?: number[]): Promise<void> {
+    if (this._videoPath == null) {
+      return;
+    }
+    const wanted = objectIds == null ? null : new Set(objectIds);
+    for (const track of await this._local.store.list(this._videoPath)) {
+      if (wanted != null && !wanted.has(track.objectId)) {
+        continue;
+      }
+      if ((this._seedPoints.get(track.objectId)?.size ?? 0) === 0) {
+        continue; // no clicks, nothing to show (as the backend does)
+      }
+      const t = this._tracklet(track.objectId);
+      for (const [frame, rle] of track.masks) {
+        this._setMask(t, frame, toMask(rle));
+      }
+    }
+    this._render(true);
+    await this._thumbnails([...this._tracklets.keys()]);
+    this._render(true);
   }
 
   /**

@@ -1208,3 +1208,39 @@ code {
   margin: 0 0 8px;
   font-size: 20px;
 }
+
+/* a disabled engine says why (and may link somewhere) on hover or focus */
+.engine-off {
+  position: relative;
+  display: inline-flex;
+}
+.engine-off .toggle:disabled {
+  pointer-events: none;
+}
+.engine-tip {
+  display: none;
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  width: max-content;
+  max-width: 260px;
+  padding: 8px 10px;
+  border: 1px solid var(--gray-700);
+  border-radius: var(--radius);
+  background: var(--panel-raised);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: normal;
+}
+.engine-off:hover .engine-tip,
+.engine-off:focus-within .engine-tip {
+  display: block;
+}
+.engine-tip a {
+  color: #8ab4ff;
+}
+.engine-picker label.toggle input {
+  margin: 0;
+}
