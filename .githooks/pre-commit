@@ -1,10 +1,10 @@
 #!/bin/sh
-# Footage guard: refuse media, project data, and anything named for a client or show.
+# Footage guard: refuse media, model weights, project data, and anything named for a client or show.
 # Checks added, modified, renamed and copied files (a rename is how a PNG slipped past
 # the old AM-only filter). Upstream assets listed in .githooks/media-allowlist pass.
 allow="$(git rev-parse --show-toplevel)/.githooks/media-allowlist"
 staged=$(git diff --cached --name-only --diff-filter=AMRC)
-bad=$(printf '%s\n' "$staged" | grep -E -i '\.(mp4|mov|mkv|m4v|avi|jpg|jpeg|png|webm)$|(^|/)(products|anchors|review|shots)\.json$|hacks|kerv' || true)
+bad=$(printf '%s\n' "$staged" | grep -E -i '\.(mp4|mov|mkv|m4v|avi|jpg|jpeg|png|webm|onnx|onnx\.data|safetensors|pt|pth|ckpt)$|(^|/)(products|anchors|review|shots)\.json$|hacks|kerv' || true)
 if [ -n "$bad" ] && [ -f "$allow" ]; then
   bad=$(printf '%s\n' "$bad" | grep -v -x -F -f "$allow" || true)
 fi
