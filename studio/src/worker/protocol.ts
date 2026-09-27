@@ -6,6 +6,7 @@
 // events (tracklet summaries, track progress).
 import type {JobOutcome} from '~/api/trackStream';
 import type {LocalModelStatus, LocalOptions} from '~/local/LocalEngine';
+import type {ExportedObject, ExportKind} from '~/state/maskExport';
 import type {NormPoint, ServerObject} from '~/state/objects';
 
 export type SessionInfo = {
@@ -119,6 +120,14 @@ export type StudioMethods = {
   renameObject: {args: {objectId: number; name: string | null}; result: {saved: boolean}};
   /** The backend's object names; `supported` is false on a backend without names. */
   objectNames: {args: Record<string, never>; result: {names: Record<number, string>; supported: boolean}};
+  /**
+   * Build a mask export in the browser, as a zip: mask videos, Vector JSON,
+   * or the roto working folder. The objects' masks are the engine's on screen.
+   */
+  exportMasks: {
+    args: {kind: ExportKind; objects: ExportedObject[]; engine: string; engineLabel: string; model: string};
+    result: ArrayBuffer;
+  };
   /** The browser engine's model size and hole fill (tracks made otherwise go stale). */
   setLocalOptions: {args: LocalOptions; result: void};
 };

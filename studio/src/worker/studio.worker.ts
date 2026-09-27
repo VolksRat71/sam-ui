@@ -128,6 +128,7 @@ const handlers: Handlers = {
   exportVideo: ({effects}) => exportVideo(effects),
   setLocalOptions: options => session.setLocalOptions(options),
   renameObject: ({objectId, name}) => session.renameObject(objectId, name),
+  exportMasks: args => session.exportMasks(args),
   objectNames: () => session.objectNames(),
 };
 

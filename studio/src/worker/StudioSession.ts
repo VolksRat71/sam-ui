@@ -39,7 +39,9 @@ import {
   readTrackStream,
 } from '~/api/trackStream';
 import {LocalEngine, type LocalOptions} from '~/local/LocalEngine';
-import {localTrackEntry, seedsKey, withLocalTracks, type LocalTrackEntry} from '~/local/localTracks';
+import {localTrackEntry, seedsKey, variantModel, withLocalTracks, type LocalTrackEntry} from '~/local/localTracks';
+import type {ExportedObject, ExportKind} from '~/state/maskExport';
+import {buildExport} from './maskExports';
 import type {TrackObject} from '~/local/sam2/tracker';
 import {BROWSER_ENGINE, engineLabel} from '~/state/engines';
 import {maskSegments} from '~/state/segments';
@@ -773,6 +775,61 @@ export default class StudioSession {
       this._render(true);
     }
     return {selected, jobId, outcome};
+  }
+
+  /**
+   * A mask export, built here: the masks of the engine on screen (for the
+   * browser engine, its stored tracks), the video's size, fps and frame
+   * count, and the provenance the files carry.
+   */
+  async exportMasks(args: {
+    kind: ExportKind;
+    objects: ExportedObject[];
+    engine: string;
+    engineLabel: string;
+    model: string;
+  }): Promise<ArrayBuffer> {
+    const decoded = this._context['_decodedVideo'];
+    if (decoded == null || this._videoPath == null) {
+      throw new Error('the video is not open yet');
+    }
+    const local = new Map<number, Map<number, RLEObject>>();
+    const objects = [...args.objects];
+    if (args.engine === BROWSER_ENGINE) {
+      for (const [i, o] of objects.entries()) {
+        const track = await this._local.store.get(this._videoPath, o.objectId);
+        if (track == null) {
+          throw new Error(`${o.label} has no ${engineLabel(BROWSER_ENGINE)} track`);
+        }
+        local.set(o.objectId, track.masks);
+        objects[i] = {...o, model: variantModel(track.variant)};
+      }
+    }
+    const provenance = {
+      engine: args.engine,
+      engineLabel: args.engineLabel,
+      model: args.model,
+      video: this._videoPath,
+      frames: decoded.numFrames,
+      fps: decoded.fps,
+      width: this._context.width,
+      height: this._context.height,
+      exported: new Date().toISOString(),
+    };
+    const bytes = await buildExport(
+      args.kind,
+      provenance,
+      objects,
+      {
+        maskAt: (id, frame) =>
+          args.engine === BROWSER_ENGINE
+            ? (local.get(id)?.get(frame) ?? null)
+            : ((this._tracklets.get(id)?.masks[frame]?.data as RLEObject | undefined) ?? null),
+        seedsOf: id => this._seedPoints.get(id) ?? new Map(),
+      },
+      done => this._emit({type: 'exportProgress', done}),
+    );
+    return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
   }
 
   /** POST /rename_object. A backend from before names answers 404: not saved, no error. */
