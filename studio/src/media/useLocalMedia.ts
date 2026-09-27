@@ -3,7 +3,7 @@
 // MediaApi with no backend: this browser's OPFS and the bundled samples.
 import {useCallback, useEffect, useMemo, useState} from 'react';
 import {requestPersistentStorage} from '~/lib/persist';
-import {BROWSER_LIMITS} from '~/local/budgets';
+import {BROWSER_LIMITS} from '~/budgets';
 import {OpfsKv} from '~/local/kv';
 import type {LocalMedia} from '~/local/localMedia';
 import type {VideoItem} from '~/workspace/useStudioSession';

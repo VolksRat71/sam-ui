@@ -1109,19 +1109,18 @@ export default class StudioSession {
 
   // -- thumbnails (Meta's generateThumbnail, fed from our masks) ---------------
 
-  /** The decoded frame, once the decoder has reached it. */
+  /**
+   * Frame `index` of the open video, decoded on demand (a VideoFrame the
+   * caller must close), once the video is open; null past its end.
+   */
   private async _frameAt(index: number, timeoutMs = 20_000): Promise<VideoFrame | null> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
-      // Meta's context keeps its frames private; bracket access is the
-      // TypeScript escape hatch for reading one without copying the class.
-      const decoded = this._context['_decodedVideo'];
-      const frame = decoded?.frames[index]?.bitmap;
-      if (frame != null) {
-        return frame as VideoFrame;
-      }
-      if (decoded != null && decoded.frames.length >= decoded.numFrames && index >= decoded.numFrames) {
-        return null;
+      // Meta's context keeps its video private; bracket access is the
+      // TypeScript escape hatch for reading it without copying the class.
+      const video = this._context['_decodedVideo'];
+      if (video != null) {
+        return index >= 0 && index < video.numFrames ? this._context.frameAt(index) : null;
       }
       await sleep(100);
     }
@@ -1136,15 +1135,15 @@ export default class StudioSession {
     if ((t.points[frameIndex]?.length ?? 0) === 0) {
       return;
     }
-    const frame = await this._frameAt(frameIndex);
-    if (frame == null) {
-      return;
-    }
     const rle = mask.data as RLEObject;
     const [h, w] = rle.size;
     const canvas = new OffscreenCanvas(w, h);
     const ctx = canvas.getContext('2d', {willReadFrequently: true});
     if (ctx == null) {
+      return;
+    }
+    const frame = await this._frameAt(frameIndex);
+    if (frame == null) {
       return;
     }
     const image = ctx.createImageData(w, h);
@@ -1154,6 +1153,8 @@ export default class StudioSession {
       await generateThumbnail(t, frameIndex, mask, frame, ctx);
     } catch (error) {
       this._emit({type: 'warning', message: `thumbnail failed: ${String(error)}`});
+    } finally {
+      frame.close();
     }
   }
 

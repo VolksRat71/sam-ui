@@ -48,7 +48,10 @@ that carry Meta's header: those come from Meta's SAM 2 demo frontend (see below)
   upstream commit 2b90b9f): the video decoder and renderer, worker bridge, effects
   and shaders, RLE code (jscocotools), multipart parser, Relay environment, logger
   and theme colours. `studio/scripts/meta-imports.py` lists what studio reaches.
-  Changed there: `common/tracker/Trackers.ts` (no SAM2Model). Adapted from Meta's
+  Changed there: `common/tracker/Trackers.ts` (no SAM2Model), and
+  `common/components/video/VideoWorkerContext.ts` (frames from studio's
+  `worker/frameStore.ts`, decoded on demand into a bounded cache, instead of
+  every frame decoded up front). Adapted from Meta's
   files: `studio/src/worker/studio.worker.ts` (from `VideoWorker.ts`),
   `studio/src/worker/StudioSession.ts` (from `SAM2Model.ts`) and `studio/Dockerfile`
   (from `frontend.Dockerfile`). The GraphQL schema moved with it

@@ -13,11 +13,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import {
-  DecodedVideo,
-  ImageFrame,
-  decodeStream,
-} from '@/common/codecs/VideoDecoder';
+// Modified by sam-ui: frames come from studio's FrameStore (decoded on demand,
+// an LRU bounded by bytes) instead of Meta's decodeStream, which kept every
+// decoded frame of the video; draws do not overlap, and a draw asked for
+// while one runs happens after it.
+import type {ImageFrame} from '@/common/codecs/VideoDecoder';
+import {FrameStore} from '~/worker/frameStore';
 import {encode as encodeVideo} from '@/common/codecs/VideoEncoder';
 import {
   Effect,
@@ -31,7 +32,6 @@ import AllEffects, {
 } from '@/common/components/video/effects/Effects';
 import Logger from '@/common/logger/Logger';
 import {Mask, SegmentationPoint, Tracklet} from '@/common/tracker/Tracker';
-import {streamFile} from '@/common/utils/FileUtils';
 import {Stats} from '@/debug/stats/Stats';
 import {VIDEO_WATERMARK_TEXT} from '@/demo/DemoConfig';
 import CreateFilmstripError from '@/graphql/errors/CreateFilmstripError';
@@ -54,18 +54,22 @@ import {
   VideoWorkerResponse,
 } from './VideoWorkerTypes';
 
-function getEvenlySpacedItems(decodedVideo: DecodedVideo, x: number) {
-  const p = Math.floor(decodedVideo.numFrames / Math.max(1, x - 1));
-  const middleFrames = decodedVideo.frames
-    .slice(p, p * x)
-    .filter(function (_, i) {
-      return 0 == i % p;
-    });
-  return [
-    decodedVideo.frames[0],
-    ...middleFrames,
-    decodedVideo.frames[decodedVideo.numFrames - 1],
-  ];
+/** The open video: its size, frame count and rate, and each frame's timing (µs). */
+type VideoInfo = {
+  width: number;
+  height: number;
+  numFrames: number;
+  fps: number;
+  frames: Array<{timestamp: number; duration: number}>;
+};
+
+/** Indices of x frames spread evenly over the video, first and last included. */
+function getEvenlySpacedIndices(numFrames: number, x: number): number[] {
+  if (numFrames <= 0) {
+    return [];
+  }
+  const n = Math.max(1, Math.min(x, numFrames));
+  return Array.from({length: n}, (_, i) => (n === 1 ? 0 : Math.round((i * (numFrames - 1)) / (n - 1))));
 }
 
 export type FrameInfo = {
@@ -92,7 +96,9 @@ export default class VideoWorkerContext {
   private _stats: VideoStats = {};
   private _ctx: OffscreenCanvasRenderingContext2D | null = null;
   private _form: CanvasForm | null = null;
-  private _decodedVideo: DecodedVideo | null = null;
+  private _decodedVideo: VideoInfo | null = null;
+  private _store: FrameStore | null = null;
+  private _redraw: boolean = false;
   private _frameIndex: number = 0;
   private _isPlaying: boolean = false;
   private _playbackRAFHandle: number | null = null;
@@ -120,8 +126,9 @@ export default class VideoWorkerContext {
     return this._frameIndex;
   }
 
-  public get currentFrame(): VideoFrame | null {
-    return this._decodedVideo?.frames[this._frameIndex].bitmap ?? null;
+  /** Frame `index` of the open video, as a VideoFrame the caller must close; null with no video. */
+  public async frameAt(index: number): Promise<VideoFrame | null> {
+    return this._store?.frame(index) ?? null;
   }
 
   constructor() {
@@ -288,26 +295,24 @@ export default class VideoWorkerContext {
       const canvas = new OffscreenCanvas(width, height);
       const ctx = canvas.getContext('2d');
 
-      if (this._decodedVideo !== null) {
+      const store = this._store;
+      if (this._decodedVideo !== null && store != null) {
         const scale = canvas.height / this._decodedVideo.height;
         const resizeWidth = this._decodedVideo.width * scale;
 
-        const spacedFrames = getEvenlySpacedItems(
-          this._decodedVideo,
+        const spaced = getEvenlySpacedIndices(
+          this._decodedVideo.numFrames,
           Math.ceil(canvas.width / resizeWidth),
         );
 
-        spacedFrames.forEach((frame, idx) => {
-          if (frame != null) {
-            ctx?.drawImage(
-              frame.bitmap,
-              resizeWidth * idx,
-              0,
-              resizeWidth,
-              canvas.height,
-            );
+        for (const [idx, frameIndex] of spaced.entries()) {
+          const frame = await store.frame(frameIndex);
+          try {
+            ctx?.drawImage(frame, resizeWidth * idx, 0, resizeWidth, canvas.height);
+          } finally {
+            frame.close();
           }
-        });
+        }
       }
 
       const filmstrip = await createImageBitmap(canvas);
@@ -418,7 +423,7 @@ export default class VideoWorkerContext {
   }
 
   private async *_framesGenerator(
-    decodedVideo: DecodedVideo,
+    decodedVideo: VideoInfo,
     canvas: OffscreenCanvas,
     form: CanvasForm,
   ): AsyncGenerator<ImageFrame, undefined> {
@@ -429,7 +434,7 @@ export default class VideoWorkerContext {
 
       const frame = frames[frameIndex];
       const videoFrame = new VideoFrame(canvas, {
-        timestamp: frame.bitmap.timestamp,
+        timestamp: frame.timestamp,
       });
 
       yield {
@@ -478,7 +483,8 @@ export default class VideoWorkerContext {
     this._ctx?.reset();
 
     // Close frames of previously decoded video.
-    this._decodedVideo?.frames.forEach(f => f.bitmap.close());
+    this._store?.close();
+    this._store = null;
     this._decodedVideo = null;
   }
 
@@ -527,84 +533,81 @@ export default class VideoWorkerContext {
 
     this.sendResponse('loadstart');
 
-    const fileStream = streamFile(src, {
-      credentials: 'same-origin',
-      cache: 'no-store',
-    });
+    // index the frames; they are decoded when drawn, a run at a time
+    const store = await FrameStore.open(src);
+    if (this._store != null) {
+      this._store.close(); // a newer source won the race
+    }
+    this._store = store;
+    const {width, height, numFrames, fps} = store.info;
+    const frameUs = 1_000_000 / fps;
+    this._decodedVideo = {
+      width,
+      height,
+      numFrames,
+      fps,
+      frames: Array.from({length: numFrames}, (_, i) => ({timestamp: Math.round(store.time(i) * 1_000_000), duration: frameUs})),
+    };
+    canvas.width = width;
+    canvas.height = height;
+    // Set WebGL contexts right after the first frame decoded
+    this.initializeWebGLContext(width, height);
 
-    let renderedFirstFrame = false;
-    this._decodedVideo = await decodeStream(fileStream, async progress => {
-      const {fps, height, width, numFrames, frames} = progress;
-      this._decodedVideo = progress;
-      if (!renderedFirstFrame) {
-        renderedFirstFrame = true;
-        canvas.width = width;
-        canvas.height = height;
-        // Set WebGL contexts right after the first frame decoded
-        this.initializeWebGLContext(width, height);
-
-        // Initialize effect once first frame was decoded.
-        for (const [i, effect] of this._effects.entries()) {
-          const offCanvas =
-            i === EffectIndex.BACKGROUND
-              ? this._canvasBackground
-              : this._canvasHighlights;
-          invariant(offCanvas != null, 'need canvas to render effects');
-          const webglContext =
-            i === EffectIndex.BACKGROUND ? this._glBackground : this._glObjects;
-          invariant(
-            webglContext != null,
-            'need WebGL context to render effects',
-          );
-          await effect.setup({
-            width,
-            height,
-            canvas: offCanvas,
-            gl: webglContext,
-          });
-        }
-
-        // Need to render frame immediately. Cannot go through
-        // requestAnimationFrame because then rendering this frame would be
-        // delayed until the full video has finished decoding.
-        this._drawFrame();
-
-        this._stats.videoFps?.updateMaxValue(fps);
-        this._stats.total?.updateMaxValue(1000 / fps);
-        this._stats.effect0?.updateMaxValue(1000 / fps);
-        this._stats.effect1?.updateMaxValue(1000 / fps);
-        this._stats.frameBmp?.updateMaxValue(1000 / fps);
-        this._stats.maskBmp?.updateMaxValue(1000 / fps);
-      }
-      this.sendResponse<DecodeResponse>('decode', {
-        totalFrames: numFrames,
-        numFrames: frames.length,
-        fps: fps,
-        width: width,
-        height: height,
-        done: false,
+    // Initialize effect once first frame was decoded.
+    for (const [i, effect] of this._effects.entries()) {
+      const offCanvas =
+        i === EffectIndex.BACKGROUND
+          ? this._canvasBackground
+          : this._canvasHighlights;
+      invariant(offCanvas != null, 'need canvas to render effects');
+      const webglContext =
+        i === EffectIndex.BACKGROUND ? this._glBackground : this._glObjects;
+      invariant(
+        webglContext != null,
+        'need WebGL context to render effects',
+      );
+      await effect.setup({
+        width,
+        height,
+        canvas: offCanvas,
+        gl: webglContext,
       });
-    });
-
-    if (!renderedFirstFrame) {
-      canvas.width = this._decodedVideo.width;
-      canvas.height = this._decodedVideo.height;
-      this._drawFrame();
     }
 
+    this._drawFrame();
+
+    this._stats.videoFps?.updateMaxValue(fps);
+    this._stats.total?.updateMaxValue(1000 / fps);
+    this._stats.effect0?.updateMaxValue(1000 / fps);
+    this._stats.effect1?.updateMaxValue(1000 / fps);
+    this._stats.frameBmp?.updateMaxValue(1000 / fps);
+    this._stats.maskBmp?.updateMaxValue(1000 / fps);
+
+    // every frame is available now (decoded when first drawn)
     this.sendResponse<DecodeResponse>('decode', {
-      totalFrames: this._decodedVideo.numFrames,
-      numFrames: this._decodedVideo.frames.length,
-      fps: this._decodedVideo.fps,
-      width: this._decodedVideo.width,
-      height: this._decodedVideo.height,
+      totalFrames: numFrames,
+      numFrames,
+      fps,
+      width,
+      height,
       done: true,
     });
   }
 
   private _drawFrame(): void {
     if (this._canvas !== null && this._form !== null) {
-      this._drawFrameImpl(this._form, this._frameIndex);
+      if (this._isDrawing) {
+        this._redraw = true; // after the draw in progress, with the frame then current
+        return;
+      }
+      this._isDrawing = true;
+      void this._drawFrameImpl(this._form, this._frameIndex).finally(() => {
+        this._isDrawing = false;
+        if (this._redraw) {
+          this._redraw = false;
+          this._drawFrame();
+        }
+      });
     }
   }
 
@@ -615,7 +618,8 @@ export default class VideoWorkerContext {
     step: number = 0,
     maxSteps: number = 40,
   ): Promise<void> {
-    if (this._decodedVideo === null) {
+    const store = this._store;
+    if (this._decodedVideo === null || store == null) {
       return;
     }
 
@@ -626,8 +630,7 @@ export default class VideoWorkerContext {
     }
 
     try {
-      const frame = this._decodedVideo.frames[frameIndex];
-      const {bitmap} = frame;
+      const bitmap = await store.frame(frameIndex);
 
       this._stats.frameBmp?.begin();
 
@@ -635,6 +638,7 @@ export default class VideoWorkerContext {
       // globalCompositeOperation on ImageBitmap and fails on VideoFrame. FWIW,
       // Chrome treats VideoFrame similarly to ImageBitmap.
       const frameBitmap = await createImageBitmap(bitmap);
+      bitmap.close();
 
       this._stats.frameBmp?.end();
 

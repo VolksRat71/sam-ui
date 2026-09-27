@@ -23,7 +23,7 @@ export type LocalModelStatus =
 export type LocalVideo = {key: string; numFrames: number; width: number; height: number};
 
 export type LocalHost = {
-  /** A decoded frame of the open video (not closed by the engine), or null. */
+  /** A decoded frame of the open video, which the engine closes, or null. */
   frame(index: number): Promise<VideoFrame | ImageBitmap | null>;
   /** The open video, once its size and frame count are known. */
   video(): LocalVideo | null;
@@ -85,7 +85,11 @@ export class LocalEngine {
         if (frame == null) {
           throw new Error(`frame ${index} is not decoded`);
         }
-        return modelBitmap(frame, size);
+        try {
+          return await modelBitmap(frame, size);
+        } finally {
+          frame.close(); // the host's frames are the caller's to close
+        }
       });
       const loaded = new Map<string, number>();
       this._client.on(e => {

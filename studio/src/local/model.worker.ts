@@ -4,7 +4,7 @@
 // SAM 2.1 tiny graphs, the per-frame feature cache and the tracker. It has no
 // video of its own: it asks its host for frames (needFrame) as it needs them.
 import * as ort from 'onnxruntime-web/webgpu';
-import {FEATURE_CACHE_BYTES} from './budgets';
+import {FEATURE_CACHE_BYTES} from '~/budgets';
 import {loadModelFile} from './models';
 import type {FromWorker, ModelMethod, ModelMethods, ToWorker, VideoShape} from './modelProtocol';
 import {type Quality, VARIANTS} from './sam2/config';
