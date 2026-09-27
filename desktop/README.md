@@ -8,7 +8,8 @@ the app, and studio is served by it, so nothing else needs installing.
 ## Install (macOS 14 Sonoma or newer, Apple Silicon)
 
 Any M-series Mac (M1 or later). macOS 14 is the floor because the bundled
-PyTorch needs it.
+PyTorch needs it. Memory: 16 GB recommended, and needed for SAM 3; SAM 2.1 large
+may run on 8 GB with the feature cache off. See [Hardware](../README.md#hardware).
 
 1. Download `sam-ui-<version>-arm64.dmg` from the
    [releases](https://github.com/VolksRat71/sam-ui/releases) and drag **sam-ui**

@@ -1,4 +1,4 @@
-sam-ui 0.2.0: long clips, new exports, and a browser demo. macOS 14 or newer, Apple Silicon (M1 or later).
+sam-ui 0.2.0: long clips, new exports, and a browser demo. macOS 14 or newer, Apple Silicon (M1 or later); 16 GB of memory recommended, and needed for SAM 3 (see Hardware in the README).
 
 - **Long clips.** Memory no longer grows with clip length: frames are decoded as tracking and playback reach them, and tracking state keeps only what the model reads again. Uploads take up to 5 minutes and 2 GB (Meta's demo limit was 10 seconds); a longer clip keeps its start, and studio says so before it uploads.
 - **Exports.** Mask videos (one black and white MP4 per object, in a zip), the PNG roto working folder, and vector JSON (per-frame outlines for After Effects masks). Each export records the engine and model that made it. Export to After Effects is coming.

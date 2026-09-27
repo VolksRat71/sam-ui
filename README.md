@@ -28,9 +28,30 @@ into Applications.
   **SAM 3 → Download SAM 3 with a Hugging Face token…**. See
   [`desktop/README.md`](desktop/README.md).
 
-A lighter in-browser demo, SAM 2.1 tiny on WebGPU with no install, is planned for
-GitHub Pages: Chrome or Edge on desktop (WebGPU). Safari and Firefox are
-untested. Or run it from source, below.
+**Or try it in the browser:** [volksrat71.github.io/sam-ui](https://volksrat71.github.io/sam-ui/)
+runs SAM 2.1 tiny on WebGPU with no install, no server and nothing uploaded (your
+video stays in the browser). Chrome or Edge on desktop; Safari and Firefox are
+untested. It is a demo: clips up to 2 minutes, and the app's SAM 2.1 large and SAM 3
+give much better masks. Or run it from source, below.
+
+## Hardware
+
+Memory does not grow with clip length: frames are decoded as tracking and playback
+reach them, and tracking state keeps only what the model reads again. So what sets
+the hardware floor is the model, not the clip. Figures are marked **measured** or
+**estimated**; the estimates add up the model's weights, its working memory and the
+caches, and have not been run on that hardware yet.
+
+| | Minimum | Recommended | Notes |
+|---|---|---|---|
+| **App, SAM 2.1 large** (default) | 8 GB, with the feature cache off (`SAM_UI_FEATURE_CACHE_GB=0`); **estimated** | 16 GB | About 1.3 s a frame on an M1 Pro (**measured**), so a 5-minute clip at 24 fps (7,200 frames) takes about 2.5 hours per pass. |
+| **App, SAM 3** (optional) | 16 GB; **measured** working on an M1 Pro, 16 GB | 16 GB or more | Its weights alone are 3.4 GB. Slower than SAM 2.1 large (not yet timed). |
+| **Browser demo, SAM 2.1 tiny** | 8 GB; **measured** 2.7 to 3.6 GB for a 2-minute track | 16 GB | Chrome or Edge with WebGPU. About 46 ms a frame at 512 px, 252 ms at 1024, one object (**measured**). |
+
+The app needs an Apple Silicon Mac (M1 or later) on macOS 14 or newer. Measured on a
+3-minute 720p clip (4,320 frames, SAM 2.1 tiny, two objects): the backend's memory
+stays at 3.0 to 3.3 GB from start to end, where the code this began from needed 7.8 GB
+for 10 seconds and 17 GB for 30. `tools/memory_bench.py` reproduces the comparison.
 
 ## What it does
 
@@ -49,17 +70,25 @@ untested. Or run it from source, below.
   and studio marks the frames where the two disagree.
 - **Fast re-tracks.** Image-backbone features are cached per video and shared by
   every job, so a re-track skips the backbone (about 35% faster, same masks).
+- **Long clips.** Uploads up to 5 minutes and 2 GB (`MAX_UPLOAD_VIDEO_DURATION`,
+  `MAX_UPLOAD_MB`); a longer clip keeps its start, and studio says so before it
+  uploads. Memory stays flat however long the clip (see Hardware).
 - **Studio:**
-  - up to 16 objects;
+  - up to 16 objects, each with a name you can edit in place (exports use it);
+  - an engine picker that lists every model and says why one can't run here;
   - per-object effects from Meta's demo;
   - a timeline with a lane per object;
   - uploads, and deleting uploads;
   - zoom, with click markers that stay sharp at any zoom.
-- **Exports:**
-  - **Video:** an MP4 with each object's effect, encoded in the browser.
+- **Exports** (each records the engine and model that made it):
+  - **Mask videos:** one black and white MP4 per object, in a zip.
+  - **Vector JSON:** per-frame outlines (pieces and holes) per object, for After
+    Effects masks.
   - **Rotoscoping working folder:** `products.json`, `anchors.json`, `shots.json`
     and per-object mattes (`data/mattes_tracked/<id>/%05d.png`), optionally with
     the frames.
+  - **Video:** an MP4 with each object's effect, encoded in the browser.
+  - **After Effects:** coming.
 
 ## Quick start
 
@@ -133,15 +162,19 @@ studio (React, Vite, WebCodecs)                 demo/backend/server (Flask)
 | --- | --- |
 | GraphQL, `POST /graphql` | `startSession` (returns the objects already known for the video), `addPoints` (points normalised 0–1), `clearPointsInFrame`, `removeObject`, `clearPointsInVideo`, `objectTracks`, `clearTrack`, `uploadVideo`, `deleteVideo`, `videos`, `defaultVideo` |
 | Streams, `multipart/x-savi-stream` | `POST /track_objects {session_id, object_ids?, engine?}` streams one part per frame and ends with a `done` or `error` part. `POST /track_masks` streams cached tracks. |
-| JSON | `POST /cancel_track`, `POST /track_jobs`, `GET /engines`, `POST /track_disagreement`, `POST /export` |
+| JSON | `GET /engines` (every engine, with why one can't run), `GET /limits` (upload length and size), `POST /cancel_track`, `POST /track_jobs`, `POST /track_disagreement`, `POST /rename_object`, `POST /object_names`, `POST /export` |
 
 ## Tests
 
 ```sh
 pytest demo/backend/tests -q                         # backend, no model needed
-SAM_UI_SLOW=1 pytest demo/backend/tests -q -k slow   # + SAM 2 on synthetic video
+SAM_UI_SLOW=1 PYTORCH_ENABLE_MPS_FALLBACK=1 pytest demo/backend/tests -q -k "slow or streamed"
+                                                     # + real SAM 2 / SAM 3: streamed and pruned tracks
+                                                     #   give the same masks as upstream on every frame
 cd studio && npm test && npm run lint && npm run build
 npm run smoke                                        # end to end in headless Chrome
+SMOKE=both npm run smoke                             # + the browser-only build (headed Chrome, WebGPU)
+python tools/memory_bench.py --seconds 10 60 180     # peak memory against clip length
 python tools/track_cache_e2e.py --api http://127.0.0.1:7373   # live backend (use a scratch one)
 ```
 
