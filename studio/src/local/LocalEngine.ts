@@ -33,7 +33,7 @@ export type LocalHost = {
 export type LocalJobResult = {canceled: boolean; frames: number; ms: number; stats: TrackStats | null};
 
 export class LocalEngine {
-  readonly store: LocalTrackStore;
+  private _store: LocalTrackStore;
   private _client: ModelClient | null = null;
   private _opts: LocalOptions = {quality: 512, fillHoleArea: 0};
   private _loaded: {quality: Quality; ready: Promise<void>} | null = null;
@@ -45,7 +45,16 @@ export class LocalEngine {
     private readonly _host: LocalHost,
     store?: LocalTrackStore,
   ) {
-    this.store = store ?? new MemoryTrackStore();
+    this._store = store ?? new MemoryTrackStore();
+  }
+
+  get store(): LocalTrackStore {
+    return this._store;
+  }
+
+  /** Keep tracks elsewhere from now on (OPFS, with no backend). */
+  useStore(store: LocalTrackStore): void {
+    this._store = store;
   }
 
   get options(): LocalOptions {

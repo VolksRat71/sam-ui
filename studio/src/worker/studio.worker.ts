@@ -99,8 +99,8 @@ type Handlers = {
 };
 
 const handlers: Handlers = {
-  init: ({endpoint}) => session.init(endpoint),
-  startSession: ({path}) => session.startSession(path),
+  init: ({endpoint, offline}) => session.init(endpoint, offline),
+  startSession: ({path, key}) => session.startSession(path, key),
   closeSession: () => session.closeSession(),
   setPoints: ({objectId, frameIndex, points}) =>
     session.setPoints(objectId, frameIndex, points),

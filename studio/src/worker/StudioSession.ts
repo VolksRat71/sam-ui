@@ -38,7 +38,9 @@ import {
   parseObjectsHeader,
   readTrackStream,
 } from '~/api/trackStream';
+import {OpfsKv} from '~/local/kv';
 import {LocalEngine, type LocalOptions} from '~/local/LocalEngine';
+import {OfflineService} from '~/local/offlineStores';
 import {localTrackEntry, seedsKey, variantModel, withLocalTracks, type LocalTrackEntry} from '~/local/localTracks';
 import type {ExportedObject, ExportKind} from '~/state/maskExport';
 import {buildExport} from './maskExports';
@@ -284,8 +286,12 @@ export default class StudioSession {
   private _seedPoints = new Map<number, Map<number, NormPoint[]>>();
   /** The engine whose tracks the preview shows (and Track runs). */
   private _engine = DEFAULT_ENGINE;
-  /** The open video's path: the key of its browser tracks. */
+  /** The open video's path. */
   private _videoPath: string | null = null;
+  /** What its browser tracks (and, with no backend, its seeds) are stored under. */
+  private _storeKey: string | null = null;
+  /** Set with no backend: seeds, names and tracks live in this browser (OPFS). */
+  private _offline: OfflineService | null = null;
   private readonly _local: LocalEngine;
 
   constructor(
@@ -312,9 +318,22 @@ export default class StudioSession {
 
   // -- setup -----------------------------------------------------------------
 
-  init(endpoint: string): void {
+  init(endpoint: string, offline = false): void {
     this._endpoint = endpoint;
-    this._env = createEnvironment(endpoint);
+    if (offline) {
+      if (!OpfsKv.available()) {
+        throw new Error('this browser has no Origin Private File System, which studio needs without a backend');
+      }
+      this._offline = new OfflineService(new OpfsKv());
+      this._local.useStore(this._offline.tracks);
+    } else {
+      this._env = createEnvironment(endpoint);
+    }
+  }
+
+  /** The browser engine's model variant key, for track states. */
+  private get _variant(): string {
+    return this._local.variant;
   }
 
   private get env(): IEnvironment {
@@ -331,12 +350,21 @@ export default class StudioSession {
     return this._sessionId;
   }
 
-  async startSession(path: string): Promise<SessionInfo> {
+  async startSession(path: string, key?: string): Promise<SessionInfo> {
     this._reset();
-    const res = await mutate<StudioSessionStartMutation>(this.env, START, {input: {path}});
-    this._sessionId = res.startSession.sessionId;
+    let objects: ServerObject[];
+    if (this._offline != null) {
+      // no backend: the video's sha256 keys its seeds and tracks, as on the server
+      this._storeKey = key ?? path;
+      this._sessionId = `offline-${this._storeKey}`;
+      objects = await this._offline.objects(this._storeKey, this._variant, this._local.heldIds());
+    } else {
+      const res = await mutate<StudioSessionStartMutation>(this.env, START, {input: {path}});
+      this._sessionId = res.startSession.sessionId;
+      this._storeKey = path;
+      objects = plain(res.startSession.objects) as ServerObject[];
+    }
     this._videoPath = path;
-    const objects = plain(res.startSession.objects) as ServerObject[];
     for (const o of objects) {
       const t = this._tracklet(o.objectId);
       const masks = new Map<number, Mask>();
@@ -360,7 +388,7 @@ export default class StudioSession {
   async closeSession(): Promise<void> {
     const id = this._sessionId;
     this._reset();
-    if (id != null) {
+    if (id != null && this._offline == null) {
       await mutate<StudioSessionCloseMutation>(this.env, CLOSE, {input: {sessionId: id}});
     }
   }
@@ -378,7 +406,19 @@ export default class StudioSession {
   async setPoints(objectId: number, frameIndex: number, points: NormPoint[]): Promise<void> {
     const t = this._tracklet(objectId);
     let list: RleList;
-    if (points.length === 0) {
+    if (this._offline != null) {
+      // no backend: the browser engine answers, and its mask is the approved one
+      const video = this._storeKey!;
+      if (points.length === 0) {
+        await this._offline.clearFrame(video, objectId, frameIndex);
+        this._seedMasks.get(objectId)?.delete(frameIndex);
+        list = [];
+      } else {
+        const {rle} = await this._local.click(frameIndex, points);
+        await this._offline.recordPoints(video, objectId, frameIndex, points, rle);
+        list = [{objectId, rleMask: rle}];
+      }
+    } else if (points.length === 0) {
       const res = await mutate<StudioSessionClearFrameMutation>(this.env, CLEAR_FRAME, {
         input: {sessionId: this.sessionId, frameIndex, objectId},
       });
@@ -429,15 +469,19 @@ export default class StudioSession {
   }
 
   async removeObject(objectId: number): Promise<void> {
-    await mutate<StudioSessionRemoveObjectMutation>(this.env, REMOVE_OBJECT, {
-      input: {sessionId: this.sessionId, objectId},
-    });
+    if (this._offline != null) {
+      await this._offline.removeObject(this._storeKey!, objectId);
+    } else {
+      await mutate<StudioSessionRemoveObjectMutation>(this.env, REMOVE_OBJECT, {
+        input: {sessionId: this.sessionId, objectId},
+      });
+    }
     const t = this._tracklets.get(objectId);
     this._tracklets.delete(objectId);
     this._seedMasks.delete(objectId);
     this._seedPoints.delete(objectId);
-    if (this._videoPath != null) {
-      await this._local.store.delete(this._videoPath, objectId);
+    if (this._storeKey != null) {
+      await this._local.store.delete(this._storeKey, objectId);
     }
     if (t != null) {
       this._context.clearTrackletMasks(t);
@@ -449,10 +493,17 @@ export default class StudioSession {
 
   /** The backend's objects, each with its browser track (this tab's) added. */
   async objectTracks(): Promise<ServerObject[]> {
+    if (this._offline != null) {
+      return this._offline.objects(this._storeKey!, this._variant, this._local.heldIds());
+    }
     return this._withLocal(await this._serverObjectTracks());
   }
 
+  /** The objects with their seeds, from the backend (or, with none, from this browser). */
   private async _serverObjectTracks(): Promise<ServerObject[]> {
+    if (this._offline != null) {
+      return this._offline.objects(this._storeKey!, this._variant, this._local.heldIds());
+    }
     const res = await fetchQuery<StudioSessionObjectTracksQuery>(
       this.env,
       OBJECT_TRACKS,
@@ -463,13 +514,13 @@ export default class StudioSession {
   }
 
   private async _withLocal(objects: ServerObject[]): Promise<ServerObject[]> {
-    if (this._videoPath == null) {
+    if (this._storeKey == null) {
       return objects;
     }
     const held = this._local.heldIds();
     const entries = new Map<number, LocalTrackEntry>();
     for (const o of objects) {
-      const track = await this._local.store.get(this._videoPath, o.objectId);
+      const track = await this._local.store.get(this._storeKey, o.objectId);
       entries.set(
         o.objectId,
         localTrackEntry(track, {seedsKey: seedsKey(seedPointsOf(o)), variant: this._local.variant, running: held.has(o.objectId)}),
@@ -481,12 +532,12 @@ export default class StudioSession {
   /** Drop one engine's cached track (engine null: every engine's). */
   async clearTrack(objectId: number, engine: string | null): Promise<ServerObject> {
     if (engine == null || engine === BROWSER_ENGINE) {
-      if (this._videoPath != null) {
-        await this._local.store.delete(this._videoPath, objectId);
+      if (this._storeKey != null) {
+        await this._local.store.delete(this._storeKey, objectId);
       }
     }
     let result: ServerObject | undefined;
-    if (engine === BROWSER_ENGINE) {
+    if (engine === BROWSER_ENGINE || this._offline != null) {
       result = (await this.objectTracks()).find(o => o.objectId === objectId);
     } else {
       const res = await mutate<StudioSessionClearTrackMutation>(this.env, CLEAR_TRACK, {
@@ -506,12 +557,16 @@ export default class StudioSession {
   }
 
   async startOver(): Promise<void> {
-    await mutate<StudioSessionClearVideoMutation>(this.env, CLEAR_VIDEO, {
-      input: {sessionId: this.sessionId},
-    });
     await this._local.cancel(null);
-    if (this._videoPath != null) {
-      await this._local.store.clear(this._videoPath);
+    if (this._offline != null) {
+      await this._offline.clearVideo(this._storeKey!);
+    } else {
+      await mutate<StudioSessionClearVideoMutation>(this.env, CLEAR_VIDEO, {
+        input: {sessionId: this.sessionId},
+      });
+    }
+    if (this._storeKey != null) {
+      await this._local.store.clear(this._storeKey);
     }
     this._tracklets.clear();
     this._seedMasks.clear();
@@ -522,7 +577,7 @@ export default class StudioSession {
 
   /** Cancel one job (POST /cancel_track), or every job of the session. */
   async cancelTrack(jobId: string | null): Promise<boolean> {
-    if (this._local.isLocalJob(jobId)) {
+    if (this._local.isLocalJob(jobId) || this._offline != null) {
       return this._local.cancel(jobId);
     }
     if (jobId == null) {
@@ -564,6 +619,9 @@ export default class StudioSession {
 
   /** Every job running on this video (POST /track_jobs), other tabs' included. */
   async trackJobs(): Promise<RunningJob[]> {
+    if (this._offline != null) {
+      return []; // this page's own jobs are all there are
+    }
     const response = await fetch(`${this._endpoint}/track_jobs`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
@@ -691,7 +749,7 @@ export default class StudioSession {
    * and keeps the track only when the whole job finishes.
    */
   private async _trackLocal(objectIds: number[], key: number): Promise<TrackResult> {
-    const video = this._videoPath;
+    const video = this._storeKey;
     if (video == null) {
       throw new Error('no active session');
     }
@@ -790,14 +848,14 @@ export default class StudioSession {
     model: string;
   }): Promise<ArrayBuffer> {
     const decoded = this._context['_decodedVideo'];
-    if (decoded == null || this._videoPath == null) {
+    if (decoded == null || this._videoPath == null || this._storeKey == null) {
       throw new Error('the video is not open yet');
     }
     const local = new Map<number, Map<number, RLEObject>>();
     const objects = [...args.objects];
     if (args.engine === BROWSER_ENGINE) {
       for (const [i, o] of objects.entries()) {
-        const track = await this._local.store.get(this._videoPath, o.objectId);
+        const track = await this._local.store.get(this._storeKey, o.objectId);
         if (track == null) {
           throw new Error(`${o.label} has no ${engineLabel(BROWSER_ENGINE)} track`);
         }
@@ -834,6 +892,10 @@ export default class StudioSession {
 
   /** POST /rename_object. A backend from before names answers 404: not saved, no error. */
   async renameObject(objectId: number, name: string | null): Promise<{saved: boolean}> {
+    if (this._offline != null) {
+      await this._offline.seeds.setName(this._storeKey!, objectId, name);
+      return {saved: true};
+    }
     // an older backend has no such route: its CORS preflight fails (a
     // network error) or the call 404s; either way the name stays unsaved
     const response = await fetch(`${this._endpoint}/rename_object`, {
@@ -852,6 +914,9 @@ export default class StudioSession {
 
   /** POST /object_names; a backend from before names has none (404). */
   async objectNames(): Promise<{names: Record<number, string>; supported: boolean}> {
+    if (this._offline != null) {
+      return {names: await this._offline.seeds.names(this._storeKey!), supported: true};
+    }
     const response = await fetch(`${this._endpoint}/object_names`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
@@ -908,11 +973,11 @@ export default class StudioSession {
 
   /** repaint() for the browser engine: from this tab's store. */
   private async _repaintLocal(objectIds?: number[]): Promise<void> {
-    if (this._videoPath == null) {
+    if (this._storeKey == null) {
       return;
     }
     const wanted = objectIds == null ? null : new Set(objectIds);
-    for (const track of await this._local.store.list(this._videoPath)) {
+    for (const track of await this._local.store.list(this._storeKey)) {
       if (wanted != null && !wanted.has(track.objectId)) {
         continue;
       }
@@ -949,6 +1014,9 @@ export default class StudioSession {
 
   /** GET /engines: every engine the backend knows, and whether it can run. */
   async engines(): Promise<EngineInfo[]> {
+    if (this._offline != null) {
+      return []; // no backend: the browser engine is added by the UI
+    }
     const response = await fetch(`${this._endpoint}/engines`);
     if (!response.ok) {
       throw new Error(`engines: HTTP ${response.status}`);

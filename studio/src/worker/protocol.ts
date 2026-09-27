@@ -82,8 +82,10 @@ export type ExportManifest = {
 
 /** Each studio call: its arguments and what it resolves to. */
 export type StudioMethods = {
-  init: {args: {endpoint: string}; result: void};
-  startSession: {args: {path: string}; result: SessionInfo};
+  /** `offline`: no backend; seeds, names and tracks live in this browser (OPFS). */
+  init: {args: {endpoint: string; offline?: boolean}; result: void};
+  /** `key`: the video's sha256, which keys its data with no backend. */
+  startSession: {args: {path: string; key?: string}; result: SessionInfo};
   closeSession: {args: Record<string, never>; result: void};
   /** Replace one object's clicks on one frame (none: clear the frame). */
   setPoints: {
