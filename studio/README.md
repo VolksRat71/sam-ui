@@ -49,7 +49,10 @@ swift e2e/avcheck.swift e2e/out/export.mp4   # decodes it with AVFoundation (Qui
   click adds a negative point, and the Add / Remove toggle swaps the two.
   Click a point to remove it. *Add object* starts the next object. If every
   click on a frame is negative, SAM 2 returns an empty mask, and studio shows a
-  hint asking for a positive click.
+  hint asking for a positive click. Objects are *Object N* until renamed:
+  double-click the name (or the pencil) to rename it in place. Names are
+  stored with the seeds (`POST /rename_object`) and never make a track stale;
+  numbers are never reused after a delete.
 - **Track** runs the objects that are untracked or stale. Tracked objects never
   re-run, and their masks stay on screen. Jobs run beside you: you can keep
   clicking, adding objects and correcting while one runs, and pressing Track
@@ -86,15 +89,28 @@ swift e2e/avcheck.swift e2e/out/export.mp4   # decodes it with AVFoundation (Qui
   effect. New objects start on the coloured Overlay. The background effect is
   one per video. Clicking the active effect again cycles its variants. Both
   groups start collapsed. Effects are saved per video in this browser.
-- **Export video** (top bar) renders the whole video as an H.264 MP4 in the
-  browser, every object with its own effect and the background effect.
-  Objects that were never given an effect render as Original (unchanged) by
-  default, or as shown (the Overlay) if you choose. No point markers,
-  selection highlights or watermark are in the file. It plays in QuickTime and
-  browsers (constant frame rate, even size, moov atom first).
-- **Export for rotoscoping** (bottom of Objects) writes the tracked objects as
-  a rotoscoping working folder (`POST /export`), with a product id, prompt and
-  colour per object, and then shows the manifest.
+- **Export** (top bar) is one menu; every dialog has a File name field,
+  prefilled from the video's name, and the files inside are named after the
+  objects (unique, in object order). The mask items take every object with a
+  track on the engine on screen, and every zip has a README.txt naming the
+  engine, model, video, frame count and fps.
+  - *Mask videos (.zip)*: one grayscale H.264 MP4 per object (white object,
+    black background) at the video's size and fps. H.264 is lossy: threshold
+    at 128 to get the mask back.
+  - *PNG sequence / roto working folder*: the layout of
+    `demo/backend/server/tracks/export.py` (products, anchors, shots, 8-bit
+    PNG mattes). For a server engine the backend writes it (`POST /export`,
+    under its export root, with extract-frames and overwrite options); for
+    browser tracks, or with no backend, studio builds it and saves a zip.
+  - *Vector JSON (.zip)*: one JSON per object in the rotoscoping skill's
+    `contours.py` format (`add`/`sub` outline slots per frame, plus `engine`,
+    `model` and `object`), traced as OpenCV does (`src/state/contours.ts`).
+  - *Export to After Effects*: not yet.
+  - *Video with effects (.mp4)*: the whole video rendered in the browser,
+    every object with its own effect and the background effect. Objects never
+    given an effect render as Original by default, or as shown (the Overlay).
+    No point markers, selection highlights or watermark; it plays in
+    QuickTime and browsers (constant frame rate, even size, moov atom first).
 - **Zoom**: pinch, Ctrl/Cmd + wheel, or the buttons. The wheel pans, and so do
   a middle drag and Alt + drag. Only the video and its masks are pixels; the
   point markers are an SVG overlay in video coordinates, so they stay crisp
