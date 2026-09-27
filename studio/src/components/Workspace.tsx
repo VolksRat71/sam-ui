@@ -12,6 +12,7 @@ import {BROWSER_ENGINE, engineLabel} from '~/state/engines';
 import {objectName} from '~/state/fileNames';
 import useStudioSession, {type VideoItem} from '~/workspace/useStudioSession';
 import ConfirmModal from './ConfirmModal';
+import {DemoBanner, DemoTag} from './DemoNotice';
 import EnginePicker from './EnginePicker';
 import EffectsSection from './EffectsSection';
 import ExportMenu, {type ExportChoice} from './ExportMenu';
@@ -36,6 +37,8 @@ export default function Workspace({video, renderMedia}: Props) {
   const [exporting, setExporting] = useState<ExportChoice | null>(null);
   const videoName = video.path.split('/').pop() ?? 'video';
   const jobs = state.jobs;
+  // no backend, or none of its engines can run: the browser engine is all there is
+  const browserOnly = session.engines.length > 0 && session.engines.every(e => e.local || !e.available);
   const nameOf = (id: number) => objectName(state.objects.find(o => o.id === id) ?? {id});
   const n = meta.numFrames;
 
@@ -126,6 +129,7 @@ export default function Workspace({video, renderMedia}: Props) {
               <Close size={16} /> Cancel all
             </button>
           )}
+          {state.engine === BROWSER_ENGINE && <DemoTag />}
           <EnginePicker session={session} />
           <div className="gradient-border">
             <button
@@ -146,6 +150,8 @@ export default function Workspace({video, renderMedia}: Props) {
           </button>
         </div>
       </header>
+
+      <DemoBanner show={session.status === 'ready' && browserOnly} />
 
       {session.warning != null && (
         <div className="toast" role="status">

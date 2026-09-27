@@ -1465,3 +1465,28 @@ code {
 .engine-option.disabled:focus-within .engine-option-head {
   opacity: 0.8;
 }
+
+/* the demo notice (DemoNotice.tsx) */
+.demo-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 8px 8px;
+  padding: 8px 12px;
+  border: 1px solid #fa871966;
+  border-radius: var(--radius);
+  background: #fa87191a;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.demo-banner > span {
+  flex: 1;
+}
+.demo-banner a {
+  color: #ffb870;
+  white-space: nowrap;
+}
+.demo-tag .engine-chip {
+  border-color: #fa871999;
+  color: #ffb870;
+}
