@@ -22,6 +22,12 @@ jobs:
         with:
           node-version: 20
 
+      - name: The tag matches the app's version (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          want="v$(node -p "require('./desktop/package.json').version")"
+          [ "$GITHUB_REF_NAME" = "$want" ] || { echo "tag $GITHUB_REF_NAME but desktop/package.json says $want"; exit 1; }
+
       - name: Build studio (served by the bundled backend)
         working-directory: studio
         run: |

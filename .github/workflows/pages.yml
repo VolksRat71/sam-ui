@@ -1,0 +1,56 @@
+# sam-ui (Apache-2.0). New file, not from SAM 2.
+# The browser demo on GitHub Pages: studio built with no backend (SAM 2.1 tiny
+# on WebGPU). Models are fetched from Hugging Face at run time, never deployed.
+name: pages
+
+on:
+  push:
+    branches: [main]
+    paths: ["studio/**", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Test and build the browser demo
+        working-directory: studio
+        run: |
+          npm ci
+          npm test
+          npm run build:pages
+
+      - name: No model weights in the site
+        run: |
+          found=$(find studio/dist-pages -type f \( -name "*.onnx" -o -name "*.onnx.data" -o -name "*.safetensors" -o -name "*.pt" -o -name "*.pth" -o -name "*.ckpt" -o -name "*.bin" \) | head)
+          [ -z "$found" ] || { echo "model files in the site: $found"; exit 1; }
+          du -sh studio/dist-pages
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: studio/dist-pages
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
