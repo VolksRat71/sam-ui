@@ -43,6 +43,45 @@ CLIP=e2e/out/clip.mp4 STUDIO_URL=http://127.0.0.1:7362 API=http://127.0.0.1:7363
 swift e2e/avcheck.swift e2e/out/export.mp4   # decodes it with AVFoundation (QuickTime)
 ```
 
+The no-server smoke test (headed Chrome, for WebGPU) runs against a studio
+with no backend, such as the browser-only build below: it opens the clip
+from disk, tracks three objects, reloads (restored from OPFS), renames one,
+exports mask videos, Vector JSON and the roto zip, and deletes the video.
+`SMOKE=both` runs the two.
+
+```sh
+CLIP=e2e/out/clip.mp4 SMOKE=local NO_SERVER_URL=http://127.0.0.1:7390/sam-ui/ npm run smoke
+```
+
+### Without a backend (the browser-only build)
+
+Studio also runs with no backend at all, on the browser engine alone. It
+does so when built with `VITE_API_ENDPOINT=none`, or when its backend does
+not answer at start. Then:
+
+- Media lists the videos opened into this browser (copied into the Origin
+  Private File System under their sha256; nothing is uploaded) and any
+  bundled samples. Delete removes a video, and with it its objects and tracks.
+- Seeds (clicks and approved masks), object names and browser tracks live in
+  OPFS, keyed by the video's sha256 as the backend keys them, so a reload
+  restores them. Effects stay in localStorage, as with a backend.
+- The picker lists SAM 2.1 large and SAM 3 disabled, linking to the desktop
+  app, and a banner (once, dismissible) says the browser version is a demo.
+- Every export works: mask videos, Vector JSON and the roto working folder as zips.
+
+`npm run build:pages` makes that build for GitHub Pages: base `/sam-ui/`,
+no backend, output in `dist-pages/`, with two of Meta's gallery clips
+(`05_default_juggle.mp4`, `01_dog.mp4` from `demo/data/gallery`) as samples.
+It holds no model files: the models come from Hugging Face on first use and
+are kept in Cache Storage. ONNX Runtime runs with one wasm thread, so the
+site needs no cross-origin isolation. To look at it as Pages would serve it:
+
+```sh
+npm run build:pages
+mkdir -p /tmp/pages && ln -sfn "$PWD/dist-pages" /tmp/pages/sam-ui
+python3 -m http.server 7390 --bind 127.0.0.1 --directory /tmp/pages   # http://127.0.0.1:7390/sam-ui/
+```
+
 ## Using it
 
 - **Objects.** Click the video to add an object and a positive point. Right
@@ -171,7 +210,11 @@ a copy in the gitignored `studio/.models/<repo>/` is used instead
   and the five graphs on ORT (`ortModels.ts`, with a per-frame feature cache).
 - `model.worker.ts`: a worker nested in the video worker, fed the frames
   studio already decodes. `LocalEngine.ts` is its host side, and
-  `localTracks.ts` the track store (in memory now).
+  `localTracks.ts` the track state rules (tracks in memory with a backend).
+- With no backend: `kv.ts` (OPFS), `offlineStores.ts` (the seed and track
+  stores and a TrackService for the browser engine, ported from
+  `demo/backend/server/tracks`, with their tests) and `localMedia.ts` (the
+  videos). `src/media/` is the MediaApi the Media list uses either way.
 
 Where it differs from Python SAM 2:
 

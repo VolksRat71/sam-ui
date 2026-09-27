@@ -1,7 +1,8 @@
 <!-- sam-ui (Apache-2.0). New file, not from SAM 2. Working notes; delete when phase 2 lands. -->
-# Browser engine: phase 1 done, stopped at gate 1 (2026-09-27)
+# Browser engine: phases 1 and 2 done (2026-09-27)
 
-Phase 2 (no-server mode, OPFS) has not started and waits for review.
+Phase 2 (no-server mode on OPFS, MediaApi, `npm run build:pages`, the
+no-server smoke run) is built; the Pages workflow is not (it waits for review).
 The user-facing description and the list of approximations are in
 `studio/README.md` (*Browser engine*).
 
@@ -31,8 +32,8 @@ The user-facing description and the list of approximations are in
   squares 0.982/0.993, 0.963/0.986, 0.980/0.990; twotone 0.980/0.997, red only.
   512 (not gated): squares 0.964-0.971 min; twotone 0.948 min, red only.
 
-## Open for phase 2
-- OPFS behind LocalTrackStore; no-server boot; MediaApi; local roto export.
-- A build flag for Pages that passes `pages: true` to pickerEngines.
+## Open
+- The GitHub Pages workflow (after review).
+- With a backend, browser tracks still live in memory (a reload forgets them).
 - Memory at 1024 is dominated by memory attention (7 x 4096 keys); the feature
   cache budget is 1.5 GB at 1024, 0.75 GB at 512.
