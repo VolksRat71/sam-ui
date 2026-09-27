@@ -1,7 +1,6 @@
 // sam-ui (Apache-2.0). New file, not from SAM 2.
 //
-// The pure parts of studio's in-browser mask exports: file names, the
-// provenance every export carries (so a SAM 2.1 tiny export can never pass
+// The pure parts of studio's in-browser mask exports: the provenance every export carries (so a SAM 2.1 tiny export can never pass
 // for a SAM 2 large one), and the rotoscoping working folder's decision
 // files, laid out as demo/backend/server/tracks/export.py writes them.
 
@@ -9,7 +8,9 @@ export type ExportKind = 'videos' | 'vectors' | 'folder';
 
 export type ExportedObject = {
   objectId: number;
-  /** The file (or product id) name, already safe and unique. */
+  /** The object's own name, as shown in studio. */
+  label: string;
+  /** Its file (or, in the roto folder, product id) name: safe and unique. */
   name: string;
   state: string;
   prompt: string;
@@ -30,25 +31,6 @@ export type Provenance = {
   /** ISO time. */
   exported: string;
 };
-
-/** Names as file names: letters, digits, _ and -, never empty, unique (a _2 suffix). */
-export function safeNames(names: ReadonlyArray<string>): string[] {
-  const seen = new Set<string>();
-  return names.map((n, i) => {
-    const base =
-      n
-        .trim()
-        .replace(/[^A-Za-z0-9_-]+/g, '_')
-        .replace(/^[_-]+|_+$/g, '')
-        .toLowerCase() || `object_${i + 1}`;
-    let name = base;
-    for (let k = 2; seen.has(name); k++) {
-      name = `${base}_${k}`;
-    }
-    seen.add(name);
-    return name;
-  });
-}
 
 const KIND_TITLE: Record<ExportKind, string> = {
   videos: 'Mask videos: one grayscale H.264 MP4 per object, 255 = object, 0 = background.',
@@ -72,7 +54,10 @@ export function readme(kind: ExportKind, p: Provenance, objects: ReadonlyArray<E
     `Exported:   ${p.exported}`,
     '',
     'Objects:',
-    ...objects.map(o => `  ${o.name}: object ${o.objectId + 1}, ${o.state}${o.model != null && o.model !== p.model ? `, model ${o.model}` : ''}`),
+    ...objects.map(
+      o =>
+        `  ${o.name}: object id ${o.objectId}, named "${o.label}", ${o.state}${o.model != null && o.model !== p.model ? `, model ${o.model}` : ''}`,
+    ),
     '',
   ];
   if (kind === 'videos') {
@@ -104,7 +89,7 @@ export function rotoDecisions(
     prompt: o.prompt,
     color: o.color,
     status: 'confirmed',
-    meta: {sam_ui_object: o.objectId},
+    meta: {sam_ui_object: o.objectId, name: o.label},
   }));
   const anchors: Record<string, {points: Record<string, number[][]>}> = {};
   for (const o of objects) {
