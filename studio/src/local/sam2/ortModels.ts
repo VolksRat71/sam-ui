@@ -102,15 +102,15 @@ export class OrtSam2Models implements Sam2Models {
       ort.InferenceSession.create(await opts.load(file), {
         executionProviders: [opts.ep],
         graphOptimizationLevel: 'all',
+        logSeverityLevel: 3,
         preferredOutputLocation: where(outputs),
       });
-    const [enc, dec, mem, attn, ptr] = await Promise.all([
-      make(MODEL_FILES[0], ['feats0', 'feats1', 'feats2', 'feats2_no_mem', 'vision_pos_embed']),
-      make(MODEL_FILES[1], ['high_res_mask']),
-      make(MODEL_FILES[2], []),
-      make(MODEL_FILES[3], ['conditioned_feats']),
-      make(MODEL_FILES[4], []),
-    ]);
+    // one at a time: the WebGPU EP refuses to create two sessions at once
+    const enc = await make(MODEL_FILES[0], ['feats0', 'feats1', 'feats2', 'feats2_no_mem', 'vision_pos_embed']);
+    const dec = await make(MODEL_FILES[1], ['high_res_mask']);
+    const mem = await make(MODEL_FILES[2], []);
+    const attn = await make(MODEL_FILES[3], ['conditioned_feats']);
+    const ptr = await make(MODEL_FILES[4], []);
     return new OrtSam2Models(ort, constants, {enc, dec, mem, attn, ptr}, opts);
   }
 

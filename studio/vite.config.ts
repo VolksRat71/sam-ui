@@ -33,6 +33,9 @@ export default defineConfig({
     dedupe: SHARED_PACKAGES,
   },
   plugins: [react(), relay],
+  // ONNX Runtime Web finds its .wasm next to its own module (import.meta.url),
+  // which pre-bundling would move
+  optimizeDeps: {exclude: ['onnxruntime-web']},
   worker: {
     format: 'es',
     plugins: () => [relay],
