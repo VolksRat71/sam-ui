@@ -77,8 +77,14 @@ export type Job = {
   jobId: string | null;
   engine: string;
   ids: number[];
-  /** Frames streamed so far. */
+  /** Frames streamed so far (a frame may come once per pass). */
   frames: number;
+  /**
+   * How many frames the job streams in all, when the backend says (a SAM 2
+   * job with objects first seeded on different frames runs one pass per
+   * first-seed frame: frames x passes). Null: the video's frame count.
+   */
+  total: number | null;
   canceling: boolean;
 };
 
@@ -102,6 +108,7 @@ export type Action =
   | {type: 'trackStarted'; key: number; ids: number[]; engine?: string}
   | {type: 'trackAttached'; key: number; jobId: string | null; selected: number[]}
   | {type: 'trackProgress'; key: number}
+  | {type: 'trackTotal'; key: number; total: number}
   | {type: 'trackCanceling'; key: number}
   | {type: 'trackFinished'; key: number; tracked: number[]; failed: Record<number, string>}
   | {type: 'trackFailed'; key: number; error: string}
@@ -406,6 +413,7 @@ export function reducer(state: StudioState, action: Action): StudioState {
         engine: action.engine ?? state.engine,
         ids,
         frames: 0,
+        total: null,
         canceling: false,
       };
       const next = withJobs({...state, notice: null}, [...state.jobs, job]);
@@ -430,6 +438,9 @@ export function reducer(state: StudioState, action: Action): StudioState {
 
     case 'trackProgress':
       return updateJob(state, action.key, j => ({...j, frames: j.frames + 1}));
+
+    case 'trackTotal':
+      return updateJob(state, action.key, j => ({...j, total: action.total > 0 ? action.total : null}));
 
     case 'trackCanceling':
       return updateJob(state, action.key, j => ({...j, canceling: true}));
@@ -487,4 +498,11 @@ export function reducer(state: StudioState, action: Action): StudioState {
     case 'reset':
       return {...initialState, engine: state.engine};
   }
+}
+
+/** A job's progress as shown: done of total, never past it; total defaults to the video's frames. */
+export function jobProgress(job: Pick<Job, 'frames' | 'total'>, numFrames: number): {done: number; total: number | null; fraction: number} {
+  const total = job.total ?? (numFrames > 0 ? numFrames : null);
+  const done = total == null ? job.frames : Math.min(job.frames, total);
+  return {done, total, fraction: total == null || total === 0 ? 0 : done / total};
 }

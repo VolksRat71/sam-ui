@@ -189,6 +189,19 @@ export default function useStudioSession(video: VideoItem) {
           break;
         case 'jobStarted':
           dispatch({type: 'trackAttached', key: event.key, jobId: event.jobId, selected: event.selected});
+          if (event.jobId != null && !event.jobId.startsWith('local-')) {
+            // the backend knows the job's full length (frames x passes)
+            const {key, jobId} = event;
+            bridge
+              .call('trackJobs', {})
+              .then(jobs => {
+                const total = jobs.find(j => j.jobId === jobId)?.nFrames;
+                if (total != null) {
+                  dispatch({type: 'trackTotal', key, total});
+                }
+              })
+              .catch(() => {});
+          }
           break;
         case 'trackFrame':
           dispatch({type: 'trackProgress', key: event.key});

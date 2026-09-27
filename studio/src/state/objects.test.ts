@@ -11,6 +11,7 @@ import {
   dirtyIds,
   initialState,
   needsPositiveClick,
+  jobProgress,
   nextObjectId,
   reducer,
 } from './objects';
@@ -149,7 +150,7 @@ describe('track selection', () => {
       {type: 'trackStarted', key: 7, ids: [0, 1]},
       {type: 'trackAttached', key: 7, jobId: 'abc', selected: [1]},
     ]);
-    expect(s.jobs).toEqual([{key: 7, jobId: 'abc', engine: 'sam2', ids: [1], frames: 0, canceling: false}]);
+    expect(s.jobs).toEqual([{key: 7, jobId: 'abc', engine: 'sam2', ids: [1], frames: 0, total: null, canceling: false}]);
     expect(dirtyIds(s)).toEqual([0]);
   });
 });
@@ -178,7 +179,7 @@ describe('state transitions', () => {
       {type: 'trackProgress', key: 3},
       {type: 'trackProgress', key: 3},
     ]);
-    expect(s.jobs).toEqual([{key: 3, jobId: null, engine: 'sam2', ids: [0, 1], frames: 2, canceling: false}]);
+    expect(s.jobs).toEqual([{key: 3, jobId: null, engine: 'sam2', ids: [0, 1], frames: 2, total: null, canceling: false}]);
     expect(byId(s, 0).running).toBe(true);
     expect(byId(s, 2).running).toBe(false);
     const done = reducer(s, {type: 'trackFinished', key: 3, tracked: [0], failed: {1: 'OSError'}});
@@ -345,5 +346,19 @@ describe('engines', () => {
       {type: 'restore', objects: [twoEngines(0, 'tracked', 'tracked'), twoEngines(1, 'tracked', 'stale')]},
     ]);
     expect(comparableIds(s, 'sam2', 'sam3')).toEqual([0]);
+  });
+});
+
+describe('job progress', () => {
+  it('counts against the backend total when a job runs several passes', () => {
+    let s = run([{type: 'restore', objects: [server(1, 'untracked'), server(2, 'untracked')]}, {type: 'trackStarted', key: 1, ids: [1, 2]}]);
+    for (let i = 0; i < 90; i++) {
+      s = run([{type: 'trackProgress', key: 1}], s);
+    }
+    const job = s.jobs[0];
+    expect(jobProgress(job, 60)).toEqual({done: 60, total: 60, fraction: 1}); // no total yet: never past the video
+    s = run([{type: 'trackTotal', key: 1, total: 120}], s); // two passes
+    expect(jobProgress(s.jobs[0], 60)).toEqual({done: 90, total: 120, fraction: 0.75});
+    expect(jobProgress({frames: 5, total: null}, 0)).toEqual({done: 5, total: null, fraction: 0});
   });
 });

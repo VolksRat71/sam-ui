@@ -11,6 +11,7 @@ import {panelStorage} from '~/lib/storage';
 import {videoDisplayName} from '~/lib/uploadNames';
 import {BROWSER_ENGINE, engineLabel} from '~/state/engines';
 import {objectName} from '~/state/fileNames';
+import {jobProgress} from '~/state/objects';
 import useStudioSession, {type VideoItem} from '~/workspace/useStudioSession';
 import ConfirmModal from './ConfirmModal';
 import {DemoBanner, DemoTag} from './DemoNotice';
@@ -85,11 +86,11 @@ export default function Workspace({video, renderMedia}: Props) {
                 <span className="muted">loading the model…</span>
               )}
               <span className="job-progress">
-                <span style={{width: n > 0 ? `${Math.min(100, (job.frames / n) * 100)}%` : '0%'}} />
+                <span style={{width: `${Math.round(jobProgress(job, n).fraction * 100)}%`}} />
               </span>
               <span className="muted">
-                {job.frames}
-                {n > 0 ? `/${n}` : ''}
+                {jobProgress(job, n).done}
+                {jobProgress(job, n).total != null ? `/${jobProgress(job, n).total}` : ''}
               </span>
               <button
                 className="chip-close"
