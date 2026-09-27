@@ -16,7 +16,8 @@ PyTorch needs it.
 2. The app is **not signed or notarised yet**, so macOS will refuse to open it the
    first time. On macOS 14, right-click the app and choose **Open**, then **Open**
    again. On macOS 15 and later, open it once, then go to **System Settings →
-   Privacy & Security** and click **Open Anyway**. Or, on any version, run:
+   Privacy & Security** and click **Open Anyway**. If macOS says **"sam-ui is
+   damaged and can't be opened"** (v0.1.0 has that bug), or on any version, run:
    ```sh
    xattr -dr com.apple.quarantine /Applications/sam-ui.app
    ```
