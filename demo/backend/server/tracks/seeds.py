@@ -7,6 +7,9 @@ state is a cache of them, and a track job rebuilds its own state from them.
 Layout: <root>/<video_key>/<obj_id>/seeds.json, holding
 {"<frame>": {"points": [[x, y], ...], "labels": [1, 0, ...], "mask": RLE}}.
 Points are normalised to 0-1, as the demo's addPoints mutation sends them.
+An optional <obj_id>/object.json holds metadata ({"name": ...}); it is kept
+apart from seeds.json so a rename never changes the seeds hash (tracks stay
+as they were). Objects stored before names existed have none.
 
 A seed frame's "mask" is the mask the user approved there: the result of their
 last click on that frame. Track jobs condition on it (not on replayed clicks),
@@ -106,6 +109,43 @@ class SeedStore:
 
     def clear_video(self, video: str) -> None:
         shutil.rmtree(self.root / video, ignore_errors=True)
+
+    # -- metadata (names) -------------------------------------------------------
+    NAME_MAX = 64
+
+    def _meta_path(self, video: str, obj_id: int) -> Path:
+        return self.root / video / str(int(obj_id)) / "object.json"
+
+    def name(self, video: str, obj_id: int) -> Optional[str]:
+        p = self._meta_path(video, obj_id)
+        try:
+            name = json.loads(p.read_text()).get("name")
+        except (OSError, ValueError, AttributeError):
+            return None  # no metadata (an older object), or unreadable: no name
+        return name if isinstance(name, str) and name else None
+
+    def names(self, video: str) -> Dict[int, str]:
+        """Every named object of the video: {obj_id: name}."""
+        d = self.root / video
+        if not d.is_dir():
+            return {}
+        out = {}
+        for p in d.iterdir():
+            if p.name.isdigit() and (n := self.name(video, int(p.name))) is not None:
+                out[int(p.name)] = n
+        return dict(sorted(out.items()))
+
+    def set_name(self, video: str, obj_id: int, name: Optional[str]) -> Optional[str]:
+        """Name an object (trimmed, at most NAME_MAX characters); an empty or
+        missing name removes it, so the object shows its default name."""
+        name = (name or "").strip()[:self.NAME_MAX].strip()
+        p = self._meta_path(video, obj_id)
+        if not name:
+            p.unlink(missing_ok=True)
+            return None
+        p.parent.mkdir(parents=True, exist_ok=True)
+        _write_json_atomic(p, {"name": name})
+        return name
 
     def hash(self, video: str, obj_id: int) -> Optional[str]:
         seeds = self.seeds(video, obj_id)

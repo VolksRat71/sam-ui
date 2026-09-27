@@ -139,6 +139,13 @@ class TrackService:
     def remove_object(self, video: str, obj_id: int):
         self.seeds.remove_object(video, obj_id)
 
+    def rename_object(self, video: str, obj_id: int, name: Optional[str]) -> Optional[str]:
+        """Metadata only: the seeds, their hash and every track stay as they are."""
+        return self.seeds.set_name(video, obj_id, name)
+
+    def object_names(self, video: str) -> Dict[int, str]:
+        return self.seeds.names(video)
+
     def clear_video(self, video: str):
         self.seeds.clear_video(video)
 

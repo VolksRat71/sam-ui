@@ -23,6 +23,10 @@ POST /track_jobs {session_id}: the running jobs on the session's video, with
 POST /track_disagreement {session_id, object_ids?, a?, b?, threshold?}: frames
   where two engines' current tracks of an object disagree (IoU < threshold,
   default 0.8; engines default sam2 and sam3), as review flags.
+POST /rename_object {session_id, object_id, name}: name an object (trimmed, at
+  most 64 characters; empty clears it). Metadata only: no track goes stale.
+  Answers {"object_id", "name"}.
+POST /object_names {session_id}: {"names": {"<object_id>": name}} for the video.
 POST /export {session_id, out_dir, objects?, include_stale?, frames?, force?, engine?}:
   write tracked objects as a rotoscoping working folder (see tracks/export.py);
   out_dir must be under SAM_UI_EXPORT_ROOT (default ~/Movies). 400 on a refusal.
@@ -185,6 +189,21 @@ def make_blueprint(resolve: Callable[[str], TrackContext], service: Optional[Tra
         ctx = resolve(data["session_id"])
         return jsonify(ctx.service.disagreement(ctx.video, data.get("object_ids"), data.get("a"),
                                                 data.get("b", "sam3"), float(data.get("threshold", 0.8))))
+
+    @bp.route("/rename_object", methods=["POST"])
+    def rename_object() -> Response:
+        data = request.json
+        ctx = resolve(data["session_id"])
+        name = data.get("name")
+        if name is not None and not isinstance(name, str):
+            return jsonify({"error": "name must be a string"}), 400
+        obj = int(data["object_id"])
+        return jsonify({"object_id": obj, "name": ctx.service.rename_object(ctx.video, obj, name)})
+
+    @bp.route("/object_names", methods=["POST"])
+    def object_names() -> Response:
+        ctx = resolve(request.json["session_id"])
+        return jsonify({"names": {str(o): n for o, n in ctx.service.object_names(ctx.video).items()}})
 
     @bp.route("/export", methods=["POST"])
     def export_route() -> Response:
