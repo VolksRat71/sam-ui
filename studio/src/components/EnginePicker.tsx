@@ -99,7 +99,9 @@ export default function EnginePicker({session}: Props) {
   const isBrowser = state.engine === BROWSER_ENGINE;
   const browserBusy = state.jobs.some(j => j.engine === BROWSER_ENGINE);
   const loading = localModel?.status === 'loading' ? localModel : null;
-  const summary = `${engineLabel(state.engine)}${isBrowser ? ` · ${localOptions.quality}` : ''}`;
+  const summary = session.noEngine
+    ? 'No engine can run here'
+    : `${engineLabel(state.engine)}${isBrowser ? ` · ${localOptions.quality}` : ''}`;
 
   const choose = (name: string) => {
     session.setEngine(name);

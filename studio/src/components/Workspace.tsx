@@ -133,7 +133,7 @@ export default function Workspace({video, renderMedia}: Props) {
               <Close size={16} /> Cancel all
             </button>
           )}
-          {state.engine === BROWSER_ENGINE && <DemoTag />}
+          {state.engine === BROWSER_ENGINE && !session.noEngine && <DemoTag />}
           <EnginePicker session={session} />
           <div className="gradient-border">
             <button

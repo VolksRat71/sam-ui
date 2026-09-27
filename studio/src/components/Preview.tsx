@@ -160,12 +160,14 @@ export default function Preview({session, mode, onModeChange}: Props) {
         <div className="points-toggle" role="group" aria-label="Click adds">
           <button
             className={mode === 'positive' ? 'toggle selected' : 'toggle'}
+            disabled={session.noEngine}
             onClick={() => onModeChange('positive')}
             title="Left click adds a positive point (right click: negative)">
             <AddFilled size={18} className="icon-positive" /> Add
           </button>
           <button
             className={mode === 'negative' ? 'toggle selected' : 'toggle'}
+            disabled={session.noEngine}
             onClick={() => onModeChange('negative')}
             title="Left click adds a negative point (right click: positive)">
             <SubtractFilled size={18} className="icon-negative" /> Remove

@@ -1522,3 +1522,7 @@ code {
   border-color: #e6193b88;
   background: #e6193b1f;
 }
+.points-toggle .toggle:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
