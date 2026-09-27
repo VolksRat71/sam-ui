@@ -1,5 +1,5 @@
 /**
- * @generated SignedSource<<7e7b2e674c4d8044d05717f8f92794f4>>
+ * @generated SignedSource<<f6990ceaebe9252605be420fa42c30a1>>
  * @lightSyntaxTransform
  * @nogrep
  */
@@ -9,10 +9,10 @@
 // @ts-nocheck
 
 import { ConcreteRequest, Mutation } from 'relay-runtime';
-export type MediaSectionUploadMutation$variables = {
+export type useServerMediaUploadMutation$variables = {
   file: any;
 };
-export type MediaSectionUploadMutation$data = {
+export type useServerMediaUploadMutation$data = {
   readonly uploadVideo: {
     readonly height: number;
     readonly id: any;
@@ -21,9 +21,9 @@ export type MediaSectionUploadMutation$data = {
     readonly width: number;
   };
 };
-export type MediaSectionUploadMutation = {
-  response: MediaSectionUploadMutation$data;
-  variables: MediaSectionUploadMutation$variables;
+export type useServerMediaUploadMutation = {
+  response: useServerMediaUploadMutation$data;
+  variables: useServerMediaUploadMutation$variables;
 };
 
 const node: ConcreteRequest = (function(){
@@ -93,7 +93,7 @@ return {
     "argumentDefinitions": (v0/*: any*/),
     "kind": "Fragment",
     "metadata": null,
-    "name": "MediaSectionUploadMutation",
+    "name": "useServerMediaUploadMutation",
     "selections": (v1/*: any*/),
     "type": "Mutation",
     "abstractKey": null
@@ -102,20 +102,20 @@ return {
   "operation": {
     "argumentDefinitions": (v0/*: any*/),
     "kind": "Operation",
-    "name": "MediaSectionUploadMutation",
+    "name": "useServerMediaUploadMutation",
     "selections": (v1/*: any*/)
   },
   "params": {
-    "cacheID": "0e4883ebf7bc5e128acc872b623497a4",
+    "cacheID": "4858bcbce246ca87817c6e6f1fe7c5e2",
     "id": null,
     "metadata": {},
-    "name": "MediaSectionUploadMutation",
+    "name": "useServerMediaUploadMutation",
     "operationKind": "mutation",
-    "text": "mutation MediaSectionUploadMutation(\n  $file: Upload!\n) {\n  uploadVideo(file: $file) {\n    id\n    path\n    posterPath\n    width\n    height\n  }\n}\n"
+    "text": "mutation useServerMediaUploadMutation(\n  $file: Upload!\n) {\n  uploadVideo(file: $file) {\n    id\n    path\n    posterPath\n    width\n    height\n  }\n}\n"
   }
 };
 })();
 
-(node as any).hash = "285a7abf6609b414b7ff470607a37d28";
+(node as any).hash = "36a0368d5b5cbe7fd923ae5bb09580db";
 
 export default node;

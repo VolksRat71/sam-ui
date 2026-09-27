@@ -1,16 +1,13 @@
 // sam-ui (Apache-2.0). New file, not from SAM 2.
 //
-// The Media list: the backend's gallery videos plus this browser's uploads,
-// and an upload control (the backend's uploadVideo mutation, as Meta's
-// useUploadVideo sends it). Picking a video starts a new session on it.
+// The Media list: the backend's gallery videos plus this browser's uploads
+// (or, with no backend, the files opened into this browser and the bundled
+// samples), and an upload control. Picking a video starts a new session on it.
 import {TrashCan, Upload} from '@carbon/icons-react';
 import {useRef, useState} from 'react';
-import {graphql, useMutation} from 'react-relay';
-import {explainGraphQLError} from '~/lib/errors';
-import {rememberUploadName, videoDisplayName} from '~/lib/uploadNames';
+import {videoDisplayName} from '~/lib/uploadNames';
 import {isDeletable} from '~/state/media';
 import type {VideoItem} from '~/workspace/useStudioSession';
-import type {MediaSectionUploadMutation} from './__generated__/MediaSectionUploadMutation.graphql';
 
 const ACCEPT = 'video/mp4,video/quicktime,.mp4,.mov';
 const MAX_UPLOAD_MB = 70; // Meta's demo limit
@@ -19,27 +16,20 @@ type Props = {
   videos: VideoItem[];
   current: VideoItem | null;
   locked: boolean;
+  /** No backend: the file is opened into this browser, not uploaded. */
+  offline: boolean;
   onSelect: (video: VideoItem) => void;
-  onUploaded: (video: VideoItem) => void;
+  /** Upload (or, offline, store) a file. */
+  onAdd: (file: File) => Promise<VideoItem>;
+  onAdded: (video: VideoItem) => void;
   /** Ask to delete an upload (the app confirms it, above this pane). */
   onDelete: (video: VideoItem) => void;
-  toVideoItem: (v: {path: string; width: number; height: number; posterPath?: string | null}) => VideoItem;
 };
 
-export default function MediaSection({videos, current, locked, onSelect, onUploaded, onDelete, toVideoItem}: Props) {
+export default function MediaSection({videos, current, locked, offline, onSelect, onAdd, onAdded, onDelete}: Props) {
   const input = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
-  const [commit, uploading] = useMutation<MediaSectionUploadMutation>(graphql`
-    mutation MediaSectionUploadMutation($file: Upload!) {
-      uploadVideo(file: $file) {
-        id
-        path
-        posterPath
-        width
-        height
-      }
-    }
-  `);
+  const [uploading, setUploading] = useState(false);
 
   function upload(file: File) {
     setError(null);
@@ -47,19 +37,11 @@ export default function MediaSection({videos, current, locked, onSelect, onUploa
       setError(`File too large. Try a video under ${MAX_UPLOAD_MB} MB.`);
       return;
     }
-    commit({
-      variables: {file},
-      uploadables: {file},
-      onCompleted: (response, errors) => {
-        if (errors != null && errors.length > 0) {
-          setError(explainGraphQLError(errors[0].message));
-          return;
-        }
-        rememberUploadName(response.uploadVideo.path, file.name);
-        onUploaded(toVideoItem(response.uploadVideo));
-      },
-      onError: err => setError(explainGraphQLError(err.message || 'Upload failed.')),
-    });
+    setUploading(true);
+    onAdd(file)
+      .then(onAdded)
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setUploading(false));
   }
 
   return (
@@ -76,7 +58,15 @@ export default function MediaSection({videos, current, locked, onSelect, onUploa
           }
         }}>
         <Upload size={18} />
-        <span>{uploading ? 'Uploading…' : 'Upload a video (mp4 or mov)'}</span>
+        <span>
+          {offline
+            ? uploading
+              ? 'Opening…'
+              : 'Open a video (mp4 or mov): it stays in this browser'
+            : uploading
+              ? 'Uploading…'
+              : 'Upload a video (mp4 or mov)'}
+        </span>
         <input
           ref={input}
           type="file"
@@ -117,7 +107,7 @@ export default function MediaSection({videos, current, locked, onSelect, onUploa
                   className="icon-button media-remove"
                   disabled={locked && selected}
                   onClick={() => onDelete(v)}
-                  title={locked && selected ? 'Wait for the running track jobs' : 'Delete this upload'}
+                  title={locked && selected ? 'Wait for the running track jobs' : offline ? 'Delete it from this browser' : 'Delete this upload'}
                   aria-label={`Delete ${videoDisplayName(v.path)}`}>
                   <TrashCan size={16} />
                 </button>

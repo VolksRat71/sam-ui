@@ -20,6 +20,7 @@ import {
   pickEffect,
   pruneEffects,
 } from '~/state/objectEffects';
+import {isOffline} from '~/lib/mode';
 import {closeSessionOnUnload, recordClose, recordOpen} from '~/lib/sessionClose';
 import {readJson, writeJson} from '~/lib/storage';
 import {API_ENDPOINT, OBJECT_LIMIT} from '~/config';
@@ -76,6 +77,8 @@ export type VideoItem = {
   width: number;
   height: number;
   posterUrl: string | null;
+  /** The file's sha256, for videos kept in this browser (no backend). */
+  key?: string;
 };
 
 export type SessionStatus = 'starting' | 'ready' | 'failed';
@@ -137,7 +140,7 @@ export default function useStudioSession(video: VideoItem) {
   useEffect(() => {
     const onHide = () => {
       const id = sessionIdRef.current;
-      if (id != null) {
+      if (id != null && !isOffline()) {
         closeSessionOnUnload(id);
         sessionIdRef.current = null;
       }
@@ -227,7 +230,7 @@ export default function useStudioSession(video: VideoItem) {
     }
     bridge.setSource(video.url);
     try {
-      await bridge.call('init', {endpoint: API_ENDPOINT});
+      await bridge.call('init', {endpoint: API_ENDPOINT, offline: isOffline()});
       await bridge.call('setLocalOptions', localOptionsRef.current);
       const server = await bridge.call('engines', {}).catch(() => [] as EngineInfo[]);
       setBackend(server.length > 0);
@@ -242,7 +245,7 @@ export default function useStudioSession(video: VideoItem) {
         dispatch({type: 'setEngine', engine});
       }
       await bridge.call('setEngine', {engine});
-      const info = await bridge.call('startSession', {path: video.path});
+      const info = await bridge.call('startSession', {path: video.path, key: video.key});
       sessionIdRef.current = info.sessionId;
       dispatch({type: 'restore', objects: info.objects});
       setStatus('ready');
@@ -267,7 +270,7 @@ export default function useStudioSession(video: VideoItem) {
       setStatus('failed');
       setStatusError(message(error));
     }
-  }, [bridge, video.path, video.url]);
+  }, [bridge, video.path, video.url, video.key]);
 
   const sync = useCallback(async () => {
     if (bridge == null) {

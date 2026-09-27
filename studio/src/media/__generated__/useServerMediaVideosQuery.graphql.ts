@@ -1,5 +1,5 @@
 /**
- * @generated SignedSource<<30ca5d7c5757920f092afa865c9eb954>>
+ * @generated SignedSource<<a0293e5ea8bc5d7e8baaa5048d9da7d8>>
  * @lightSyntaxTransform
  * @nogrep
  */
@@ -9,8 +9,8 @@
 // @ts-nocheck
 
 import { ConcreteRequest, Query } from 'relay-runtime';
-export type AppVideosQuery$variables = Record<PropertyKey, never>;
-export type AppVideosQuery$data = {
+export type useServerMediaVideosQuery$variables = Record<PropertyKey, never>;
+export type useServerMediaVideosQuery$data = {
   readonly videos: {
     readonly edges: ReadonlyArray<{
       readonly node: {
@@ -23,9 +23,9 @@ export type AppVideosQuery$data = {
     }>;
   };
 };
-export type AppVideosQuery = {
-  response: AppVideosQuery$data;
-  variables: AppVideosQuery$variables;
+export type useServerMediaVideosQuery = {
+  response: useServerMediaVideosQuery$data;
+  variables: useServerMediaVideosQuery$variables;
 };
 
 const node: ConcreteRequest = (function(){
@@ -104,7 +104,7 @@ return {
     "argumentDefinitions": [],
     "kind": "Fragment",
     "metadata": null,
-    "name": "AppVideosQuery",
+    "name": "useServerMediaVideosQuery",
     "selections": (v0/*: any*/),
     "type": "Query",
     "abstractKey": null
@@ -113,20 +113,20 @@ return {
   "operation": {
     "argumentDefinitions": [],
     "kind": "Operation",
-    "name": "AppVideosQuery",
+    "name": "useServerMediaVideosQuery",
     "selections": (v0/*: any*/)
   },
   "params": {
-    "cacheID": "03f526855dbc834ed74bb5525d1f9c66",
+    "cacheID": "e342dfddc8209c7a5edddad62ff7504d",
     "id": null,
     "metadata": {},
-    "name": "AppVideosQuery",
+    "name": "useServerMediaVideosQuery",
     "operationKind": "query",
-    "text": "query AppVideosQuery {\n  videos {\n    edges {\n      node {\n        id\n        path\n        posterPath\n        width\n        height\n      }\n    }\n  }\n}\n"
+    "text": "query useServerMediaVideosQuery {\n  videos {\n    edges {\n      node {\n        id\n        path\n        posterPath\n        width\n        height\n      }\n    }\n  }\n}\n"
   }
 };
 })();
 
-(node as any).hash = "59bf2904010be15c4f944086e5e99777";
+(node as any).hash = "7be8fb3ebc750dbb30fe9d3fd0587f87";
 
 export default node;

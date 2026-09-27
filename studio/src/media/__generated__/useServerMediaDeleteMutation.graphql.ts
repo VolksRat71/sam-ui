@@ -1,5 +1,5 @@
 /**
- * @generated SignedSource<<245a05badec22cf4f404be93e1708377>>
+ * @generated SignedSource<<6fba6569ba95bad6a8c91155d7ca388b>>
  * @lightSyntaxTransform
  * @nogrep
  */
@@ -14,19 +14,19 @@ export type DeleteVideoInput = {
   path: string;
   purgeTracks?: boolean;
 };
-export type AppDeleteVideoMutation$variables = {
+export type useServerMediaDeleteMutation$variables = {
   input: DeleteVideoInput;
 };
-export type AppDeleteVideoMutation$data = {
+export type useServerMediaDeleteMutation$data = {
   readonly deleteVideo: {
     readonly path: string;
     readonly purged: boolean;
     readonly sessionsClosed: number;
   };
 };
-export type AppDeleteVideoMutation = {
-  response: AppDeleteVideoMutation$data;
-  variables: AppDeleteVideoMutation$variables;
+export type useServerMediaDeleteMutation = {
+  response: useServerMediaDeleteMutation$data;
+  variables: useServerMediaDeleteMutation$variables;
 };
 
 const node: ConcreteRequest = (function(){
@@ -82,7 +82,7 @@ return {
     "argumentDefinitions": (v0/*: any*/),
     "kind": "Fragment",
     "metadata": null,
-    "name": "AppDeleteVideoMutation",
+    "name": "useServerMediaDeleteMutation",
     "selections": (v1/*: any*/),
     "type": "Mutation",
     "abstractKey": null
@@ -91,20 +91,20 @@ return {
   "operation": {
     "argumentDefinitions": (v0/*: any*/),
     "kind": "Operation",
-    "name": "AppDeleteVideoMutation",
+    "name": "useServerMediaDeleteMutation",
     "selections": (v1/*: any*/)
   },
   "params": {
-    "cacheID": "b4f978ed3b920a8b90b9e75f45839643",
+    "cacheID": "58bc9c596d0fe2f378f44fa174c90406",
     "id": null,
     "metadata": {},
-    "name": "AppDeleteVideoMutation",
+    "name": "useServerMediaDeleteMutation",
     "operationKind": "mutation",
-    "text": "mutation AppDeleteVideoMutation(\n  $input: DeleteVideoInput!\n) {\n  deleteVideo(input: $input) {\n    path\n    purged\n    sessionsClosed\n  }\n}\n"
+    "text": "mutation useServerMediaDeleteMutation(\n  $input: DeleteVideoInput!\n) {\n  deleteVideo(input: $input) {\n    path\n    purged\n    sessionsClosed\n  }\n}\n"
   }
 };
 })();
 
-(node as any).hash = "e1474b075fbee1ec7e5d39c8cefd9c1e";
+(node as any).hash = "1611099d79a462e310ceb81f445a1dfd";
 
 export default node;

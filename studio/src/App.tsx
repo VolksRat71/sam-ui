@@ -1,60 +1,40 @@
 // sam-ui (Apache-2.0). New file, not from SAM 2.
-import {useCallback, useMemo, useState} from 'react';
-import {graphql, useLazyLoadQuery, useMutation} from 'react-relay';
+import {useCallback, useState} from 'react';
 import DeleteVideoModal from '~/components/DeleteVideoModal';
 import MediaSection from '~/components/MediaSection';
 import Workspace from '~/components/Workspace';
-import {API_ENDPOINT} from '~/config';
 import {whenClosed} from '~/lib/sessionClose';
 import {readJson, writeJson} from '~/lib/storage';
+import type {MediaApi} from '~/media/mediaApi';
+import useLocalMedia from '~/media/useLocalMedia';
+import useServerMedia from '~/media/useServerMedia';
 import {afterDelete} from '~/state/media';
 import type {VideoItem} from '~/workspace/useStudioSession';
-import type {AppDeleteVideoMutation} from './__generated__/AppDeleteVideoMutation.graphql';
-import type {AppVideosQuery} from './__generated__/AppVideosQuery.graphql';
 
 const LAST_VIDEO_KEY = 'sam-ui-studio:video';
 
-/**
- * Video URLs are built from the configured endpoint rather than the backend's
- * `url` field, which uses the backend's API_URL setting and may name another
- * port.
- */
-function toVideoItem(v: {path: string; width: number; height: number; posterPath?: string | null}): VideoItem {
-  return {
-    path: v.path,
-    url: `${API_ENDPOINT}/${v.path}`,
-    width: v.width,
-    height: v.height,
-    posterUrl: v.posterPath != null && v.posterPath !== '' ? `${API_ENDPOINT}/${v.posterPath}` : null,
-  };
+/** Studio on a backend: its gallery and uploads. */
+export function ServerApp() {
+  return <App media={useServerMedia()} />;
 }
 
-export default function App() {
-  // bumped after an upload, so the list is fetched again with the new video
-  const [fetchKey, setFetchKey] = useState(0);
-  const data = useLazyLoadQuery<AppVideosQuery>(
-    graphql`
-      query AppVideosQuery {
-        videos {
-          edges {
-            node {
-              id
-              path
-              posterPath
-              width
-              height
-            }
-          }
-        }
-      }
-    `,
-    {},
-    {fetchKey, fetchPolicy: fetchKey === 0 ? 'store-or-network' : 'network-only'},
-  );
+/** Studio with no backend: videos opened into this browser, and the bundled samples. */
+export function LocalApp() {
+  const media = useLocalMedia();
+  if (media == null) {
+    return (
+      <div className="app empty-app">
+        <span className="loading">
+          <span className="spinner" /> Loading…
+        </span>
+      </div>
+    );
+  }
+  return <App media={media} />;
+}
 
-  // the gallery and every upload, as the backend lists them
-  const videos = useMemo(() => data.videos.edges.map(e => toVideoItem(e.node)), [data]);
-
+function App({media}: {media: MediaApi}) {
+  const {videos} = media;
   const [current, setCurrent] = useState<VideoItem | null>(() => {
     const last = readJson<string | null>(LAST_VIDEO_KEY, null);
     return videos.find(v => v.path === last) ?? videos[0] ?? null;
@@ -65,26 +45,16 @@ export default function App() {
     writeJson(LAST_VIDEO_KEY, v.path);
   }, []);
 
-  const uploaded = useCallback(
+  const added = useCallback(
     (v: VideoItem) => {
-      setFetchKey(k => k + 1);
+      media.refresh();
       select(v);
     },
-    [select],
+    [media, select],
   );
 
-  const [commitDelete] = useMutation<AppDeleteVideoMutation>(graphql`
-    mutation AppDeleteVideoMutation($input: DeleteVideoInput!) {
-      deleteVideo(input: $input) {
-        path
-        purged
-        sessionsClosed
-      }
-    }
-  `);
-
   /**
-   * Delete an upload. If it is the open video, move off it first and wait for
+   * Delete a video. If it is the open one, move off it first and wait for
    * its session to close: the backend refuses to delete an open video.
    */
   // the dialog lives here, above the Workspace, so it outlives the switch away
@@ -101,18 +71,10 @@ export default function App() {
         }
         await whenClosed(v.path); // the Workspace unmounts and closes its session
       }
-      await new Promise<void>((resolve, reject) =>
-        commitDelete({
-          // the user is deleting it: sessions abandoned on it (vanished tabs) must not block that
-          variables: {input: {path: v.path, purgeTracks, closeIdleSessions: true}},
-          onCompleted: (_, errors) =>
-            errors != null && errors.length > 0 ? reject(new Error(errors[0].message)) : resolve(),
-          onError: reject,
-        }),
-      );
-      setFetchKey(k => k + 1);
+      await media.remove(v, purgeTracks);
+      media.refresh();
     },
-    [commitDelete, current, videos],
+    [media, current, videos],
   );
 
   const renderMedia = useCallback(
@@ -121,13 +83,14 @@ export default function App() {
         videos={videos}
         current={current}
         locked={locked}
+        offline={media.offline}
         onSelect={select}
-        onUploaded={uploaded}
+        onAdd={media.add}
+        onAdded={added}
         onDelete={setDeleting}
-        toVideoItem={toVideoItem}
       />
     ),
-    [videos, current, select, uploaded],
+    [videos, current, media, select, added],
   );
 
   const dialog =
@@ -145,7 +108,11 @@ export default function App() {
       <div className="app empty-app">
         <div className="empty-card">
           <h1>sam-ui studio</h1>
-          <p>No videos yet. Upload one to start, or put an .mp4 in the backend&apos;s gallery folder.</p>
+          <p>
+            {media.offline
+              ? 'Open a video to start. It stays in this browser: nothing is uploaded.'
+              : "No videos yet. Upload one to start, or put an .mp4 in the backend's gallery folder."}
+          </p>
           {renderMedia(false)}
         </div>
         {dialog}
