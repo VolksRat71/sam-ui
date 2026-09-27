@@ -78,3 +78,9 @@ export function parseConstants(raw: Record<string, unknown>): Sam2Constants {
     tpos,
   };
 }
+
+/** The model a browser track was made with, as exports name it. */
+export function browserModelName(quality: Quality, fillHoleArea: number): string {
+  const v = VARIANTS[quality];
+  return `sam2.1_hiera_tiny (${v.label}, ${v.repo})${fillHoleArea > 0 ? `, hole fill ${fillHoleArea} px` : ''}`;
+}

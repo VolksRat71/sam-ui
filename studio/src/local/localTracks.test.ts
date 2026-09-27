@@ -8,6 +8,7 @@ import {
   MemoryTrackStore,
   seedsKey,
   variantKey,
+  variantModel,
   withLocalTracks,
 } from './localTracks';
 
@@ -93,5 +94,12 @@ describe('MemoryTrackStore', () => {
     await store.clear('a.mp4');
     expect(await store.list('a.mp4')).toEqual([]);
     expect(await store.get('b.mp4', 0)).not.toBeNull();
+  });
+});
+
+describe('variantModel', () => {
+  it('names the model a browser track was made with', () => {
+    expect(variantModel(variantKey(1024, 8))).toBe('sam2.1_hiera_tiny (1024 px, fp32, square-zero-labs/sam2.1-tiny-video-onnx), hole fill 8 px');
+    expect(variantModel(variantKey(512, 0))).toBe('sam2.1_hiera_tiny (512 px, fp16, diffusionstudio/sam2.1-tiny-video-onnx-fp16)');
   });
 });

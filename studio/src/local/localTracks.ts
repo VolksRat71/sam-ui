@@ -11,6 +11,7 @@
 // holds the object, untracked when there is none.
 import type {RLEObject} from '@/jscocotools/mask';
 import {BROWSER_ENGINE} from '~/state/engines';
+import {browserModelName, parseQuality} from './sam2/config';
 import {DEFAULT_ENGINE, type NormPoint, type ServerObject} from '~/state/objects';
 
 export {BROWSER_ENGINE};
@@ -113,4 +114,10 @@ export function withLocalTracks(
     const base = o.tracks != null && o.tracks.length > 0 ? o.tracks : [{engine: DEFAULT_ENGINE, state: o.state, frames: o.frames, nFrames: o.nFrames}];
     return {...o, tracks: [...base.filter(t => t.engine !== entry.engine), entry]};
   });
+}
+
+/** variantKey()'s model, as exports name it (the key itself when it is not one). */
+export function variantModel(variant: string): string {
+  const m = /^sam2\.1-tiny-(\d+)-fill(\d+)$/.exec(variant);
+  return m == null ? variant : browserModelName(parseQuality(m[1]), Number(m[2]));
 }
