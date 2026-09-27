@@ -4,3 +4,4 @@ dist
 .env
 e2e/out
 .models
+dist-pages

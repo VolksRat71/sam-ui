@@ -8,6 +8,7 @@
     "dev": "vite",
     "relay": "npm run merge-schemas && relay-compiler",
     "build": "tsc -p tsconfig.json && tsc -p tsconfig.node.json && vite build",
+    "build:pages": "tsc -p tsconfig.json && tsc -p tsconfig.node.json && VITE_API_ENDPOINT=none VITE_BASE=/sam-ui/ VITE_SAMPLES=05_default_juggle.mp4,01_dog.mp4 vite build --outDir dist-pages",
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run",
     "preview": "vite preview",
