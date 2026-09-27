@@ -8,13 +8,14 @@
 //     listed disabled with its reason, and a link when it has one;
 //   - inside the browser entry: its model size (512 fp16 or 1024 fp32) and
 //     hole fill, and a status line (download size, cached, loading, WebGPU).
-// With a single engine (a Pages build) the control is a plain label, with
-// the disabled entries beside it as chips whose tooltip carries the link.
+// The browser-only build keeps the same dropdown: SAM 2.1 large and SAM 3
+// are listed in it, disabled, and their tooltips link to the desktop app,
+// so the top bar holds one control whatever the build.
 import {ChevronDown} from '@carbon/icons-react';
 import {useEffect, useRef, useState} from 'react';
 import {modelAvailability} from '~/local/models';
 import {type Quality, VARIANTS} from '~/local/sam2/config';
-import {BROWSER_ENGINE, engineLabel, pickerLayout} from '~/state/engines';
+import {BROWSER_ENGINE, engineLabel} from '~/state/engines';
 import type {EngineInfo} from '~/worker/protocol';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
 
@@ -39,15 +40,6 @@ function Why({engine}: {engine: EngineInfo}) {
           </a>
         </>
       )}
-    </span>
-  );
-}
-
-function DisabledChip({engine}: {engine: EngineInfo}) {
-  return (
-    <span className="engine-off" tabIndex={0} aria-disabled="true">
-      <span className="engine-chip">{labelOf(engine)}</span>
-      <Why engine={engine} />
     </span>
   );
 }
@@ -94,7 +86,6 @@ export default function EnginePicker({session}: Props) {
     };
   }, [open, engines, readyQuality]);
 
-  const layout = pickerLayout(engines);
   if (engines.length === 0) {
     return null;
   }
@@ -183,24 +174,6 @@ export default function EnginePicker({session}: Props) {
       )}
     </button>
   );
-
-  if (layout.single) {
-    // one engine (Pages): a label, and the ones that cannot run as chips
-    const only = layout.available[0];
-    return (
-      <div className="engine-picker" ref={root}>
-        {only?.local ? button : <span className="engine-label">{only != null ? labelOf(only) : 'No engine'}</span>}
-        {layout.disabled.map(e => (
-          <DisabledChip key={e.name} engine={e} />
-        ))}
-        {open && only?.local && (
-          <div className="engine-menu" role="dialog" aria-label="Browser model">
-            {browserOptions}
-          </div>
-        )}
-      </div>
-    );
-  }
 
   return (
     <div className="engine-picker" ref={root}>

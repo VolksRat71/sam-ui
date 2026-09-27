@@ -1,7 +1,7 @@
 // sam-ui (Apache-2.0). New file, not from SAM 2.
 import {describe, expect, it} from 'vitest';
 import type {EngineInfo} from '~/worker/protocol';
-import {BROWSER_ENGINE, engineLabel, pickerEngines, pickerLayout, RELEASES_URL, unavailableReason} from './engines';
+import {BROWSER_ENGINE, engineLabel, pickerEngines, RELEASES_URL, unavailableReason} from './engines';
 
 const sam2: EngineInfo = {name: 'sam2', model: 'sam2.1_hiera_large', default: true, available: true, reason: null, loaded: true};
 const sam3: EngineInfo = {name: 'sam3', model: 'sam3', default: false, available: false, reason: 'no weights', loaded: false};
@@ -50,18 +50,5 @@ describe('pickerEngines', () => {
     expect(list[0]).toMatchObject({model: 'sam2.1_hiera_large', reason: 'Requires the desktop app.', href: RELEASES_URL});
     expect(list[1]).toMatchObject({reason: 'Requires the desktop app.', href: RELEASES_URL});
     expect(list[2]).toMatchObject({default: true, hint: undefined});
-  });
-});
-
-describe('pickerLayout', () => {
-  it('is a menu with a choice, and a label beside the disabled ones without', () => {
-    expect(pickerLayout(pickerEngines([sam2, sam3], {webgpu: true, backend: true})).single).toBe(false);
-    const alone = pickerLayout(pickerEngines([], {webgpu: true, backend: false}));
-    expect(alone.single).toBe(true);
-    expect(alone.available.map(e => e.name)).toEqual([BROWSER_ENGINE]);
-    expect(alone.disabled.map(e => [e.name, e.href])).toEqual([
-      ['sam2', RELEASES_URL],
-      ['sam3', RELEASES_URL],
-    ]);
   });
 });

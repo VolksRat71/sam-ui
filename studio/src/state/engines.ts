@@ -63,17 +63,3 @@ export function pickerEngines(server: ReadonlyArray<EngineInfo>, opts: PickerOpt
   });
   return out;
 }
-
-/**
- * How the picker lays out: a menu when there is a choice, else (a Pages
- * build) a label for the one engine, with the ones that cannot run beside it.
- */
-export function pickerLayout(engines: ReadonlyArray<EngineInfo>): {
-  available: EngineInfo[];
-  disabled: EngineInfo[];
-  single: boolean;
-} {
-  const available = engines.filter(e => e.available);
-  const disabled = engines.filter(e => !e.available);
-  return {available, disabled, single: available.length <= 1};
-}

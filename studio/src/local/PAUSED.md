@@ -15,7 +15,7 @@ The user-facing description and the list of approximations are in
   (LocalTrackStore interface, MemoryTrackStore, state rules, objectTracks merge).
 - studio wiring: StudioSession routes clicks, Track, cancel, repaint, Clear track,
   Remove and Start over for `browser-sam2`; EnginePicker.tsx is the one engine
-  control; `pickerEngines`/`pickerLayout` cover a Pages build (SAM 3 disabled,
+  control; `pickerEngines` covers the browser-only build (SAM 2.1 large and SAM 3 disabled,
   linked to releases/latest), not yet switched on by any build flag.
 - `parityPage.ts` + `e2e/parity.html` + `e2e/parity.mjs`.
 
