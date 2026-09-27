@@ -73,8 +73,11 @@ export class FrameStore {
     return this._times[index] - this._times[0];
   }
 
-  /** Frame `index` as a VideoFrame the caller owns (close it). */
-  async frame(index: number): Promise<VideoFrame> {
+  /**
+   * Frame `index` as a VideoFrame the caller owns (close it). `run` frames
+   * are decoded on a miss (1 for sparse reads, like the filmstrip's).
+   */
+  async frame(index: number, run = RUN): Promise<VideoFrame> {
     if (this._closed) {
       throw new Error('the video is closed');
     }
@@ -83,7 +86,7 @@ export class FrameStore {
     this._last = i;
     let f = this._cache.get(i);
     if (f == null) {
-      await (this._pending.get(i) ?? this._decodeRun(reverse ? Math.max(0, i - RUN + 1) : i));
+      await (this._pending.get(i) ?? this._decodeRun(reverse ? Math.max(0, i - run + 1) : i, run));
       f = this._cache.get(i);
       if (f == null) {
         // evicted before we got to it (a tiny budget): decode it alone

@@ -306,7 +306,7 @@ export default class VideoWorkerContext {
         );
 
         for (const [idx, frameIndex] of spaced.entries()) {
-          const frame = await store.frame(frameIndex);
+          const frame = await store.frame(frameIndex, 1); // sparse: no run
           try {
             ctx?.drawImage(frame, resizeWidth * idx, 0, resizeWidth, canvas.height);
           } finally {

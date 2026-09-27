@@ -37,12 +37,20 @@ function requestFrame(frame: number, size: number): Promise<ImageBitmap> {
   });
 }
 
+/** Time spent waiting for the host's frames, and turning them into pixels. */
+const frameTimes = {n: 0, waitMs: 0, pixelsMs: 0};
+
 async function framePixels(frame: number, size: number): Promise<Pixels> {
+  const t0 = performance.now();
   const bitmap = await requestFrame(frame, size);
+  const t1 = performance.now();
   try {
     return models!.pixelsOf(bitmap);
   } finally {
     bitmap.close();
+    frameTimes.n++;
+    frameTimes.waitMs += t1 - t0;
+    frameTimes.pixelsMs += performance.now() - t1;
   }
 }
 
@@ -143,7 +151,7 @@ const handlers: Handlers = {
     ep,
     cachedFrames: models?.cachedFrames ?? 0,
     cachedBytes: models?.cachedBytes ?? 0,
-    times: models?.times ?? {},
+    times: {...(models?.times ?? {}), frameWait: {n: frameTimes.n, ms: frameTimes.waitMs}, framePixels: {n: frameTimes.n, ms: frameTimes.pixelsMs}},
   }),
 };
 

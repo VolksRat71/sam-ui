@@ -182,6 +182,12 @@ export class LocalEngine {
       });
       try {
         const res = await client.call('track', {job, objects});
+        // where the time went, for the console (per graph, and the frames)
+        const stats = await client.call('stats', {}).catch(() => null);
+        if (stats != null && res.frames > 0) {
+          const per = Object.fromEntries(Object.entries(stats.times).map(([k, v]) => [k, v.n > 0 ? +(v.ms / v.n).toFixed(1) : 0]));
+          console.info(`browser engine: ${res.frames} frames in ${(res.ms / 1000).toFixed(1)} s (${(res.ms / res.frames).toFixed(0)} ms a frame); ms per run since load:`, per);
+        }
         return {canceled: res.canceled, frames: res.frames, ms: res.ms, stats: res.stats};
       } finally {
         off();
