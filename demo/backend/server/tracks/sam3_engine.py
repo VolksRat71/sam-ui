@@ -13,6 +13,7 @@ Measured on the synthetic squares (MPS, fp32): IoU min 0.989 against SAM 2's
 0.974, at 1.43 s/frame against SAM 2's 0.61, with about 20 GB of MPS driver
 memory. Hence opt-in, per track job.
 """
+import importlib.util
 import os
 import threading
 from pathlib import Path
@@ -35,11 +36,15 @@ def available() -> Optional[str]:
     """None when the engine can run here, else why not."""
     if not (weights_path() / "model.safetensors").exists():
         return f"no SAM 3 weights at {weights_path()}"
-    try:
-        import transformers  # noqa: F401
-        from transformers import Sam3TrackerVideoModel  # noqa: F401
-    except ImportError as err:
-        return f"transformers with Sam3TrackerVideoModel is not installed ({err})"
+    # located, not imported: importing transformers' SAM 3 model takes seconds
+    # (7.5 s in the desktop app), and this runs on every GET /engines, which
+    # studio waits on at start. A broken install still fails loudly when the
+    # engine loads.
+    spec = importlib.util.find_spec("transformers")
+    if spec is None or spec.origin is None:
+        return "transformers is not installed"
+    if not (Path(spec.origin).parent / "models" / "sam3_tracker_video").is_dir():
+        return "this transformers has no Sam3TrackerVideoModel (it needs 5.x)"
     return None
 
 

@@ -123,3 +123,30 @@ def test_export_takes_an_engine(h, tmp_path, monkeypatch):
     assert r.status_code == 200 and r.json["products"]["object_1"]["engine"] == "fake3"
     r = h.client.post("/export", json={"session_id": "s", "out_dir": str(tmp_path / "y")})  # default: untracked there
     assert r.json["skipped"] == {"1": UNTRACKED}
+
+
+# --- SAM 3 availability is cheap (GET /engines runs it, and studio waits on that at start)
+
+def test_sam3_available_reports_missing_weights_and_never_imports_transformers(tmp_path, monkeypatch):
+    import importlib.util
+    import sys
+    from tracks import sam3_engine
+
+    monkeypatch.setenv("SAM_UI_SAM3_WEIGHTS", str(tmp_path))
+    before = "transformers" in sys.modules
+    assert "no SAM 3 weights" in sam3_engine.available()
+    (tmp_path / "model.safetensors").write_bytes(b"")
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: None)
+    assert sam3_engine.available() == "transformers is not installed"
+    fake = tmp_path / "tf" / "transformers"
+    fake.mkdir(parents=True)
+    (fake / "__init__.py").write_text("")
+
+    class Spec:
+        origin = str(fake / "__init__.py")
+
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: Spec())
+    assert "needs 5.x" in sam3_engine.available()
+    (fake / "models" / "sam3_tracker_video").mkdir(parents=True)
+    assert sam3_engine.available() is None
+    assert ("transformers" in sys.modules) == before  # located, never imported
