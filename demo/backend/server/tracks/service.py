@@ -187,6 +187,15 @@ class TrackService:
         return self.object_info(video, obj_id)
 
     # -- jobs ------------------------------------------------------------------
+    def passes(self, video: str, obj_ids: List[int], engine: Optional[str] = None) -> int:
+        """How many times a job over obj_ids runs through the clip (an engine
+        may split one job into several passes), for its progress total."""
+        f = getattr(self.get_engine(engine), "passes", None)
+        if f is None:
+            return 1
+        seeds = {o: self.seeds.seeds(video, o) for o in obj_ids}
+        return f({o: s for o, s in seeds.items() if s})
+
     def track(self, video: str, path: str, obj_ids: List[int], video_handle: Optional[Any] = None,
               result: Optional[JobResult] = None, engine: Optional[str] = None) -> Iterator[FrameRle]:
         """Run `engine` on obj_ids and yield each frame's RLE masks. Each track

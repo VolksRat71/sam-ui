@@ -14,6 +14,7 @@ import numpy as np
 
 from tracks import rle
 from tracks.seeds import Seeds
+from tracks.streaming import sam2_prune
 
 FrameMasks = Tuple[int, Dict[int, np.ndarray]]
 
@@ -69,9 +70,22 @@ class Sam2Engine:
 
     def track(self, video_path: str, objects: Dict[int, Seeds],
               video_handle: Optional[Dict] = None) -> Iterator[FrameMasks]:
+        """Objects whose first seed is on different frames run in separate
+        states, one per first-seed frame, one after another: tracked together,
+        SAM 2 on MPS aborts the whole process (an MPSNDArrayMatrixMultiplication
+        datatype assertion in memory attention). A frame can so be yielded once
+        per group, each time with that group's objects. The backbone features
+        are cached per video, so the extra passes do not re-encode frames."""
         objects = {o: s for o, s in objects.items() if any(v["points"] for v in s.values())}
-        if not objects:
-            return
+        for group in groups_by_first_seed(objects):
+            yield from self._track_group(video_path, group, video_handle)
+
+    def passes(self, objects: Dict[int, Seeds]) -> int:
+        """How many times a job over `objects` runs the clip (one per group)."""
+        return max(1, len(groups_by_first_seed(objects)))
+
+    def _track_group(self, video_path: str, objects: Dict[int, Seeds],
+                     video_handle: Optional[Dict] = None) -> Iterator[FrameMasks]:
         with self.autocast():
             if video_handle is not None:
                 state = job_state_like(video_handle)
@@ -85,12 +99,25 @@ class Sam2Engine:
                 for reverse in (False, True):
                     for frame, obj_ids, masks in self.predictor.propagate_in_video(
                             state, start_frame_idx=start, reverse=reverse):
+                        # outputs the model will not read again go, so memory stays flat
+                        sam2_prune(self.predictor, state, frame, start, reverse)
                         if reverse and frame == start:
                             continue  # the forward pass already yielded it
                         yield frame, {int(o): (masks[k] > self.score_thresh)[0].cpu().numpy()
                                       for k, o in enumerate(obj_ids)}
             finally:
                 self.predictor.reset_state(state)
+
+
+def groups_by_first_seed(objects: Dict[int, Seeds]) -> List[Dict[int, Seeds]]:
+    """Objects grouped by the frame of their first seed with points, earliest
+    group first (objects without one are dropped)."""
+    by: Dict[int, Dict[int, Seeds]] = {}
+    for o, s in objects.items():
+        seeded = [f for f, v in s.items() if v["points"]]
+        if seeded:
+            by.setdefault(min(seeded), {})[o] = s
+    return [by[f] for f in sorted(by)]
 
 
 def seed_into_state(predictor, state, obj_id: int, frame: int, seed: Dict) -> None:

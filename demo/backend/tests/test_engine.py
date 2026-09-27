@@ -50,12 +50,28 @@ class _StubPredictor:
 def test_sam2_engine_seeds_only_its_objects_and_yields_each_frame_once():
     p = _StubPredictor(n=4)
     e = Sam2Engine(p, model="stub")
-    seeds = {7: {2: {"points": [[0.1, 0.2]], "labels": [1]}}, 9: {1: {"points": [[0.5, 0.5], [0.6, 0.6]], "labels": [1, 0]}}}
+    seeds = {7: {1: {"points": [[0.1, 0.2]], "labels": [1]}}, 9: {1: {"points": [[0.5, 0.5], [0.6, 0.6]], "labels": [1, 0]}}}
     frames = list(e.track("v.mp4", seeds))
     assert sorted(f for f, _ in frames) == [0, 1, 2, 3]  # start frame 1 not repeated by the reverse pass
     assert sorted(a[0] for a in p.added) == [7, 9]
     assert all(set(m) == {7, 9} and all(v.dtype == bool for v in m.values()) for _, m in frames)
     assert p.reset == 1
+
+
+def test_objects_first_seeded_on_different_frames_track_in_separate_passes():
+    """Tracked together, SAM 2 on MPS aborts the process; so each first-seed
+    frame gets its own state, and each object still gets every frame once."""
+    p = _StubPredictor(n=4)
+    e = Sam2Engine(p, model="stub")
+    seeds = {7: {2: {"points": [[0.1, 0.2]], "labels": [1]}}, 9: {1: {"points": [[0.5, 0.5], [0.6, 0.6]], "labels": [1, 0]}}}
+    assert e.passes(seeds) == 2
+    per_obj = {7: [], 9: []}
+    for f, m in e.track("v.mp4", seeds):
+        assert len(m) == 1  # one group's objects at a time
+        for o in m:
+            per_obj[o].append(f)
+    assert {o: sorted(fs) for o, fs in per_obj.items()} == {7: [0, 1, 2, 3], 9: [0, 1, 2, 3]}
+    assert p.reset == 2  # every state released
 
 
 def test_sam2_engine_skips_objects_without_points_and_releases_state_on_cancel():

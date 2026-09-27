@@ -159,7 +159,9 @@ def make_blueprint(resolve: Callable[[str], TrackContext], service: Optional[Tra
         engine = ctx.service.get_engine(data.get("engine")).name  # 400 now if it can't run, not mid-stream
         with ctx.lock:  # a consistent read of the seeds and tracks
             ids = ctx.service.select(ctx.video, data.get("object_ids"), engine)
-        job = ctx.service.jobs.claim(ctx.session_id, ctx.video, ids, _n_frames(ctx.video_handle), engine)
+            n = _n_frames(ctx.video_handle)
+            n = n * ctx.service.passes(ctx.video, ids, engine) if n else n  # one count per frame per pass
+        job = ctx.service.jobs.claim(ctx.session_id, ctx.video, ids, n, engine)
         r = _response(_run_job(ctx, job), job.objects, job)
         r.call_on_close(lambda: ctx.service.jobs.release(job))  # also if the stream never started
         return r
