@@ -24,6 +24,7 @@ import numpy as np
 from tracks import rle
 from tracks.engine import FrameMasks
 from tracks.seeds import Seeds
+from tracks.streaming import Sam3Frames, sam3_prune
 
 DEFAULT_WEIGHTS = Path.home() / ".cache/rotoscoping-video-subjects/weights/sam3-hf"
 
@@ -46,13 +47,6 @@ def available() -> Optional[str]:
     if not (Path(spec.origin).parent / "models" / "sam3_tracker_video").is_dir():
         return "this transformers has no Sam3TrackerVideoModel (it needs 5.x)"
     return None
-
-
-def decode_video(path: str) -> list:
-    import decord
-
-    vr = decord.VideoReader(path)
-    return [vr[i].asnumpy() for i in range(len(vr))]
 
 
 class Sam3Engine:
@@ -88,11 +82,13 @@ class Sam3Engine:
         if not objects:
             return
         proc, model, dev = self._load()
-        frames = decode_video(video_path)
-        h, w = frames[0].shape[:2]
+        # frames processed as tracking reaches them, not the whole clip up front
+        frames = Sam3Frames(video_path, proc, dtype=torch.float32)
+        h, w = frames.height, frames.width
         with torch.inference_mode():
-            sess = proc.init_video_session(video=frames, inference_device=dev, video_storage_device="cpu",
-                                           dtype=torch.float32)
+            sess = proc.init_video_session(inference_device=dev, video_storage_device="cpu", dtype=torch.float32)
+            sess.processed_frames = frames
+            sess.video_height, sess.video_width = h, w
             by_frame: Dict[int, list] = {}
             for o, seeds in objects.items():
                 for f, v in seeds.items():
@@ -119,6 +115,7 @@ class Sam3Engine:
             start = min(by_frame)
             for reverse in (False, True):
                 for out in model.propagate_in_video_iterator(sess, start_frame_idx=start, reverse=reverse):
+                    sam3_prune(model, sess, out.frame_idx, start, reverse)
                     if reverse and out.frame_idx == start:
                         continue
                     masks = proc.post_process_masks([out.pred_masks], original_sizes=[[h, w]], binarize=True)[0]

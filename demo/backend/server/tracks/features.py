@@ -13,6 +13,7 @@ What is stored, per frame: the projected FPN features (`backbone_fpn`, about
 every frame and is kept once per video (it is the larger part, about 88 MB).
 Least recently used frames are dropped past `max_bytes`.
 """
+import os
 import threading
 from collections import OrderedDict
 from typing import Dict, List, Optional, Tuple
@@ -20,6 +21,16 @@ from typing import Dict, List, Optional, Tuple
 import torch
 
 VIDEO_KEY = "sam_ui_video"  # set on an inference state to opt it into the cache
+
+
+def default_cache_gb() -> float:
+    """A quarter of this machine's RAM, at most 6 GB: a long clip fills the
+    cache, and on a 16 GB Mac 6 GB of it would crowd the models."""
+    try:
+        ram = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 2 ** 30
+    except (ValueError, OSError, AttributeError):
+        return 6.0
+    return round(min(6.0, ram / 4), 2)
 
 
 def _nbytes(ts: List[torch.Tensor]) -> int:

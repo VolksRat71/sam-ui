@@ -39,7 +39,8 @@ from pycocotools.mask import decode as decode_masks
 from sam2.build_sam import build_sam2_video_predictor
 from tracks import rle as track_rle
 from tracks.engine import Sam2Engine, seed_into_state
-from tracks.features import VIDEO_KEY, FeatureCache, install as install_feature_cache
+from tracks.features import VIDEO_KEY, FeatureCache, default_cache_gb, install as install_feature_cache
+from tracks.streaming import install_sam2_streaming
 from tracks.routes import TrackContext
 from tracks import sam3_engine
 from tracks.service import EngineSpec, TrackService
@@ -111,8 +112,11 @@ class InferenceAPI:
     def _init_tracks(self, tracks_root) -> None:
         """sam-ui: seeds and cached tracks, per video, under DATA_PATH/tracks;
         and a backbone-feature cache shared by sessions and jobs on a video
-        (SAM_UI_FEATURE_CACHE_GB, default 6; 0 turns it off)."""
-        cache_gb = float(os.environ.get("SAM_UI_FEATURE_CACHE_GB", "6"))
+        (SAM_UI_FEATURE_CACHE_GB, default a quarter of RAM up to 6; 0 turns it
+        off). Frames are decoded as tracking reaches them (tracks/streaming.py),
+        so a clip's length no longer sets its memory."""
+        install_sam2_streaming()
+        cache_gb = float(os.environ.get("SAM_UI_FEATURE_CACHE_GB", default_cache_gb()))
         if cache_gb > 0:
             install_feature_cache(self.predictor, FeatureCache(int(cache_gb * (1 << 30))))
         self.tracks = TrackService(
