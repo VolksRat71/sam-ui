@@ -53,6 +53,21 @@ The app needs an Apple Silicon Mac (M1 or later) on macOS 14 or newer. Measured 
 stays at 3.0 to 3.3 GB from start to end, where the code this began from needed 7.8 GB
 for 10 seconds and 17 GB for 30. `tools/memory_bench.py` reproduces the comparison.
 
+## Platform support
+
+| | Status |
+|---|---|
+| **Desktop app**, macOS 14+ on Apple Silicon | Released ([v0.2.0](https://github.com/VolksRat71/sam-ui/releases/latest)) |
+| Desktop app, Intel Mac | Not supported ([#7](https://github.com/VolksRat71/sam-ui/issues/7)) |
+| Desktop app, Windows or Linux | Not yet ([#6](https://github.com/VolksRat71/sam-ui/issues/6)) |
+| **Browser demo**, Chrome on macOS | Tested |
+| Browser demo, Chrome or Edge on Windows | Untested ([#2](https://github.com/VolksRat71/sam-ui/issues/2)) |
+| Browser demo, Safari 26 | Untested ([#3](https://github.com/VolksRat71/sam-ui/issues/3)) |
+| Browser demo, Firefox | WebGPU only on some versions; untested ([#4](https://github.com/VolksRat71/sam-ui/issues/4)) |
+| Browser demo, Android Chrome | Known issue: blank preview ([#1](https://github.com/VolksRat71/sam-ui/issues/1)) |
+
+Details and progress: [Platform support, #16](https://github.com/VolksRat71/sam-ui/issues/16).
+
 ## What it does
 
 - **Per-object track cache.** Your clicks are saved as seeds, with the mask you
