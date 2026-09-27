@@ -4,9 +4,14 @@
 // deletes uploads only (the gallery can hold source footage) and checks the
 // same rules; the UI never offers Remove where the backend would refuse.
 
-/** An upload the backend will delete: under uploads/, and no path tricks. */
+/**
+ * A video that may be deleted: an upload the backend will delete (under
+ * uploads/), or, with no backend, a file opened into this browser (local/).
+ * Never the gallery or the bundled samples, and no path tricks.
+ */
 export function isDeletable(path: string): boolean {
-  return path.startsWith('uploads/') && !path.split('/').includes('..') && path.length > 'uploads/'.length;
+  const prefix = ['uploads/', 'local/'].find(p => path.startsWith(p));
+  return prefix != null && !path.split('/').includes('..') && path.length > prefix.length;
 }
 
 /**

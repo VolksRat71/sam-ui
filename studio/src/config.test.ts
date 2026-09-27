@@ -9,6 +9,9 @@ describe('resolveApiEndpoint', () => {
   it('uses a given endpoint, without trailing slashes', () => {
     expect(resolveApiEndpoint('http://127.0.0.1:7363//', 'http://x')).toBe('http://127.0.0.1:7363');
   });
+  it('is empty for the browser-only build', () => {
+    expect(resolveApiEndpoint('none', 'http://x')).toBe('');
+  });
   it('falls back to the default when unset', () => {
     expect(resolveApiEndpoint(undefined, 'http://x')).toBe(DEFAULT_API_ENDPOINT);
     expect(resolveApiEndpoint('', 'http://x')).toBe(DEFAULT_API_ENDPOINT);

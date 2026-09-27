@@ -5,6 +5,8 @@ import {afterDelete, isDeletable} from './media';
 describe('isDeletable', () => {
   it('allows uploads only', () => {
     expect(isDeletable('uploads/abc.mp4')).toBe(true);
+    expect(isDeletable('local/abc.mp4')).toBe(true);
+    expect(isDeletable('samples/05_default_juggle.mp4')).toBe(false);
     expect(isDeletable('gallery/clip.mp4')).toBe(false);
     expect(isDeletable('uploads/../gallery/clip.mp4')).toBe(false);
     expect(isDeletable('uploads/')).toBe(false);
