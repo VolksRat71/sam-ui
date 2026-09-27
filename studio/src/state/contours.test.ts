@@ -93,8 +93,8 @@ describe('vectorJson', () => {
     rect2(2, 2, 20, 20);
     rect2(30, 30, 60, 60);
     const frames = [donut, null, two, new Uint8Array(w * h)];
-    const v = vectorJson({engine: 'browser-sam2', model: 'sam2.1_hiera_tiny', fps: 24, w, h, frames: 4}, i => frames[i]);
-    expect(v).toMatchObject({version: 1, engine: 'browser-sam2', model: 'sam2.1_hiera_tiny', fps: 24, w, h, frames: 4});
+    const v = vectorJson({engine: 'browser-sam2', model: 'sam2.1_hiera_tiny', object: {id: 3, name: 'Red cup'}, fps: 24, w, h, frames: 4}, i => frames[i]);
+    expect(v).toMatchObject({version: 1, engine: 'browser-sam2', model: 'sam2.1_hiera_tiny', object: {id: 3, name: 'Red cup'}, fps: 24, w, h, frames: 4});
     expect(v.add).toHaveLength(2);
     expect(v.sub).toHaveLength(1);
     expect(v.add.every(slot => slot.length === 4)).toBe(true);

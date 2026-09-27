@@ -4,7 +4,7 @@
 // skill's contours.py (its default mode), so its After Effects handoff reads
 // studio's Vector JSON unchanged:
 //
-//   {"version": 1, "engine", "model", "fps", "w", "h", "frames": N,
+//   {"version": 1, "engine", "model", "object": {"id", "name"}, "fps", "w", "h", "frames": N,
 //    "add": [[outline_or_null per frame] per slot],   pieces, largest first
 //    "sub": [[outline_or_null per frame] per slot]}   holes, largest first
 //
@@ -234,6 +234,7 @@ export type VectorJson = {
   version: 1;
   engine: string;
   model: string;
+  object?: {id: number; name: string};
   fps: number;
   w: number;
   h: number;
@@ -253,7 +254,7 @@ function slots(perFrame: Array<Outline[] | null>): Array<Array<Outline | null>> 
  * 0/1 mask, or null where the track has none.
  */
 export function vectorJson(
-  meta: {engine: string; model: string; fps: number; w: number; h: number; frames: number},
+  meta: {engine: string; model: string; object?: {id: number; name: string}; fps: number; w: number; h: number; frames: number},
   frameMask: (index: number) => ArrayLike<number> | null,
   opts: TraceOptions = {},
 ): VectorJson {
@@ -266,6 +267,7 @@ export function vectorJson(
     version: 1,
     engine: meta.engine,
     model: meta.model,
+    ...(meta.object != null ? {object: meta.object} : {}),
     fps: meta.fps,
     w: meta.w,
     h: meta.h,
