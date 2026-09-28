@@ -934,9 +934,12 @@ code {
   display: flex;
   gap: 12px;
   overflow-y: auto;
+  /* overflow-y alone makes x auto too, so a label or seed a few px past the edge
+     put a horizontal scrollbar under the whole timeline */
+  overflow-x: hidden;
 }
 .lane-labels {
-  width: 64px;
+  width: 112px;
   flex: none;
 }
 .lane-label {
@@ -946,6 +949,11 @@ code {
   font-size: 10px;
   color: var(--gray-300);
   white-space: nowrap;
+}
+.lane-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .lane-label.scrub-label {
   height: 60px;
@@ -986,6 +994,9 @@ code {
 }
 .tick:first-child {
   transform: none;
+}
+.tick.end {
+  transform: translateX(-100%);
 }
 .swimlane {
   position: relative;

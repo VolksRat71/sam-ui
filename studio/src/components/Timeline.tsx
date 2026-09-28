@@ -105,7 +105,9 @@ export default function Timeline({session}: Props) {
           <div className="lane-label scrub-label">Video</div>
           {state.objects.map(o => (
             <div key={o.id} className="lane-label" style={{color: o.id === state.activeId ? '#fff' : undefined}}>
-              {objectName(o)}
+              <span className="lane-name" title={objectName(o)}>
+                {objectName(o)}
+              </span>
             </div>
           ))}
         </div>
@@ -129,7 +131,8 @@ export default function Timeline({session}: Props) {
             <canvas ref={filmstripRef} className="filmstrip" />
             <div className="ticks">
               {ticks.map(t => (
-                <span key={t} className="tick" style={{left: pos(t)}}>
+                // a label near the right edge ends there instead of centring past it
+                <span key={t} className={pos(t) > width - TICK_EDGE ? 'tick end' : 'tick'} style={{left: pos(t)}}>
                   {t + 1}
                 </span>
               ))}
@@ -184,6 +187,9 @@ export default function Timeline({session}: Props) {
 }
 
 /** Frame labels spaced to fit, on round numbers. */
+/** Ticks this close to the right edge (px) are right-aligned, so their label stays in view. */
+const TICK_EDGE = 24;
+
 function tickFrames(n: number, width: number): number[] {
   if (width <= 0) {
     return [0];
