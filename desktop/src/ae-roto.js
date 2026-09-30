@@ -32,10 +32,17 @@ const {AeBridgeError} = require('./ae-bridge');
 
 const VIDEO_EXT = /\.(mp4|mov|m4v)$/i;
 const FPS_TOLERANCE = 1e-3;
-/** Per call: the bridge caps a body at 5 MB and a host op at 30 s. */
+/**
+ * Per call: the bridge caps a body at 5 MB. A host op gets 30 s over /rpc but
+ * masks get 3 minutes through the tool layer, so every setPathKeys goes over
+ * /mcp (inline, or by keys file when too big for a body), and we wait a little
+ * longer than the bridge does so we never give up while AE is still writing.
+ */
 const INLINE_LIMIT = 4 * 1024 * 1024;
 const CHUNK_FRAMES = 600;
-const KEYS_TIMEOUT_MS = 120000;
+const KEYS_TIMEOUT_MS = 200000;
+/** More pieces or holes than this in one object is a bad document, not roto. */
+const MAX_SLOTS = 256;
 
 const OVERRIDE_NAMES = {
   conformFrameRate: 'a conformed frame rate',
@@ -146,6 +153,31 @@ function chunks(keys, chunk) {
   return out;
 }
 
+const isPoint = p => Array.isArray(p) && p.length === 2 && Number.isFinite(p[0]) && Number.isFinite(p[1]);
+
+/**
+ * The slot arrays come from the renderer: each must hold exactly one entry per
+ * frame (a short one would leave its last hold key over the rest of the comp,
+ * a long one would key past its end), and each entry is null or an outline of
+ * at least 3 finite [x, y] points.
+ */
+function checkSlots(o, label, frames) {
+  const slots = [...(o.add ?? []), ...(o.sub ?? [])];
+  if (slots.length > MAX_SLOTS) {
+    throw new AeBridgeError('mismatch', `${label} has ${slots.length} mask pieces; at most ${MAX_SLOTS} are exported.`);
+  }
+  for (const frame of slots) {
+    if (!Array.isArray(frame) || frame.length !== frames) {
+      throw new AeBridgeError('mismatch', `${label} has a mask with ${Array.isArray(frame) ? frame.length : 0} frames; the footage has ${frames}.`);
+    }
+    for (const outline of frame) {
+      if (outline !== null && !(Array.isArray(outline) && outline.length >= 3 && outline.every(isPoint))) {
+        throw new AeBridgeError('mismatch', `${label} has an outline that is not a list of at least 3 [x, y] points.`);
+      }
+    }
+  }
+}
+
 function baseName(name) {
   return String(name).replace(/\.[^.]+$/, '');
 }
@@ -166,6 +198,7 @@ function planExport({source, objects, inlineLimit = INLINE_LIMIT, chunkFrames = 
         `${label}'s outlines are ${o.w}x${o.h} over ${o.frames} frames; the footage is ${source.width}x${source.height} over ${source.frames}.`,
       );
     }
+    checkSlots(o, label, source.frames);
   }
   const title = baseName(source.name);
   const compName = `${title} roto (sam-ui)`;
@@ -204,7 +237,7 @@ function planExport({source, objects, inlineLimit = INLINE_LIMIT, chunkFrames = 
         const args = {command: 'setPathKeys', compId: comp, layerId: ref(layer), maskName: m.maskName, hold: true, keys};
         const size = Buffer.byteLength(JSON.stringify({op: 'masks', args}));
         step(`keys ${m.maskName} ${keys[0].time.toFixed(3)}s`, 'masks', args, {
-          transport: size > inlineLimit ? 'file' : 'rpc',
+          transport: size > inlineLimit ? 'file' : 'tool',
           timeoutMs: KEYS_TIMEOUT_MS,
         });
       }
@@ -250,6 +283,8 @@ async function runPlan(plan, client, {tmpDir, onProgress} = {}) {
         fs.writeFileSync(file, JSON.stringify(args.keys));
         const {keys: _inline, ...rest} = args;
         result = await client.tool('ae_masks', {...rest, keysPath: file}, {timeoutMs: s.timeoutMs});
+      } else if (s.transport === 'tool') {
+        result = await client.tool('ae_masks', args, {timeoutMs: s.timeoutMs});
       } else {
         result = await client.rpc(s.op, args, s.timeoutMs != null ? {timeoutMs: s.timeoutMs} : undefined);
       }

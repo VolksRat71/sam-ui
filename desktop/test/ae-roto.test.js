@@ -118,7 +118,8 @@ test('a long clip is split into calls by time range; a big call goes by keys fil
   const keySteps = plan.steps.filter(s => s.args.command === 'setPathKeys');
   assert.deepStrictEqual(keySteps.map(s => s.args.keys.length), [600, 600, 100]);
   assert.strictEqual(keySteps[1].args.keys[0].time, 600 / SOURCE.frameRate); // contiguous
-  assert.ok(keySteps.every(s => s.transport === 'rpc'));
+  // masks get 3 minutes through the tool layer; /rpc would cut them off at 30 s
+  assert.ok(keySteps.every(s => s.transport === 'tool'));
   const big = roto.planExport({source, objects, chunkFrames: 600, inlineLimit: 1000});
   assert.ok(big.steps.filter(s => s.args.command === 'setPathKeys').every(s => s.transport === 'file'));
 });
@@ -127,6 +128,16 @@ test('outlines that do not match the footage are refused before any call', () =>
   assert.throws(() => roto.planExport({source: SOURCE, objects: [vectors('car', {frames: 299})]}), /299 frames.*300/);
   assert.throws(() => roto.planExport({source: SOURCE, objects: [vectors('car', {w: 1280, h: 720})]}), /1280x720/);
   assert.throws(() => roto.planExport({source: SOURCE, objects: []}), /No object/);
+});
+
+test('mask slots that do not cover every frame, or hold bad outlines, are refused', () => {
+  const plan = objects => () => roto.planExport({source: SOURCE, objects});
+  assert.throws(plan([vectors('car', {add: [slot([4], square, 299)]})]), /299 frames; the footage has 300/);
+  assert.throws(plan([vectors('car', {add: [slot([4], square, 301)]})]), /301 frames/);
+  assert.throws(plan([vectors('car', {sub: [slot([4], () => [[0, 0], [1, 1]])]})]), /at least 3/);
+  assert.throws(plan([vectors('car', {add: [slot([4], () => [[0, 0], [1, NaN], [2, 2]])]})]), /at least 3/);
+  assert.throws(plan([vectors('car', {add: Array.from({length: 257}, () => slot([], square))})]), /257 mask pieces/);
+  assert.doesNotThrow(plan([vectors('car', {add: [slot([4], square)], sub: [slot([], square)]})]));
 });
 
 /** A fake bridge client: records calls, answers ids. */
@@ -150,7 +161,7 @@ function fakeClient({failOn, media = MEDIA} = {}) {
       return answer(op, args);
     },
     tool: async (name, args) => {
-      calls.push({tool: name, args, file: JSON.parse(fs.readFileSync(args.keysPath, 'utf8'))});
+      calls.push({tool: name, args, file: args.keysPath ? JSON.parse(fs.readFileSync(args.keysPath, 'utf8')) : undefined});
       return answer('masks', args);
     },
   };
