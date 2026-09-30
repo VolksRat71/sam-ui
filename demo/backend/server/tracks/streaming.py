@@ -14,31 +14,29 @@ Here:
   - Sam2Frames / Sam3Frames stand in for those frame stores. They decode one
     frame on request with exactly upstream's resize and normalisation, keeping
     a few recent ones, so the model sees bit-identical input.
-  - decord is only ever open for one short run of frames: after its first read,
-    a decord reader decodes the WHOLE clip in a background thread and keeps
-    every frame (3 MiB each at 1024x1024; num_threads does not stop it), which
-    silently put the whole clip back in memory. _DecordRuns opens a reader,
-    decodes up to RUN frames in the direction tracking moves, copies them out
-    and deletes the reader, which stops that thread and frees what it held.
+  - _PyAVRuns decodes RUN frames at a time in the direction tracking moves:
+    it seeks to the keyframe before the run, decodes to its end, keeps only
+    that run and closes the file. Frame i is the i-th frame a plain decode
+    yields, found by timestamp (the packet index built at open), so B-frames,
+    a first timestamp other than 0, variable frame rates and edit lists all
+    land on the right frame; a stream without timestamps is decoded from the
+    start instead. (It replaced decord, whose reader, once read, decoded the
+    whole clip in a background thread and kept every frame.)
   - prune_behind drops the non-seeded outputs a propagation has moved past by
     more than the model's window. Seeded (cond) frames are never touched, and
     neither are the frames just after the start, which the reverse pass reads.
 """
+import bisect
+import contextlib
 import threading
 from collections import OrderedDict
-from typing import Dict, Optional
+from typing import Dict, List, Optional, Tuple
 
+import numpy as np
 import torch
 
 KEEP_DECODED = 4  # recent frames kept decoded (tracking asks for each once, in order)
-RUN = 16  # frames decoded per decord reader, which is then deleted
-
-
-def _tensor(frame) -> torch.Tensor:
-    """A decoded HxWx3 uint8 frame as a tensor. decord hands back its own array,
-    or a tensor once anything (upstream's loader does) has set its torch bridge
-    for the whole process."""
-    return frame if isinstance(frame, torch.Tensor) else torch.from_numpy(frame.asnumpy())
+RUN = 16  # frames decoded per open of the file, which is then closed
 
 
 class _Lru:
@@ -58,47 +56,122 @@ class _Lru:
             self._d.popitem(last=False)
 
 
-class _DecordRuns:
-    """Frames of a video, decoded by short-lived decord readers, RUN at a time
-    in the direction the reader is moving (so the reverse pass is cheap too),
-    keeping only the current run. Same decoder and resize as upstream's."""
+def _packet_index(video_path: str) -> Tuple[Optional[List[int]], List[int]]:
+    """The timestamps of the frames a decode shows, in display order, and of the
+    keyframes, from the packets alone (nothing is decoded). Packets an edit list
+    hides are not shown frames, but their keyframes are where decoding starts.
+    None for the frames when the stream has no timestamps (raw h264)."""
+    import av
+
+    shown, keys = [], []
+    with av.open(video_path) as c:
+        stream = c.streams.video[0]
+        for pkt in c.demux(stream):
+            if not pkt.size:
+                continue  # the demuxer's end-of-stream packet
+            if pkt.pts is None:
+                return None, []
+            if pkt.is_keyframe:
+                keys.append(pkt.pts)
+            if not pkt.is_discard:
+                shown.append(pkt.pts)
+    return sorted(shown), sorted(keys)
+
+
+def _count_frames(video_path: str) -> int:
+    import av
+
+    with av.open(video_path) as c:
+        return sum(1 for _ in c.decode(video=0))
+
+
+class _PyAVRuns:
+    """Frames of a video, decoded RUN at a time in the direction the reader is
+    moving (so the reverse pass is cheap too), keeping only the current run.
+    Each run opens the file, seeks to the keyframe before the run, decodes to
+    the run's end and closes it. Same decode and resize as upstream's loader."""
 
     def __init__(self, video_path: str, width: int = -1, height: int = -1, run: int = RUN):
-        import decord
-
         self._path, self._w, self._h, self._run = video_path, width, height, run
-        vr = decord.VideoReader(video_path, width=width, height=height)  # no read: no prefetch yet
-        self.n = len(vr)
-        del vr
+        self._pts, self._keys = _packet_index(video_path)
+        self.n = len(self._pts) if self._pts is not None else _count_frames(video_path)
         self._raw: Dict[int, torch.Tensor] = {}
         self._last = -1
 
     def get(self, i: int) -> torch.Tensor:
         """Frame i as an HxWx3 uint8 tensor (the caller must not modify it)."""
+        if not 0 <= i < self.n:
+            raise IndexError(i)
         if i not in self._raw:
-            import decord
-
             backward = i < self._last
             start, end = (max(0, i - self._run + 1), i + 1) if backward else (i, min(self.n, i + self._run))
-            vr = decord.VideoReader(self._path, width=self._w, height=self._h)
-            try:
-                batch = vr.get_batch(list(range(start, end)))
-                batch = batch.clone() if isinstance(batch, torch.Tensor) else torch.from_numpy(batch.asnumpy())
-            finally:
-                del vr  # stops its prefetch thread and frees what it decoded
+            self._raw = {}  # free the old run before decoding the next
+            frames = self._decode(start, end)
+            batch = torch.from_numpy(np.stack(frames))  # one copy, independent of the decoder's buffers
             self._raw = {start + k: batch[k] for k in range(end - start)}
         self._last = i
         return self._raw[i]
+
+    def _decode(self, start: int, end: int) -> list:
+        if self._pts is None:  # no timestamps: count frames from the start
+            with self._open() as (c, stream, to_rgb):
+                return [to_rgb(f) for k, f in zip(range(end), c.decode(stream)) if k >= start]
+        want = {self._pts[k]: k - start for k in range(start, end)}
+        first = self._pts[start]
+        key = bisect.bisect_right(self._keys, first) - 1  # the last keyframe at or before the run
+        while True:
+            key_pts = self._keys[key] if key >= 0 else None  # None: from the top of a fresh open
+            with self._open() as (c, stream, to_rgb):
+                if key_pts is not None:
+                    c.seek(key_pts, stream=stream, backward=True, any_frame=False)
+                out = self._collect(c.decode(stream), to_rgb, first, want, check_landing=key_pts is not None)
+            if out is not None:
+                return out
+            key -= 1  # the seek missed (mpegts seeks by searching): a keyframe earlier
+
+    @contextlib.contextmanager
+    def _open(self):
+        import av
+        from sam2.utils.misc import pyav_rgb_converter
+
+        with av.open(self._path) as c:
+            stream = c.streams.video[0]
+            stream.thread_type = "AUTO"
+            yield c, stream, pyav_rgb_converter(stream, self._w, self._h)
+
+    def _collect(self, frames, to_rgb, first: int, want: Dict[int, int], check_landing: bool) -> Optional[list]:
+        """The run's frames, matched by timestamp, or None when a seek went wrong:
+        the first frame after it is already past the run's first frame, or the
+        stream ended first (seeking into a transport stream's last GOP can)."""
+        out: list = [None] * len(want)
+        left = len(want)
+        landed = not check_landing
+        for frame in frames:
+            if frame.pts is None:
+                continue
+            if not landed:
+                if frame.pts > first:
+                    return None
+                landed = True
+            k = want.get(frame.pts)
+            if k is not None and out[k] is None:
+                out[k] = to_rgb(frame)
+                left -= 1
+                if not left:
+                    return out
+        if check_landing:
+            return None
+        raise RuntimeError(f"{self._path}: {left} frame(s) of a run did not decode")
 
 
 class Sam2Frames:
     """SAM 2's `inference_state["images"]`, decoded on request: frame i is
     exactly what upstream's load_video_frames_from_video_file stacks at i
-    (decord resize to image_size, /255, minus mean, over std, on the CPU)."""
+    (resize to image_size as decord did, /255, minus mean, over std, on the CPU)."""
 
     def __init__(self, video_path: str, image_size: int, img_mean=(0.485, 0.456, 0.406),
                  img_std=(0.229, 0.224, 0.225), keep: int = KEEP_DECODED):
-        self._runs = _DecordRuns(video_path, image_size, image_size)
+        self._runs = _PyAVRuns(video_path, image_size, image_size)
         self._n = self._runs.n
         self._mean = torch.tensor(img_mean, dtype=torch.float32)[:, None, None]
         self._std = torch.tensor(img_std, dtype=torch.float32)[:, None, None]
@@ -134,11 +207,7 @@ def install_sam2_streaming() -> None:
     def load_video_frames(video_path, image_size, offload_video_to_cpu, img_mean=(0.485, 0.456, 0.406),
                           img_std=(0.229, 0.224, 0.225), async_loading_frames=False, compute_device=None, **kw):
         if isinstance(video_path, str) and not _is_dir(video_path) and offload_video_to_cpu:
-            import decord
-
-            vr = decord.VideoReader(video_path)
-            h, w, _ = vr.next().shape
-            del vr  # a reader left open decodes the whole clip in the background
+            h, w = _native_size(video_path)
             return Sam2Frames(video_path, image_size, img_mean, img_std), h, w
         return upstream(video_path, image_size, offload_video_to_cpu, img_mean=img_mean, img_std=img_std,
                         async_loading_frames=async_loading_frames,
@@ -146,6 +215,16 @@ def install_sam2_streaming() -> None:
 
     load_video_frames._sam_ui_streaming = True
     svp.load_video_frames = load_video_frames
+
+
+def _native_size(video_path: str) -> Tuple[int, int]:
+    """The first decoded frame's height and width, as upstream's loader reports."""
+    import av
+
+    with av.open(video_path) as c:
+        for frame in c.decode(video=0):
+            return frame.height, frame.width
+    raise RuntimeError(f"no frames decoded from {video_path}")
 
 
 def _is_dir(p: str) -> bool:
@@ -160,7 +239,7 @@ class Sam3Frames:
     frames independently), stored as the session would store it."""
 
     def __init__(self, video_path: str, processor, dtype=torch.float32, keep: int = KEEP_DECODED):
-        self._runs = _DecordRuns(video_path)
+        self._runs = _PyAVRuns(video_path)
         self._n = self._runs.n
         self._proc = processor
         self._dtype = dtype

@@ -75,10 +75,15 @@ that carry Meta's header: those come from Meta's SAM 2 demo frontend (see below)
   License, not Apache-2.0**: sam-ui only imports transformers at run time and loads
   weights from a local folder (`SAM_UI_SAM3_WEIGHTS`); no SAM 3 code or weights are
   in this repository.
-- Changed upstream files: `demo/backend/server/app.py`, `inference/predictor.py`,
-  `data/schema.py`, `data/data_types.py`, `studio/schemas/inference-api-schema.graphql`
-  (and the generated `studio/schema.graphql`), `docker-compose.yaml`, `README.md`,
-  `demo/README.md`.
+- Video decoding uses PyAV instead of decord (`sam2/utils/misc.py`,
+  `tracks/streaming.py`). `load_video_frames_from_video_file` decodes with PyAV
+  through the filter graph decord ran, so resized frames are bit-identical to
+  decord's; `tracks/streaming.py` decodes frames on request, 16 at a time, finding
+  frame i by timestamp. decord is no longer a dependency.
+- Changed upstream files: `sam2/utils/misc.py`, `demo/backend/server/app.py`,
+  `inference/predictor.py`, `data/schema.py`, `data/data_types.py`,
+  `studio/schemas/inference-api-schema.graphql` (and the generated
+  `studio/schema.graphql`), `docker-compose.yaml`, `README.md`, `demo/README.md`.
 - Tests: `demo/backend/tests/` (`pytest demo/backend/tests`; `SAM_UI_SLOW=1` also runs
   the SAM 2 engine on a synthetic video) and `tools/track_cache_e2e.py` against a live
   backend.
