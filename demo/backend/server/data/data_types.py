@@ -4,6 +4,7 @@
 # LICENSE file in the root directory of this source tree.
 # Modified by sam-ui: types for per-object tracks (ObjectTrack, SeedFrame, clearTrack).
 # Modified by sam-ui: frame ranges on an object (ObjectRange, setObjectRange).
+# Modified by sam-ui: a seed frame's text prompt (SeedFrame.text).
 
 from dataclasses import dataclass
 from typing import Iterable, List, Optional
@@ -82,6 +83,7 @@ class SeedFrame:
     points: List[List[float]]
     labels: List[int]
     mask: Optional[RLEMask] = None  # the approved mask on this frame, if recorded
+    text: Optional[str] = None  # the text prompt that seeded the frame, if any
 
 
 @strawberry.type
@@ -135,6 +137,7 @@ class ObjectTrack:
                     frame_index=f,
                     points=v["points"],
                     labels=v["labels"],
+                    text=v.get("text"),
                     mask=RLEMask(size=v["mask"]["size"], counts=v["mask"]["counts"], order="F")
                     if v.get("mask")
                     else None,

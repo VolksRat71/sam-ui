@@ -18,6 +18,8 @@ but play no part in tracking while it stands.
 """
 from typing import Dict, Iterable, List, Optional, Tuple
 
+from tracks.text import has_prompt
+
 ABSENT = "absent"
 STATES = (ABSENT,)
 
@@ -97,11 +99,11 @@ def window_frames(w: Window, n_frames: int) -> range:
 
 
 def seeded_windows(seeds: Dict[int, Dict], ranges: Iterable[Dict]) -> List[Tuple[Window, Dict[int, Dict]]]:
-    """The windows that hold at least one seed with points, each with only its
-    own seeds. Seeds inside an absent range belong to no window."""
+    """The windows that hold at least one seed (clicks or text), each with only
+    its own seeds. Seeds inside an absent range belong to no window."""
     out = []
     for w in windows(ranges):
-        mine = {f: v for f, v in seeds.items() if v["points"] and in_window(f, w)}
+        mine = {f: v for f, v in seeds.items() if has_prompt(v) and in_window(f, w)}
         if mine:
             out.append((w, mine))
     return out
