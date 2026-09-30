@@ -433,3 +433,30 @@ def test_real_sam2_leaves_an_absent_range_empty_and_tracks_the_far_side_from_its
     assert min(near) > 0.9 and min(far) > 0.9
     assert min(same) > 0.99  # the far side comes from the far seed alone
     assert a.tracks.object_info(a.session_states[sid]["video"], 1)["state"] == TRACKED
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(os.environ.get("SAM_UI_SLOW") != "1", reason="set SAM_UI_SLOW=1 (and have the SAM 3 weights)")
+def test_real_sam3_tracks_each_window_on_its_own(tmp_path):
+    from tracks import sam3_engine
+
+    why = sam3_engine.available()
+    if why:
+        pytest.skip(why)
+    truth = gap_video(tmp_path / "gap.mp4")
+
+    def center(f):
+        ys, xs = np.nonzero(truth[f])
+        return {"points": [[float(xs.mean()) / GW, float(ys.mean()) / GH]], "labels": [1]}
+
+    e = sam3_engine.Sam3Engine()
+    got = {}
+    for f, m in e.track(str(tmp_path / "gap.mp4"), {1: {0: center(0), 24: center(24)}},
+                        windows={1: [(0, GAP[0] - 1), (GAP[1] + 1, None)]}):
+        assert f not in got
+        got[f] = m[1]
+    ious = {f: float((got[f] & truth[f]).sum() / (got[f] | truth[f]).sum()) for f in got}
+    print(f"\nsam3 windows: frames {sorted(got)[0]}-{GAP[0] - 1} and {GAP[1] + 1}-{sorted(got)[-1]}, "
+          f"min IoU {min(ious.values()):.3f}")
+    assert sorted(got) == [f for f in range(N) if not GAP[0] <= f <= GAP[1]]  # nothing inside the gap
+    assert min(ious.values()) > 0.9
