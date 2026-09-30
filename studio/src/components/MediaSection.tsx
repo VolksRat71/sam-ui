@@ -3,14 +3,18 @@
 // The Media list: the backend's gallery videos plus this browser's uploads
 // (or, with no backend, the files opened into this browser and the bundled
 // samples), and an upload control. Picking a video starts a new session on it.
-import {TrashCan, Upload} from '@carbon/icons-react';
+// In the desktop app, Open from After Effects opens footage from the open AE
+// project in place (AeOpenModal), frame for frame.
+import {Launch, TrashCan, Upload} from '@carbon/icons-react';
 import {useRef, useState} from 'react';
+import {aeBridge} from '~/lib/desktop';
 import {videoDisplayName} from '~/lib/uploadNames';
 import {readDuration} from '~/lib/videoDuration';
 import {RELEASES_URL} from '~/state/engines';
 import {checkUpload, FALLBACK_LIMITS, type UploadLimits} from '~/state/uploadLimits';
 import {isDeletable} from '~/state/media';
 import type {VideoItem} from '~/workspace/useStudioSession';
+import AeOpenModal from './AeOpenModal';
 
 const ACCEPT = 'video/mp4,video/quicktime,.mp4,.mov';
 
@@ -35,6 +39,8 @@ export default function MediaSection({videos, current, locked, offline, limits, 
   const [error, setError] = useState<{text: string; desktop: boolean} | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [fromAe, setFromAe] = useState(false);
+  const canAe = !offline && aeBridge() != null;
 
   async function upload(file: File) {
     setError(null);
@@ -92,6 +98,20 @@ export default function MediaSection({videos, current, locked, offline, limits, 
           }}
         />
       </div>
+      {canAe && (
+        <button className="button subtle ae-open" disabled={locked} onClick={() => setFromAe(true)} title={locked ? 'Wait for the running track jobs' : undefined}>
+          <Launch size={16} /> Open from After Effects…
+        </button>
+      )}
+      {fromAe && (
+        <AeOpenModal
+          onClose={() => setFromAe(false)}
+          onOpened={v => {
+            setFromAe(false);
+            onAdded(v);
+          }}
+        />
+      )}
       {error != null && (
         <div className="media-error">
           {error.text}

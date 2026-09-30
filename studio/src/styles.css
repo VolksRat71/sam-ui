@@ -1526,3 +1526,31 @@ code {
   opacity: 0.4;
   cursor: not-allowed;
 }
+
+/* After Effects: Media > Open from After Effects (AeOpenModal.tsx) and its export (AeExportModal.tsx) */
+.ae-open {
+  width: 100%;
+  margin-top: 6px;
+  justify-content: center;
+}
+.ae-items {
+  margin: 8px 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 4px;
+  max-height: 320px;
+  overflow: auto;
+}
+.media-item.ae-item {
+  grid-template-columns: minmax(0, 1fr) auto;
+  row-gap: 2px;
+}
+.ae-item .ae-reason {
+  grid-column: 1 / -1;
+  color: #ffb870;
+}
+.ae-problems {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}

@@ -96,3 +96,33 @@ export function zip(entries: ReadonlyArray<ZipEntry>, when = new Date()): Uint8A
   }
   return out;
 }
+
+/**
+ * The entries of a zip `zip()` wrote (stored, no compression), for reading
+ * studio's own exports back. A compressed entry or a bad CRC throws.
+ */
+export function unzipStored(bytes: Uint8Array): Array<{name: string; data: Uint8Array}> {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const dec = new TextDecoder();
+  const out: Array<{name: string; data: Uint8Array}> = [];
+  let at = 0;
+  while (at + 30 <= bytes.length && view.getUint32(at, true) === 0x04034b50) {
+    const method = view.getUint16(at + 8, true);
+    const crc = view.getUint32(at + 14, true);
+    const size = view.getUint32(at + 18, true);
+    const nameLen = view.getUint16(at + 26, true);
+    const extraLen = view.getUint16(at + 28, true);
+    const name = dec.decode(bytes.subarray(at + 30, at + 30 + nameLen));
+    if (method !== 0) {
+      throw new Error(`zip: ${name} is compressed; only stored entries are read`);
+    }
+    const start = at + 30 + nameLen + extraLen;
+    const data = bytes.subarray(start, start + size);
+    if (crc32(data) !== crc) {
+      throw new Error(`zip: ${name} fails its CRC`);
+    }
+    out.push({name, data});
+    at = start + size;
+  }
+  return out;
+}
