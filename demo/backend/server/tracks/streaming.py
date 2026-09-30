@@ -19,8 +19,8 @@ Here:
     that run and closes the file. Frame i is the i-th frame a plain decode
     yields, found by timestamp (the packet index built at open), so B-frames,
     a first timestamp other than 0, variable frame rates and edit lists all
-    land on the right frame; a stream without timestamps is decoded from the
-    start instead. (It replaced decord, whose reader, once read, decoded the
+    land on the right frame; a stream without usable timestamps (none, or
+    two frames sharing one) is decoded from the start instead. (It replaced decord, whose reader, once read, decoded the
     whole clip in a background thread and kept every frame.)
   - prune_behind drops the non-seeded outputs a propagation has moved past by
     more than the model's window. Seeded (cond) frames are never touched, and
@@ -58,9 +58,12 @@ class _Lru:
 
 def _packet_index(video_path: str) -> Tuple[Optional[List[int]], List[int]]:
     """The timestamps of the frames a decode shows, in display order, and of the
-    keyframes, from the packets alone (nothing is decoded). Packets an edit list
-    hides are not shown frames, but their keyframes are where decoding starts.
-    None for the frames when the stream has no timestamps (raw h264)."""
+    keyframes, from the packets (and the first decoded frame). Packets an edit
+    list hides are not shown frames, but their keyframes are where decoding
+    starts; packets before the first keyframe, and frames shown before the first
+    frame a decode yields, never decode. None for the frames when the stream has
+    no timestamps (raw h264) or two frames share one (a millisecond time base at
+    a high frame rate): those are decoded in order from the start."""
     import av
 
     shown, keys = [], []
@@ -73,9 +76,17 @@ def _packet_index(video_path: str) -> Tuple[Optional[List[int]], List[int]]:
                 return None, []
             if pkt.is_keyframe:
                 keys.append(pkt.pts)
+            elif not keys:
+                continue  # before the first keyframe (a stream joined mid-GOP)
             if not pkt.is_discard:
                 shown.append(pkt.pts)
-    return sorted(shown), sorted(keys)
+    if len(set(shown)) != len(shown):
+        return None, []
+    with av.open(video_path) as c:
+        first = next((f.pts for f in c.decode(video=0) if f.pts is not None), None)
+    if first is None:
+        return None, []
+    return sorted(t for t in shown if t >= first), sorted(keys)
 
 
 def _count_frames(video_path: str) -> int:
@@ -141,10 +152,12 @@ class _PyAVRuns:
 
     def _collect(self, frames, to_rgb, first: int, want: Dict[int, int], check_landing: bool) -> Optional[list]:
         """The run's frames, matched by timestamp, or None when a seek went wrong:
-        the first frame after it is already past the run's first frame, or the
-        stream ended first (seeking into a transport stream's last GOP can)."""
+        the first frame after it is already past the run's first frame, or no
+        frame came at all (seeking into a transport stream's last GOP can). Once
+        it has landed, a frame that does not come is an error, not a retry."""
         out: list = [None] * len(want)
         left = len(want)
+        last = max(want)
         landed = not check_landing
         for frame in frames:
             if frame.pts is None:
@@ -159,7 +172,9 @@ class _PyAVRuns:
                 left -= 1
                 if not left:
                     return out
-        if check_landing:
+            if frame.pts > last:
+                break  # past the run: what is missing is not coming
+        if not landed:
             return None
         raise RuntimeError(f"{self._path}: {left} frame(s) of a run did not decode")
 

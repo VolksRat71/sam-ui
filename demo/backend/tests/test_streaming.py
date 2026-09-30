@@ -48,14 +48,14 @@ def _clip(path: Path, n: int = 90, w: int = 320, h: int = 240) -> Path:
     return path
 
 
-def _edge_clip(path: Path, n: int = 60, fmt=None, start: float = 0.0, vfr: bool = False) -> Path:
+def _edge_clip(path: Path, n: int = 60, fmt=None, start: float = 0.0, vfr: bool = False, rate: int = 24) -> Path:
     """A clip that makes frame-accurate seeking hard: B-frames (bf 3), a keyframe
     every 12 frames, optionally a first timestamp other than 0, a frame rate that
     changes halfway, or a container with no timestamps at all (raw h264). Every
     frame differs from its neighbours."""
     import av
 
-    rate, tick = 24, 4  # time base 1/96: a frame lasts 4 ticks, or 12 once vfr slows it
+    tick = 4  # time base 1/(4 rate): a frame lasts 4 ticks, or 12 once vfr slows it
     out = av.open(str(path), "w", format=fmt)
     st = out.add_stream("libx264", rate=rate, options={"crf": "12", "bf": "3", "g": "12", "keyint_min": "12",
                                                        "sc_threshold": "0"})
@@ -159,6 +159,52 @@ def test_frames_an_edit_list_hides_are_not_counted(tmp_path):
         assert np.array_equal(runs.get(i).numpy(), want[i]), i
     with pytest.raises(IndexError):
         runs.get(runs.n)
+
+
+def test_a_stream_cut_mid_gop_counts_only_the_frames_that_decode(tmp_path):
+    """A transport stream that starts after a keyframe (a capture joined late,
+    a byte cut) opens with packets the decoder drops until the next keyframe."""
+    import av
+
+    src = _edge_clip(tmp_path / "src.ts", fmt="mpegts", start=1.4)
+    clip = tmp_path / "cut.ts"
+    with av.open(str(src)) as i, av.open(str(clip), "w", format="mpegts") as o:
+        out = o.add_stream_from_template(i.streams.video[0])
+        for k, pkt in enumerate(i.demux(video=0)):
+            if pkt.dts is not None and k >= 5:  # the first 5 packets: a keyframe and 4 after it
+                pkt.stream = out
+                o.mux(pkt)
+    want = _decode_all(clip)
+    runs = _PyAVRuns(str(clip), run=5)
+    assert runs.n == len(want) < 55
+    for i in list(range(runs.n)) + list(range(runs.n - 1, -1, -1)):
+        assert np.array_equal(runs.get(i).numpy(), want[i]), i
+
+
+def test_timestamps_that_collide_fall_back_to_decoding_in_order(tmp_path):
+    """Matroska stores milliseconds: at 1500 fps several frames share one."""
+    clip = _edge_clip(tmp_path / "fast.mkv", n=40, rate=1500)
+    want = _decode_all(clip)
+    runs = _PyAVRuns(str(clip), run=5)
+    assert runs.n == len(want) == 40
+    for i in (0, 7, 39, 20, 3):
+        assert np.array_equal(runs.get(i).numpy(), want[i]), i
+
+
+def test_a_frame_that_never_decodes_fails_after_one_pass(tmp_path, monkeypatch):
+    """A frame the index promises but the decoder never shows is an error, found
+    in one pass: not a missed seek to retry from every earlier keyframe."""
+    import av
+
+    clip = _edge_clip(tmp_path / "c.mp4")
+    runs = _PyAVRuns(str(clip), run=5)
+    runs._pts[40] += 1  # a timestamp no frame has
+    opens = []
+    real_open = av.open
+    monkeypatch.setattr(av, "open", lambda *a, **k: opens.append(a) or real_open(*a, **k))
+    with pytest.raises(RuntimeError, match="did not decode"):
+        runs.get(38)
+    assert len(opens) == 1, len(opens)
 
 
 @pytest.mark.skipif(shutil.which("lsof") is None, reason="counts open files with lsof")
