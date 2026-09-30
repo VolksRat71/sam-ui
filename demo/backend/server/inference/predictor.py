@@ -2,7 +2,7 @@
 # All rights reserved.
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
-# Modified by sam-ui: clicks are recorded as seeds, track jobs run through tracks/, and a correction refines the cached track mask (with an anchor click for a lone negative).
+# Modified by sam-ui: clicks are recorded as seeds, track jobs run through tracks/, a correction refines the cached track mask (with an anchor click for a lone negative), and a click inside an absent range is refused.
 
 import contextlib
 import logging
@@ -193,6 +193,15 @@ class InferenceAPI:
             points = request.points
             labels = request.labels
             clear_old_points = request.clear_old_points
+
+            # sam-ui: the object is marked absent here, so there is nothing to
+            # click on; the studio says so before it sends. Refusing also keeps
+            # the cached track from priming a frame the object is not in.
+            if self.tracks.is_absent(session["video"], obj_id, frame_idx):
+                raise ValueError(
+                    f"frame {frame_idx} is inside a range where object {obj_id} is marked absent; "
+                    "unmark that part of the range to click here"
+                )
 
             # sam-ui: a first click on a frame SAM 2 holds no mask for (a frame
             # tracked by a job, not in this state) refines that frame's cached
@@ -492,6 +501,12 @@ class InferenceAPI:
     def object_tracks(self, session_id: str) -> List[Dict]:
         session = self.__get_session(session_id)
         return self.tracks.objects(session["video"])
+
+    def set_object_range(self, session_id: str, object_id: int, start: int, end: int, state=None) -> Dict:
+        """Mark (state "absent") or clear (None) frames start-end of an object."""
+        with self.inference_lock:  # not while a job reads the seeds
+            session = self.__get_session(session_id)
+            return self.tracks.set_range(session["video"], object_id, start, end, state)
 
     def clear_track(self, session_id: str, object_id: int, engine=None) -> Dict:
         with self.inference_lock:  # not while a job is writing

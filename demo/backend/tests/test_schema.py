@@ -8,7 +8,8 @@ from data.schema import schema
 INFO = {"object_id": 3, "state": "stale", "engine": "sam2", "model": "large", "frames": [0, 9], "n_frames": 10,
         "seeds": {4: {"points": [[0.25, 0.75]], "labels": [1]}, 1: {"points": [[0.5, 0.5]], "labels": [0]}},
         "tracks": [{"engine": "sam2", "model": "large", "state": "stale", "frames": [0, 9], "n_frames": 10},
-                   {"engine": "sam3", "model": "sam3-tracker", "state": "tracked", "frames": [0, 9], "n_frames": 10}]}
+                   {"engine": "sam3", "model": "sam3-tracker", "state": "tracked", "frames": [0, 9], "n_frames": 10}],
+        "ranges": [{"start": 2, "end": 5, "state": "absent"}]}
 
 
 class FakeAPI:
@@ -20,6 +21,10 @@ class FakeAPI:
 
     def object_tracks(self, session_id):
         return [INFO]
+
+    def set_object_range(self, session_id, object_id, start, end, state=None):
+        self.ranged = (session_id, object_id, start, end, state)
+        return {**INFO, "ranges": [] if state is None else [{"start": start, "end": end, "state": state}]}
 
     def clear_track(self, session_id, object_id, engine=None):
         self.cleared.append((session_id, object_id, engine))
@@ -56,3 +61,16 @@ def test_object_tracks_lists_every_engines_track():
     assert tracks["objectTracks"][0]["tracks"] == [
         {"engine": "sam2", "model": "large", "state": "stale", "nFrames": 10},
         {"engine": "sam3", "model": "sam3-tracker", "state": "tracked", "nFrames": 10}]
+
+
+def test_object_ranges_are_listed_and_set_by_mutation():
+    api = FakeAPI()
+    assert run('{ objectTracks(sessionId: "s1") { ranges { start end state } } }', api)["objectTracks"][0][
+        "ranges"] == [{"start": 2, "end": 5, "state": "absent"}]
+    d = run('mutation { setObjectRange(input: {sessionId: "s1", objectId: 3, start: 4, end: 8, state: "absent"}) '
+            '{ objectId ranges { start end state } } }', api)["setObjectRange"]
+    assert d == {"objectId": 3, "ranges": [{"start": 4, "end": 8, "state": "absent"}]}
+    assert api.ranged == ("s1", 3, 4, 8, "absent")
+    d = run('mutation { setObjectRange(input: {sessionId: "s1", objectId: 3, start: 4, end: 8}) { ranges { start } } }',
+            api)["setObjectRange"]
+    assert d == {"ranges": []} and api.ranged[-1] is None

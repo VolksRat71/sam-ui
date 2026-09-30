@@ -37,9 +37,13 @@ class _StubPredictor:
         if obj_id not in inference_state["obj_ids"]:
             inference_state["obj_ids"].append(obj_id)
 
-    def propagate_in_video(self, state, start_frame_idx, reverse=False):
+    def propagate_in_video(self, state, start_frame_idx, max_frame_num_to_track=None, reverse=False):
         import torch
-        frames = range(start_frame_idx, -1, -1) if reverse else range(start_frame_idx, self.n)
+        m = self.n if max_frame_num_to_track is None else max_frame_num_to_track  # SAM 2's bounds
+        if reverse:
+            frames = range(start_frame_idx, max(start_frame_idx - m, 0) - 1, -1) if start_frame_idx > 0 else []
+        else:
+            frames = range(start_frame_idx, min(start_frame_idx + m, self.n - 1) + 1)
         for f in frames:
             yield f, list(state["obj_ids"]), torch.ones(len(state["obj_ids"]), 1, 2, 2)
 
