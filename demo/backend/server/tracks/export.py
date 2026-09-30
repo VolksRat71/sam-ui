@@ -118,7 +118,7 @@ def export(service, video: str, video_path: str, out_dir: str, objects: Optional
         for frame, seed in sorted(info["seeds"].items()):
             if w is None:
                 break
-            if absent_at(ranges, frame):
+            if absent_at(ranges, frame) or not seed["points"]:  # a text-seeded frame has no clicks
                 continue
             points[str(frame + 1)] = [[round(x * w), round(y * h), int(lab)]
                                       for (x, y), lab in zip(seed["points"], seed["labels"])]

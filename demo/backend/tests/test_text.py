@@ -285,6 +285,20 @@ def test_a_click_after_a_text_prompt_refines_its_mask_in_the_session(tmp_path):
     assert stub.mask_calls == [(2, 1)]
 
 
+def test_an_export_gives_a_text_frame_no_empty_anchor(h, tmp_path, monkeypatch):
+    import json
+
+    monkeypatch.setenv("SAM_UI_EXPORT_ROOT", str(tmp_path))
+    prompt(h, obj=1, frame=0)
+    h.click(1, frame=2, points=[[0.25, 0.5]])
+    prompt(h, obj=2, frame=1)  # text only
+    h.track()
+    r = h.client.post("/export", json={"session_id": "s", "out_dir": str(tmp_path / "out")})
+    assert r.status_code == 200 and set(r.json["products"]) == {"object_1", "object_2"}
+    anchors = json.loads((tmp_path / "out" / "anchors.json").read_text())
+    assert anchors == {"object_1": {"points": {"3": [[8, 12, 1]]}}}  # no [] for a text frame, no entry for 2
+
+
 def test_graphql_seeds_carry_their_text():
     from test_schema import INFO, FakeAPI, run
 
