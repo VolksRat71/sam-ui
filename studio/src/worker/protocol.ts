@@ -109,6 +109,8 @@ export type StudioMethods = {
   /** Write tracked objects as a rotoscoping working folder; a refusal rejects with its reason. */
   export: {args: ExportRequest; result: ExportManifest};
   setActiveObject: {args: {objectId: number | null}; result: void};
+  /** Objects whose shown track is stale: drawn faded, except on frames with clicks. */
+  setStaleObjects: {args: {objectIds: number[]}; result: void};
   /** The engine the preview shows; its cached tracks are repainted. */
   setEngine: {args: {engine: string}; result: void};
   engines: {args: Record<string, never>; result: EngineInfo[]};

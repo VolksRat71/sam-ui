@@ -287,12 +287,20 @@ export function canAddObject(state: StudioState, limit: number): boolean {
 }
 
 /**
- * True when every click on this frame is negative. SAM 2 then returns an
- * empty mask: a correction frame needs one positive click on what to keep.
+ * True when every click on this frame is negative and the frame has no mask.
+ * On a tracked frame the backend's SAM 2 cuts the clicked region from the
+ * tracked mask (`masked`: the frame still shows one). With no mask to refine,
+ * as in the browser engine, SAM 2 returns an empty mask, and the frame needs
+ * one positive click on what to keep.
  */
-export function needsPositiveClick(o: StudioObject | undefined, frame: number): boolean {
+export function needsPositiveClick(o: StudioObject | undefined, frame: number, masked = false): boolean {
   const pts = o?.points[frame];
-  return pts != null && pts.length > 0 && pts.every(p => p[2] === 0);
+  return !masked && pts != null && pts.length > 0 && pts.every(p => p[2] === 0);
+}
+
+/** Objects whose shown track is stale: the preview draws it faded until the re-track. */
+export function staleIds(state: StudioState): number[] {
+  return state.objects.filter(o => o.state === 'stale').map(o => o.id);
 }
 
 function update(

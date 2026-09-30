@@ -8,6 +8,7 @@ import {OBJECT_LIMIT} from '~/config';
 import {engineLabel} from '~/state/engines';
 import {NAME_MAX, objectName} from '~/state/fileNames';
 import {clearTarget, isTracking, needsPositiveClick, seedFrames, type StudioObject} from '~/state/objects';
+import {maskedAt} from '~/state/segments';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
 
 type Props = {session: StudioSessionApi};
@@ -172,7 +173,7 @@ export default function ObjectsSection({session}: Props) {
                       : ' · they agree'}
                   </div>
                 )}
-                {active && needsPositiveClick(o, frame) && (
+                {active && needsPositiveClick(o, frame, maskedAt(t?.segments, frame)) && (
                   <div className="object-hint">Add a positive click to keep part of the object</div>
                 )}
                 {o.error != null && <div className="object-error">Track failed: {o.error}</div>}

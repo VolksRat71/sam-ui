@@ -42,7 +42,9 @@ import {
   initialState,
   nextObjectId,
   reducer,
+  staleIds,
 } from '~/state/objects';
+import {clearFlag, parseFlagMap, pruneFlags, toggleFlag as toggled, type FlagMap} from '~/state/flags';
 import type {EngineInfo, RunningJob, TrackletSummary} from '~/worker/protocol';
 
 /** Where two engines disagree on one object: frames under the IoU threshold. */
@@ -335,12 +337,22 @@ export default function useStudioSession(video: VideoItem) {
   const noEngine = engines.length > 0 && engines.every(e => !e.available);
   const busy = repainting || status !== 'ready' || noEngine;
 
+  // review flags (F while scrubbing), saved per video in this browser
+  const flagsKey = `sam-ui-studio:flags:${video.path}`;
+  const [flags, setFlags] = useState<FlagMap>(() => parseFlagMap(readJson(flagsKey, {})));
+  useEffect(() => {
+    writeJson(flagsKey, flags);
+  }, [flagsKey, flags]);
+
   const setPoints = useCallback(
     (objectId: number, frameIndex: number, points: NormPoint[]) => {
       if (bridge == null) {
         return;
       }
       dispatch({type: 'setPoints', id: objectId, frame: frameIndex, points});
+      if (points.length > 0) {
+        setFlags(m => clearFlag(m, objectId, frameIndex)); // corrected
+      }
       serial(async () => {
         await bridge.call('setPoints', {objectId, frameIndex, points});
         await sync();
@@ -579,6 +591,10 @@ export default function useStudioSession(video: VideoItem) {
         const pruned = pruneEffects(m, idsKey === '' ? [] : idsKey.split(',').map(Number));
         return Object.keys(pruned).length === Object.keys(m).length ? m : pruned;
       });
+      setFlags(m => {
+        const pruned = pruneFlags(m, idsKey === '' ? [] : idsKey.split(',').map(Number));
+        return Object.keys(pruned).length === Object.keys(m).length ? m : pruned;
+      });
     }
   }, [idsKey, status]);
   useEffect(() => {
@@ -778,6 +794,22 @@ export default function useStudioSession(video: VideoItem) {
 
   const dirty = useMemo(() => dirtyIds(state), [state]);
 
+  /** Flag the current frame of the selected object for a correction, or unflag it. */
+  const toggleFlag = useCallback(() => {
+    const id = stateRef.current.activeId;
+    if (id != null && meta.numFrames > 0) {
+      setFlags(m => toggled(m, id, frame));
+    }
+  }, [frame, meta.numFrames]);
+
+  // a stale track stays on screen, faded, until the re-track (corrected frames show at full strength)
+  const staleKey = staleIds(state).join(',');
+  useEffect(() => {
+    bridge
+      ?.call('setStaleObjects', {objectIds: staleKey === '' ? [] : staleKey.split(',').map(Number)})
+      .catch(() => {});
+  }, [bridge, staleKey]);
+
   return {
     bridge,
     state,
@@ -800,6 +832,8 @@ export default function useStudioSession(video: VideoItem) {
     setLocalOptions,
     localModel,
     disagreement,
+    flags,
+    toggleFlag,
     objectEffects,
     pickObjectEffect,
     variantCounts,

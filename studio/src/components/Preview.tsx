@@ -12,6 +12,7 @@ import {AddFilled, SubtractFilled, ZoomIn, ZoomOut} from '@carbon/icons-react';
 import {useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type PointerEvent} from 'react';
 import {objectName} from '~/state/fileNames';
 import {needsPositiveClick} from '~/state/objects';
+import {maskedAt} from '~/state/segments';
 import {FIT, panBy, toScreen, zoomAt, type View} from '~/state/view';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
 
@@ -48,7 +49,7 @@ function useFittedBox(aspect: number) {
 }
 
 export default function Preview({session, mode, onModeChange}: Props) {
-  const {bridge, meta, state, frame, status, statusError, start} = session;
+  const {bridge, meta, state, frame, status, statusError, start, tracklets} = session;
   const aspect = meta.width > 0 && meta.height > 0 ? meta.width / meta.height : 16 / 9;
   const {ref, box} = useFittedBox(aspect);
   const [size] = useState(() => ({width: dim(meta.width), height: dim(meta.height)}));
@@ -80,7 +81,7 @@ export default function Preview({session, mode, onModeChange}: Props) {
 
   const active = state.objects.find(o => o.id === state.activeId);
   const points = active?.points[frame] ?? [];
-  const hint = needsPositiveClick(active, frame);
+  const hint = needsPositiveClick(active, frame, maskedAt(active && tracklets.get(active.id)?.segments, frame));
 
   // zoom and pan
   const [view, setView] = useState<View>(FIT);

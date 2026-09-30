@@ -1043,6 +1043,13 @@ export default class StudioSession {
     this._render(true);
   }
 
+  /** Draw these objects' track faded, except on frames their clicks made. */
+  setStaleObjects(objectIds: number[]): void {
+    const stale = new Set(objectIds);
+    this._overlay.faded = (id, frame) => stale.has(id) && !(this._seedMasks.get(id)?.has(frame) ?? false);
+    this._render(true);
+  }
+
   // -- tracklets ---------------------------------------------------------------
 
   private _tracklet(id: number): Tracklet {

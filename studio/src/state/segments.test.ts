@@ -2,7 +2,7 @@
 import {describe, expect, it} from 'vitest';
 import {encode, DataArray} from '@/jscocotools/mask';
 import {paintMask} from '~/worker/maskPixels';
-import {maskSegments} from './segments';
+import {maskedAt, maskSegments} from './segments';
 
 describe('maskSegments', () => {
   it('finds runs of non-empty masks in a sparse array', () => {
@@ -43,5 +43,13 @@ describe('paintMask', () => {
     expect(alpha(2, 1)).toBe(255); // outline
     expect(alpha(5, 4)).toBe(128); // inside, 2 px from every edge
     expect(red(5, 4)).toBe(0x38);
+  });
+});
+
+describe('maskedAt', () => {
+  it('tells whether a frame falls in a run with a mask', () => {
+    const runs: Array<[number, number]> = [[2, 4], [9, 9]];
+    expect([1, 2, 4, 5, 9, 10].map(f => maskedAt(runs, f))).toEqual([false, true, true, false, true, false]);
+    expect(maskedAt(undefined, 3)).toBe(false);
   });
 });
