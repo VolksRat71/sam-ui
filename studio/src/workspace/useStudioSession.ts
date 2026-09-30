@@ -45,6 +45,7 @@ import {
   staleIds,
 } from '~/state/objects';
 import {clearFlag, parseFlagMap, pruneFlags, toggleFlag as toggled, type FlagMap} from '~/state/flags';
+import {absentAt, normalizeRanges, paintRange, type RangeState} from '~/state/ranges';
 import type {EngineInfo, RunningJob, TrackletSummary} from '~/worker/protocol';
 
 /** Where two engines disagree on one object: frames under the IoU threshold. */
@@ -392,7 +393,16 @@ export default function useStudioSession(video: VideoItem) {
         dispatch({type: 'add', id});
         bridge.call('setActiveObject', {objectId: id}).catch(() => {});
       }
-      const current = s.objects.find(o => o.id === id)?.points[frame] ?? [];
+      const target = s.objects.find(o => o.id === id);
+      if (absentAt(target?.ranges, frame)) {
+        // refused, not a way to shrink the range: unmarking is its own, explicit step
+        setWarning(
+          `${target != null ? objectName(target) : 'This object'} is marked absent on frame ${frame + 1}. ` +
+            'Select that part of its lane and unmark it to click here.',
+        );
+        return;
+      }
+      const current = target?.points[frame] ?? [];
       setPoints(id, frame, [...current, [x, y, label]]);
     },
     [bridge, busy, playing, frame, setPoints, claimId],
@@ -549,6 +559,31 @@ export default function useStudioSession(video: VideoItem) {
     [bridge, serial, sync],
   );
 
+  /**
+   * Mark frames start-end of an object absent (the object is not in the
+   * shot), or clear them (state null). The frames go empty on screen at once;
+   * the track goes stale, and a re-track skips them.
+   */
+  const setRange = useCallback(
+    (objectId: number, start: number, end: number, rangeState: RangeState | null) => {
+      if (bridge == null) {
+        return;
+      }
+      const o = stateRef.current.objects.find(x => x.id === objectId);
+      if (o == null) {
+        return;
+      }
+      const [a, b] = start <= end ? [start, end] : [end, start];
+      dispatch({type: 'setRanges', id: objectId, ranges: paintRange(o.ranges, a, b, rangeState)});
+      serial(async () => {
+        const res = await bridge.call('setRange', {objectId, start: a, end: b, state: rangeState});
+        dispatch({type: 'setRanges', id: objectId, ranges: normalizeRanges(res.ranges)});
+        await sync();
+      });
+    },
+    [bridge, serial, sync],
+  );
+
   /** Track with, and show, another engine. */
   const setEngine = useCallback(
     (engine: string) => {
@@ -669,6 +704,7 @@ export default function useStudioSession(video: VideoItem) {
           state: o.state,
           prompt: row?.prompt ?? objectName(o),
           color: (row?.color ?? o.color).toLowerCase(),
+          ranges: o.ranges,
         };
       });
       setExportProgress(0);
@@ -854,6 +890,7 @@ export default function useStudioSession(video: VideoItem) {
     track,
     cancelTrack,
     clearTrack,
+    setRange,
     removeObject,
     startOver,
     seek,

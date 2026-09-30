@@ -373,3 +373,23 @@ describe('job progress', () => {
     expect(jobProgress({frames: 5, total: null}, 0)).toEqual({done: 5, total: null, fraction: 0});
   });
 });
+
+describe('absent ranges', () => {
+  it('come from the backend, and marking one makes the track stale', () => {
+    const tracked = {...server(1, 'tracked'), ranges: [{start: 4, end: 6, state: 'absent'}]};
+    let s = run([{type: 'restore', objects: [tracked, server(2, 'tracked')]}]);
+    expect(byId(s, 1).ranges).toEqual([{start: 4, end: 6, state: 'absent'}]);
+    expect(byId(s, 2).ranges).toEqual([]); // an older backend sends none
+    s = run([{type: 'setRanges', id: 2, ranges: [{start: 1, end: 2, state: 'absent'}]}], s);
+    expect(byId(s, 2).state).toBe('stale');
+    expect(dirtyIds(s)).toEqual([2]);
+    expect(byId(s, 1).state).toBe('tracked');
+  });
+
+  it('leaves the track alone when the ranges did not change', () => {
+    const tracked = {...server(1, 'tracked'), ranges: [{start: 4, end: 6, state: 'absent'}]};
+    let s = run([{type: 'restore', objects: [tracked]}]);
+    s = run([{type: 'setRanges', id: 1, ranges: [{start: 4, end: 5, state: 'absent'}, {start: 6, end: 6, state: 'absent'}]}], s);
+    expect(byId(s, 1).state).toBe('tracked');
+  });
+});

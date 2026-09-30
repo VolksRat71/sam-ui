@@ -48,6 +48,7 @@ type Mutation {
     input: CancelPropagateInVideoInput!
   ): CancelPropagateInVideo!
   clearTrack(input: ClearTrackInput!): ObjectTrack!
+  setObjectRange(input: SetObjectRangeInput!): ObjectTrack!
   deleteVideo(input: DeleteVideoInput!): DeleteVideo!
   createDeletionId: String!
   acceptTos: Boolean!
@@ -79,6 +80,20 @@ input ClearTrackInput {
   engine: String
 }
 
+input SetObjectRangeInput {
+  sessionId: String!
+  objectId: Int!
+  start: Int!
+  end: Int!
+  state: String
+}
+
+type ObjectRange {
+  start: Int!
+  end: Int!
+  state: String!
+}
+
 type EngineTrack {
   engine: String!
   model: String!
@@ -103,6 +118,7 @@ type ObjectTrack {
   nFrames: Int!
   seeds: [SeedFrame!]!
   tracks: [EngineTrack!]!
+  ranges: [ObjectRange!]!
 }
 
 input PingInput {

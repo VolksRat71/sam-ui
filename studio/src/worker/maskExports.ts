@@ -7,13 +7,23 @@
 //   - vectors: one Vector JSON per object (state/contours.ts);
 //   - folder:  the rotoscoping working folder (tracks/export.py's layout),
 //              for when the backend cannot write it (browser tracks).
+// Frames inside an object's absent ranges are empty in all three.
 import {BufferTarget, CanvasSource, Mp4OutputFormat, Output, QUALITY_HIGH} from 'mediabunny';
 import type {RLEObject} from '@/jscocotools/mask';
 import {grayPng} from '~/lib/png';
 import {zip, type ZipEntry} from '~/lib/zip';
 import {rleToMask} from '~/local/sam2/masks';
 import {vectorJson} from '~/state/contours';
-import {type ExportedObject, type ExportKind, matteName, type Provenance, readme, rotoDecisions, type Seeds} from '~/state/maskExport';
+import {
+  type ExportedObject,
+  type ExportKind,
+  matteName,
+  type Provenance,
+  readme,
+  rotoDecisions,
+  type Seeds,
+  withoutAbsent,
+} from '~/state/maskExport';
 
 export type MaskSource = {
   /** Object `id`'s mask on frame i, or null where its track has none. */
@@ -81,6 +91,8 @@ export async function buildExport(
   src: MaskSource,
   onProgress: (done: number) => void,
 ): Promise<Uint8Array> {
+  // absent frames are empty in every kind of export
+  src = {...src, maskAt: withoutAbsent((id, frame) => src.maskAt(id, frame), objects)};
   const entries: ZipEntry[] = [{name: 'README.txt', data: readme(kind, p, objects)}];
   const total = Math.max(1, objects.length * p.frames);
   let done = 0;

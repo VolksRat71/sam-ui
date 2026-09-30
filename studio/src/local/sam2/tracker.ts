@@ -21,6 +21,10 @@
 // Objects are tracked independently, each with its own memory, as SAM 2
 // does (non_overlap_masks is off).
 //
+// A window (absent ranges, state/ranges.ts) confines a run to frames lo-hi:
+// forward from the earliest seed to hi, back to lo, seeds outside ignored.
+// The caller runs each window with a fresh tracker, so no memory crosses a gap.
+//
 // Approved-mask seeds (sam-ui stores the mask the user approved on each seed
 // frame): SAM 2 conditions on the mask itself (add_new_mask with
 // use_mask_input_as_output_without_sam): the mask is the frame's output and
@@ -64,6 +68,8 @@ export interface Sam2Models {
 
 export type TrackSeed = {frame: number; points: readonly NormPoint[]; mask?: RLEObject | null};
 export type TrackObject = {id: number; seeds: readonly TrackSeed[]};
+/** Frames [lo, hi], inclusive; hi null runs to the clip's end. */
+export type TrackWindow = {lo: number; hi: number | null};
 
 export type TrackedFrame = {frame: number; masks: Map<number, RLEObject>; ms: number};
 
@@ -251,16 +257,17 @@ export class Sam2Tracker {
   }
 
   /**
-   * Track `objects` over the whole video, yielding every frame once (forward
-   * from the earliest seed, then backwards from the frame before it). Stops
-   * between frames once `signal` aborts.
+   * Track `objects` over the whole video (or `window`), yielding every frame
+   * once (forward from the earliest seed, then backwards from the frame
+   * before it). Stops between frames once `signal` aborts.
    */
-  async *track(objects: readonly TrackObject[], signal?: AbortSignal): AsyncGenerator<TrackedFrame> {
-    const {numFrames} = this._opts;
+  async *track(objects: readonly TrackObject[], signal?: AbortSignal, window?: TrackWindow): AsyncGenerator<TrackedFrame> {
+    const lo = Math.max(0, window?.lo ?? 0);
+    const hi = Math.min(this._opts.numFrames - 1, window?.hi ?? Infinity);
     const states: ObjectState[] = [];
     const seeds: Array<{state: ObjectState; seed: TrackSeed}> = [];
     for (const o of objects) {
-      const withClicks = o.seeds.filter(s => s.points.length > 0 && s.frame >= 0 && s.frame < numFrames);
+      const withClicks = o.seeds.filter(s => s.points.length > 0 && s.frame >= lo && s.frame <= hi);
       if (withClicks.length === 0) {
         continue;
       }
@@ -284,8 +291,8 @@ export class Sam2Tracker {
     }
     const start = Math.min(...seeds.map(s => s.seed.frame));
     const passes: Array<{reverse: boolean; frames: number[]}> = [
-      {reverse: false, frames: range(start, numFrames - 1)},
-      {reverse: true, frames: start > 0 ? range(start - 1, 0) : []},
+      {reverse: false, frames: range(start, hi)},
+      {reverse: true, frames: start > lo ? range(start - 1, lo) : []},
     ];
     for (const pass of passes) {
       for (const frame of pass.frames) {

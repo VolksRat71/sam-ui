@@ -2,7 +2,7 @@
 import {describe, expect, it} from 'vitest';
 import type {Sam2Constants} from './config';
 import {maskToRle, rleToMask} from './masks';
-import {promptOf, type Releasable, type Sam2Models, Sam2Tracker} from './tracker';
+import {promptOf, type Releasable, type Sam2Models, Sam2Tracker, type TrackObject} from './tracker';
 
 const S = 32; // model input size
 const F = 2; // feature side: 4 tokens per memory block
@@ -112,6 +112,24 @@ describe('Sam2Tracker', () => {
     const {mask} = rleToMask(frames[1].masks.get(3) as never);
     expect(mask[0]).toBe(0);
     expect(mask[15]).toBe(1);
+  });
+
+  it('runs a window only: no model call outside it, seeds outside it ignored', async () => {
+    const models = new FakeModels();
+    const tracker = new Sam2Tracker(models, {numFrames: 12, width: 16, height: 12});
+    const frames: number[] = [];
+    const objects: TrackObject[] = [{id: 3, seeds: [{frame: 2, points: [[0.5, 0.5, 1]]}, {frame: 9, points: [[0.5, 0.5, 1]]}]}];
+    for await (const f of tracker.track(objects, undefined, {lo: 7, hi: null})) {
+      frames.push(f.frame);
+    }
+    expect(frames).toEqual([9, 10, 11, 8, 7]);
+    expect(models.calls.every(c => c.frame >= 7)).toBe(true); // frame 2's seed was never read
+    const before: number[] = [];
+    for await (const f of new Sam2Tracker(models, {numFrames: 12, width: 16, height: 12}).track(objects, undefined, {lo: 0, hi: 4})) {
+      before.push(f.frame);
+    }
+    expect(before).toEqual([2, 3, 4, 1, 0]);
+    expect(models.open).toBe(0);
   });
 
   it('uses an approved mask as the seed output and memory, and the clicks for the pointer', async () => {
