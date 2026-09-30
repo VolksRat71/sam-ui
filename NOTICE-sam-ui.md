@@ -80,10 +80,11 @@ that carry Meta's header: those come from Meta's SAM 2 demo frontend (see below)
   through the filter graph decord ran, so resized frames are bit-identical to
   decord's; `tracks/streaming.py` decodes frames on request, 16 at a time, finding
   frame i by timestamp. decord is no longer a dependency.
-- Changed upstream files: `sam2/utils/misc.py`, `demo/backend/server/app.py`,
-  `inference/predictor.py`, `data/schema.py`, `data/data_types.py`,
-  `studio/schemas/inference-api-schema.graphql` (and the generated
-  `studio/schema.graphql`), `docker-compose.yaml`, `README.md`, `demo/README.md`.
+- Changed upstream files: `setup.py`, `sam2/utils/misc.py`,
+  `demo/backend/server/app.py`, `inference/predictor.py`, `data/schema.py`,
+  `data/data_types.py`, `studio/schemas/inference-api-schema.graphql` (and the
+  generated `studio/schema.graphql`), `docker-compose.yaml`, `README.md`,
+  `demo/README.md`.
 - Tests: `demo/backend/tests/` (`pytest demo/backend/tests`; `SAM_UI_SLOW=1` also runs
   the SAM 2 engine on a synthetic video) and `tools/track_cache_e2e.py` against a live
   backend.
