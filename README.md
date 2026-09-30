@@ -75,8 +75,11 @@ Details and progress: [Platform support, #16](https://github.com/VolksRat71/sam-
   four states: untracked, stale (its clicks changed since), tracked, or tracking (a
   job holds it). Track runs only what isn't current.
 - **Corrections that stick.** Click on any frame to fix a mask; the next Track uses
-  your corrected mask on that frame. (As in SAM 2 itself, a frame needs at least one
-  positive click. A lone negative click empties the mask.)
+  your corrected mask on that frame. A correction refines the tracked mask, even
+  after an earlier correction has made the track stale: a lone negative click cuts
+  away only the region it is on, and a lone positive click adds one. (Plain SAM 2
+  empties a frame whose clicks are all negative; the backend adds an anchor click
+  inside the tracked mask.)
 - **Keep working while it tracks.** A track job holds the model one frame at a time,
   so clicks come back in about 0.1 s even while a job runs. Jobs can overlap, and
   each has its own cancel.
