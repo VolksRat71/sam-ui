@@ -83,6 +83,16 @@ async function maskVideo(p: Provenance, id: number, src: MaskSource, onFrame: ()
   return new Uint8Array(buffer);
 }
 
+/**
+ * `src` with every absent frame empty. The original maskAt is read once, up
+ * front: a closure over `src` itself would call the wrapper again once `src`
+ * is rebound, recursing until the stack overflows.
+ */
+export function sourceWithoutAbsent(src: MaskSource, objects: ReadonlyArray<ExportedObject>): MaskSource {
+  const inner = src.maskAt.bind(src);
+  return {...src, maskAt: withoutAbsent(inner, objects)};
+}
+
 /** Build one export as a zip. `onProgress` gets 0-1. */
 export async function buildExport(
   kind: ExportKind,
@@ -92,7 +102,7 @@ export async function buildExport(
   onProgress: (done: number) => void,
 ): Promise<Uint8Array> {
   // absent frames are empty in every kind of export
-  src = {...src, maskAt: withoutAbsent((id, frame) => src.maskAt(id, frame), objects)};
+  src = sourceWithoutAbsent(src, objects);
   const entries: ZipEntry[] = [{name: 'README.txt', data: readme(kind, p, objects)}];
   const total = Math.max(1, objects.length * p.frames);
   let done = 0;

@@ -574,9 +574,17 @@ export default function useStudioSession(video: VideoItem) {
         return;
       }
       const [a, b] = start <= end ? [start, end] : [end, start];
-      dispatch({type: 'setRanges', id: objectId, ranges: paintRange(o.ranges, a, b, rangeState)});
+      const before = o.ranges;
+      dispatch({type: 'setRanges', id: objectId, ranges: paintRange(before, a, b, rangeState)});
       serial(async () => {
-        const res = await bridge.call('setRange', {objectId, start: a, end: b, state: rangeState});
+        let res;
+        try {
+          res = await bridge.call('setRange', {objectId, start: a, end: b, state: rangeState});
+        } catch (error) {
+          // the backend never took it: put the lane back as it was
+          dispatch({type: 'setRanges', id: objectId, ranges: before});
+          throw error;
+        }
         dispatch({type: 'setRanges', id: objectId, ranges: normalizeRanges(res.ranges)});
         await sync();
       });

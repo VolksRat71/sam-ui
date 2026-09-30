@@ -43,7 +43,11 @@ export type ServerObject = {
   }>;
   /** One entry per engine; the top-level fields are the default engine's. */
   readonly tracks?: ReadonlyArray<ServerTrack>;
-  /** Absent ranges (state/ranges.ts); a backend from before them sends none. */
+  /**
+   * Absent ranges (state/ranges.ts). Studio's queries select this field, so
+   * studio needs a backend that has it: the two ship together (desktop), and a
+   * backend from before ranges fails the whole query rather than sending none.
+   */
   readonly ranges?: ReadonlyArray<{readonly start: number; readonly end: number; readonly state: string}> | null;
 };
 
