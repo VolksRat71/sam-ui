@@ -126,15 +126,19 @@ class TrackService:
 
     def prime_mask(self, video: str, obj_id: int, frame: int) -> Optional[Dict]:
         """The mask a first click on this frame should refine: the approved
-        seed mask there, else the default engine's cached mask, else None."""
+        seed mask there, else the default engine's cached mask, else None.
+        An empty mask is None too: there is nothing to refine.
+
+        A stale track counts. The first correction makes the track stale (its
+        seeds changed), and the other frames flagged in the same review are
+        corrected against that same track, which the studio still shows, until
+        the re-track. Refusing it made every correction after the first start
+        from nothing."""
         seed = self.seeds.seeds(video, obj_id).get(frame)
         if seed and seed.get("mask"):
-            return seed["mask"]
-        # only a current track: a stale one follows old seeds, and refining it
-        # would save the wrong region as this frame's approved mask
-        if self.object_info(video, obj_id)["state"] != TRACKED:
-            return None
-        return self.tracks.mask_at(video, obj_id, self.default, frame)
+            return seed["mask"] if rle.area(seed["mask"]) else None
+        cached = self.tracks.mask_at(video, obj_id, self.default, frame)
+        return cached if cached is not None and rle.area(cached) else None
 
     def remove_object(self, video: str, obj_id: int):
         self.seeds.remove_object(video, obj_id)
