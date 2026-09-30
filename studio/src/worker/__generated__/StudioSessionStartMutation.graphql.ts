@@ -1,5 +1,5 @@
 /**
- * @generated SignedSource<<d415c16dd7a3cbbefafea377eee9fc57>>
+ * @generated SignedSource<<4623b9cefb5dc3f063509733437e13d6>>
  * @lightSyntaxTransform
  * @nogrep
  */
@@ -34,6 +34,7 @@ export type StudioSessionStartMutation$data = {
           readonly size: ReadonlyArray<number>;
         } | null | undefined;
         readonly points: ReadonlyArray<ReadonlyArray<number>>;
+        readonly text: string | null | undefined;
       }>;
       readonly state: string;
       readonly tracks: ReadonlyArray<{
@@ -152,6 +153,13 @@ v4 = [
               {
                 "alias": null,
                 "args": null,
+                "kind": "ScalarField",
+                "name": "text",
+                "storageKey": null
+              },
+              {
+                "alias": null,
+                "args": null,
                 "concreteType": "RLEMask",
                 "kind": "LinkedField",
                 "name": "mask",
@@ -249,16 +257,16 @@ return {
     "selections": (v4/*: any*/)
   },
   "params": {
-    "cacheID": "d374cb77e32ae36fbe7afc107f8a838e",
+    "cacheID": "fdb7501fa8240b8f67245852e4a060c7",
     "id": null,
     "metadata": {},
     "name": "StudioSessionStartMutation",
     "operationKind": "mutation",
-    "text": "mutation StudioSessionStartMutation(\n  $input: StartSessionInput!\n) {\n  startSession(input: $input) {\n    sessionId\n    objects {\n      objectId\n      state\n      frames\n      nFrames\n      seeds {\n        frameIndex\n        points\n        labels\n        mask {\n          size\n          counts\n        }\n      }\n      tracks {\n        engine\n        state\n        frames\n        nFrames\n      }\n      ranges {\n        start\n        end\n        state\n      }\n    }\n  }\n}\n"
+    "text": "mutation StudioSessionStartMutation(\n  $input: StartSessionInput!\n) {\n  startSession(input: $input) {\n    sessionId\n    objects {\n      objectId\n      state\n      frames\n      nFrames\n      seeds {\n        frameIndex\n        points\n        labels\n        text\n        mask {\n          size\n          counts\n        }\n      }\n      tracks {\n        engine\n        state\n        frames\n        nFrames\n      }\n      ranges {\n        start\n        end\n        state\n      }\n    }\n  }\n}\n"
   }
 };
 })();
 
-(node as any).hash = "2f0b0d2baf3a95a7b8233121b663a74b";
+(node as any).hash = "7975b9c029c798c87d3d03d8200cdb1a";
 
 export default node;

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # Modified by sam-ui: ObjectTrack, EngineTrack, SeedFrame, objectTracks, clearTrack, StartSession.objects,
-# deleteVideo (closeIdleSessions, sessionsClosed), ObjectRange, setObjectRange.
+# deleteVideo (closeIdleSessions, sessionsClosed), ObjectRange, setObjectRange, SeedFrame.text.
 
 input AddPointsInput {
   sessionId: String!
@@ -129,6 +129,8 @@ type SeedFrame {
   labels: [Int!]!
   # the approved mask on this frame, if recorded
   mask: RLEMask
+  # the text prompt that seeded the frame (SAM 3), if any
+  text: String
 }
 
 type ObjectTrack {

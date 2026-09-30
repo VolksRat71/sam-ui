@@ -40,6 +40,8 @@ export type ServerObject = {
     readonly points: ReadonlyArray<ReadonlyArray<number>>;
     readonly labels: ReadonlyArray<number>;
     readonly mask?: {readonly size: ReadonlyArray<number>; readonly counts: string} | null;
+    /** The text prompt that seeded the frame (SAM 3); its mask is the frame's. */
+    readonly text?: string | null;
   }>;
   /** One entry per engine; the top-level fields are the default engine's. */
   readonly tracks?: ReadonlyArray<ServerTrack>;
@@ -71,6 +73,11 @@ export type StudioObject = {
   engines: Record<string, EngineTrack>;
   /** Seed clicks per frame. A frame with no clicks has no key. */
   points: Record<number, NormPoint[]>;
+  /**
+   * Text prompts per frame (SAM 3): a frame seeded by a phrase, whose best
+   * match is its mask. Clicks there refine it and keep the text.
+   */
+  texts: Record<number, string>;
   /** Frames where the object is marked absent: empty, never tracked or exported. */
   ranges: FrameRange[];
   /** Held by one of this page's running jobs on the current engine. */
@@ -114,6 +121,8 @@ export type Action =
   | {type: 'add'; id: number}
   | {type: 'select'; id: number | null}
   | {type: 'setPoints'; id: number; frame: number; points: NormPoint[]}
+  /** A text prompt matched: it seeds the frame, replacing its clicks. */
+  | {type: 'setText'; id: number; frame: number; text: string}
   /** The object's absent ranges changed (marked or unmarked). */
   | {type: 'setRanges'; id: number; ranges: FrameRange[]}
   | {type: 'trackStarted'; key: number; ids: number[]; engine?: string}
@@ -162,6 +171,16 @@ function seedsToPoints(seeds: ServerObject['seeds']): Record<number, NormPoint[]
   return out;
 }
 
+function seedsToTexts(seeds: ServerObject['seeds']): Record<number, string> {
+  const out: Record<number, string> = {};
+  for (const s of seeds) {
+    if (s.text != null && s.text !== '') {
+      out[s.frameIndex] = s.text;
+    }
+  }
+  return out;
+}
+
 function trackFrames(frames: ServerTrack['frames']): [number, number] | null {
   return frames != null && frames.length >= 2 ? [frames[0], frames[1]] : null;
 }
@@ -195,6 +214,7 @@ export function fromServer(o: ServerObject, engine: string = DEFAULT_ENGINE): St
       nFrames: 0,
       engines,
       points: seedsToPoints(o.seeds),
+      texts: seedsToTexts(o.seeds),
       ranges: normalizeRanges(o.ranges),
       running: false,
       error: null,
@@ -204,14 +224,18 @@ export function fromServer(o: ServerObject, engine: string = DEFAULT_ENGINE): St
 }
 
 export function hasSeeds(o: StudioObject): boolean {
-  return Object.values(o.points).some(p => p.length > 0);
+  return Object.values(o.points).some(p => p.length > 0) || Object.keys(o.texts).length > 0;
 }
 
+/** Frames with clicks or a text prompt: the frames the object is seeded on. */
 export function seedFrames(o: StudioObject): number[] {
-  return Object.keys(o.points)
-    .map(Number)
-    .filter(f => o.points[f].length > 0)
-    .sort((a, b) => a - b);
+  const frames = new Set(Object.keys(o.texts).map(Number));
+  for (const f of Object.keys(o.points).map(Number)) {
+    if (o.points[f].length > 0) {
+      frames.add(f);
+    }
+  }
+  return [...frames].sort((a, b) => a - b);
 }
 
 /** Held by a running job on the current engine, this page's or another's. */
@@ -394,6 +418,7 @@ export function reducer(state: StudioState, action: Action): StudioState {
         nFrames: 0,
         engines: {},
         points: {},
+        texts: {},
         ranges: [],
         running: false,
         error: null,
@@ -405,14 +430,20 @@ export function reducer(state: StudioState, action: Action): StudioState {
       return {...state, activeId: action.id};
 
     case 'setPoints':
+    case 'setText':
       return update(state, action.id, o => {
         const points = {...o.points};
-        if (action.points.length > 0) {
+        const texts = {...o.texts};
+        if (action.type === 'setText') {
+          texts[action.frame] = action.text; // the backend drops the frame's clicks
+          delete points[action.frame];
+        } else if (action.points.length > 0) {
           points[action.frame] = action.points;
         } else {
-          delete points[action.frame];
+          delete points[action.frame]; // the backend clears the frame, text and all
+          delete texts[action.frame];
         }
-        const next = {...o, points, error: null};
+        const next = {...o, points, texts, error: null};
         const engines: Record<string, EngineTrack> = {};
         for (const [name, t] of Object.entries(o.engines)) {
           // the backend drops a track with no seeds left behind it; any other

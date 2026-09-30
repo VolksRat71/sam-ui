@@ -1,5 +1,5 @@
 /**
- * @generated SignedSource<<2bcc415674a9f905962c46dac2701bc0>>
+ * @generated SignedSource<<94a19d493e9711d2d3ce3abe7fa5107b>>
  * @lightSyntaxTransform
  * @nogrep
  */
@@ -35,6 +35,7 @@ export type StudioSessionClearTrackMutation$data = {
         readonly size: ReadonlyArray<number>;
       } | null | undefined;
       readonly points: ReadonlyArray<ReadonlyArray<number>>;
+      readonly text: string | null | undefined;
     }>;
     readonly state: string;
     readonly tracks: ReadonlyArray<{
@@ -136,6 +137,13 @@ v4 = [
           {
             "alias": null,
             "args": null,
+            "kind": "ScalarField",
+            "name": "text",
+            "storageKey": null
+          },
+          {
+            "alias": null,
+            "args": null,
             "concreteType": "RLEMask",
             "kind": "LinkedField",
             "name": "mask",
@@ -230,16 +238,16 @@ return {
     "selections": (v4/*: any*/)
   },
   "params": {
-    "cacheID": "056593f980907421310cb0d5191de77c",
+    "cacheID": "c1105686779025124f18ccce59db95a8",
     "id": null,
     "metadata": {},
     "name": "StudioSessionClearTrackMutation",
     "operationKind": "mutation",
-    "text": "mutation StudioSessionClearTrackMutation(\n  $input: ClearTrackInput!\n) {\n  clearTrack(input: $input) {\n    objectId\n    state\n    frames\n    nFrames\n    seeds {\n      frameIndex\n      points\n      labels\n      mask {\n        size\n        counts\n      }\n    }\n    tracks {\n      engine\n      state\n      frames\n      nFrames\n    }\n    ranges {\n      start\n      end\n      state\n    }\n  }\n}\n"
+    "text": "mutation StudioSessionClearTrackMutation(\n  $input: ClearTrackInput!\n) {\n  clearTrack(input: $input) {\n    objectId\n    state\n    frames\n    nFrames\n    seeds {\n      frameIndex\n      points\n      labels\n      text\n      mask {\n        size\n        counts\n      }\n    }\n    tracks {\n      engine\n      state\n      frames\n      nFrames\n    }\n    ranges {\n      start\n      end\n      state\n    }\n  }\n}\n"
   }
 };
 })();
 
-(node as any).hash = "fc74475e356c66c583ea60999c141cc4";
+(node as any).hash = "45b257e7bd3ea40c04f3ffca7046b10f";
 
 export default node;

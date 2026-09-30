@@ -1,5 +1,5 @@
 /**
- * @generated SignedSource<<7b3055084b2d7c7e9ba558a067e206c3>>
+ * @generated SignedSource<<e3e052c4bd202ab55e26430d7b8ad835>>
  * @lightSyntaxTransform
  * @nogrep
  */
@@ -37,6 +37,7 @@ export type StudioSessionSetRangeMutation$data = {
         readonly size: ReadonlyArray<number>;
       } | null | undefined;
       readonly points: ReadonlyArray<ReadonlyArray<number>>;
+      readonly text: string | null | undefined;
     }>;
     readonly state: string;
     readonly tracks: ReadonlyArray<{
@@ -138,6 +139,13 @@ v4 = [
           {
             "alias": null,
             "args": null,
+            "kind": "ScalarField",
+            "name": "text",
+            "storageKey": null
+          },
+          {
+            "alias": null,
+            "args": null,
             "concreteType": "RLEMask",
             "kind": "LinkedField",
             "name": "mask",
@@ -232,16 +240,16 @@ return {
     "selections": (v4/*: any*/)
   },
   "params": {
-    "cacheID": "08cc59790aa61d39edda6da966a71dd5",
+    "cacheID": "ece344a479a95d240b3fb8ff87ab88fd",
     "id": null,
     "metadata": {},
     "name": "StudioSessionSetRangeMutation",
     "operationKind": "mutation",
-    "text": "mutation StudioSessionSetRangeMutation(\n  $input: SetObjectRangeInput!\n) {\n  setObjectRange(input: $input) {\n    objectId\n    state\n    frames\n    nFrames\n    seeds {\n      frameIndex\n      points\n      labels\n      mask {\n        size\n        counts\n      }\n    }\n    tracks {\n      engine\n      state\n      frames\n      nFrames\n    }\n    ranges {\n      start\n      end\n      state\n    }\n  }\n}\n"
+    "text": "mutation StudioSessionSetRangeMutation(\n  $input: SetObjectRangeInput!\n) {\n  setObjectRange(input: $input) {\n    objectId\n    state\n    frames\n    nFrames\n    seeds {\n      frameIndex\n      points\n      labels\n      text\n      mask {\n        size\n        counts\n      }\n    }\n    tracks {\n      engine\n      state\n      frames\n      nFrames\n    }\n    ranges {\n      start\n      end\n      state\n    }\n  }\n}\n"
   }
 };
 })();
 
-(node as any).hash = "38284d4cbef5cdfe01103e6d0fc6e5e8";
+(node as any).hash = "33e11983b3e423c592e80903e2e13a3b";
 
 export default node;

@@ -61,6 +61,7 @@ import type {
   RunningJob,
   SessionInfo,
   StudioEvent,
+  TextPromptResult,
   TrackResult,
 } from './protocol';
 import type {StudioSessionAddPointsMutation} from './__generated__/StudioSessionAddPointsMutation.graphql';
@@ -94,6 +95,7 @@ const START = graphql`
           frameIndex
           points
           labels
+          text
           mask {
             size
             counts
@@ -172,6 +174,7 @@ const CLEAR_TRACK = graphql`
         frameIndex
         points
         labels
+        text
         mask {
           size
           counts
@@ -203,6 +206,7 @@ const SET_RANGE = graphql`
         frameIndex
         points
         labels
+        text
         mask {
           size
           counts
@@ -250,6 +254,7 @@ const OBJECT_TRACKS = graphql`
         frameIndex
         points
         labels
+        text
         mask {
           size
           counts
@@ -524,6 +529,67 @@ export default class StudioSession {
     }
     this._context.updateTracklets(frameIndex, this._list(), true);
     this._emitTracklets();
+  }
+
+  /**
+   * POST /text_prompt: seed this frame of an object from a phrase. The
+   * backend's text engine (SAM 3) takes the phrase's best instance there as
+   * the frame's approved mask, replacing the frame's clicks; a phrase that
+   * matches nothing changes nothing. Needs a backend (the browser engine
+   * takes clicks only).
+   */
+  async textPrompt(objectId: number, frameIndex: number, text: string, engine: string): Promise<TextPromptResult> {
+    if (this._offline != null) {
+      throw new Error('text prompts need SAM 3 in the desktop app');
+    }
+    if (absentAt(this._ranges.get(objectId), frameIndex)) {
+      throw new Error(`frame ${frameIndex + 1} is marked absent for this object: unmark it to prompt here`);
+    }
+    const response = await fetch(`${this._endpoint}/text_prompt`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({session_id: this.sessionId, object_id: objectId, frame_index: frameIndex, text, engine}),
+    });
+    const body = (await response.json().catch(() => ({}))) as {
+      error?: string;
+      object_id?: number;
+      frame_index?: number;
+      text?: string;
+      engine?: string;
+      matched?: boolean;
+      score?: number;
+      instances?: number;
+      mask?: {size: number[]; counts: string} | null;
+    };
+    if (!response.ok) {
+      throw new Error(body.error ?? `text_prompt: HTTP ${response.status}`);
+    }
+    const result: TextPromptResult = {
+      objectId,
+      frameIndex,
+      text: body.text ?? text,
+      engine: body.engine ?? engine,
+      matched: body.matched === true && body.mask != null,
+      score: body.score ?? 0,
+      instances: body.instances ?? 0,
+    };
+    if (result.matched && body.mask != null) {
+      const t = this._tracklet(objectId);
+      const mask = toMask(body.mask);
+      this._setSeedPoints(t, frameIndex, []); // the prompt replaced the frame's clicks
+      this._setMask(t, frameIndex, mask);
+      const seeds = this._seedMasks.get(objectId) ?? new Map<number, Mask>();
+      if (mask != null) {
+        seeds.set(frameIndex, mask);
+      }
+      this._seedMasks.set(objectId, seeds);
+      if (mask != null) {
+        await this._thumbnail(t, frameIndex);
+      }
+      this._context.updateTracklets(frameIndex, this._list(), true);
+      this._emitTracklets();
+    }
+    return result;
   }
 
   async removeObject(objectId: number): Promise<void> {
@@ -1134,7 +1200,9 @@ export default class StudioSession {
     if (!response.ok) {
       throw new Error(`engines: HTTP ${response.status}`);
     }
-    return ((await response.json()) as {engines?: EngineInfo[]}).engines ?? [];
+    const {engines} = (await response.json()) as {engines?: Array<EngineInfo & {text_reason?: string | null}>};
+    // text_reason, as the backend spells it, is textReason here
+    return (engines ?? []).map(({text_reason, ...e}) => (text_reason === undefined ? e : {...e, textReason: text_reason}));
   }
 
   /** POST /track_disagreement: frames where two engines' current tracks differ. */
