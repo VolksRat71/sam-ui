@@ -33,3 +33,18 @@ def test_the_anchor_picks_the_other_blob_over_the_clicked_one():
     m[20:40, 80:100] = True  # a false positive, clicked
     p = anchor_point(m, [[90 / 120, 30 / 60]])
     assert at(m, p) and p[0] * 120 < 45
+
+
+def test_the_anchor_skips_a_clicked_blob_thicker_than_the_object():
+    m = np.zeros((80, 160), bool)
+    m[10:70, 10:18] = True  # a thin object, 8 px wide
+    m[10:70, 60:150] = True  # a thick false positive, clicked
+    p = anchor_point(m, [[100 / 160, 40 / 80]])
+    assert at(m, p) and p[0] * 160 < 18
+
+
+def test_the_anchor_falls_back_to_the_whole_mask_when_every_piece_is_clicked():
+    m = np.zeros((60, 120), bool)
+    m[10:50, 10:110] = True
+    p = anchor_point(m, [[90 / 120, 30 / 60]])
+    assert at(m, p)

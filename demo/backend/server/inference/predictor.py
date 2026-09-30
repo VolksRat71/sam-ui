@@ -2,8 +2,7 @@
 # All rights reserved.
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
-# Modified by sam-ui: clicks are recorded as seeds, and track jobs run through tracks/.
-# Modified by sam-ui: a correction refines the cached track mask, with an anchor click for a lone negative.
+# Modified by sam-ui: clicks are recorded as seeds, track jobs run through tracks/, and a correction refines the cached track mask (with an anchor click for a lone negative).
 
 import contextlib
 import logging

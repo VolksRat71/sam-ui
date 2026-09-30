@@ -34,15 +34,44 @@ def depth(mask: np.ndarray) -> np.ndarray:
     return d
 
 
+def reached(mask: np.ndarray, clicks: Sequence[Sequence[float]]) -> np.ndarray:
+    """The parts of `mask` 4-connected to a click: the pieces the user is
+    cutting away."""
+    m = mask.astype(bool)
+    h, w = m.shape
+    cur = np.zeros_like(m)
+    for x, y in clicks:
+        c, r = min(int(x * w), w - 1), min(int(y * h), h - 1)
+        cur[r, c] |= m[r, c]
+    while True:
+        g = cur.copy()
+        g[1:] |= cur[:-1]
+        g[:-1] |= cur[1:]
+        g[:, 1:] |= cur[:, :-1]
+        g[:, :-1] |= cur[:, 1:]
+        g &= m
+        if (g == cur).all():
+            return cur
+        cur = g
+
+
 def anchor_point(mask: np.ndarray, clicks: Sequence[Sequence[float]]) -> Optional[List[float]]:
-    """A point well inside `mask` (at least half its deepest depth) and as far
-    as possible from `clicks`, in the same normalized [0, 1] (x, y) terms as
-    the clicks. None when the mask is empty."""
+    """A point well inside `mask` (at least half as deep as its deepest part)
+    and as far as possible from `clicks`, in the same normalized [0, 1] (x, y)
+    terms as the clicks. Pieces of the mask a click lands on are left out, so
+    the anchor never keeps the false positive being cut, however thick it is;
+    only when every piece was clicked does it fall back to the whole mask.
+    None when the mask is empty."""
     d = depth(mask)
     if d.max() == 0:
         return None
     h, w = mask.shape
-    ys, xs = np.nonzero(d * 2 >= d.max())
+    keep = d > 0
+    if len(clicks):
+        rest = keep & ~reached(mask, clicks)
+        if rest.any():
+            keep = rest
+    ys, xs = np.nonzero(keep & (d * 2 >= d[keep].max()))
     if len(clicks):
         c = np.asarray(clicks, np.float64) * (w, h)
         far = np.min(np.hypot(xs[:, None] + 0.5 - c[:, 0], ys[:, None] + 0.5 - c[:, 1]), axis=1)
