@@ -113,6 +113,15 @@ python3 -m http.server 7390 --bind 127.0.0.1 --directory /tmp/pages   # http://1
   the object after the gap" hint on the lane. A click inside an absent range is
   refused, with a note saying so: click the block to select it and *Unmark* it
   (all of it, or a dragged part) first. Escape drops a selection.
+- **Text prompts.** With SAM 3 on screen, the selected object's row has a
+  *Find by text* field: type a phrase ("dog", "the red cup") and *Find*. The
+  phrase's best match on the frame on screen becomes that frame's mask,
+  replacing its clicks, and the row says the score, and how many things
+  matched when several did. A click on that frame refines the mask and keeps
+  the text; clearing the frame's clicks clears the text too. A phrase that
+  matches nothing changes nothing. The frame is marked on the lane like a
+  clicked one, titled with its text. With SAM 2 or the browser engine the
+  field is disabled and says why (`GET /engines` reports `text` per engine).
 - **Names.** Objects are *Object N* until renamed:
   double-click the name (or the pencil) to rename it in place. Names are
   stored with the seeds (`POST /rename_object`) and never make a track stale;
@@ -214,7 +223,7 @@ Compared with Meta's demo UI, which studio replaced:
 | Close the session on unload | missing: the backend expires idle sessions (30 min). A visible tab touches its session every 5 minutes to keep it |
 | Stats overlay (debug) | missing |
 
-Studio only: SAM 3 engine, the in-browser SAM 2.1 tiny engine, per-engine badges and disagreement flags, objects restored on reload (with their seed masks), track-state badges, Clear track, absent ranges,
+Studio only: SAM 3 engine, the in-browser SAM 2.1 tiny engine, per-engine badges and disagreement flags, objects restored on reload (with their seed masks), track-state badges, Clear track, absent ranges, text prompts (SAM 3),
 concurrent jobs, jobs from other tabs shown, zoom and pan, export for
 rotoscoping, and keyboard shortcuts.
 
