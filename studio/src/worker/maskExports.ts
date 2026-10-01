@@ -8,6 +8,9 @@
 //   - folder:  the rotoscoping working folder (tracks/export.py's layout),
 //              for when the backend cannot write it (browser tracks).
 // Frames inside an object's absent ranges are empty in all three.
+// Objects come in the order given (the layout's: state/maskExport.ts
+// groupExport); a grouped object's files go in its group's folder, with an
+// optional union of the group's masks (opts.union).
 import {BufferTarget, CanvasSource, Mp4OutputFormat, Output, QUALITY_HIGH} from 'mediabunny';
 import type {RLEObject} from '@/jscocotools/mask';
 import {grayPng} from '~/lib/png';
@@ -16,14 +19,25 @@ import {rleToMask} from '~/local/sam2/masks';
 import {vectorJson} from '~/state/contours';
 import {
   type ExportedObject,
+  type ExportGroup,
   type ExportKind,
+  exportPath,
   matteName,
   type Provenance,
   readme,
   rotoDecisions,
   type Seeds,
+  unionMatteName,
+  unionPath,
   withoutAbsent,
 } from '~/state/maskExport';
+
+export type ExportOptions = {
+  /** The groups with an exported member (groupExport); none: no folders. */
+  groups?: ReadonlyArray<ExportGroup>;
+  /** Also one union mask per group. Off by default. */
+  union?: boolean;
+};
 
 export type MaskSource = {
   /** Object `id`'s mask on frame i, or null where its track has none. */
@@ -43,7 +57,25 @@ function plane(rle: RLEObject | null, w: number, h: number): Uint8Array | null {
   return m.mask;
 }
 
+/** The OR of several objects' masks, as one more mask source id (a group's union). */
+function unionSource(src: MaskSource, members: ReadonlyArray<number>, p: Provenance): (frame: number) => Uint8Array | null {
+  return frame => {
+    let acc: Uint8Array | null = null;
+    for (const id of members) {
+      const m = plane(src.maskAt(id, frame), p.width, p.height);
+      if (m != null) {
+        acc = acc == null ? m.slice() : acc.map((v, k) => v | m[k]);
+      }
+    }
+    return acc;
+  };
+}
+
 async function maskVideo(p: Provenance, id: number, src: MaskSource, onFrame: () => void): Promise<Uint8Array> {
+  return maskVideoOf(p, frame => plane(src.maskAt(id, frame), p.width, p.height), onFrame);
+}
+
+async function maskVideoOf(p: Provenance, maskOf: (frame: number) => Uint8Array | null, onFrame: () => void): Promise<Uint8Array> {
   // H.264 needs even dimensions: pad with a black row or column
   const w = p.width + (p.width % 2);
   const h = p.height + (p.height % 2);
@@ -61,7 +93,7 @@ async function maskVideo(p: Provenance, id: number, src: MaskSource, onFrame: ()
   const px = new Uint32Array(image.data.buffer);
   try {
     for (let i = 0; i < p.frames; i++) {
-      const m = plane(src.maskAt(id, i), p.width, p.height);
+      const m = maskOf(i);
       for (let k = 0; k < px.length; k++) {
         px[k] = m != null && m[k] ? 0xffffffff : 0xff000000;
       }
@@ -100,11 +132,14 @@ export async function buildExport(
   objects: ReadonlyArray<ExportedObject>,
   src: MaskSource,
   onProgress: (done: number) => void,
+  opts: ExportOptions = {},
 ): Promise<Uint8Array> {
   // absent frames are empty in every kind of export
   src = sourceWithoutAbsent(src, objects);
-  const entries: ZipEntry[] = [{name: 'README.txt', data: readme(kind, p, objects)}];
-  const total = Math.max(1, objects.length * p.frames);
+  const groups = opts.groups ?? [];
+  const union = opts.union === true && groups.length > 0;
+  const entries: ZipEntry[] = [{name: 'README.txt', data: readme(kind, p, objects, groups, union)}];
+  const total = Math.max(1, (objects.length + (union ? groups.length : 0)) * p.frames);
   let done = 0;
   const tick = () => {
     done++;
@@ -114,16 +149,25 @@ export async function buildExport(
   };
   for (const o of objects) {
     if (kind === 'videos') {
-      entries.push({name: `${o.name}.mp4`, data: await maskVideo(p, o.objectId, src, tick)});
+      entries.push({name: exportPath(o, groups, '.mp4'), data: await maskVideo(p, o.objectId, src, tick)});
     } else if (kind === 'vectors') {
       const v = vectorJson(
-        {engine: p.engine, model: o.model ?? p.model, object: {id: o.objectId, name: o.label}, fps: p.fps, w: p.width, h: p.height, frames: p.frames},
+        {
+          engine: p.engine,
+          model: o.model ?? p.model,
+          object: {id: o.objectId, name: o.label},
+          ...(o.group != null ? {group: o.group} : {}),
+          fps: p.fps,
+          w: p.width,
+          h: p.height,
+          frames: p.frames,
+        },
         i => {
           tick();
           return plane(src.maskAt(o.objectId, i), p.width, p.height);
         },
       );
-      entries.push({name: `${o.name}.json`, data: JSON.stringify(v)});
+      entries.push({name: exportPath(o, groups, '.json'), data: JSON.stringify(v)});
     } else {
       const zeros = new Uint8Array(p.width * p.height);
       for (let i = 0; i < p.frames; i++) {
@@ -136,8 +180,31 @@ export async function buildExport(
     // let the worker answer the UI between objects
     await new Promise(r => setTimeout(r, 0));
   }
+  for (const g of union ? groups : []) {
+    const maskOf = unionSource(src, g.members, p);
+    if (kind === 'videos') {
+      entries.push({name: unionPath(g, objects, '.mp4'), data: await maskVideoOf(p, maskOf, tick)});
+    } else if (kind === 'vectors') {
+      const v = vectorJson(
+        {engine: p.engine, model: p.model, group: {id: g.id, name: g.name}, fps: p.fps, w: p.width, h: p.height, frames: p.frames},
+        i => {
+          tick();
+          return maskOf(i);
+        },
+      );
+      entries.push({name: unionPath(g, objects, '.json'), data: JSON.stringify(v)});
+    } else {
+      const zeros = new Uint8Array(p.width * p.height);
+      for (let i = 0; i < p.frames; i++) {
+        const m = maskOf(i);
+        entries.push({name: unionMatteName(g, i), data: await grayPng(m == null ? zeros : m.map(v => (v ? 255 : 0)), p.width, p.height)});
+        tick();
+      }
+    }
+    await new Promise(r => setTimeout(r, 0));
+  }
   if (kind === 'folder') {
-    const files = rotoDecisions(p, objects, id => src.seedsOf(id), () => p.frames);
+    const files = rotoDecisions(p, objects, id => src.seedsOf(id), () => p.frames, groups, union);
     for (const [name, data] of Object.entries(files)) {
       entries.push({name, data});
     }
