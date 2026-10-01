@@ -94,6 +94,8 @@ export type StudioMethods = {
   };
   removeObject: {args: {objectId: number}; result: void};
   clearTrack: {args: {objectId: number; engine: string | null}; result: ServerObject};
+  /** Mark frames start-end of an object absent, or clear them (state null). */
+  setRange: {args: {objectId: number; start: number; end: number; state: 'absent' | null}; result: ServerObject};
   objectTracks: {args: Record<string, never>; result: ServerObject[]};
   /**
    * Run a track job for these ids (the backend skips any another job holds);

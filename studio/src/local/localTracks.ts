@@ -8,11 +8,13 @@
 // A browser track's state follows the backend's rules (tracks/store.py):
 // tracked when it was made from the object's current clicks with the current
 // model settings, stale when either changed since, tracking while a job
-// holds the object, untracked when there is none.
+// holds the object, untracked when there is none. Absent ranges join the
+// seeds key, as they join the backend's seeds hash.
 import type {RLEObject} from '@/jscocotools/mask';
 import {BROWSER_ENGINE} from '~/state/engines';
 import {browserModelName, parseQuality} from './sam2/config';
 import {DEFAULT_ENGINE, type NormPoint, type ServerObject} from '~/state/objects';
+import {type FrameRange, rangesKey} from '~/state/ranges';
 
 export {BROWSER_ENGINE};
 
@@ -22,7 +24,7 @@ export type LocalTrack = {
   seedsKey: string;
   /** variantKey() of the model settings it was tracked with. */
   variant: string;
-  /** Per frame; a frame without a mask (the object is gone) has none. */
+  /** Per frame; a frame without a mask (the object is gone, or marked absent) has none. */
   masks: Map<number, RLEObject>;
   nFrames: number;
 };
@@ -70,10 +72,16 @@ export class MemoryTrackStore implements LocalTrackStore {
   }
 }
 
-/** A stable key of an object's clicks: frames in order, each frame's points as clicked. */
-export function seedsKey(seeds: ReadonlyMap<number, readonly NormPoint[]>): string {
+/**
+ * A stable key of an object's clicks (frames in order, each frame's points as
+ * clicked) and its absent ranges. With no ranges it is the key from before
+ * ranges existed, so those browser tracks stay tracked.
+ */
+export function seedsKey(seeds: ReadonlyMap<number, readonly NormPoint[]>, ranges: ReadonlyArray<FrameRange> = []): string {
   const frames = [...seeds.entries()].filter(([, p]) => p.length > 0).sort((a, b) => a[0] - b[0]);
-  return JSON.stringify(frames.map(([f, p]) => [f, p.map(q => [q[0], q[1], q[2]])]));
+  const key = JSON.stringify(frames.map(([f, p]) => [f, p.map(q => [q[0], q[1], q[2]])]));
+  const r = rangesKey(ranges);
+  return r === '' ? key : `${key}|absent:${r}`;
 }
 
 /** A browser track's model settings: re-tracking is needed when these change. */

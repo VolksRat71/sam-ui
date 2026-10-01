@@ -13,6 +13,7 @@
 // authority: after each call the UI syncs from objectTracks, and the reducer's
 // own transitions only keep the list right in between.
 import {THEME_COLORS} from '@/theme/colors';
+import {type FrameRange, normalizeRanges, rangesKey} from './ranges';
 
 export type TrackState = 'untracked' | 'stale' | 'tracked' | 'tracking';
 export type Label = 0 | 1;
@@ -42,6 +43,12 @@ export type ServerObject = {
   }>;
   /** One entry per engine; the top-level fields are the default engine's. */
   readonly tracks?: ReadonlyArray<ServerTrack>;
+  /**
+   * Absent ranges (state/ranges.ts). Studio's queries select this field, so
+   * studio needs a backend that has it: the two ship together (desktop), and a
+   * backend from before ranges fails the whole query rather than sending none.
+   */
+  readonly ranges?: ReadonlyArray<{readonly start: number; readonly end: number; readonly state: string}> | null;
 };
 
 export type EngineTrack = {
@@ -64,6 +71,8 @@ export type StudioObject = {
   engines: Record<string, EngineTrack>;
   /** Seed clicks per frame. A frame with no clicks has no key. */
   points: Record<number, NormPoint[]>;
+  /** Frames where the object is marked absent: empty, never tracked or exported. */
+  ranges: FrameRange[];
   /** Held by one of this page's running jobs on the current engine. */
   running: boolean;
   /** Why this object's last track failed. */
@@ -105,6 +114,8 @@ export type Action =
   | {type: 'add'; id: number}
   | {type: 'select'; id: number | null}
   | {type: 'setPoints'; id: number; frame: number; points: NormPoint[]}
+  /** The object's absent ranges changed (marked or unmarked). */
+  | {type: 'setRanges'; id: number; ranges: FrameRange[]}
   | {type: 'trackStarted'; key: number; ids: number[]; engine?: string}
   | {type: 'trackAttached'; key: number; jobId: string | null; selected: number[]}
   | {type: 'trackProgress'; key: number}
@@ -184,6 +195,7 @@ export function fromServer(o: ServerObject, engine: string = DEFAULT_ENGINE): St
       nFrames: 0,
       engines,
       points: seedsToPoints(o.seeds),
+      ranges: normalizeRanges(o.ranges),
       running: false,
       error: null,
     },
@@ -382,6 +394,7 @@ export function reducer(state: StudioState, action: Action): StudioState {
         nFrames: 0,
         engines: {},
         points: {},
+        ranges: [],
         running: false,
         error: null,
       };
@@ -411,6 +424,20 @@ export function reducer(state: StudioState, action: Action): StudioState {
               : t;
         }
         return viewed({...next, engines}, state.engine);
+      });
+
+    case 'setRanges':
+      return update(state, action.id, o => {
+        const ranges = normalizeRanges(action.ranges);
+        if (rangesKey(ranges) === rangesKey(o.ranges)) {
+          return o;
+        }
+        // ranges join the seeds hash: every engine's track goes stale
+        const engines: Record<string, EngineTrack> = {};
+        for (const [name, t] of Object.entries(o.engines)) {
+          engines[name] = t.state === 'tracked' ? {...t, state: 'stale'} : t;
+        }
+        return viewed({...o, ranges, engines, error: null}, state.engine);
       });
 
     case 'trackStarted': {

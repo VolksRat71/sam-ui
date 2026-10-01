@@ -7,6 +7,12 @@ are untracked or stale for the chosen engine (or the ids given) and caches each
 finished track under that engine. The default engine (SAM 2) also serves the
 interactive clicks; others (SAM 3) are registered by spec and built on first
 use. Locking is the caller's job (the backend's single inference lock).
+
+Absent ranges (issue #20, tracks/ranges.py) split an object's timeline into
+windows. A job tracks each window with a seed on its own, and stores every
+other frame as an empty mask, so a track always covers the whole clip. A
+stale track keeps the windows whose inputs did not change (window_key): only
+the windows a range or seed edit touched run again.
 """
 import logging
 import os
@@ -17,9 +23,10 @@ from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 import numpy as np
 
 from tracks import rle
-from tracks.engine import Engine
+from tracks.engine import WHOLE, Engine, Windows
 from tracks.jobs import TRACKING, JobRegistry
-from tracks.seeds import SeedStore, seeds_hash, video_key
+from tracks.ranges import Window, absent_at, seeded_windows, window_frames
+from tracks.seeds import Seeds, SeedStore, seeds_hash, video_key, window_key
 from tracks.store import TRACKED, TrackStore
 
 FrameRle = Tuple[int, Dict[int, Dict]]
@@ -48,6 +55,29 @@ class EngineSpec:
 
 class UnknownEngine(ValueError):
     pass
+
+
+@dataclass
+class _ObjectPlan:
+    """What a job does with one object: its seeded windows (with their keys),
+    the ones the engine must run, and the ones kept from the stale track."""
+
+    seeds: Seeds
+    ranges: List[Dict]
+    hash: str
+    windows: List[Tuple[Window, str]]
+    compute: List[Window]
+    reuse: Dict[Window, Dict[int, Dict]]  # window -> {frame: rle} from the old track
+
+    def covered(self, frame: int) -> bool:
+        return any(w[0] <= frame and (w[1] is None or frame <= w[1]) for w, _ in self.windows)
+
+
+def _handle_frames(handle) -> Optional[int]:
+    try:
+        return len(handle["images"])
+    except (TypeError, KeyError):
+        return None
 
 
 class TrackService:
@@ -124,16 +154,30 @@ class TrackService:
         if not self.seeds.clear_frame(video, obj_id, frame):
             self.tracks.clear(video, obj_id)
 
+    def set_range(self, video: str, obj_id: int, start: int, end: int, state: Optional[str]) -> Dict:
+        """Mark frames start-end of an object with a range state ("absent"), or
+        clear them (state None). ValueError on a bad span or state. The seeds
+        hash changes, so the object's tracks go stale; a re-track runs only
+        the windows the change touched."""
+        self.seeds.paint_range(video, obj_id, start, end, state)
+        return self.object_info(video, obj_id)
+
+    def is_absent(self, video: str, obj_id: int, frame: int) -> bool:
+        return absent_at(self.seeds.ranges(video, obj_id), frame)
+
     def prime_mask(self, video: str, obj_id: int, frame: int) -> Optional[Dict]:
         """The mask a first click on this frame should refine: the approved
         seed mask there, else the default engine's cached mask, else None.
-        An empty mask is None too: there is nothing to refine.
+        An empty mask is None too: there is nothing to refine, and so is any
+        frame inside an absent range (the object is not there).
 
         A stale track counts. The first correction makes the track stale (its
         seeds changed), and the other frames flagged in the same review are
         corrected against that same track, which the studio still shows, until
         the re-track. Refusing it made every correction after the first start
         from nothing."""
+        if self.is_absent(video, obj_id, frame):
+            return None
         seed = self.seeds.seeds(video, obj_id).get(frame)
         if seed and seed.get("mask"):
             return seed["mask"] if rle.area(seed["mask"]) else None
@@ -154,10 +198,10 @@ class TrackService:
         self.seeds.clear_video(video)
 
     # -- state -----------------------------------------------------------------
-    def _track_state(self, video: str, obj_id: int, name: str, seeds) -> Dict:
+    def _track_state(self, video: str, obj_id: int, name: str, seeds, ranges) -> Dict:
         name, model = self._engine_model(name)
         meta = self.tracks.meta(video, obj_id, name)
-        state = self.tracks.state(video, obj_id, name, model, seeds_hash(seeds) if seeds else None)
+        state = self.tracks.state(video, obj_id, name, model, seeds_hash(seeds, ranges) if seeds else None)
         if obj_id in self.jobs.held(video, name):
             state = TRACKING
         return {"engine": name, "model": model, "state": state,
@@ -167,9 +211,10 @@ class TrackService:
         """The object's seeds and its track state for `engine` (default SAM 2),
         plus every engine's state under "tracks"."""
         seeds = self.seeds.seeds(video, obj_id)
-        tracks = {n: self._track_state(video, obj_id, n, seeds) for n in self.engine_names()}
+        ranges = self.seeds.ranges(video, obj_id)
+        tracks = {n: self._track_state(video, obj_id, n, seeds, ranges) for n in self.engine_names()}
         main = tracks[self._engine_model(engine or self.default)[0]]
-        return {"object_id": obj_id, **main, "seeds": seeds, "tracks": list(tracks.values())}
+        return {"object_id": obj_id, **main, "seeds": seeds, "ranges": ranges, "tracks": list(tracks.values())}
 
     def objects(self, video: str, engine: Optional[str] = None) -> List[Dict]:
         return [self.object_info(video, o, engine) for o in self.seeds.objects(video)]
@@ -191,56 +236,159 @@ class TrackService:
         return self.object_info(video, obj_id)
 
     # -- jobs ------------------------------------------------------------------
-    def passes(self, video: str, obj_ids: List[int], engine: Optional[str] = None) -> int:
-        """How many times a job over obj_ids runs through the clip (an engine
-        may split one job into several passes), for its progress total."""
-        f = getattr(self.get_engine(engine), "passes", None)
-        if f is None:
-            return 1
-        seeds = {o: self.seeds.seeds(video, o) for o in obj_ids}
-        return f({o: s for o, s in seeds.items() if s})
+    def _plan(self, video: str, e: Engine, obj_ids: List[int], n: Optional[int]) -> Dict[int, _ObjectPlan]:
+        plans = {}
+        for o in obj_ids:
+            seeds = self.seeds.seeds(video, o)
+            if not seeds:
+                continue
+            ranges = self.seeds.ranges(video, o)
+            h = seeds_hash(seeds, ranges)
+            wins = [(w, window_key(w, mine)) for w, mine in seeded_windows(seeds, ranges)]
+            reuse = self._reusable(video, o, e, h, wins, n)
+            plans[o] = _ObjectPlan(seeds, ranges, h, wins, [w for w, _ in wins if w not in reuse], reuse)
+        return plans
+
+    def _reusable(self, video: str, o: int, e: Engine, h: str, wins: List[Tuple[Window, str]],
+                  n: Optional[int]) -> Dict[Window, Dict[int, Dict]]:
+        """The windows of a STALE track whose inputs are unchanged, with their
+        masks. A tracked object asked for again is re-run whole, and so is
+        every track from before windows (it has no window keys)."""
+        meta = self.tracks.meta(video, o, e.name)
+        if n is None or meta is None or meta["model"] != e.model or meta["seeds_hash"] == h:
+            return {}
+        old = {seg["key"] for seg in meta.get("windows") or []}
+        keep = [w for w, k in wins if k in old]
+        if not keep:
+            return {}
+        frames = {f: r for f, r in self.tracks.masks(video, o, e.name)
+                  if any(f in window_frames(w, n) for w in keep)}
+        out = {}
+        for w in keep:
+            got = {f: frames[f] for f in window_frames(w, n) if f in frames}
+            if len(got) == len(window_frames(w, n)):  # all of it, or run it again
+                out[w] = got
+        return out
+
+    @staticmethod
+    def _engine_windows(plans: Dict[int, _ObjectPlan]) -> Optional[Windows]:
+        """The windows the engine is given; None when every object runs whole
+        (no ranges, nothing kept), the call from before windows existed."""
+        wins = {o: p.compute for o, p in plans.items() if p.compute}
+        return None if all(w == [WHOLE] for w in wins.values()) else wins
+
+    def job_frames(self, video: str, obj_ids: List[int], n_frames: int, engine: Optional[str] = None) -> int:
+        """How many frames a job over obj_ids streams, for its progress total:
+        each engine pass's window, plus the frames sent from the cache or as
+        empty (absent, or in a window with no seed)."""
+        e = self.get_engine(engine)
+        plans = self._plan(video, e, obj_ids, n_frames)
+        run = {o: p.seeds for o, p in plans.items() if p.compute}
+        wins = self._engine_windows(plans)
+        plan = getattr(e, "plan", None)  # an engine that does not say runs the clip once
+        if not run:
+            computed = 0
+        elif plan is None:
+            computed = n_frames
+        else:
+            computed = sum(u.n_frames(n_frames) for u in plan(run, wins))
+        filled = sum(1 for f in range(n_frames)
+                     if any(not p.covered(f) or any(w[0] <= f and (w[1] is None or f <= w[1]) for w in p.reuse)
+                            for p in plans.values()))
+        return computed + filled
 
     def track(self, video: str, path: str, obj_ids: List[int], video_handle: Optional[Any] = None,
-              result: Optional[JobResult] = None, engine: Optional[str] = None) -> Iterator[FrameRle]:
+              result: Optional[JobResult] = None, engine: Optional[str] = None,
+              n_frames: Optional[int] = None) -> Iterator[FrameRle]:
         """Run `engine` on obj_ids and yield each frame's RLE masks. Each track
         is cached only once the whole job finishes: a cancelled job (the
         consumer stops iterating) caches nothing. The seeds hash is taken at the
         start, so seeds edited mid-job leave the track stale. `result` is filled
-        in with what was tracked and what failed to save."""
+        in with what was tracked and what failed to save.
+
+        The engine runs only the windows that need it. The frames it does not
+        run (absent, in a window with no seed, or kept from the stale track)
+        follow, merged per frame. `n_frames` is the clip's length; without it
+        the session's video handle or the engine says, else the frames seen."""
         result = result if result is not None else JobResult()
-        seeds = {o: self.seeds.seeds(video, o) for o in obj_ids}
-        seeds = {o: s for o, s in seeds.items() if s}
-        result.objects = sorted(seeds)
-        if not seeds:
-            return
         e = self.get_engine(engine)
-        hashes = {o: seeds_hash(s) for o, s in seeds.items()}
-        frames: Dict[int, Dict[int, Dict]] = {o: {} for o in seeds}
+        n = n_frames or _handle_frames(video_handle) or getattr(e, "n_frames", None)
+        plans = self._plan(video, e, obj_ids, n)
+        result.objects = sorted(plans)
+        if not plans:
+            return
+        frames: Dict[int, Dict[int, Dict]] = {o: {} for o in plans}
+        run = {o: p.seeds for o, p in plans.items() if p.compute}
         t0 = time.perf_counter()
-        for frame, masks in e.track(path, seeds, video_handle=video_handle):
-            enc = {o: rle.encode(m) for o, m in masks.items()}
-            for o, r in enc.items():
-                frames[o][frame] = r
-            yield frame, enc
+        if run:
+            wins = self._engine_windows(plans)
+            it = e.track(path, run, video_handle=video_handle) if wins is None else \
+                e.track(path, run, video_handle=video_handle, windows=wins)
+            for frame, masks in it:
+                enc = {o: rle.encode(m) for o, m in masks.items()}
+                for o, r in enc.items():
+                    frames[o][frame] = r
+                yield frame, enc
+        if n is None:
+            n = 1 + max([f for fs in frames.values() for f in fs] +
+                        [f for p in plans.values() for got in p.reuse.values() for f in got] or [-1])
+        size = self._mask_size(plans, frames, video_handle)
+        empty = rle.encode(np.zeros(size, bool)) if size else None
+        for f in range(n):
+            fill = {}
+            for o, p in plans.items():
+                kept = next((got[f] for got in p.reuse.values() if f in got), None)
+                if kept is not None:
+                    fill[o] = kept
+                elif not p.covered(f) and empty is not None:
+                    fill[o] = empty
+            if fill:
+                for o, r in fill.items():
+                    frames[o][f] = r
+                yield f, fill
         elapsed = time.perf_counter() - t0
-        for o in seeds:
+        for o, p in plans.items():
             try:
-                self.tracks.save(video, o, e.name, e.model, hashes[o], frames[o], elapsed)
+                self.tracks.save(video, o, e.name, e.model, p.hash, frames[o], elapsed,
+                                 extra={"windows": [{"start": w[0], "end": w[1], "key": k} for w, k in p.windows]})
                 result.tracked.append(o)
             except Exception as err:  # one object's failed save must not lose the others
                 logger.exception(f"saving the track of object {o} failed")
                 result.failed[o] = f"{type(err).__name__}: {err}"
 
+    @staticmethod
+    def _mask_size(plans: Dict[int, _ObjectPlan], frames: Dict[int, Dict[int, Dict]], handle) -> Optional[List[int]]:
+        """[h, w] of the clip's masks, for the empty frames: from anything
+        tracked or kept, a seed's mask, or the session's video."""
+        for fs in frames.values():
+            for r in fs.values():
+                return list(r["size"])
+        for p in plans.values():
+            for got in p.reuse.values():
+                for r in got.values():
+                    return list(r["size"])
+            for v in p.seeds.values():
+                if v.get("mask"):
+                    return list(v["mask"]["size"])
+        try:
+            return [int(handle["video_height"]), int(handle["video_width"])]
+        except (TypeError, KeyError, ValueError):
+            return None
+
     def cached(self, video: str, obj_ids: Optional[List[int]] = None,
                engine: Optional[str] = None) -> Iterator[FrameRle]:
         """Stream stored tracks, merged per frame, to repaint them after a reload.
-        Stale tracks are sent too; the UI marks them."""
+        Stale tracks are sent too; the UI marks them. Frames inside an absent
+        range go out empty, even from a track made before the range was marked."""
         name = self._engine_model(engine or self.default)[0]
         ids = self.seeds.objects(video) if obj_ids is None else [int(o) for o in obj_ids]
         ids = [o for o in ids if self.seeds.seeds(video, o)]  # no seeds, nothing to show
         by_frame: Dict[int, Dict[int, Dict]] = {}
         for o in ids:
+            ranges = self.seeds.ranges(video, o)
             for frame, r in self.tracks.masks(video, o, name):
+                if ranges and absent_at(ranges, frame):  # a stale track, marked since: never shown
+                    r = rle.encode(np.zeros(r["size"], bool))
                 by_frame.setdefault(frame, {})[o] = r
         for frame in sorted(by_frame):
             yield frame, by_frame[frame]

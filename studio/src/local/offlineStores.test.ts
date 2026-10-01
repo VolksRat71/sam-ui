@@ -143,3 +143,26 @@ describe('job claims (test_jobs.py)', () => {
     expect(engine.isLocalJob(a) && !engine.isLocalJob('job-1')).toBe(true);
   });
 });
+
+describe('absent ranges (test_ranges.py)', () => {
+  it('are stored apart from the seeds, make the track stale, and unmarking all of it restores it', async () => {
+    const kv = new MemoryKv();
+    const svc = new OfflineService(kv);
+    await svc.recordPoints(V, 1, 0, [[0.5, 0.5, 1]], rle);
+    await tracked(svc, 1);
+    expect(await state(svc, 1)).toBe('tracked');
+    expect(await svc.setRange(V, 1, 4, 8, 'absent')).toEqual([{start: 4, end: 8, state: 'absent'}]);
+    expect(await state(svc, 1)).toBe('stale');
+    expect((await new OfflineService(kv).objectInfo(V, 1, VARIANT, new Set())).ranges).toEqual([{start: 4, end: 8, state: 'absent'}]);
+    expect(await svc.setRange(V, 1, 6, 6, null)).toEqual([{start: 4, end: 5, state: 'absent'}, {start: 7, end: 8, state: 'absent'}]);
+    await svc.setRange(V, 1, 0, 20, null);
+    expect(await state(svc, 1)).toBe('tracked');
+  });
+
+  it('keep an object with a range and no clicks yet listed', async () => {
+    const svc = new OfflineService(new MemoryKv());
+    await svc.setRange(V, 3, 0, 2, 'absent');
+    expect(await svc.seeds.objects(V)).toEqual([3]);
+    expect(await svc.select(V, null, VARIANT, new Set())).toEqual([]); // nothing to track
+  });
+});

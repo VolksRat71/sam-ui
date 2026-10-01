@@ -109,6 +109,7 @@ const handlers: Handlers = {
     session.setPoints(objectId, frameIndex, points),
   removeObject: ({objectId}) => session.removeObject(objectId),
   clearTrack: ({objectId, engine}) => session.clearTrack(objectId, engine),
+  setRange: ({objectId, start, end, state}) => session.setRange(objectId, start, end, state),
   objectTracks: () => session.objectTracks(),
   track: ({objectIds, key, engine}) => session.track(objectIds, key, engine),
   cancelTrack: ({jobId}) => session.cancelTrack(jobId),

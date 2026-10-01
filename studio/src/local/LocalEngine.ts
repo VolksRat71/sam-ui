@@ -12,7 +12,7 @@ import {modelBitmap} from './frames';
 import {MemoryTrackStore, type LocalTrackStore, variantKey} from './localTracks';
 import {ModelClient, spawnModelWorker} from './modelClient';
 import {type Quality, VARIANTS} from './sam2/config';
-import type {TrackObject, TrackStats} from './sam2/tracker';
+import type {TrackObject, TrackStats, TrackWindow} from './sam2/tracker';
 
 export type LocalOptions = {quality: Quality; fillHoleArea: number};
 
@@ -33,6 +33,9 @@ export type LocalHost = {
 
 export type LocalJobResult = {canceled: boolean; frames: number; ms: number; stats: TrackStats | null};
 
+/** One pass of a job: objects tracked together, over the whole clip or one window. */
+export type LocalUnit = {objects: TrackObject[]; window?: TrackWindow};
+
 export class LocalEngine {
   private _store: LocalTrackStore;
   private _client: ModelClient | null = null;
@@ -40,6 +43,8 @@ export class LocalEngine {
   private _loaded: {quality: Quality; ready: Promise<void>} | null = null;
   private _configured: string | null = null;
   private _jobs = new Map<string, number[]>();
+  /** Jobs cancelled between two of their passes. */
+  private _canceled = new Set<string>();
   private _nextJob = 1;
 
   constructor(
@@ -171,10 +176,14 @@ export class LocalEngine {
     return job != null && job.startsWith('local-');
   }
 
-  /** Run a claimed job; `onFrame` gets every frame once. Releases the claim when it ends. */
+  /**
+   * Run a claimed job, one pass per unit, each with fresh memories (a window
+   * never sees another's). `onFrame` gets every frame of every pass. Releases
+   * the claim when it ends.
+   */
   async run(
     job: string,
-    objects: TrackObject[],
+    units: LocalUnit[],
     onFrame: (frame: number, masks: Map<number, RLEObject>) => void,
   ): Promise<LocalJobResult> {
     try {
@@ -185,30 +194,45 @@ export class LocalEngine {
         }
       });
       try {
-        const res = await client.call('track', {job, objects});
+        const total: LocalJobResult = {canceled: false, frames: 0, ms: 0, stats: null};
+        for (const unit of units) {
+          if (this._canceled.has(job)) {
+            return {...total, canceled: true};
+          }
+          const res = await client.call('track', {job, objects: unit.objects, window: unit.window});
+          total.frames += res.frames;
+          total.ms += res.ms;
+          total.stats = res.stats;
+          if (res.canceled) {
+            return {...total, canceled: true};
+          }
+        }
         // where the time went, for the console (per graph, and the frames)
         const stats = await client.call('stats', {}).catch(() => null);
-        if (stats != null && res.frames > 0) {
+        if (stats != null && total.frames > 0) {
           const per = Object.fromEntries(Object.entries(stats.times).map(([k, v]) => [k, v.n > 0 ? +(v.ms / v.n).toFixed(1) : 0]));
-          console.info(`browser engine: ${res.frames} frames in ${(res.ms / 1000).toFixed(1)} s (${(res.ms / res.frames).toFixed(0)} ms a frame); ms per run since load:`, per);
+          console.info(`browser engine: ${total.frames} frames in ${(total.ms / 1000).toFixed(1)} s (${(total.ms / total.frames).toFixed(0)} ms a frame); ms per run since load:`, per);
         }
-        return {canceled: res.canceled, frames: res.frames, ms: res.ms, stats: res.stats};
+        return total;
       } finally {
         off();
       }
     } finally {
       this._jobs.delete(job);
+      this._canceled.delete(job);
     }
   }
 
   /** Cancel one job, or every job with null. */
   async cancel(job: string | null): Promise<boolean> {
     const jobs = job == null ? [...this._jobs.keys()] : [job];
+    const flagged = jobs.filter(j => this._jobs.has(j));
+    flagged.forEach(j => this._canceled.add(j)); // a job between two passes stops too
     if (this._client == null || jobs.length === 0) {
       return false;
     }
     const res = await Promise.all(jobs.map(j => this._client!.call('cancel', {job: j})));
-    return res.some(Boolean);
+    return res.some(Boolean) || flagged.length > 0;
   }
 
   dispose(): void {

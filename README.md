@@ -80,6 +80,13 @@ Details and progress: [Platform support, #16](https://github.com/VolksRat71/sam-
   away only the region it is on, and a lone positive click adds one. (Plain SAM 2
   empties a frame whose clicks are all negative; the backend adds an anchor click
   inside the tracked mask.)
+- **Absent ranges.** Mark a span of frames where an object is not in the shot (it
+  left the frame, went behind something, or is gone after a cut). Those frames stay
+  empty in the preview and in every export, the tracker never runs on them, and the
+  range splits the object's track: each side is tracked only from its own clicks,
+  so nothing seen before the gap carries into the frames after it. A side with no
+  clicks stays empty. Marking or unmarking a range makes the track stale, and the
+  re-track runs only the sides that changed.
 - **Keep working while it tracks.** A track job holds the model one frame at a time,
   so clicks come back in about 0.1 s even while a job runs. Jobs can overlap, and
   each has its own cancel.
@@ -197,7 +204,8 @@ python tools/track_cache_e2e.py --api http://127.0.0.1:7373   # live backend (us
 ```
 
 `tools/track_cache_e2e.py` uploads its own synthetic clips and deletes them when it
-finishes. It also has `--after-restart`, `--correction` and `--responsive` checks.
+finishes. It also has `--after-restart`, `--correction`, `--responsive` and
+`--absent` checks.
 
 ## Licences and credits
 

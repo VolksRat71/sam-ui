@@ -3,6 +3,9 @@
 // The pure parts of studio's in-browser mask exports: the provenance every export carries (so a SAM 2.1 tiny export can never pass
 // for a SAM 2 large one), and the rotoscoping working folder's decision
 // files, laid out as demo/backend/server/tracks/export.py writes them.
+// Frames inside an object's absent ranges export empty (a black matte, a null
+// outline), and its clicks there stay out of anchors.json, as the backend does.
+import {absentAt, type FrameRange} from './ranges';
 
 export type ExportKind = 'videos' | 'vectors' | 'folder';
 
@@ -17,7 +20,18 @@ export type ExportedObject = {
   color: string;
   /** The model this object's track was made with, when it differs per object. */
   model?: string;
+  /** Frames the object is marked absent on: exported empty. */
+  ranges?: ReadonlyArray<FrameRange>;
 };
+
+/** `maskAt` with every absent frame empty (null), even from a track made before the range. */
+export function withoutAbsent<T>(
+  maskAt: (id: number, frame: number) => T | null,
+  objects: ReadonlyArray<Pick<ExportedObject, 'objectId' | 'ranges'>>,
+): (id: number, frame: number) => T | null {
+  const ranges = new Map(objects.map(o => [o.objectId, o.ranges ?? []]));
+  return (id, frame) => (absentAt(ranges.get(id), frame) ? null : maskAt(id, frame));
+}
 
 export type Provenance = {
   engine: string;
@@ -95,7 +109,7 @@ export function rotoDecisions(
   for (const o of objects) {
     const points: Record<string, number[][]> = {};
     for (const [frame, pts] of [...seedsOf(o.objectId)].sort((a, b) => a[0] - b[0])) {
-      if (pts.length > 0) {
+      if (pts.length > 0 && !absentAt(o.ranges, frame)) {
         points[String(frame + 1)] = pts.map(q => [Math.round(q[0] * p.width), Math.round(q[1] * p.height), q[2] === 0 ? 0 : 1]);
       }
     }

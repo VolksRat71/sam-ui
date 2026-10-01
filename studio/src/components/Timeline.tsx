@@ -4,6 +4,9 @@
 // and one swimlane per object in the style of Meta's TrackletSwimlane (a thin
 // line in the object's colour, solid where it has a mask, a dot on each frame
 // that holds clicks). Review flags (F) mark frames to correct later.
+// Dragging across a lane selects a span of frames, which the transport can
+// mark absent (the object is not in the shot) or unmark; an absent range is a
+// hatched block on the lane, and a window no click reaches carries a hint.
 import {
   ChevronLeft,
   ChevronRight,
@@ -16,6 +19,7 @@ import {useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerE
 import {objectName} from '~/state/fileNames';
 import {flagsOf} from '~/state/flags';
 import {seedFrames} from '~/state/objects';
+import {ABSENT, spanState, unseededWindows} from '~/state/ranges';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
 
 const FILMSTRIP_HEIGHT = 44;
@@ -38,12 +42,37 @@ function useWidth() {
   return {ref, width};
 }
 
+/** A span of one object's frames picked on its lane, inclusive, in drag order. */
+type Selection = {id: number; start: number; end: number};
+
 export default function Timeline({session}: Props) {
   const {bridge, meta, frame, playing, state, tracklets, seek, togglePlay} = session;
   const n = meta.numFrames;
   const {ref: trackRef, width} = useWidth();
   const filmstripRef = useRef<HTMLCanvasElement>(null);
   const dragging = useRef(false);
+  const [selection, setSelection] = useState<Selection | null>(null);
+  const laneDrag = useRef<{id: number; from: number; x: number; moved: boolean} | null>(null);
+
+  // Escape drops the selection; so does removing its object
+  useEffect(() => {
+    if (selection == null) {
+      return;
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setSelection(null);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [selection]);
+  const selected = selection == null ? undefined : state.objects.find(o => o.id === selection.id);
+  useEffect(() => {
+    if (selection != null && selected == null) {
+      setSelection(null);
+    }
+  }, [selection, selected]);
 
   const pos = useCallback(
     (index: number) => (n <= 1 ? 0 : (index / (n - 1)) * width),
@@ -82,6 +111,10 @@ export default function Timeline({session}: Props) {
   }
 
   const ticks = n > 0 ? tickFrames(n, width) : [];
+  const span = selection == null ? null : {a: Math.min(selection.start, selection.end), b: Math.max(selection.start, selection.end)};
+  const covered = selected != null && span != null ? spanState(selected.ranges, span.a, span.b) : null;
+  const active = state.objects.find(o => o.id === state.activeId);
+  const absentHere = active?.ranges.some(r => r.start <= frame && frame <= r.end) ?? false;
 
   return (
     <div className="timeline">
@@ -113,7 +146,42 @@ export default function Timeline({session}: Props) {
             <span className="muted"> · {(frame / meta.fps).toFixed(2)} s · {Math.round(meta.fps)} fps</span>
           )}
           {!meta.decoded && n > 0 && <span className="muted"> · decoding…</span>}
+          {absentHere && active != null && selection == null && (
+            <span className="absent-note"> · {objectName(active)} is marked absent here</span>
+          )}
         </span>
+        {selection != null && selected != null && span != null && (
+          <span className="range-bar" role="group" aria-label="Selected frames">
+            <span>
+              {objectName(selected)}: frames {span.a + 1}–{span.b + 1}
+            </span>
+            {covered !== 'absent' && (
+              <button
+                className="button compact"
+                onClick={() => {
+                  session.setRange(selected.id, span.a, span.b, ABSENT);
+                  setSelection(null);
+                }}
+                title="The object is not in the shot on these frames: they stay empty, are never tracked or exported, and each side of the gap is tracked from its own clicks">
+                Mark absent
+              </button>
+            )}
+            {covered !== 'present' && (
+              <button
+                className="button compact"
+                onClick={() => {
+                  session.setRange(selected.id, span.a, span.b, null);
+                  setSelection(null);
+                }}
+                title="Track these frames again (after a re-track)">
+                Unmark
+              </button>
+            )}
+            <button className="button subtle compact" onClick={() => setSelection(null)} title="Cancel (Esc)">
+              Cancel
+            </button>
+          </span>
+        )}
       </div>
       <div className="lanes">
         <div className="lane-labels">
@@ -152,8 +220,40 @@ export default function Timeline({session}: Props) {
           </div>
           {state.objects.map(o => {
             const lane = tracklets.get(o.id);
+            const sel = selection?.id === o.id && span != null ? span : null;
             return (
-              <div key={o.id} className="swimlane" onClick={() => session.selectObject(o.id)}>
+              <div
+                key={o.id}
+                className="swimlane"
+                onPointerDown={e => {
+                  if (e.button !== 0 || (e.target as HTMLElement).closest('button') != null || n === 0) {
+                    return;
+                  }
+                  laneDrag.current = {id: o.id, from: frameAt(e), x: e.clientX, moved: false};
+                  e.currentTarget.setPointerCapture(e.pointerId);
+                }}
+                onPointerMove={e => {
+                  const d = laneDrag.current;
+                  if (d == null || d.id !== o.id) {
+                    return;
+                  }
+                  if (!d.moved && Math.abs(e.clientX - d.x) < 4) {
+                    return; // a click, so far
+                  }
+                  d.moved = true;
+                  setSelection({id: o.id, start: d.from, end: frameAt(e)});
+                }}
+                onPointerUp={e => {
+                  const d = laneDrag.current;
+                  laneDrag.current = null;
+                  if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+                    e.currentTarget.releasePointerCapture(e.pointerId);
+                  }
+                  if (d != null && !d.moved) {
+                    setSelection(null); // a plain click on a lane drops the selection
+                  }
+                }}
+                onClick={() => session.selectObject(o.id)}>
                 <div className="swimlane-line" style={{background: o.color}} />
                 {lane?.segments.map(([a, b]) => (
                   <div
@@ -162,6 +262,31 @@ export default function Timeline({session}: Props) {
                     style={{background: o.color, left: pos(a), width: Math.max(2, pos(b) - pos(a))}}
                   />
                 ))}
+                {o.ranges.map(r => (
+                  <button
+                    key={`absent-${r.start}`}
+                    className="swimlane-absent"
+                    title={`Frames ${r.start + 1}–${r.end + 1}: marked absent (not in the shot). Click to select, then Unmark.`}
+                    style={{left: pos(r.start), width: Math.max(4, pos(Math.min(r.end, n - 1)) - pos(r.start))}}
+                    onClick={e => {
+                      e.stopPropagation();
+                      session.selectObject(o.id);
+                      setSelection({id: o.id, start: r.start, end: Math.min(r.end, Math.max(0, n - 1))});
+                    }}
+                  />
+                ))}
+                {unseededWindows(seedFrames(o), o.ranges, n).map(w => (
+                  <span
+                    key={`hint-${w.lo}`}
+                    className="swimlane-hint"
+                    style={{left: pos(w.lo), width: Math.max(0, pos(w.hi) - pos(w.lo))}}
+                    title={`Frames ${w.lo + 1}–${w.hi + 1} have no clicks: nothing is tracked there`}>
+                    click the object {w.side} the gap
+                  </span>
+                ))}
+                {sel != null && (
+                  <div className="swimlane-selection" style={{left: pos(sel.a), width: Math.max(2, pos(sel.b) - pos(sel.a))}} />
+                )}
                 {session.disagreement.get(o.id)?.flagged.map(f => (
                   <button
                     key={`flag-${f}`}

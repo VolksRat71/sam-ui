@@ -1,5 +1,5 @@
 /**
- * @generated SignedSource<<276bb35960a6bc79dd9ba30efb92ec78>>
+ * @generated SignedSource<<7b3055084b2d7c7e9ba558a067e206c3>>
  * @lightSyntaxTransform
  * @nogrep
  */
@@ -8,12 +8,19 @@
 /* eslint-disable */
 // @ts-nocheck
 
-import { ConcreteRequest, Query } from 'relay-runtime';
-export type StudioSessionObjectTracksQuery$variables = {
+import { ConcreteRequest, Mutation } from 'relay-runtime';
+export type SetObjectRangeInput = {
+  end: number;
+  objectId: number;
   sessionId: string;
+  start: number;
+  state?: string | null | undefined;
 };
-export type StudioSessionObjectTracksQuery$data = {
-  readonly objectTracks: ReadonlyArray<{
+export type StudioSessionSetRangeMutation$variables = {
+  input: SetObjectRangeInput;
+};
+export type StudioSessionSetRangeMutation$data = {
+  readonly setObjectRange: {
     readonly frames: ReadonlyArray<number> | null | undefined;
     readonly nFrames: number;
     readonly objectId: number;
@@ -38,11 +45,11 @@ export type StudioSessionObjectTracksQuery$data = {
       readonly nFrames: number;
       readonly state: string;
     }>;
-  }>;
+  };
 };
-export type StudioSessionObjectTracksQuery = {
-  response: StudioSessionObjectTracksQuery$data;
-  variables: StudioSessionObjectTracksQuery$variables;
+export type StudioSessionSetRangeMutation = {
+  response: StudioSessionSetRangeMutation$data;
+  variables: StudioSessionSetRangeMutation$variables;
 };
 
 const node: ConcreteRequest = (function(){
@@ -50,7 +57,7 @@ var v0 = [
   {
     "defaultValue": null,
     "kind": "LocalArgument",
-    "name": "sessionId"
+    "name": "input"
   }
 ],
 v1 = {
@@ -80,14 +87,14 @@ v4 = [
     "args": [
       {
         "kind": "Variable",
-        "name": "sessionId",
-        "variableName": "sessionId"
+        "name": "input",
+        "variableName": "input"
       }
     ],
     "concreteType": "ObjectTrack",
     "kind": "LinkedField",
-    "name": "objectTracks",
-    "plural": true,
+    "name": "setObjectRange",
+    "plural": false,
     "selections": [
       {
         "alias": null,
@@ -212,29 +219,29 @@ return {
     "argumentDefinitions": (v0/*: any*/),
     "kind": "Fragment",
     "metadata": null,
-    "name": "StudioSessionObjectTracksQuery",
+    "name": "StudioSessionSetRangeMutation",
     "selections": (v4/*: any*/),
-    "type": "Query",
+    "type": "Mutation",
     "abstractKey": null
   },
   "kind": "Request",
   "operation": {
     "argumentDefinitions": (v0/*: any*/),
     "kind": "Operation",
-    "name": "StudioSessionObjectTracksQuery",
+    "name": "StudioSessionSetRangeMutation",
     "selections": (v4/*: any*/)
   },
   "params": {
-    "cacheID": "82dd0870e078043faf69229af6b78305",
+    "cacheID": "08cc59790aa61d39edda6da966a71dd5",
     "id": null,
     "metadata": {},
-    "name": "StudioSessionObjectTracksQuery",
-    "operationKind": "query",
-    "text": "query StudioSessionObjectTracksQuery(\n  $sessionId: String!\n) {\n  objectTracks(sessionId: $sessionId) {\n    objectId\n    state\n    frames\n    nFrames\n    seeds {\n      frameIndex\n      points\n      labels\n      mask {\n        size\n        counts\n      }\n    }\n    tracks {\n      engine\n      state\n      frames\n      nFrames\n    }\n    ranges {\n      start\n      end\n      state\n    }\n  }\n}\n"
+    "name": "StudioSessionSetRangeMutation",
+    "operationKind": "mutation",
+    "text": "mutation StudioSessionSetRangeMutation(\n  $input: SetObjectRangeInput!\n) {\n  setObjectRange(input: $input) {\n    objectId\n    state\n    frames\n    nFrames\n    seeds {\n      frameIndex\n      points\n      labels\n      mask {\n        size\n        counts\n      }\n    }\n    tracks {\n      engine\n      state\n      frames\n      nFrames\n    }\n    ranges {\n      start\n      end\n      state\n    }\n  }\n}\n"
   }
 };
 })();
 
-(node as any).hash = "81b74d0355cc08e44c8099ce68502a79";
+(node as any).hash = "38284d4cbef5cdfe01103e6d0fc6e5e8";
 
 export default node;

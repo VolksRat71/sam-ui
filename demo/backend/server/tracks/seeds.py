@@ -10,6 +10,10 @@ Points are normalised to 0-1, as the demo's addPoints mutation sends them.
 An optional <obj_id>/object.json holds metadata ({"name": ...}); it is kept
 apart from seeds.json so a rename never changes the seeds hash (tracks stay
 as they were). Objects stored before names existed have none.
+An optional <obj_id>/ranges.json holds the object's frame ranges
+({"ranges": [{"start", "end", "state"}]}, see tracks/ranges.py). Unlike the
+name, ranges change what a track job does, so they join the seeds hash; an
+object without any keeps the hash it had before ranges existed.
 
 A seed frame's "mask" is the mask the user approved there: the result of their
 last click on that frame. Track jobs condition on it (not on replayed clicks),
@@ -22,14 +26,14 @@ import json
 import os
 import shutil
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, Iterable, List, Optional
+
+from tracks import ranges as rng
 
 Seeds = Dict[int, Dict[str, list]]
 
 
-def seeds_hash(seeds: Seeds) -> str:
-    """sha256 of the seeds as canonical JSON: independent of dict order, and
-    changed by any point, label or frame."""
+def _canon(seeds: Seeds) -> Dict:
     canon = {}
     for f, v in seeds.items():
         if not v["points"]:
@@ -38,8 +42,29 @@ def seeds_hash(seeds: Seeds) -> str:
         if v.get("mask"):  # only when present: seeds stored before masks keep their hash
             c["mask"] = v["mask"]["counts"]
         canon[str(int(f))] = c
-    blob = json.dumps(canon, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(blob.encode()).hexdigest()
+    return canon
+
+
+def _sha(canon) -> str:
+    return hashlib.sha256(json.dumps(canon, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def seeds_hash(seeds: Seeds, ranges: Optional[Iterable[Dict]] = None) -> str:
+    """sha256 of the seeds (and the object's ranges) as canonical JSON:
+    independent of dict order, and changed by any point, label, frame or
+    range. Ranges join only when there are some, so objects without any keep
+    the hash they had before ranges existed (and their tracks stay tracked)."""
+    canon = _canon(seeds)
+    ranges = rng.normalize(ranges or [])
+    if ranges:  # frame keys are digits, so this key never collides with one
+        canon["ranges"] = [[r["start"], r["end"], r["state"]] for r in ranges]
+    return _sha(canon)
+
+
+def window_key(window: "rng.Window", seeds: Seeds) -> str:
+    """What one window of a track was made from: its bounds and its own seeds.
+    Equal keys mean equal inputs, so a re-track may keep that window's masks."""
+    return _sha({"window": [window[0], window[1]], "seeds": _canon(seeds)})
 
 
 def video_key(path: str) -> str:
@@ -75,8 +100,9 @@ class SeedStore:
         d = self.root / video
         if not d.is_dir():
             return []
+        # an object with ranges and no clicks yet is listed too, so its ranges show
         return sorted(int(p.name) for p in d.iterdir()
-                      if p.name.isdigit() and (p / "seeds.json").exists())
+                      if p.name.isdigit() and ((p / "seeds.json").exists() or (p / "ranges.json").exists()))
 
     def _save(self, video: str, obj_id: int, seeds: Seeds) -> None:
         p = self._path(video, obj_id)
@@ -147,6 +173,32 @@ class SeedStore:
         _write_json_atomic(p, {"name": name})
         return name
 
+    # -- ranges ------------------------------------------------------------------
+    def _ranges_path(self, video: str, obj_id: int) -> Path:
+        return self.root / video / str(int(obj_id)) / "ranges.json"
+
+    def ranges(self, video: str, obj_id: int) -> List[Dict]:
+        p = self._ranges_path(video, obj_id)
+        if not p.exists():
+            return []
+        return rng.normalize(json.loads(p.read_text()).get("ranges", []))
+
+    def set_ranges(self, video: str, obj_id: int, ranges: Iterable[Dict]) -> List[Dict]:
+        """Replace the object's ranges (validated and merged). None left: the
+        file goes, so the object is exactly as it was before it had any."""
+        ranges = rng.normalize(ranges)
+        p = self._ranges_path(video, obj_id)
+        if not ranges:
+            p.unlink(missing_ok=True)
+            return []
+        p.parent.mkdir(parents=True, exist_ok=True)
+        _write_json_atomic(p, {"ranges": ranges})
+        return ranges
+
+    def paint_range(self, video: str, obj_id: int, start: int, end: int, state: Optional[str]) -> List[Dict]:
+        """Set frames start-end to `state` ("absent"), or clear them (None)."""
+        return self.set_ranges(video, obj_id, rng.paint(self.ranges(video, obj_id), start, end, state))
+
     def hash(self, video: str, obj_id: int) -> Optional[str]:
         seeds = self.seeds(video, obj_id)
-        return seeds_hash(seeds) if seeds else None
+        return seeds_hash(seeds, self.ranges(video, obj_id)) if seeds else None

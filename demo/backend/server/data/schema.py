@@ -3,6 +3,7 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 # Modified by sam-ui: objectTracks query, clearTrack mutation, startSession returns known objects.
+# Modified by sam-ui: setObjectRange mutation (absent ranges).
 
 import hashlib
 import os
@@ -37,6 +38,7 @@ from data.data_types import (
     RLEMask,
     RLEMaskForObject,
     RLEMaskListOnFrame,
+    SetObjectRangeInput,
     StartSession,
     StartSessionInput,
     Video,
@@ -178,6 +180,18 @@ class Mutation:
         inference_api: InferenceAPI = info.context["inference_api"]
         return ObjectTrack.from_info(
             inference_api.clear_track(input.session_id, input.object_id, input.engine)
+        )
+
+    @strawberry.mutation
+    def set_object_range(self, input: SetObjectRangeInput, info: strawberry.Info) -> ObjectTrack:
+        """sam-ui: mark frames start-end of an object absent (state "absent"),
+        or clear them (state null). Its tracks go stale; a re-track runs only
+        the windows the change touched."""
+        inference_api: InferenceAPI = info.context["inference_api"]
+        return ObjectTrack.from_info(
+            inference_api.set_object_range(
+                input.session_id, input.object_id, input.start, input.end, input.state
+            )
         )
 
     @strawberry.mutation
