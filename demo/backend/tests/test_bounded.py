@@ -109,7 +109,9 @@ def test_sam2_engine_runs_a_stretch_in_one_fresh_state_within_its_bounds():
         calls.append((f, reverse))
         return f in (24, 17)  # agreed there
 
-    got = list(e.track_stretch("v.mp4", Stretch(7, seeds, start=20, lo=10, hi=30, reverse=True), stop))
+    steps = list(e.track_stretch("v.mp4", Stretch(7, seeds, start=20, lo=10, hi=30, reverse=True), stop))
+    assert steps[:3] == [None] * 3  # a step after each seed: the caller may let go of the model lock
+    got = steps[3:]
     frames = [f for f, _ in got]
     assert frames == [20, 21, 22, 23, 24, 19, 18, 17]  # forward to the stop, then back from the start
     assert all(set(m) == {7} and m[7].dtype == bool for _, m in got)
@@ -117,13 +119,13 @@ def test_sam2_engine_runs_a_stretch_in_one_fresh_state_within_its_bounds():
     assert p.reset == 1
     # a hard bound ends a direction without asking
     p = _StubPredictor(n=40)
-    got = [f for f, _ in Sam2Engine(p, model="stub").track_stretch(
-        "v.mp4", Stretch(7, seeds, start=20, lo=18, hi=22, reverse=True), lambda *a: False)]
+    got = [x[0] for x in Sam2Engine(p, model="stub").track_stretch(
+        "v.mp4", Stretch(7, seeds, start=20, lo=18, hi=22, reverse=True), lambda *a: False) if x]
     assert got == [20, 21, 22, 19, 18]
     # without reverse: forward only
     p = _StubPredictor(n=40)
-    got = [f for f, _ in Sam2Engine(p, model="stub").track_stretch(
-        "v.mp4", Stretch(7, seeds, start=12, lo=0, hi=15, corrected=20), lambda *a: False)]
+    got = [x[0] for x in Sam2Engine(p, model="stub").track_stretch(
+        "v.mp4", Stretch(7, seeds, start=12, lo=0, hi=15, corrected=20), lambda *a: False) if x]
     assert got == [12, 13, 14, 15]
 
 
@@ -143,7 +145,13 @@ class _PrimingStub(_StubPredictor):
         return 0
 
     def _run_single_frame_inference(self, inference_state, output_dict, frame_idx, mask_inputs, **kw):
+        import torch
         assert tuple(mask_inputs.shape) == (1, 1, 8, 8) and kw["is_init_cond_frame"] is False
+        # upstream runs this only under inference_mode: outside it, on the CPU,
+        # the cached backbone features (inference tensors) raise "Inference
+        # tensors cannot be saved for backward", and on MPS each primed output
+        # keeps an autograd graph alive
+        assert torch.is_inference_mode_enabled()
         self.primed.append(frame_idx)
         return {"pred_masks": mask_inputs}, mask_inputs
 
@@ -153,10 +161,12 @@ def test_a_stretch_starting_mid_window_is_primed_from_the_cache():
     e = Sam2Engine(p, model="stub")
     cached = {f: rle.encode(np.ones((4, 4), bool)) for f in range(60)}
     seeds = {0: seed(), 30: seed(label=0), 22: seed()}
-    list(e.track_stretch("v.mp4", Stretch(1, seeds, start=25, lo=0, hi=27, corrected=30, cached=cached, floor=12),
-                         lambda *a: False))
+    got = list(e.track_stretch("v.mp4", Stretch(1, seeds, start=25, lo=0, hi=27, corrected=30, cached=cached,
+                                                floor=12), lambda *a: False))
     # the PRIME (16) frames before the start, never before the window (12), never a seed frame (22)
     assert p.primed == [12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 23, 24]
+    # a None step after each seed and each primed frame, so the caller can let go of the model lock
+    assert got[:15] == [None] * 15 and [f for f, _ in got[15:]] == [25, 26, 27]
     p.primed.clear()
     list(e.track_stretch("v.mp4", Stretch(1, seeds, start=22, lo=0, hi=23, cached=cached), lambda *a: False))
     assert p.primed == []  # a seed frame start has its seed
@@ -278,6 +288,47 @@ def test_a_change_that_reaches_further_back_starts_the_pass_earlier(tmp_path):
     p = meta(h)["passes"][-1]
     assert p["attempts"] == 2 and p["frames"] == [20, 84] and p["stops"] == {"forward": "agreed",
                                                                             "backward": "agreed"}
+
+
+def test_a_bounded_job_lets_go_of_the_model_lock_on_every_frame_it_holds_back(tmp_path):
+    """Lead-in frames are held back until the check passes, and a failed
+    lead-in starts again: each of those is still a step of its own (None), so
+    the job holds the model lock one frame at a time."""
+    eng = FakeEngine(n_frames=100, influence=15)
+    h = Harness(tmp_path, engine=eng)
+    h.click(1, frame=0)
+    h.track()
+    correct(h, 60)
+    log = []
+    run = eng.track_stretch
+
+    def logged(*a, **kw):
+        for item in run(*a, **kw):
+            log.append("made")
+            yield item
+
+    eng.track_stretch = logged
+    steps = []
+    for item in h.service.track(h.video, str(h.video_path), [1], n_frames=100, steps=True):
+        log.append("step")
+        steps.append(item)
+    assert "made" in log and all(not (x == y == "made") for x, y in zip(log, log[1:]))  # never two at once
+    frames = [s for s in steps if s is not None]
+    assert sorted(f for f, _ in frames) == list(range(100))  # the frames, once each, as before
+    assert steps.count(None) == len(eng.stretches[0][4]) + 10  # the failed start, and the held frames of the kept one
+    # without steps (any other caller) there are none
+    correct(h, 61)
+    assert None not in list(h.service.track(h.video, str(h.video_path), [1], n_frames=100))
+
+
+def test_the_route_never_counts_or_sends_a_step(tmp_path):
+    h = Harness(tmp_path, engine=FakeEngine(n_frames=100, influence=15))
+    h.click(1, frame=0)
+    h.track()
+    correct(h, 60)
+    total = h.service.job_frames(h.video, [1], 100)
+    _, frames = h.track()
+    assert len(frames) == total == 100 and h.closing["tracked"] == [1]
 
 
 def test_a_correction_of_the_first_seed_also_runs_back_from_it(h):
@@ -453,6 +504,7 @@ def test_real_sam2_bounded_retrack_matches_a_full_retrack(tmp_path):
     from inference.predictor import InferenceAPI
     from test_inference_api import click, start
     from tracks.bounded import mask_iou
+    from tracks.routes import _run_job
 
     truth = cross_video(tmp_path / "cross.mp4")
     dev = "mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu")
@@ -461,32 +513,36 @@ def test_real_sam2_bounded_retrack_matches_a_full_retrack(tmp_path):
     sid = start(a, str(tmp_path / "cross.mp4"))
 
     def track(full=False):
+        """A job as /track_objects runs it (routes._run_job): the lock taken
+        per step, no inference_mode around it."""
         ctx = a.track_context(sid)
-        got, t0 = {}, time.perf_counter()
-        with a.inference_lock, a.autocast_context():
-            for f, m in ctx.service.track(ctx.video, ctx.path, [1], video_handle=ctx.video_handle, n_frames=CN,
-                                          full=full):
-                assert f not in got
-                got[f] = rle.decode(m[1])
+        job = ctx.service.jobs.claim(sid, ctx.video, [1], None, "sam2")
+        t0 = time.perf_counter()
+        frames, closing = parse_all(b"".join(_run_job(ctx, job, full)))
+        assert closing["done"] and closing["tracked"] == [1], closing
+        got = {}
+        for f, m in frames:
+            assert f not in got
+            got[f] = m[1]
         return got, time.perf_counter() - t0
 
-    with torch.inference_mode():
-        y, x = cross_obj(0)
-        click(a, sid, 1, 0, [[(x + CS / 2) / CW, (y + CS / 2) / CH]], [1])
-        old, _ = track()
-        extra = {f: int((old[f] & ~truth[f]).sum()) for f in range(CN)}
-        c = max(extra, key=extra.get)
-        if extra[c] > 50:  # cut the look-alike away where the track holds most of it
-            ys, xs = np.nonzero(old[c] & ~truth[c])
-            click(a, sid, 1, c, [[(xs.mean() + .5) / CW, (ys.mean() + .5) / CH]], [0])
-        else:  # a clean track: refine mid-clip
-            c = CN // 2
-            y, x = cross_obj(c)
-            click(a, sid, 1, c, [[(x + CS / 2) / CW, (y + CS / 2) / CH]], [1])
-        bnd, t_b = track()
-        video = a.track_context(sid).video
-        prov = a.tracks.provenance(video, 1)
-        full, t_f = track(full=True)
+    assert not torch.is_inference_mode_enabled()  # as in a job: the engine must bring its own
+    y, x = cross_obj(0)
+    click(a, sid, 1, 0, [[(x + CS / 2) / CW, (y + CS / 2) / CH]], [1])
+    old, _ = track()
+    extra = {f: int((old[f] & ~truth[f]).sum()) for f in range(CN)}
+    c = max(extra, key=extra.get)
+    if extra[c] > 50:  # cut the look-alike away where the track holds most of it
+        ys, xs = np.nonzero(old[c] & ~truth[c])
+        click(a, sid, 1, c, [[(xs.mean() + .5) / CW, (ys.mean() + .5) / CH]], [0])
+    else:  # a clean track: refine mid-clip
+        c = CN // 2
+        y, x = cross_obj(c)
+        click(a, sid, 1, c, [[(x + CS / 2) / CW, (y + CS / 2) / CH]], [1])
+    bnd, t_b = track()
+    video = a.track_context(sid).video
+    prov = a.tracks.provenance(video, 1)
+    full, t_f = track(full=True)
     spans = prov["bounded"]
     inside = {f for s, e in spans for f in range(s, e + 1)}
     v = [mask_iou(bnd[f], full[f]) for f in range(CN)]

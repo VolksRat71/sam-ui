@@ -39,8 +39,9 @@ side after a far-side click. /export must write empty mattes for the gap.
 Bounded: a red square crosses a look-alike mid-clip (160 frames). One negative
 click on the frame where the cached track holds most of the look-alike must
 re-track a bounded stretch (Objects-Bounded, /track_provenance), stream every
-frame once, and match a full re-track of the same seeds (full: true) within
-BOUNDED_MIN_IOU on every frame. It prints frames re-tracked, both wall times
+frame once, answer clicks on another object within 2 s while it runs, and
+match a full re-track of the same seeds (full: true) within BOUNDED_MIN_IOU
+on every frame and BOUNDED_MEAN_IOU on average. It prints frames re-tracked, both wall times
 and the IoU against the full re-track.
 """
 import argparse
@@ -432,9 +433,27 @@ def bounded_retrack():
         y, x = cross_obj(c)
         add(c, [(x + CS / 2) / W, (y + CS / 2) / H], 1)
         what = f"a refining click on frame {c} (the track held no look-alike)"
-    _, frames, t_b = post_stream("/track_objects", {"session_id": sid})
+    import threading
+    box, waits = {}, []
+
+    def run():
+        box["r"] = post_stream("/track_objects", {"session_id": sid})
+
+    job = threading.Thread(target=run)
+    job.start()
+    while job.is_alive():  # clicks on another object while the bounded job runs: its lead-in and priming too
+        t1 = time.time()
+        gql('mutation($i: AddPointsInput!) { addPoints(input: $i) { frameIndex } }',
+            {"i": {"sessionId": sid, "frameIndex": 0, "objectId": 1, "clearOldPoints": True, "labels": [1],
+                   "points": [[0.9, 0.1]]}})
+        waits.append(time.time() - t1)
+        time.sleep(0.5)
+    job.join()
+    _, frames, t_b = box["r"]
     head = HEADERS.get("Objects-Bounded")
     check(head == "0", f"after {what}, the job re-tracks object 0 in a bounded pass ({t_b:.1f} s)")
+    check(max(waits) < 2.0, f"{len(waits)} clicks during it answered in at most {max(waits):.2f} s "
+                            f"(median {sorted(waits)[len(waits) // 2]:.2f} s)")
     bnd = {f: m[0] for f, m in frames}
     check(len(frames) == CN and sorted(bnd) == list(range(CN)), "and streams every frame once")
     prov = json.load(urllib.request.urlopen(urllib.request.Request(

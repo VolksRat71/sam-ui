@@ -356,7 +356,7 @@ class TrackService:
 
     def track(self, video: str, path: str, obj_ids: List[int], video_handle: Optional[Any] = None,
               result: Optional[JobResult] = None, engine: Optional[str] = None,
-              n_frames: Optional[int] = None, full: bool = False) -> Iterator[FrameRle]:
+              n_frames: Optional[int] = None, full: bool = False, steps: bool = False) -> Iterator[Optional[FrameRle]]:
         """Run `engine` on obj_ids and yield each frame's RLE masks. Each track
         is cached only once the whole job finishes: a cancelled job (the
         consumer stops iterating) caches nothing. The seeds hash is taken at the
@@ -369,7 +369,13 @@ class TrackService:
         with no seed, or kept from the stale track) follow, merged per frame.
         `n_frames` is the clip's length; without it the session's video handle
         or the engine says, else the frames seen. `full` re-tracks every
-        window whole, keeping nothing from a stale track."""
+        window whole, keeping nothing from a stale track.
+
+        With `steps`, a bounded pass also yields None between frames it holds
+        back or throws away (its lead-in, a failed start, the seeding and
+        priming of its state): steps with no frame, so a caller that takes
+        the model lock per item (routes._run_job) holds it one frame at a
+        time. Without, those are skipped."""
         result = result if result is not None else JobResult()
         e = self.get_engine(engine)
         n = n_frames or _handle_frames(video_handle) or getattr(e, "n_frames", None)
@@ -393,7 +399,9 @@ class TrackService:
                 yield frame, enc
         for o, p in plans.items():
             for w, b in p.bounded.items():
-                yield from self._bounded(e, path, video_handle, o, p, w, b, n, frames[o], prov[o])
+                for item in self._bounded(e, path, video_handle, o, p, w, b, n, frames[o], prov[o]):
+                    if item is not None or steps:
+                        yield item
         if n is None:
             n = 1 + max([f for fs in frames.values() for f in fs] +
                         [f for p in plans.values() for got in p.reuse.values() for f in got] or [-1])
@@ -426,11 +434,12 @@ class TrackService:
 
     @staticmethod
     def _bounded(e: Engine, path: str, video_handle, o: int, p: _ObjectPlan, w: Window, b: _Bounded, n: int,
-                 frames: Dict[int, Dict], prov: Provenance) -> Iterator[FrameRle]:
+                 frames: Dict[int, Dict], prov: Provenance) -> Iterator[Optional[FrameRle]]:
         """One window's bounded passes, one per corrected frame in order, then
         the window's other frames from the cache (tracks/bounded.py has the
         algorithm). A pass that fails its lead-in check is dropped before any
-        of its frames is sent, so every frame still goes out once."""
+        of its frames is sent, so every frame still goes out once. Each
+        engine step that sends nothing yields None (see track's `steps`)."""
         span = window_frames(w, n)
         first_seed = min(b.seeds)
         made = set()
@@ -450,13 +459,19 @@ class TrackService:
                                   cached=ChainMap(frames, b.old), floor=span[0])
                 stop = Agreement(b.old, start, c, check=0 if at_anchor else bnd.AGREE_RUN)
                 held, ran = [], []
-                for f, masks in e.track_stretch(path, stretch, stop, video_handle=video_handle):
+                for item in e.track_stretch(path, stretch, stop, video_handle=video_handle):
+                    if item is None:  # seeding or priming: no frame yet
+                        yield None
+                        continue
                     if stop.failed:
+                        yield None  # the failed frame was a step too; the next start follows
                         break
+                    f, masks = item
                     r = rle.encode(masks[o])
                     ran.append((f, r))
                     if f < start + stop.check:  # held until the lead-in check has passed
                         held.append((f, r))
+                        yield None
                         continue
                     for hf, hr in held:
                         yield hf, {o: hr}

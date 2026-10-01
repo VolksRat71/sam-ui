@@ -95,13 +95,14 @@ def _n_frames(handle) -> Optional[int]:
 
 
 def _run_job(ctx: TrackContext, job: Job, full: bool = False) -> Iterator[bytes]:
-    """Stream one job. The model lock is held per step (one frame, or the
-    seeding before the first one), never across a yield to the client."""
+    """Stream one job. The model lock is held per step (one frame, the
+    seeding before the first one, or a bounded pass's frame it holds back),
+    never across a yield to the client."""
     service, result = ctx.service, JobResult()
     try:
         with ctx.autocast():
             it = service.track(ctx.video, ctx.path, job.objects, video_handle=ctx.video_handle, result=result,
-                               engine=job.engine, n_frames=_n_frames(ctx.video_handle), full=full)
+                               engine=job.engine, n_frames=_n_frames(ctx.video_handle), full=full, steps=True)
             try:
                 while True:
                     if job.canceled:
@@ -110,9 +111,12 @@ def _run_job(ctx: TrackContext, job: Job, full: bool = False) -> Iterator[bytes]
                         return
                     with ctx.lock:
                         try:
-                            frame, masks = next(it)
+                            item = next(it)
                         except StopIteration:
                             break
+                    if item is None:  # a step with no frame: the lock was let go, nothing to send
+                        continue
+                    frame, masks = item
                     job.frames_done += 1
                     yield part(frame, masks)
             except Exception as err:

@@ -185,7 +185,11 @@ class Sam2Engine:
         reaching it (prime_from_cache). Without that the pass would start from
         the seeds alone, which no frame of a full pass ever does mid-window.
         One object per state, so the MPS trap of objects first seeded on
-        different frames (see track) cannot arise."""
+        different frames (see track) cannot arise.
+
+        It also yields None, a step with no frame, after each seed and each
+        primed frame: a point where the caller may let go of the model lock,
+        which it otherwise holds from one yield to the next."""
         o, start = stretch.obj_id, stretch.start
         with self.autocast():
             if video_handle is not None:
@@ -195,8 +199,10 @@ class Sam2Engine:
             try:
                 for frame in sorted(stretch.seeds):
                     seed_into_state(self.predictor, state, o, frame, stretch.seeds[frame])
+                    yield None
                 if self.prime and stretch.cached and start not in stretch.seeds:
-                    prime_from_cache(self.predictor, state, o, stretch, self.prime)
+                    for _ in prime_from_cache(self.predictor, state, o, stretch, self.prime):
+                        yield None
                 limits = {False: stretch.hi - start, True: start - stretch.lo}
                 for reverse in ((False, True) if stretch.reverse else (False,)):
                     if reverse and limits[True] <= 0:
@@ -226,33 +232,37 @@ def groups_by_first_seed(objects: Dict[int, Seeds]) -> List[Dict[int, Seeds]]:
     return [by[f] for f in sorted(by)]
 
 
-def prime_from_cache(predictor, state, obj_id: int, stretch: Stretch, n: int) -> int:
+def prime_from_cache(predictor, state, obj_id: int, stretch: Stretch, n: int) -> Iterator[int]:
     """Give a bounded pass the memory a full pass would have on reaching
     stretch.start: the cached masks of the `n` frames before it (never before
     stretch.floor, never a seed frame) become non-conditioning outputs, made
     by SAM 2 from each mask as a mask prompt (the frame's object pointer
     included) and encoded by its memory encoder, as add_new_mask's frames
-    are. Returns how many frames were primed."""
+    are. Yields each frame once it is primed.
+
+    Under torch.inference_mode, as upstream runs every caller of
+    _run_single_frame_inference: a job is not inside one (autocast is a no-op
+    off CUDA), and outside it the CPU refuses the cached backbone features
+    (inference tensors) and MPS keeps an autograd graph per primed frame."""
     import torch
 
     obj_idx = predictor._obj_id_to_idx(state, obj_id)
     out_dict = state["output_dict_per_obj"][obj_idx]
-    done = 0
     for f in range(max(stretch.floor, stretch.start - n), stretch.start):
         if f in stretch.seeds or f not in stretch.cached:
             continue
-        m = torch.from_numpy(rle.decode(stretch.cached[f]))[None, None].float().to(state["device"])
-        size = predictor.image_size
-        if tuple(m.shape[-2:]) != (size, size):  # as add_new_mask resizes it
-            m = torch.nn.functional.interpolate(m, size=(size, size), align_corners=False, mode="bilinear",
-                                                antialias=True)
-            m = (m >= 0.5).float()
-        out, _ = predictor._run_single_frame_inference(
-            inference_state=state, output_dict=out_dict, frame_idx=f, batch_size=1, is_init_cond_frame=False,
-            point_inputs=None, mask_inputs=m, reverse=False, run_mem_encoder=True)
-        out_dict["non_cond_frame_outputs"][f] = out
-        done += 1
-    return done
+        with torch.inference_mode():  # per frame: never held across the yield
+            m = torch.from_numpy(rle.decode(stretch.cached[f]))[None, None].float().to(state["device"])
+            size = predictor.image_size
+            if tuple(m.shape[-2:]) != (size, size):  # as add_new_mask resizes it
+                m = torch.nn.functional.interpolate(m, size=(size, size), align_corners=False, mode="bilinear",
+                                                    antialias=True)
+                m = (m >= 0.5).float()
+            out, _ = predictor._run_single_frame_inference(
+                inference_state=state, output_dict=out_dict, frame_idx=f, batch_size=1, is_init_cond_frame=False,
+                point_inputs=None, mask_inputs=m, reverse=False, run_mem_encoder=True)
+            out_dict["non_cond_frame_outputs"][f] = out
+        yield f
 
 
 def seed_into_state(predictor, state, obj_id: int, frame: int, seed: Dict) -> None:
