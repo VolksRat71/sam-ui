@@ -13,16 +13,24 @@ windows. A job tracks each window with a seed on its own, and stores every
 other frame as an empty mask, so a track always covers the whole clip. A
 stale track keeps the windows whose inputs did not change (window_key): only
 the windows a range or seed edit touched run again.
+
+Inside a window a seed edit touched, a correction re-tracks only the stretch
+it changes (issue #19, tracks/bounded.py): a bounded pass from the corrected
+frame outward, until the new masks rejoin the cached track, merged into the
+cached frames. track.json records which pass made each frame.
 """
 import logging
 import os
 import time
+from collections import ChainMap
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
 import numpy as np
 
+from tracks import bounded as bnd
 from tracks import rle
+from tracks.bounded import Agreement, Provenance, Stretch, mask_iou
 from tracks.engine import WHOLE, Engine, Windows
 from tracks.jobs import TRACKING, JobRegistry
 from tracks.ranges import Window, absent_at, seeded_windows, window_frames
@@ -58,9 +66,19 @@ class UnknownEngine(ValueError):
 
 
 @dataclass
+class _Bounded:
+    """A window re-tracked in bounded passes, one per corrected frame."""
+
+    changed: List[int]  # the new or edited seed frames, in order
+    seeds: Seeds  # every seed of the window: each pass conditions on them all
+    old: Dict[int, Dict]  # the stale track's frames of the window {frame: rle}
+
+
+@dataclass
 class _ObjectPlan:
     """What a job does with one object: its seeded windows (with their keys),
-    the ones the engine must run, and the ones kept from the stale track."""
+    the ones the engine must run whole, the ones kept from the stale track, and
+    the ones re-tracked in bounded passes."""
 
     seeds: Seeds
     ranges: List[Dict]
@@ -68,6 +86,8 @@ class _ObjectPlan:
     windows: List[Tuple[Window, str]]
     compute: List[Window]
     reuse: Dict[Window, Dict[int, Dict]]  # window -> {frame: rle} from the old track
+    bounded: Dict[Window, _Bounded] = field(default_factory=dict)
+    meta: Optional[Dict] = None  # the old track's track.json
 
     def covered(self, frame: int) -> bool:
         return any(w[0] <= frame and (w[1] is None or frame <= w[1]) for w, _ in self.windows)
@@ -236,7 +256,8 @@ class TrackService:
         return self.object_info(video, obj_id)
 
     # -- jobs ------------------------------------------------------------------
-    def _plan(self, video: str, e: Engine, obj_ids: List[int], n: Optional[int]) -> Dict[int, _ObjectPlan]:
+    def _plan(self, video: str, e: Engine, obj_ids: List[int], n: Optional[int],
+              full: bool = False) -> Dict[int, _ObjectPlan]:
         plans = {}
         for o in obj_ids:
             seeds = self.seeds.seeds(video, o)
@@ -244,31 +265,48 @@ class TrackService:
                 continue
             ranges = self.seeds.ranges(video, o)
             h = seeds_hash(seeds, ranges)
-            wins = [(w, window_key(w, mine)) for w, mine in seeded_windows(seeds, ranges)]
-            reuse = self._reusable(video, o, e, h, wins, n)
-            plans[o] = _ObjectPlan(seeds, ranges, h, wins, [w for w, _ in wins if w not in reuse], reuse)
+            seeded = seeded_windows(seeds, ranges)
+            wins = [(w, window_key(w, mine)) for w, mine in seeded]
+            meta = self.tracks.meta(video, o, e.name)
+            reuse, bounded = ({}, {}) if full else self._from_stale(video, o, e, h, meta, seeds, seeded, wins, n)
+            compute = [w for w, _ in wins if w not in reuse and w not in bounded]
+            plans[o] = _ObjectPlan(seeds, ranges, h, wins, compute, reuse, bounded, meta)
         return plans
 
-    def _reusable(self, video: str, o: int, e: Engine, h: str, wins: List[Tuple[Window, str]],
-                  n: Optional[int]) -> Dict[Window, Dict[int, Dict]]:
-        """The windows of a STALE track whose inputs are unchanged, with their
-        masks. A tracked object asked for again is re-run whole, and so is
-        every track from before windows (it has no window keys)."""
-        meta = self.tracks.meta(video, o, e.name)
+    def _from_stale(self, video: str, o: int, e: Engine, h: str, meta: Optional[Dict], seeds: Seeds,
+                    seeded: List[Tuple[Window, Seeds]], wins: List[Tuple[Window, str]],
+                    n: Optional[int]) -> Tuple[Dict[Window, Dict[int, Dict]], Dict[Window, _Bounded]]:
+        """What a STALE track still gives: the windows whose inputs are
+        unchanged, with their masks, and the windows a correction touched that
+        a bounded pass can re-track (tracks/bounded.py says when one cannot).
+        A tracked object asked for again is re-run whole, and so is every
+        track from before windows (it has no window keys)."""
         if n is None or meta is None or meta["model"] != e.model or meta["seeds_hash"] == h:
-            return {}
-        old = {seg["key"] for seg in meta.get("windows") or []}
-        keep = [w for w, k in wins if k in old]
-        if not keep:
-            return {}
+            return {}, {}
+        old_keys = {seg["key"] for seg in meta.get("windows") or []}
+        keep = [w for w, k in wins if k in old_keys]
+        touched: Dict[Window, List[int]] = {}
+        if callable(getattr(e, "track_stretch", None)) and meta.get("seed_keys") is not None:
+            old_bounds = {(seg["start"], seg["end"]) for seg in meta.get("windows") or []}
+            for w, k in wins:
+                if k not in old_keys and w in old_bounds:
+                    changed = bnd.changed_frames(meta["seed_keys"], seeds, w)
+                    if changed:
+                        touched[w] = changed
+        if not keep and not touched:
+            return {}, {}
+        wanted = set(keep) | set(touched)
         frames = {f: r for f, r in self.tracks.masks(video, o, e.name)
-                  if any(f in window_frames(w, n) for w in keep)}
-        out = {}
-        for w in keep:
+                  if any(f in window_frames(w, n) for w in wanted)}
+        whole = {}
+        for w in wanted:
             got = {f: frames[f] for f in window_frames(w, n) if f in frames}
             if len(got) == len(window_frames(w, n)):  # all of it, or run it again
-                out[w] = got
-        return out
+                whole[w] = got
+        mine = dict(seeded)
+        reuse = {w: whole[w] for w in keep if w in whole}
+        bounded = {w: _Bounded(touched[w], mine[w], whole[w]) for w in touched if w in whole}
+        return reuse, bounded
 
     @staticmethod
     def _engine_windows(plans: Dict[int, _ObjectPlan]) -> Optional[Windows]:
@@ -277,12 +315,30 @@ class TrackService:
         wins = {o: p.compute for o, p in plans.items() if p.compute}
         return None if all(w == [WHOLE] for w in wins.values()) else wins
 
-    def job_frames(self, video: str, obj_ids: List[int], n_frames: int, engine: Optional[str] = None) -> int:
+    def job_frames(self, video: str, obj_ids: List[int], n_frames: int, engine: Optional[str] = None,
+                   full: bool = False) -> int:
         """How many frames a job over obj_ids streams, for its progress total:
-        each engine pass's window, plus the frames sent from the cache or as
-        empty (absent, or in a window with no seed)."""
+        each engine pass's window, each bounded window's frames (every one is
+        sent once, re-tracked or kept), plus the frames sent from the cache or
+        as empty (absent, or in a window with no seed)."""
+        return self.job_outline(video, obj_ids, n_frames, engine, full)["frames"]
+
+    def bounded_objects(self, video: str, obj_ids: List[int], n_frames: Optional[int],
+                        engine: Optional[str] = None, full: bool = False) -> List[int]:
+        """The objects a job over obj_ids re-tracks, at least in part, in
+        bounded passes (for the studio's progress chip)."""
+        return self.job_outline(video, obj_ids, n_frames, engine, full)["bounded"]
+
+    def job_outline(self, video: str, obj_ids: List[int], n_frames: Optional[int], engine: Optional[str] = None,
+                    full: bool = False) -> Dict:
+        """{"frames": job_frames, "bounded": bounded_objects}, planned once."""
         e = self.get_engine(engine)
-        plans = self._plan(video, e, obj_ids, n_frames)
+        # the clip's length as track() finds it, so both plan alike; the total
+        # stays unknown (None) when the caller cannot say it
+        plans = self._plan(video, e, obj_ids, n_frames or getattr(e, "n_frames", None), full)
+        bounded = sorted(o for o, p in plans.items() if p.bounded)
+        if not n_frames:
+            return {"frames": n_frames, "bounded": bounded}
         run = {o: p.seeds for o, p in plans.items() if p.compute}
         wins = self._engine_windows(plans)
         plan = getattr(e, "plan", None)  # an engine that does not say runs the clip once
@@ -295,29 +351,40 @@ class TrackService:
         filled = sum(1 for f in range(n_frames)
                      if any(not p.covered(f) or any(w[0] <= f and (w[1] is None or f <= w[1]) for w in p.reuse)
                             for p in plans.values()))
-        return computed + filled
+        in_bounded = sum(len(window_frames(w, n_frames)) for p in plans.values() for w in p.bounded)
+        return {"frames": computed + in_bounded + filled, "bounded": bounded}
 
     def track(self, video: str, path: str, obj_ids: List[int], video_handle: Optional[Any] = None,
               result: Optional[JobResult] = None, engine: Optional[str] = None,
-              n_frames: Optional[int] = None) -> Iterator[FrameRle]:
+              n_frames: Optional[int] = None, full: bool = False, steps: bool = False) -> Iterator[Optional[FrameRle]]:
         """Run `engine` on obj_ids and yield each frame's RLE masks. Each track
         is cached only once the whole job finishes: a cancelled job (the
         consumer stops iterating) caches nothing. The seeds hash is taken at the
         start, so seeds edited mid-job leave the track stale. `result` is filled
         in with what was tracked and what failed to save.
 
-        The engine runs only the windows that need it. The frames it does not
-        run (absent, in a window with no seed, or kept from the stale track)
-        follow, merged per frame. `n_frames` is the clip's length; without it
-        the session's video handle or the engine says, else the frames seen."""
+        The engine runs only the windows that need it, whole, then each
+        bounded window's passes, each object's followed by the rest of that
+        window from the cache. The frames no pass runs (absent, in a window
+        with no seed, or kept from the stale track) follow, merged per frame.
+        `n_frames` is the clip's length; without it the session's video handle
+        or the engine says, else the frames seen. `full` re-tracks every
+        window whole, keeping nothing from a stale track.
+
+        With `steps`, a bounded pass also yields None between frames it holds
+        back or throws away (its lead-in, a failed start, the seeding and
+        priming of its state): steps with no frame, so a caller that takes
+        the model lock per item (routes._run_job) holds it one frame at a
+        time. Without, those are skipped."""
         result = result if result is not None else JobResult()
         e = self.get_engine(engine)
         n = n_frames or _handle_frames(video_handle) or getattr(e, "n_frames", None)
-        plans = self._plan(video, e, obj_ids, n)
+        plans = self._plan(video, e, obj_ids, n, full)
         result.objects = sorted(plans)
         if not plans:
             return
         frames: Dict[int, Dict[int, Dict]] = {o: {} for o in plans}
+        prov = {o: Provenance(p.meta) for o, p in plans.items()}
         run = {o: p.seeds for o, p in plans.items() if p.compute}
         t0 = time.perf_counter()
         if run:
@@ -328,7 +395,13 @@ class TrackService:
                 enc = {o: rle.encode(m) for o, m in masks.items()}
                 for o, r in enc.items():
                     frames[o][frame] = r
+                    prov[o].made(frame, prov[o].full(plans[o].hash))
                 yield frame, enc
+        for o, p in plans.items():
+            for w, b in p.bounded.items():
+                for item in self._bounded(e, path, video_handle, o, p, w, b, n, frames[o], prov[o]):
+                    if item is not None or steps:
+                        yield item
         if n is None:
             n = 1 + max([f for fs in frames.values() for f in fs] +
                         [f for p in plans.values() for got in p.reuse.values() for f in got] or [-1])
@@ -340,8 +413,10 @@ class TrackService:
                 kept = next((got[f] for got in p.reuse.values() if f in got), None)
                 if kept is not None:
                     fill[o] = kept
+                    prov[o].kept(f)
                 elif not p.covered(f) and empty is not None:
                     fill[o] = empty
+                    prov[o].empty(f, p.hash)
             if fill:
                 for o, r in fill.items():
                     frames[o][f] = r
@@ -350,11 +425,75 @@ class TrackService:
         for o, p in plans.items():
             try:
                 self.tracks.save(video, o, e.name, e.model, p.hash, frames[o], elapsed,
-                                 extra={"windows": [{"start": w[0], "end": w[1], "key": k} for w, k in p.windows]})
+                                 extra={"windows": [{"start": w[0], "end": w[1], "key": k} for w, k in p.windows],
+                                        **prov[o].extra(p.seeds)})
                 result.tracked.append(o)
             except Exception as err:  # one object's failed save must not lose the others
                 logger.exception(f"saving the track of object {o} failed")
                 result.failed[o] = f"{type(err).__name__}: {err}"
+
+    @staticmethod
+    def _bounded(e: Engine, path: str, video_handle, o: int, p: _ObjectPlan, w: Window, b: _Bounded, n: int,
+                 frames: Dict[int, Dict], prov: Provenance) -> Iterator[Optional[FrameRle]]:
+        """One window's bounded passes, one per corrected frame in order, then
+        the window's other frames from the cache (tracks/bounded.py has the
+        algorithm). A pass that fails its lead-in check is dropped before any
+        of its frames is sent, so every frame still goes out once. Each
+        engine step that sends nothing yields None (see track's `steps`)."""
+        span = window_frames(w, n)
+        first_seed = min(b.seeds)
+        made = set()
+        reached = span[0] - 1  # the last frame an earlier pass in this window made
+        for i, c in enumerate(b.changed):
+            hi = b.changed[i + 1] - 1 if i + 1 < len(b.changed) else span[-1]
+            floor = reached + 1
+            anchor = max(floor, first_seed)  # no pass starts before it (c is a seed, so c >= first_seed)
+            pid = prov.bounded(p.hash, w, c, b.seeds[c])
+            lead, attempts = bnd.LEAD, 0
+            while True:
+                attempts += 1
+                start = max(c - lead, anchor)
+                at_anchor = start == anchor
+                stretch = Stretch(o, b.seeds, start, floor, hi, corrected=c,
+                                  reverse=at_anchor and start == first_seed and start > floor,
+                                  cached=ChainMap(frames, b.old), floor=span[0])
+                stop = Agreement(b.old, start, c, check=0 if at_anchor else bnd.AGREE_RUN)
+                held, ran = [], []
+                for item in e.track_stretch(path, stretch, stop, video_handle=video_handle):
+                    if item is None:  # seeding or priming: no frame yet
+                        yield None
+                        continue
+                    if stop.failed:
+                        yield None  # the failed frame was a step too; the next start follows
+                        break
+                    f, masks = item
+                    r = rle.encode(masks[o])
+                    ran.append((f, r))
+                    if f < start + stop.check:  # held until the lead-in check has passed
+                        held.append((f, r))
+                        yield None
+                        continue
+                    for hf, hr in held:
+                        yield hf, {o: hr}
+                    held = []
+                    yield f, {o: r}
+                if not stop.failed:
+                    break
+                lead *= 2  # the change reaches further back: start earlier
+            for hf, hr in held:  # a pass shorter than its lead-in check
+                yield hf, {o: hr}
+            for f, r in ran:
+                frames[f] = r
+                prov.made(f, pid)
+                made.add(f)
+            done = [f for f, _ in ran]
+            prov.finish(pid, done, stop.agreed[False], not at_anchor or stop.agreed[True], attempts)
+            reached = max(done + [c])
+        for f in span:
+            if f not in made:
+                frames[f] = b.old[f]
+                prov.kept(f)
+                yield f, {o: b.old[f]}
 
     @staticmethod
     def _mask_size(plans: Dict[int, _ObjectPlan], frames: Dict[int, Dict[int, Dict]], handle) -> Optional[List[int]]:
@@ -393,6 +532,17 @@ class TrackService:
         for frame in sorted(by_frame):
             yield frame, by_frame[frame]
 
+    def provenance(self, video: str, obj_id: int, engine: Optional[str] = None) -> Optional[Dict]:
+        """Which pass made each frame of the object's track on `engine`, or
+        None without one. A track from before provenance reads as one full pass."""
+        name = self._engine_model(engine or self.default)[0]
+        meta = self.tracks.meta(video, obj_id, name)
+        if meta is None:
+            return None
+        by_frame = bnd.frame_passes(meta)
+        return {"object_id": obj_id, "engine": name, "state": self.object_info(video, obj_id, name)["state"],
+                "passes": bnd.passes(meta), "provenance": bnd.runs(by_frame), "bounded": bnd.spans(meta)}
+
     # -- engine disagreement -----------------------------------------------------
     def disagreement(self, video: str, obj_ids: Optional[List[int]] = None, a: Optional[str] = None,
                      b: str = "sam3", threshold: float = 0.8) -> Dict:
@@ -409,12 +559,11 @@ class TrackService:
                 out["skipped"][str(o)] = {a: states.get(a), b: states.get(b)}
                 continue
             ma, mb = dict(self.tracks.masks(video, o, a)), dict(self.tracks.masks(video, o, b))
-            ious = {}
-            for f in sorted(set(ma) & set(mb)):
-                x, y = rle.decode(ma[f]), rle.decode(mb[f])
-                union = np.logical_or(x, y).sum()
-                ious[f] = 1.0 if union == 0 else float(np.logical_and(x, y).sum() / union)
+            ious = {f: mask_iou(rle.decode(ma[f]), rle.decode(mb[f])) for f in sorted(set(ma) & set(mb))}
             out["objects"][str(o)] = {"flagged": [f for f, v in ious.items() if v < threshold],
                                       "iou": {str(f): round(v, 4) for f, v in ious.items()},
-                                      "mean_iou": round(float(np.mean(list(ious.values()))), 4) if ious else None}
+                                      "mean_iou": round(float(np.mean(list(ious.values()))), 4) if ious else None,
+                                      # stretches a bounded pass made: agreement there is a strong
+                                      # signal, not a guarantee, so the review covers them too
+                                      "bounded": {x: bnd.spans(self.tracks.meta(video, o, x)) for x in (a, b)}}
         return out

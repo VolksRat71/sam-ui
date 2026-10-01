@@ -14,6 +14,7 @@ it at a scratch backend; --api is required so it never defaults to one in use.
     python tools/track_cache_e2e.py --api http://127.0.0.1:7373 --correction  # any time
     python tools/track_cache_e2e.py --api http://127.0.0.1:7373 --responsive  # any time
     python tools/track_cache_e2e.py --api http://127.0.0.1:7373 --absent      # any time
+    python tools/track_cache_e2e.py --api http://127.0.0.1:7373 --bounded     # any time
 
 Phase 1 leaves its upload for phase 2 (remembered in ~/.cache/sam-ui-e2e/),
 which deletes it. A phase 1 that finds a leftover from an earlier run deletes
@@ -35,6 +36,13 @@ frame 20, while a look-alike stands in for it. Clicked once on each side and
 marked absent 12-19 (setObjectRange), the job must stream the gap empty,
 track both sides, refuse a click inside the gap, and re-track only the far
 side after a far-side click. /export must write empty mattes for the gap.
+Bounded: a red square crosses a look-alike mid-clip (160 frames). One negative
+click on the frame where the cached track holds most of the look-alike must
+re-track a bounded stretch (Objects-Bounded, /track_provenance), stream every
+frame once, answer clicks on another object within 2 s while it runs, and
+match a full re-track of the same seeds (full: true) within BOUNDED_MIN_IOU
+on every frame and BOUNDED_MEAN_IOU on average. It prints frames re-tracked, both wall times
+and the IoU against the full re-track.
 """
 import argparse
 import json
@@ -56,6 +64,7 @@ REL = ""  # the uploaded clip's path, set by use_clip()
 WORK = Path(tempfile.gettempdir()) / "sam-ui-e2e"
 STATE = Path.home() / ".cache" / "sam-ui-e2e" / "state.json"
 OPEN_SESSIONS = []
+HEADERS = {}  # the last post_stream's response headers
 N, H, W, S = 24, 240, 320, 50
 SQUARES = {0: (20, 10, (220, 40, 40)), 1: (95, 260, (40, 60, 220)), 2: (170, 10, (40, 200, 60))}
 A, B, C = 0, 1, 2
@@ -94,6 +103,8 @@ def post_stream(route, body):
     t0 = time.time()
     r = urllib.request.urlopen(req)
     data, ids = r.read(), r.headers.get("Objects-Tracked", "")
+    HEADERS.clear()
+    HEADERS.update(r.headers.items())
     frames, pos = [], 0
     while (h := data.find(b"Content-Length: ", pos)) != -1:
         n = int(data[h + 16:data.index(b"\r\n", h)])
@@ -352,6 +363,118 @@ def absent():
         shutil.rmtree(out, ignore_errors=True)
 
 
+CN, CS = 160, 40  # the crossing clip: frames, square side
+BOUNDED_MIN_IOU, BOUNDED_MEAN_IOU = 0.8, 0.99  # bounded vs full re-track: on every frame, on average
+
+
+def cross_obj(i):
+    return 100, int(10 + (W - 60) * i / (CN - 1))
+
+
+def cross_distractor(i):
+    return int(100 + 3 * (i - CN // 2)), cross_obj(CN // 2)[1]
+
+
+def make_cross(path: Path):
+    """A red square moving right; a look-alike moving down crosses it mid-clip."""
+    import av
+    bg = np.random.default_rng().integers(90, 140, (H, W, 3), dtype=np.uint8)
+    out = av.open(str(path), "w")
+    st = out.add_stream("libx264", rate=24, options={"crf": "12"})
+    st.width, st.height, st.pix_fmt = W, H, "yuv420p"
+    for i in range(CN):
+        img = bg.copy()
+        y, x = cross_distractor(i)
+        if -CS < y < H:
+            img[max(y, 0):y + CS, x:x + CS] = (215, 45, 45)
+        y, x = cross_obj(i)
+        img[y:y + CS, x:x + CS] = (220, 40, 40)
+        for pkt in st.encode(av.VideoFrame.from_ndarray(img, format="rgb24")):
+            out.mux(pkt)
+    for pkt in st.encode():
+        out.mux(pkt)
+    out.close()
+
+
+def cross_truth(i):
+    m = np.zeros((H, W), bool)
+    y, x = cross_obj(i)
+    m[y:y + CS, x:x + CS] = True
+    return m
+
+
+def bounded_retrack():
+    use_clip(make_cross, "cross.mp4")
+    sid, _ = start()
+    gql('mutation($s: String!) { clearPointsInVideo(input: {sessionId: $s}) { success } }', {"s": sid})
+
+    def add(frame, pt, label):
+        gql('mutation($i: AddPointsInput!) { addPoints(input: $i) { frameIndex } }',
+            {"i": {"sessionId": sid, "frameIndex": frame, "objectId": 0, "clearOldPoints": True,
+                   "labels": [label], "points": [pt]}})
+
+    def iou(a, b):
+        u = (a | b).sum()
+        return 1.0 if u == 0 else float((a & b).sum() / u)
+
+    y, x = cross_obj(0)
+    add(0, [(x + CS / 2) / W, (y + CS / 2) / H], 1)
+    _, frames, t0 = post_stream("/track_objects", {"session_id": sid})
+    old = {f: m[0] for f, m in frames}
+    check(sorted(old) == list(range(CN)), f"the first track covers all {CN} frames ({t0:.1f} s)")
+    extra = {f: int((old[f] & ~cross_truth(f)).sum()) for f in range(CN)}
+    c = max(extra, key=extra.get)
+    if extra[c] > 50:  # the track holds some of the look-alike: cut it away there
+        ys, xs = np.nonzero(old[c] & ~cross_truth(c))
+        add(c, [(xs.mean() + .5) / W, (ys.mean() + .5) / H], 0)
+        what = f"a negative click on the {extra[c]} look-alike px of frame {c}"
+    else:  # a clean track: a refining click mid-clip
+        c = CN // 2
+        y, x = cross_obj(c)
+        add(c, [(x + CS / 2) / W, (y + CS / 2) / H], 1)
+        what = f"a refining click on frame {c} (the track held no look-alike)"
+    import threading
+    box, waits = {}, []
+
+    def run():
+        # object 0 only: the clicks below make object 1, which a job without ids would take too
+        box["r"] = post_stream("/track_objects", {"session_id": sid, "object_ids": [0]})
+
+    job = threading.Thread(target=run)
+    job.start()
+    while job.is_alive():  # clicks on another object while the bounded job runs: its lead-in and priming too
+        t1 = time.time()
+        gql('mutation($i: AddPointsInput!) { addPoints(input: $i) { frameIndex } }',
+            {"i": {"sessionId": sid, "frameIndex": 0, "objectId": 1, "clearOldPoints": True, "labels": [1],
+                   "points": [[0.9, 0.1]]}})
+        waits.append(time.time() - t1)
+        time.sleep(0.5)
+    job.join()
+    _, frames, t_b = box["r"]
+    head = HEADERS.get("Objects-Bounded")
+    check(head == "0", f"after {what}, the job re-tracks object 0 in a bounded pass ({t_b:.1f} s)")
+    check(max(waits) < 2.0, f"{len(waits)} clicks during it answered in at most {max(waits):.2f} s "
+                            f"(median {sorted(waits)[len(waits) // 2]:.2f} s; in order {[round(w, 2) for w in waits]})")
+    bnd = {f: m[0] for f, m in frames}
+    check(len(frames) == CN and sorted(bnd) == list(range(CN)), "and streams every frame once")
+    prov = json.load(urllib.request.urlopen(urllib.request.Request(
+        f"{API}/track_provenance", json.dumps({"session_id": sid, "object_id": 0}).encode(),
+        {"Content-Type": "application/json"})))
+    spans = prov["bounded"]
+    n_re = sum(b - a + 1 for a, b in spans)
+    check(prov["state"] == "tracked" and 0 < n_re < CN,
+          f"it re-tracked {n_re} of {CN} frames ({spans}) and the object is tracked")
+    _, frames, t_full = post_stream("/track_objects", {"session_id": sid, "object_ids": [0], "full": True})
+    full = {f: m[0] for f, m in frames}
+    check(sorted(full) == list(range(CN)), f"a full re-track of the same seeds ({t_full:.1f} s)")
+    v = [iou(bnd[f], full[f]) for f in range(CN)]
+    w = int(np.argmin(v))
+    check(min(v) > BOUNDED_MIN_IOU and np.mean(v) > BOUNDED_MEAN_IOU,
+          f"bounded vs full re-track: min IoU {min(v):.4f} (frame {w}: IoU vs the square bounded "
+          f"{iou(bnd[w], cross_truth(w)):.3f}, full {iou(full[w], cross_truth(w)):.3f}), mean {np.mean(v):.4f} "
+          f"over all {CN} frames")
+
+
 def responsive():
     import threading
     sid, _ = start()
@@ -380,11 +503,12 @@ if __name__ == "__main__":
     ap.add_argument("--correction", action="store_true")
     ap.add_argument("--responsive", action="store_true")
     ap.add_argument("--absent", action="store_true")
+    ap.add_argument("--bounded", action="store_true")
     a = ap.parse_args()
     API = a.api.rstrip("/")
-    if a.absent:
+    if a.absent or a.bounded:
         try:
-            absent()
+            absent() if a.absent else bounded_retrack()
         finally:
             cleanup(REL)
     elif a.correction or a.responsive:

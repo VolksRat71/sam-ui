@@ -80,6 +80,18 @@ Details and progress: [Platform support, #16](https://github.com/VolksRat71/sam-
   away only the region it is on, and a lone positive click adds one. (Plain SAM 2
   empties a frame whose clicks are all negative; the backend adds an anchor click
   inside the tracked mask.)
+- **Re-track only what a correction changes.** On SAM 2, a correction re-tracks a
+  stretch around the corrected frame and keeps the cached track beyond it: the pass
+  starts a little before the frame, from the cached masks there, and stops once ten
+  frames in a row agree with the cache (IoU above 0.98). On the gallery dog clip
+  (289 frames) a one-click fix on frame 148 re-tracked 31 frames in 19 s, against
+  144 s for a full re-track, and on every re-tracked frame its masks were within
+  IoU 0.987 of the full re-track's. SAM 2 lets a correction nudge distant frames too
+  (the full re-track moved frame 55 to IoU 0.936 of the old track), and the kept
+  frames stay as they were, so each track records which pass made each frame
+  (`POST /track_provenance`) and the review lists the bounded stretches. A tracked
+  object tracked again, or a job with `full: true`, re-tracks everything. SAM 3 and
+  the browser engine re-track the whole window for now.
 - **Absent ranges.** Mark a span of frames where an object is not in the shot (it
   left the frame, went behind something, or is gone after a cut). Those frames stay
   empty in the preview and in every export, the tracker never runs on them, and the
@@ -204,8 +216,8 @@ python tools/track_cache_e2e.py --api http://127.0.0.1:7373   # live backend (us
 ```
 
 `tools/track_cache_e2e.py` uploads its own synthetic clips and deletes them when it
-finishes. It also has `--after-restart`, `--correction`, `--responsive` and
-`--absent` checks.
+finishes. It also has `--after-restart`, `--correction`, `--responsive`,
+`--absent` and `--bounded` checks.
 
 ## Licences and credits
 

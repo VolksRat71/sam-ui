@@ -104,7 +104,9 @@ python3 -m http.server 7390 --bind 127.0.0.1 --directory /tmp/pages   # http://1
   yellow marker on the object's lane that seeks there when clicked; clicks on
   that frame clear it. After a correction the object's track is stale: studio
   keeps showing it, faded, until the re-track, so the other flagged frames can
-  be corrected against it.
+  be corrected against it. On SAM 2 the re-track runs only a stretch around
+  each correction and keeps the rest of the cached track; its job chip says
+  *near corrections* while it does.
 - **Absent ranges.** Drag across an object's lane to select frames, then
   *Mark absent* in the transport when the object is not in the shot there. The
   range shows as a hatched block on the lane; its frames are empty in the
