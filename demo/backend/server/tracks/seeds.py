@@ -244,6 +244,8 @@ class SeedStore:
         annotations under it without removing them; present clears absent
         there; a candidate goes under whatever is confirmed. Answers timeline()."""
         absent, notes = self.ranges(video, obj_id), self.annotations(video, obj_id)
+        if state is not None and clear is not None:
+            raise ValueError("clear picks the states to clear: it goes with no state")
         if state is None:
             clear = set(rng.STATES if clear is None else clear)
             bad = clear - set(rng.STATES)

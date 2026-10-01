@@ -900,6 +900,8 @@ export default class StudioSession {
    */
   async setRange(objectId: number, start: number, end: number, state: RangeState | null, opts: PaintOptions = {}): Promise<ServerObject> {
     const [a, b] = [Math.min(start, end), Math.max(start, end)];
+    // taken first: objectTracks() below already stores the new ranges
+    const before = this._ranges.get(objectId) ?? [];
     let result: ServerObject | undefined;
     if (this._offline != null) {
       await this._offline.setRange(this._storeKey!, objectId, a, b, state, this._variant, opts);
@@ -919,7 +921,7 @@ export default class StudioSession {
     if (result == null) {
       throw new Error(`object ${objectId} is not known`);
     }
-    await this._rangesChanged(objectId, normalizeRanges(result.ranges), a, b);
+    await this._rangesChanged(objectId, before, normalizeRanges(result.ranges), a, b);
     return result;
   }
 
@@ -950,9 +952,8 @@ export default class StudioSession {
     return result;
   }
 
-  /** The object's absent ranges are now `ranges` (a change inside frames a-b): show it. */
-  private async _rangesChanged(objectId: number, ranges: FrameRange[], a: number, b: number): Promise<void> {
-    const before = this._ranges.get(objectId) ?? [];
+  /** The object's absent ranges went from `before` to `ranges` (a change inside frames a-b): show it. */
+  private async _rangesChanged(objectId: number, before: FrameRange[], ranges: FrameRange[], a: number, b: number): Promise<void> {
     this._ranges.set(objectId, ranges);
     if (rangesKey(before) === rangesKey(ranges)) {
       return; // annotations only: no mask changes

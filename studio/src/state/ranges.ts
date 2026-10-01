@@ -313,7 +313,17 @@ export function paintTimeline(layers: Layers, start: number, end: number, state:
   checkSpan(a, b);
   const ranges = normalizeRanges(layers.ranges);
   const marks = normalizeMarks(layers.marks);
+  if (state != null && opts.clear != null) {
+    throw new Error('clear picks the states to clear: it goes with no state');
+  }
+  if ((state == null || state === ABSENT) && (opts.source != null || opts.score != null)) {
+    throw new Error(state == null ? 'clearing frames takes no source or score' : "an absent range is the user's: it takes no source or score");
+  }
   if (state == null) {
+    const bad = (opts.clear ?? []).filter(x => !RANGE_STATES.includes(x));
+    if (bad.length > 0) {
+      throw new Error(`range state must be one of ${RANGE_STATES.join(', ')}, got ${bad.join(', ')}`);
+    }
     const clear = new Set<string>(opts.clear ?? RANGE_STATES);
     return {
       ranges: clear.has(ABSENT) ? paintRange(ranges, a, b, null) : ranges,

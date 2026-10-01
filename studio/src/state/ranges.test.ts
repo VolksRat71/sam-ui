@@ -137,6 +137,10 @@ describe('candidate and confirmed ranges', () => {
     expect(paintTimeline(t, 10, 12, null, {clear: [CANDIDATE]}).marks).toEqual([c(0, 9, DOG, 0.4), p(6, 9)]);
     expect(paintTimeline(t, 0, 12, null)).toEqual({ranges: [], marks: []});
     expect(() => paintTimeline(t, 0, 1, CANDIDATE)).toThrow(/source/);
+    expect(() => paintTimeline(t, 0, 1, ABSENT, {source: DOG})).toThrow(/source/);
+    expect(() => paintTimeline(t, 0, 1, null, {score: 0.5})).toThrow(/source or score/);
+    expect(() => paintTimeline(t, 0, 1, null, {clear: ['maybe' as never]})).toThrow(/state/);
+    expect(() => paintTimeline(t, 0, 1, PRESENT, {clear: [CANDIDATE]})).toThrow(/clear/);
   });
 
   it('writes candidates in bulk, a later one winning, replace dropping the old ones', () => {

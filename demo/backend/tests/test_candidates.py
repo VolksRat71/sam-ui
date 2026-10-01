@@ -203,6 +203,8 @@ def test_bad_range_requests_are_refused_and_change_nothing(h):
         h.service.set_range(h.video, 1, 0, 3, PRESENT, source=DOG)
     with pytest.raises(ValueError):
         h.service.set_range(h.video, 1, 0, 3, None, clear=["maybe"])
+    with pytest.raises(ValueError):
+        h.service.set_range(h.video, 1, 0, 3, PRESENT, clear=[CANDIDATE])  # clear goes with no state
     assert h.service.object_info(h.video, 1)["ranges"] == []
 
 

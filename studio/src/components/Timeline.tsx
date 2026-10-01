@@ -142,6 +142,9 @@ export default function Timeline({session}: Props) {
       if (e.metaKey || e.ctrlKey || e.altKey || (target != null && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))) {
         return;
       }
+      if (document.querySelector('.modal-backdrop') != null) {
+        return; // a dialog is open: its keys are its own
+      }
       if (e.key === 'Escape') {
         setSelection(null);
         setPicked(null);
