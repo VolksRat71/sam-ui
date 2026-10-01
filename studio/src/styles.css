@@ -1732,6 +1732,38 @@ code {
   font: inherit;
 }
 
+/* the selected object's text prompt (ObjectsSection.tsx, SAM 3 only) */
+.text-prompt {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 6px 0 2px;
+}
+.text-prompt-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.text-prompt-input {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--gray-500);
+  border-radius: 4px;
+  background: var(--gray-900);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+.text-prompt-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.text-prompt .object-meta {
+  white-space: normal;
+}
+
 /* the Export menu (ExportMenu.tsx); it reuses the engine popover's panel */
 .export-menu {
   position: relative;

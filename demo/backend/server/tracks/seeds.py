@@ -24,6 +24,12 @@ live in ranges.json.
 The files above that make the seeds hash (RECORD_FILES) are the object's seed
 record: tracks/versions.py snapshots them as they are, for undo.
 
+A frame can be seeded by a text prompt instead of clicks (issue #22,
+tracks/text.py): {"points": [], "labels": [], "text": "dog", "mask": RLE}.
+Clicks on that frame later refine its mask and keep the text; clearing the
+frame drops both. The text joins the hash only where there is some, so
+objects without text keep their exact old hash (pinned in test_text.py).
+
 A seed frame's "mask" is the mask the user approved there: the result of their
 last click on that frame. Track jobs condition on it (not on replayed clicks),
 because SAM 2 reads a click as a correction only against a mask already on
@@ -38,6 +44,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
 from tracks import ranges as rng
+from tracks.text import has_prompt, normalize as normalize_text
 
 Seeds = Dict[int, Dict[str, list]]
 
@@ -45,11 +52,13 @@ Seeds = Dict[int, Dict[str, list]]
 def _canon(seeds: Seeds) -> Dict:
     canon = {}
     for f, v in seeds.items():
-        if not v["points"]:
+        if not has_prompt(v):
             continue
         c = {"points": [[float(x), float(y)] for x, y in v["points"]], "labels": [int(l) for l in v["labels"]]}
         if v.get("mask"):  # only when present: seeds stored before masks keep their hash
             c["mask"] = v["mask"]["counts"]
+        if v.get("text"):  # likewise: seeds without text keep theirs
+            c["text"] = v["text"]
         canon[str(int(f))] = c
     return canon
 
@@ -119,19 +128,32 @@ class SeedStore:
     def _save(self, video: str, obj_id: int, seeds: Seeds) -> None:
         p = self._path(video, obj_id)
         p.parent.mkdir(parents=True, exist_ok=True)
-        _write_json_atomic(p, {str(f): v for f, v in sorted(seeds.items()) if v["points"]})
+        _write_json_atomic(p, {str(f): v for f, v in sorted(seeds.items()) if has_prompt(v)})
 
     def add_points(self, video: str, obj_id: int, frame: int, points: List[List[float]],
                    labels: List[int], clear_old_points: bool, mask: Optional[Dict] = None) -> Seeds:
         """Mirror SAM 2's add_new_points_or_box: clear_old_points replaces this
         frame's points, otherwise they are appended. `mask` (RLE) is the mask
-        the click produced; it replaces the frame's approved mask."""
+        the click produced; it replaces the frame's approved mask. A text
+        prompt on the frame stays: the clicks refine the mask it made."""
         seeds = self.seeds(video, obj_id)
+        text = seeds.get(frame, {}).get("text")
         old = {"points": [], "labels": []} if clear_old_points else seeds.get(frame, {"points": [], "labels": []})
         seeds[frame] = {"points": old["points"] + [list(map(float, p)) for p in points],
                         "labels": old["labels"] + [int(l) for l in labels]}
+        if text:
+            seeds[frame]["text"] = text
         if mask is not None:
             seeds[frame]["mask"] = {"size": list(mask["size"]), "counts": mask["counts"]}
+        self._save(video, obj_id, seeds)
+        return seeds
+
+    def set_text(self, video: str, obj_id: int, frame: int, text: str, mask: Dict) -> Seeds:
+        """Seed this frame from a text prompt: the frame's clicks go, and
+        `mask` (RLE, the engine's pick for the text) is its approved mask."""
+        seeds = self.seeds(video, obj_id)
+        seeds[frame] = {"points": [], "labels": [], "text": normalize_text(text),
+                        "mask": {"size": list(mask["size"]), "counts": mask["counts"]}}
         self._save(video, obj_id, seeds)
         return seeds
 

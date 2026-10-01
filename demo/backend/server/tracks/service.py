@@ -34,6 +34,10 @@ record as stored; where a version holds a track of it, that track becomes
 current again with no job, so the object is tracked at once. Without one the
 object is stale, as after any seed change. They are refused while a job holds
 the object (ObjectBusy): the job would save over the restored track.
+
+Text prompts (issue #22, tracks/text.py): text_prompt() asks an engine that
+reads text (SAM 3) for a phrase's best instance on one frame, and stores it as
+that frame's seed. engines() says which engines read text, and why not.
 """
 import contextlib
 import logging
@@ -58,6 +62,7 @@ from tracks.seeds import Seeds, SeedStore, seeds_hash, video_key, window_key
 from tracks.store import STALE, TRACKED, TrackStore
 from tracks import versions as ver
 from tracks.versions import VersionStore
+from tracks.text import normalize as normalize_text
 
 FrameRle = Tuple[int, Dict[int, Dict]]
 logger = logging.getLogger(__name__)
@@ -81,6 +86,9 @@ class EngineSpec:
     model: str
     factory: Callable[[], Engine]
     unavailable: Callable[[], Optional[str]] = lambda: None  # a reason, or None when it can run
+    # None: the engine takes clicks only. Else why it cannot read text here,
+    # or None when it can (its engine then has segment_text).
+    text: Optional[Callable[[], Optional[str]]] = None
 
 
 class UnknownEngine(ValueError):
@@ -102,6 +110,9 @@ class _Bounded:
     changed: List[int]  # the new or edited seed frames, in order
     seeds: Seeds  # every seed of the window: each pass conditions on them all
     old: Dict[int, Dict]  # the stale track's frames of the window {frame: rle}
+
+
+CLICKS_ONLY = "this engine takes clicks only; text prompts need SAM 3"
 
 
 @dataclass
@@ -184,9 +195,41 @@ class TrackService:
         for name in self.engine_names():
             spec = self._specs.get(name)
             why = spec.unavailable() if spec and name not in self._engines else None
+            text_why = self.text_reason(name)
             out.append({"name": name, "model": self._engine_model(name)[1], "default": name == self.default,
-                        "available": why is None, "reason": why, "loaded": name in self._engines})
+                        "available": why is None, "reason": why, "loaded": self._loaded(name),
+                        "text": text_why is None, "text_reason": text_why})
         return out
+
+    def _loaded(self, name: str) -> bool:
+        """Whether engine `name` holds its model now: built, and not unloaded
+        since (SAM 3 unloads when idle, tracks/sam3_engine.py)."""
+        e = self._engines.get(name)
+        return e is not None and bool(getattr(e, "loaded", True))
+
+    def text_reason(self, name: str) -> Optional[str]:
+        """None when engine `name` can take a text prompt here, else why not.
+        Never builds the engine."""
+        spec = self._specs.get(name)
+        if spec is not None and spec.text is not None:
+            return spec.unavailable() or spec.text()
+        if spec is None and hasattr(self._engines.get(name), "segment_text"):
+            return None
+        return CLICKS_ONLY
+
+    def text_engine(self, name: Optional[str] = None) -> Engine:
+        """The engine a text prompt runs on: `name`, else the first that reads
+        text here. UnknownEngine (a 400) when it cannot."""
+        if name is None:
+            name = next((n for n in self.engine_names() if self.text_reason(n) is None), None)
+            if name is None:
+                raise UnknownEngine("no engine here reads text prompts; they need SAM 3 (Help > Set up SAM 3)")
+        else:
+            self._engine_model(name)  # unknown: its own error
+            why = self.text_reason(name)
+            if why:
+                raise UnknownEngine(f"engine {name!r} cannot take a text prompt: {why}")
+        return self.get_engine(name)
 
     def video_key(self, path: str) -> str:
         st = os.stat(path)
@@ -257,6 +300,30 @@ class TrackService:
     def remove_object(self, video: str, obj_id: int):
         self.seeds.remove_object(video, obj_id)
         self.layouts.remove_object(video, obj_id)  # out of the order and its group
+
+    def text_prompt(self, video: str, path: str, obj_id: int, frame: int, text: str,
+                    engine: Optional[str] = None) -> Dict:
+        """Seed one frame of an object from a phrase: the text engine's best
+        instance there becomes the frame's approved mask (its clicks go). A
+        phrase that matches nothing stores nothing. ValueError on no text, a
+        bad frame, or a frame inside an absent range; UnknownEngine when no
+        engine (or not `engine`) reads text. The answer has "mask" as RLE, or
+        None on a miss."""
+        text = normalize_text(text)
+        if isinstance(frame, bool) or not isinstance(frame, int) or frame < 0:
+            raise ValueError(f"frame_index must be a frame number, got {frame!r}")
+        if self.is_absent(video, obj_id, frame):
+            raise ValueError(f"frame {frame} is inside a range where object {obj_id} is marked absent; "
+                             "unmark that part of the range to prompt here")
+        e = self.text_engine(engine)
+        match = e.segment_text(path, frame, text)
+        mask = None
+        if match.mask is not None:
+            mask = rle.encode(np.asarray(match.mask, bool))
+            self.seeds.set_text(video, obj_id, frame, text, mask)
+        return {"object_id": obj_id, "frame_index": frame, "text": text, "engine": e.name,
+                "matched": mask is not None, "score": round(float(match.score), 4), "instances": int(match.instances),
+                "box": None if match.box is None else [round(float(v), 1) for v in match.box], "mask": mask}
 
     def rename_object(self, video: str, obj_id: int, name: Optional[str]) -> Optional[str]:
         """Metadata only: the seeds, their hash and every track stay as they are."""

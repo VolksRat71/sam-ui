@@ -539,7 +539,7 @@ export default function Timeline({session}: Props) {
                   <button
                     key={f}
                     className="swimlane-seed"
-                    title={`Clicks on frame ${f + 1}`}
+                    title={o.texts[f] != null ? `"${o.texts[f]}" on frame ${f + 1}` : `Clicks on frame ${f + 1}`}
                     style={{left: pos(f) - 6, background: o.color}}
                     onClick={e => {
                       e.stopPropagation();

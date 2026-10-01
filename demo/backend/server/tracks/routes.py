@@ -48,6 +48,13 @@ POST /object_layout {session_id}: {"layout": {"order", "groups"}}, the objects'
 POST /set_object_layout {session_id, layout}: store it (400 when malformed).
   Metadata only: no track goes stale and nothing joins the undo history.
   Answers {"layout"} as /object_layout would.
+POST /text_prompt {session_id, object_id, frame_index, text, engine?}: seed one
+  frame of an object from a phrase (tracks/text.py) with the first engine that
+  reads text (SAM 3), or `engine`. Answers {"object_id", "frame_index", "text",
+  "engine", "matched", "score", "instances", "box", "mask"}: the best instance's
+  mask as RLE, now the frame's approved seed, or matched false and mask null
+  when nothing matched (nothing is stored). 400 when no engine reads text, the
+  frame is absent, or there is no text.
 POST /export {session_id, out_dir, objects?, include_stale?, frames?, force?, engine?, union?, flags?}:
   write tracked objects as a rotoscoping working folder (see tracks/export.py),
   in the layout's order, with a folder per group (union: a union matte each);
@@ -67,6 +74,7 @@ from typing import Callable, Iterator, Optional
 from flask import Blueprint, Response, jsonify, request
 
 from inference.multipart import MultipartResponseBuilder
+from tracks import rle
 from tracks.export import ExportError, export
 from tracks.jobs import Job
 from tracks.layout import LayoutError
@@ -86,6 +94,9 @@ class TrackContext:
     lock: contextlib.AbstractContextManager = field(default_factory=contextlib.nullcontext)
     autocast: Callable[[], contextlib.AbstractContextManager] = contextlib.nullcontext
     video_handle: Optional[object] = None  # the session's loaded video, shared with jobs
+    # tells the interactive session of a new seed mask (obj_id, frame, HxW bool),
+    # so a click on that frame refines it; called under `lock`
+    seed_mask: Optional[Callable[[int, int, object], None]] = None
 
 
 def part(frame: int, masks) -> bytes:
@@ -272,6 +283,22 @@ def make_blueprint(resolve: Callable[[str], TrackContext], service: Optional[Tra
         except KeyError as err:
             return jsonify({"error": str(err)}), 404
         return jsonify(got)
+    @bp.route("/text_prompt", methods=["POST"])
+    def text_prompt() -> Response:
+        data = request.json
+        ctx = resolve(data["session_id"])
+        try:
+            obj = int(data["object_id"])
+            with ctx.lock, ctx.autocast():  # the model, and a consistent write of the seeds
+                out = ctx.service.text_prompt(ctx.video, ctx.path, obj, data.get("frame_index"), data.get("text"),
+                                              data.get("engine"))
+                if out["mask"] is not None and ctx.seed_mask is not None:
+                    ctx.seed_mask(obj, out["frame_index"], rle.decode(out["mask"]))
+        except UnknownEngine:
+            raise
+        except (ValueError, KeyError, TypeError) as err:
+            return jsonify({"error": str(err)}), 400
+        return jsonify(out)
 
     @bp.route("/rename_object", methods=["POST"])
     def rename_object() -> Response:

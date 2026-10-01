@@ -16,6 +16,7 @@ import {
   jobProgress,
   nextObjectId,
   reducer,
+  seedFrames,
   staleIds,
 } from './objects';
 
@@ -470,5 +471,39 @@ describe('the object layout (issue #21)', () => {
     s = run([{type: 'trackStarted', key: 1, ids: [1]}], s);
     expect(groupDirtyIds(s, 'cast')).toEqual([]); // held by the job
     expect(groupDirtyIds(s, 'nope')).toEqual([]);
+  });
+});
+
+describe('text prompts', () => {
+  const textSeed = {frameIndex: 4, points: [], labels: [], text: 'dog'};
+
+  it('a text seed is a seed without clicks', () => {
+    const s = run([{type: 'restore', objects: [{...server(1, 'untracked', []), seeds: [textSeed]}]}]);
+    const o = byId(s, 1);
+    expect(o.texts).toEqual({4: 'dog'});
+    expect(seedFrames(o)).toEqual([4]);
+    expect(dirtyIds(s)).toEqual([1]); // it can be tracked
+  });
+
+  it('a prompt replaces the frame\'s clicks and stales every track', () => {
+    const s = run([
+      {type: 'restore', objects: [server(1, 'tracked', [[4, [[0.5, 0.5]], [1]]])]},
+      {type: 'setText', id: 1, frame: 4, text: 'dog'},
+    ]);
+    const o = byId(s, 1);
+    expect(o.texts).toEqual({4: 'dog'});
+    expect(o.points).toEqual({});
+    expect(o.state).toBe('stale');
+  });
+
+  it('clicks refine a text frame and keep its text; clearing the clicks clears the frame', () => {
+    const base = run([
+      {type: 'restore', objects: [{...server(1, 'untracked', []), seeds: [textSeed]}]},
+      {type: 'setPoints', id: 1, frame: 4, points: [[0.1, 0.1, 1]]},
+    ]);
+    expect(byId(base, 1).texts).toEqual({4: 'dog'});
+    const cleared = reducer(base, {type: 'setPoints', id: 1, frame: 4, points: []});
+    expect(byId(cleared, 1).texts).toEqual({});
+    expect(seedFrames(byId(cleared, 1))).toEqual([]);
   });
 });

@@ -7,6 +7,8 @@
 // Objects can be dragged into another order and into named, coloured groups
 // (issue #21); Alt-Up / Alt-Down, the arrow buttons and the Group menu do
 // the same from the keyboard. The order is also the lanes' and the exports'.
+// The selected object's row also takes a text prompt for the frame on screen
+// (SAM 3 only; with another engine the field is disabled and says why).
 import {
   Add,
   ArrowDown,
@@ -19,6 +21,7 @@ import {
   Redo,
   TrashCan,
   Reset,
+  Search,
   Undo,
   View,
   ViewOff,
@@ -26,7 +29,7 @@ import {
 import {highlightEffects, moreEffects} from '@/common/components/effects/EffectsUtils';
 import {useEffect, useRef, useState, type DragEvent, type KeyboardEvent} from 'react';
 import {OBJECT_LIMIT} from '~/config';
-import {BROWSER_ENGINE, engineLabel} from '~/state/engines';
+import {BROWSER_ENGINE, engineLabel, textPromptNote} from '~/state/engines';
 import {NAME_MAX, objectName} from '~/state/fileNames';
 import {moveTargets, parseCreated, undoBlock, versionLabel} from '~/state/history';
 import {
@@ -220,13 +223,66 @@ function HistoryControls({o, session}: {o: StudioObject; session: StudioSessionA
 }
 
 function describe(o: StudioObject): string {
-  const seeds = seedFrames(o);
+  const clicked = seedFrames(o).filter(f => (o.points[f]?.length ?? 0) > 0);
+  const texts = Object.entries(o.texts).map(([f, t]) => `"${t}" on frame ${Number(f) + 1}`);
   const clicks =
-    seeds.length === 0
-      ? 'no clicks yet'
-      : `clicks on ${seeds.length === 1 ? 'frame' : 'frames'} ${seeds.map(f => f + 1).join(', ')}`;
-  const track = o.frames != null ? ` · track ${o.frames[0] + 1}–${o.frames[1] + 1}` : '';
-  return clicks + track;
+    clicked.length === 0
+      ? texts.length === 0
+        ? 'no clicks yet'
+        : ''
+      : `clicks on ${clicked.length === 1 ? 'frame' : 'frames'} ${clicked.map(f => f + 1).join(', ')}`;
+  const track = o.frames != null ? `track ${o.frames[0] + 1}–${o.frames[1] + 1}` : '';
+  return [clicks, texts.join(', '), track].filter(x => x !== '').join(' · ');
+}
+
+/** "Find by text" for the selected object, on the frame on screen. */
+function TextPrompt({o, session}: {o: StudioObject; session: StudioSessionApi}) {
+  const [draft, setDraft] = useState('');
+  const [note, setNote] = useState<string | null>(null);
+  const [running, setRunning] = useState(false);
+  const {ok, why} = session.textSupport;
+  const disabled = !ok || session.busy || running || isTracking(o);
+  const submit = () => {
+    const text = draft.trim();
+    if (disabled || text === '') {
+      return;
+    }
+    setRunning(true);
+    setNote(null);
+    void session.textPrompt(o.id, text).then(r => {
+      setRunning(false);
+      if (r != null) {
+        setNote(textPromptNote(r));
+      }
+    });
+  };
+  return (
+    <div className="text-prompt" onClick={e => e.stopPropagation()}>
+      <form
+        className="text-prompt-row"
+        onSubmit={e => {
+          e.preventDefault();
+          submit();
+        }}>
+        <input
+          className="text-prompt-input"
+          value={draft}
+          maxLength={200}
+          placeholder={ok ? 'Find by text, e.g. dog' : 'Find by text (SAM 3)'}
+          aria-label={`Find ${objectName(o)} by text on frame ${session.frame + 1}`}
+          title={why ?? `Segment what these words describe on frame ${session.frame + 1}; its best match becomes this frame's mask`}
+          disabled={disabled}
+          onChange={e => setDraft(e.target.value)}
+          onKeyDown={e => e.stopPropagation()} // not the video's shortcuts
+        />
+        <button className="button small" type="submit" disabled={disabled || draft.trim() === ''}>
+          {running ? <span className="spinner small" /> : <Search size={14} />} Find
+        </button>
+      </form>
+      {why != null && <div className="object-meta text-prompt-why">{why}</div>}
+      {why == null && note != null && <div className="object-meta">{note}</div>}
+    </div>
+  );
 }
 
 /** What is being dragged in the list: an object or a whole group. */
@@ -377,6 +433,7 @@ function ObjectRow({
               : ' · they agree'}
           </div>
         )}
+        {active && <TextPrompt o={o} session={session} />}
         {active && needsPositiveClick(o, frame, maskedAt(t?.segments, frame)) && (
           <div className="object-hint">Add a positive click to keep part of the object</div>
         )}

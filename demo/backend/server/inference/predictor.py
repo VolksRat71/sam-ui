@@ -2,9 +2,8 @@
 # All rights reserved.
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
-# Modified by sam-ui: clicks are recorded as seeds, track jobs run through tracks/, a correction refines the cached track mask (with an anchor click for a lone negative), and a click inside an absent range is refused; undo, redo and versions of an object's seeds, and moving a frame's clicks to another object.
+# Modified by sam-ui: clicks are recorded as seeds, track jobs run through tracks/, a correction refines the cached track mask (with an anchor click for a lone negative), and a click inside an absent range is refused; undo, redo and versions of an object's seeds, and moving a frame's clicks to another object. A text prompt's seed mask (SAM 3, /text_prompt) joins the session like a replayed seed.
 
-import contextlib
 import logging
 import os
 import time
@@ -44,7 +43,9 @@ from tracks.features import VIDEO_KEY, FeatureCache, default_cache_gb, install a
 from tracks.streaming import install_sam2_streaming
 from tracks.routes import TrackContext
 from tracks import sam3_engine
+from tracks.precision import sam2_autocast
 from tracks.service import EngineSpec, ObjectBusy, TrackService
+from tracks.text import has_prompt
 
 
 logger = logging.getLogger(__name__)
@@ -137,15 +138,15 @@ class InferenceAPI:
                     model=sam3_engine.Sam3Engine.model,
                     factory=sam3_engine.Sam3Engine,
                     unavailable=sam3_engine.available,
+                    text=sam3_engine.text_available,  # its detector reads text prompts
                 )
             ],
         )
 
     def autocast_context(self):
-        if self.device.type == "cuda":
-            return torch.autocast("cuda", dtype=torch.bfloat16)
-        else:
-            return contextlib.nullcontext()
+        # sam-ui: bf16 on CUDA as upstream; on MPS fp32 unless SAM_UI_SAM2_DTYPE
+        # asks otherwise (tracks/precision.py, issue #11)
+        return sam2_autocast(self.device.type)
 
     def start_session(self, request: StartSessionRequest) -> StartSessionResponse:
         with self.autocast_context(), self.inference_lock:
@@ -165,7 +166,7 @@ class InferenceAPI:
             inference_state[VIDEO_KEY] = video  # opts the session (and its jobs) into the feature cache
             seeds = {o: self.tracks.seeds.seeds(video, o) for o in self.tracks.seeds.objects(video)}
             for frame_idx, obj_id in sorted(
-                (f, o) for o, s in seeds.items() for f, v in s.items() if v["points"]
+                (f, o) for o, s in seeds.items() for f, v in s.items() if has_prompt(v)
             ):
                 seed_into_state(self.predictor, inference_state, obj_id, frame_idx, seeds[obj_id][frame_idx])
             self.session_states[session_id] = {
@@ -607,6 +608,14 @@ class InferenceAPI:
 
     def track_context(self, session_id: str) -> TrackContext:
         session = self.__get_session(session_id)
+
+        def seed_mask(obj_id: int, frame_idx: int, mask) -> None:
+            # a text prompt's mask replaces the frame's inputs in the session, as
+            # start_session replays a seed, so a click there refines it
+            self.predictor.add_new_mask(
+                inference_state=session["state"], frame_idx=frame_idx, obj_id=obj_id, mask=mask
+            )
+
         return TrackContext(
             service=self.tracks,
             video=session["video"],
@@ -615,6 +624,7 @@ class InferenceAPI:
             lock=self.inference_lock,
             autocast=self.autocast_context,
             video_handle=session["state"],
+            seed_mask=seed_mask,
         )
 
     @staticmethod

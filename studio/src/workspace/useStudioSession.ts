@@ -28,7 +28,7 @@ import {readJson, writeJson} from '~/lib/storage';
 import {API_ENDPOINT, OBJECT_LIMIT} from '~/config';
 import type {LocalModelStatus, LocalOptions} from '~/local/LocalEngine';
 import {browserModelName, parseQuality} from '~/local/sam2/config';
-import {BROWSER_ENGINE, engineLabel, pickerEngines} from '~/state/engines';
+import {BROWSER_ENGINE, engineLabel, pickerEngines, textPrompts} from '~/state/engines';
 import {cleanObjectName, objectName, uniqueFileNames} from '~/state/fileNames';
 import {type ExportedObject, type ExportKind, groupExport} from '~/state/maskExport';
 import {
@@ -72,7 +72,7 @@ import {
   normalizeRanges,
   paintTimeline,
 } from '~/state/ranges';
-import type {EngineInfo, RunningJob, TrackletSummary} from '~/worker/protocol';
+import type {EngineInfo, RunningJob, TextPromptResult, TrackletSummary} from '~/worker/protocol';
 
 /** Where two engines disagree on one object: frames under the IoU threshold. */
 export type ObjectDisagreement = {flagged: number[]; meanIou: number | null};
@@ -401,6 +401,7 @@ export default function useStudioSession(video: VideoItem) {
   // no engine can run (the browser-only build without WebGPU): nothing to click or track
   const noEngine = engines.length > 0 && engines.every(e => !e.available);
   const busy = repainting || status !== 'ready' || noEngine;
+  const textSupport = useMemo(() => textPrompts(engines, state.engine), [engines, state.engine]);
 
   // review flags (F while scrubbing), saved per video in this browser
   const flagsKey = `sam-ui-studio:flags:${video.path}`;
@@ -424,6 +425,32 @@ export default function useStudioSession(video: VideoItem) {
       });
     },
     [bridge, serial, sync],
+  );
+
+  /**
+   * Seed the current frame of an object from a phrase, on the engine on
+   * screen (only SAM 3 reads text: textSupport says so). Its best match
+   * replaces the frame's clicks. Resolves with what was found, or null when
+   * the call failed (the warning says why).
+   */
+  const textPrompt = useCallback(
+    (objectId: number, text: string): Promise<TextPromptResult | null> => {
+      if (bridge == null) {
+        return Promise.resolve(null);
+      }
+      const at = frame;
+      const engine = stateRef.current.engine;
+      let result: TextPromptResult | null = null;
+      return serial(async () => {
+        result = await bridge.call('textPrompt', {objectId, frameIndex: at, text, engine});
+        if (result.matched) {
+          dispatch({type: 'setText', id: objectId, frame: at, text: result.text});
+          setFlags(m => clearFlag(m, objectId, at));
+        }
+        await sync();
+      }).then(() => result);
+    },
+    [bridge, serial, sync, frame],
   );
 
   /** A new object's id: past every id this video has used, and remembered. */
@@ -480,9 +507,17 @@ export default function useStudioSession(video: VideoItem) {
         return;
       }
       const current = o.points[frame] ?? [];
-      setPoints(o.id, frame, current.filter((_, i) => i !== index));
+      const rest = current.filter((_, i) => i !== index);
+      const text = o.texts[frame];
+      if (rest.length === 0 && text != null) {
+        // undoing the last refinement of a text frame goes back to the text's
+        // mask; sending no clicks would clear the frame, text and all
+        void textPrompt(o.id, text);
+        return;
+      }
+      setPoints(o.id, frame, rest);
     },
-    [busy, playing, frame, setPoints],
+    [busy, playing, frame, setPoints, textPrompt],
   );
 
   const addObject = useCallback(() => {
@@ -1303,6 +1338,8 @@ export default function useStudioSession(video: VideoItem) {
     start,
     addPoint,
     removePoint,
+    textPrompt,
+    textSupport,
     addObject,
     renameObject,
     selectObject,
