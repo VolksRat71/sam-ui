@@ -455,3 +455,70 @@ export const KIND_LABELS: Record<ReasonKind, string> = {
   components: 'pieces change',
   retrack: 're-tracked',
 };
+
+// -- a queue built in the browser -------------------------------------------------------
+
+/** The audit queue of a video, as POST /review_queue answers it (camelCase), or as built here. */
+export type ReviewQueue = {
+  engine: string;
+  /** The engine whose disagreement counted, if any. */
+  compare: string | null;
+  objects: Record<number, {state: string; nFrames: number; unreviewed: number}>;
+  /** Every object's stops, best first. */
+  queue: QueueEntry[];
+  /** Objects with no track to review, and their state. */
+  skipped: Record<number, string>;
+  /** False on a backend from before the audit queue. */
+  supported: boolean;
+};
+
+/** A frame the object is not on (no mask) still has a mask to review: none. */
+export const EMPTY_MASK = 'empty';
+
+/** The fingerprint of a browser track's mask on `frame`: EMPTY_MASK where it has none, null past the clip. */
+export function maskFingerprint(masks: ReadonlyMap<number, RleLike> | null, frame: number, nFrames: number): string | null {
+  if (masks == null || frame < 0 || frame >= nFrames) {
+    return null;
+  }
+  const m = masks.get(frame);
+  return m == null ? EMPTY_MASK : fingerprint(m);
+}
+
+export type QueueObject = {
+  id: number;
+  state: string;
+  /** The engine's track, per frame (a frame with no mask is empty); null without one. */
+  masks: ReadonlyMap<number, RleLike> | null;
+  marks: ReadonlyArray<ReviewMark>;
+  /** Absent ranges. */
+  ranges: ReadonlyArray<{start: number; end: number; state: string}>;
+  candidates: ReadonlyArray<TimelineRange>;
+  seeds: ReadonlyArray<number>;
+  flags: ReadonlyArray<number>;
+};
+
+/** The queue of tracks the tab holds (the browser engine's), as the backend's review_queue builds it. */
+export function buildQueue(objects: ReadonlyArray<QueueObject>, nFrames: number, engine: string): ReviewQueue {
+  const out: ReviewQueue = {engine, compare: null, objects: {}, queue: [], skipped: {}, supported: true};
+  const byObject = new Map<number, Array<Location & {reviewed: boolean; reviewedAt: string | null}>>();
+  for (const o of objects) {
+    if (o.masks == null || (o.state !== 'tracked' && o.state !== 'stale')) {
+      out.skipped[o.id] = o.state;
+      continue;
+    }
+    const stats = new Map<number, FrameStats>();
+    for (const [f, m] of o.masks) {
+      stats.set(f, frameStats(m));
+    }
+    const reasons = signals(stats, nFrames, {absent: o.ranges, candidates: o.candidates, seeds: o.seeds, flags: o.flags});
+    const valid = o.marks.filter(m => markValid(m, engine, maskFingerprint(o.masks, m.frame, nFrames)));
+    const locs = locations(reasons, nFrames, o.ranges).map(l => {
+      const hit = [...valid].reverse().find(m => covers(m, l.start, l.end));
+      return {...l, reviewed: hit != null, reviewedAt: hit?.at ?? null};
+    });
+    byObject.set(o.id, locs);
+    out.objects[o.id] = {state: o.state, nFrames, unreviewed: locs.filter(l => !l.reviewed).length};
+  }
+  out.queue = rank(byObject);
+  return out;
+}

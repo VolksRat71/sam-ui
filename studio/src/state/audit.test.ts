@@ -4,15 +4,18 @@ import {DataArray, encode, type RLEObject} from '@/jscocotools/mask';
 import {
   COMPONENT_MIN_FRACTION,
   COMPONENT_MIN_PX,
+  EMPTY_MASK,
   QUEUE_CAP,
   WEIGHTS,
   type Reason,
   type ReviewMark,
+  buildQueue,
   covers,
   fingerprint,
   frameStats,
   locations,
   markValid,
+  maskFingerprint,
   rank,
   signals,
   stepQueue,
@@ -302,7 +305,7 @@ describe('stepping through the queue', () => {
 
   it('skips reviewed stops when asked', () => {
     expect(stepQueue(q, 0, 1, true)).toBe(2);
-    expect(stepQueue([{objectId: 1, frame: 1, reviewed: true}], null, 1, true)).toBeNull();
+    expect(stepQueue([{reviewed: true}], null, 1, true)).toBeNull();
   });
 });
 
@@ -316,12 +319,58 @@ describe('parity with the backend (tracks/audit.py wrote audit.parity.json)', ()
     const i = parity.inputs;
     const reasons = signals(stats, 40, {
       absent: i.absent,
-      candidates: i.candidates as Parameters<typeof signals>[2]['candidates'],
+      candidates: i.candidates as NonNullable<Parameters<typeof signals>[2]>['candidates'],
       disagreement: new Map(Object.entries(i.disagreement).map(([f, v]) => [Number(f), v])),
       bounded: i.bounded as Array<[number, number]>,
       flags: i.flags,
       seeds: i.seeds,
     });
     expect(locations(reasons, 40, i.absent)).toEqual(parity.expected.locations);
+  });
+});
+
+describe('a queue built in the browser', () => {
+  const wrap = () => {
+    // a square that jumps back to the left at frame 12
+    const masks = new Map<number, RLEObject>();
+    for (let f = 0; f < 20; f++) masks.set(f, enc(sq(f < 12 ? 2 + f : f - 10, 10)));
+    return masks;
+  };
+  const base = {ranges: [], candidates: [], seeds: [0], flags: []};
+
+  it('ranks tracked and stale objects, skips the rest, and says which stops are reviewed', () => {
+    const masks = wrap();
+    const marks: ReviewMark[] = [{frame: 12, span: [12, 12], engine: 'browser-sam2', at: 't', mask: fingerprint(masks.get(12)!), reasons: ['jump']}];
+    const q = buildQueue(
+      [
+        {id: 1, state: 'tracked', masks, marks, ...base},
+        {id: 2, state: 'stale', masks, marks: [], ...base, flags: [1]}, // 11 frames from the jump: a stop of its own
+        {id: 3, state: 'untracked', masks: null, marks: [], ...base},
+      ],
+      20,
+      'browser-sam2',
+    );
+    expect(q.skipped).toEqual({3: 'untracked'});
+    expect(q.objects[1]).toEqual({state: 'tracked', nFrames: 20, unreviewed: 0});
+    expect(q.objects[2].unreviewed).toBe(2);
+    expect(q.queue.map(e => [e.objectId, e.frame, e.reviewed])).toEqual([
+      [2, 1, false],
+      [1, 12, true],
+      [2, 12, false],
+    ]);
+  });
+
+  it('drops a mark once the mask on its frame changes, and an empty frame can be reviewed', () => {
+    const masks = wrap();
+    const old = fingerprint(enc(sq(30, 30)));
+    const marks: ReviewMark[] = [
+      {frame: 12, span: null, engine: 'browser-sam2', at: 't', mask: old, reasons: []},
+      {frame: 3, span: null, engine: 'browser-sam2', at: 't', mask: EMPTY_MASK, reasons: []},
+    ];
+    masks.delete(3); // no mask there: the object is gone on that frame
+    const q = buildQueue([{id: 1, state: 'tracked', masks, marks, ...base, flags: [3]}], 20, 'browser-sam2');
+    expect(q.queue.filter(e => e.reviewed).map(e => e.frame)).toEqual([3]);
+    expect(maskFingerprint(masks, 3, 20)).toBe(EMPTY_MASK);
+    expect(maskFingerprint(masks, 25, 20)).toBeNull();
   });
 });
