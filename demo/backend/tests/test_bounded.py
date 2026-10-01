@@ -1,0 +1,400 @@
+# sam-ui (Apache-2.0). New file, not from SAM 2.
+"""Bounded re-tracks (issue #19): a correction re-tracks only the stretch of
+frames it changes, forward and back from the corrected frame until the new
+masks rejoin the cached track, and keeps the cached frames beyond."""
+import json
+
+import numpy as np
+import pytest
+
+from test_api import Harness, parse, parse_all
+from test_engine import _StubPredictor
+from tracks import rle
+from tracks.bounded import AGREE_IOU, AGREE_RUN, Agreement, Stretch, changed_frames, frame_passes, seed_keys
+from tracks.engine import FakeEngine, Sam2Engine
+from tracks.ranges import ABSENT
+from tracks.service import EngineSpec
+from tracks.store import STALE, TRACKED
+
+N = 60
+INFLUENCE = 3  # the fake engine's correction changes frames within 2 of it
+
+
+def seed(x=0.5, y=0.5, label=1):
+    return {"points": [[x, y]], "labels": [label]}
+
+
+class _NoStretches(FakeEngine):
+    """An engine that cannot run a bounded pass (SAM 3, today)."""
+
+    track_stretch = None
+
+
+@pytest.fixture
+def h(tmp_path):
+    return Harness(tmp_path, engine=FakeEngine(n_frames=N, influence=INFLUENCE))
+
+
+def by_frame(frames, obj=1):
+    out = {}
+    for f, m in frames:
+        if obj in m:
+            assert f not in out, f"frame {f} sent twice for object {obj}"
+            out[f] = m[obj]
+    return out
+
+
+def stored(h, obj=1, engine="fake"):
+    return dict(h.service.tracks.masks(h.video, obj, engine))
+
+
+def meta(h, obj=1, engine="fake"):
+    return h.service.tracks.meta(h.video, obj, engine)
+
+
+def correct(h, frame, obj=1):
+    """A lone negative click: the correction the fake engine reacts to."""
+    h.click(obj, frame=frame, points=[[0.3, 0.3]], labels=(0,))
+
+
+# -- the pieces -------------------------------------------------------------------
+
+def test_agreement_stops_after_a_run_of_frames_that_match_the_cache():
+    a = np.zeros((8, 8), bool)
+    a[2:6, 2:6] = True
+    off = np.roll(a, 1, axis=0)
+    cached = {f: rle.encode(a) for f in range(40)}
+    stop = Agreement(cached)
+    got = [stop(f, False, off if f < 13 else a) for f in range(10, 40)]
+    # 10-12 differ; 13 onwards agree, and the 10th agreeing frame (22) ends it
+    assert got.index(True) == 22 - 10 and stop.agreed[False]
+    # a disagreement resets the run; each direction counts on its own
+    stop = Agreement(cached, run=3)
+    assert [stop(f, True, m) for f, m in [(9, a), (8, a), (7, off), (6, a), (5, a), (4, a)]] == \
+        [False, False, False, False, False, True]
+    assert stop.agreed == {True: True, False: False}
+    # two empty masks agree (the object is gone in both)
+    e = np.zeros((8, 8), bool)
+    stop = Agreement({f: rle.encode(e) for f in range(5)}, run=2)
+    assert [stop(f, False, e) for f in (1, 2)] == [False, True]
+    # the lead-in: frames before the corrected one only check, and only the first `check` of them
+    stop = Agreement(cached, start=10, corrected=20, check=3)
+    assert [stop(f, False, a) for f in (10, 11, 12)] == [False] * 3 and not stop.failed
+    assert stop(13, False, off) is False  # past the check: a lead-in frame may differ
+    assert [stop(f, False, a) for f in range(20, 29)] == [False] * 9 and stop(29, False, a) is True
+    stop = Agreement(cached, start=10, corrected=20, check=3)
+    assert stop(10, False, a) is False and stop(11, False, off) is True and stop.failed
+    assert AGREE_IOU == 0.98 and AGREE_RUN == 10
+
+
+def test_changed_frames_are_the_new_or_edited_seeds_and_a_removal_is_none():
+    old = {1: seed(), 5: seed(0.2), 30: seed(0.4)}
+    keys = seed_keys(old)
+    new = {1: seed(), 5: seed(0.2, label=0), 9: seed(0.6), 30: seed(0.4)}
+    assert changed_frames(keys, new, (0, 20)) == [5, 9]  # 30 is in another window
+    assert changed_frames(keys, new, (21, None)) == []
+    assert changed_frames(keys, {1: seed(), 30: seed(0.4)}, (0, 20)) is None  # 5 went
+    # the approved mask is part of a seed: a new mask on the same clicks is a change
+    masked = {**old, 1: {**seed(), "mask": {"size": [2, 2], "counts": "04"}}}
+    assert changed_frames(keys, masked, (0, None)) == [1]
+
+
+def test_sam2_engine_runs_a_stretch_in_one_fresh_state_within_its_bounds():
+    p = _StubPredictor(n=40)
+    e = Sam2Engine(p, model="stub")
+    seeds = {2: seed(), 20: seed(0.3, label=0), 35: seed(0.6)}
+    calls = []
+
+    def stop(f, reverse, m):
+        calls.append((f, reverse))
+        return f in (24, 17)  # agreed there
+
+    got = list(e.track_stretch("v.mp4", Stretch(7, seeds, start=20, lo=10, hi=30, reverse=True), stop))
+    frames = [f for f, _ in got]
+    assert frames == [20, 21, 22, 23, 24, 19, 18, 17]  # forward to the stop, then back from the start
+    assert all(set(m) == {7} and m[7].dtype == bool for _, m in got)
+    assert sorted((o, f) for o, f, *_ in p.added) == [(7, 2), (7, 20), (7, 35)]  # every seed of the window
+    assert p.reset == 1
+    # a hard bound ends a direction without asking
+    p = _StubPredictor(n=40)
+    got = [f for f, _ in Sam2Engine(p, model="stub").track_stretch(
+        "v.mp4", Stretch(7, seeds, start=20, lo=18, hi=22, reverse=True), lambda *a: False)]
+    assert got == [20, 21, 22, 19, 18]
+    # without reverse: forward only
+    p = _StubPredictor(n=40)
+    got = [f for f, _ in Sam2Engine(p, model="stub").track_stretch(
+        "v.mp4", Stretch(7, seeds, start=12, lo=0, hi=15, corrected=20), lambda *a: False)]
+    assert got == [12, 13, 14, 15]
+
+
+class _PrimingStub(_StubPredictor):
+    """The stub, with the bits of SAM 2 that priming from the cache uses."""
+
+    image_size = 8
+
+    def __init__(self, n):
+        super().__init__(n)
+        self.primed = []
+
+    def init_state(self, path, offload_video_to_cpu=False):
+        return {"obj_ids": [], "device": "cpu", "output_dict_per_obj": {0: {"non_cond_frame_outputs": {}}}}
+
+    def _obj_id_to_idx(self, state, obj_id):
+        return 0
+
+    def _run_single_frame_inference(self, inference_state, output_dict, frame_idx, mask_inputs, **kw):
+        assert tuple(mask_inputs.shape) == (1, 1, 8, 8) and kw["is_init_cond_frame"] is False
+        self.primed.append(frame_idx)
+        return {"pred_masks": mask_inputs}, mask_inputs
+
+
+def test_a_stretch_starting_mid_window_is_primed_from_the_cache():
+    p = _PrimingStub(n=60)
+    e = Sam2Engine(p, model="stub")
+    cached = {f: rle.encode(np.ones((4, 4), bool)) for f in range(60)}
+    seeds = {0: seed(), 30: seed(label=0), 22: seed()}
+    list(e.track_stretch("v.mp4", Stretch(1, seeds, start=25, lo=0, hi=27, corrected=30, cached=cached, floor=12),
+                         lambda *a: False))
+    # the PRIME (16) frames before the start, never before the window (12), never a seed frame (22)
+    assert p.primed == [12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 23, 24]
+    p.primed.clear()
+    list(e.track_stretch("v.mp4", Stretch(1, seeds, start=22, lo=0, hi=23, cached=cached), lambda *a: False))
+    assert p.primed == []  # a seed frame start has its seed
+
+
+def test_sam2_engine_releases_the_stretch_state_on_cancel():
+    p = _StubPredictor(n=40)
+    it = Sam2Engine(p, model="stub").track_stretch("v.mp4", Stretch(7, {5: seed()}, 5, 0, 39), lambda *a: False)
+    next(it)
+    it.close()
+    assert p.reset == 1
+
+
+# -- the service ------------------------------------------------------------------
+
+def test_a_one_frame_correction_retracks_a_bounded_stretch_and_keeps_the_rest(h):
+    h.click(1, frame=0)
+    h.track()
+    before = stored(h)
+    correct(h, 30)
+    assert h.state(1) == STALE
+    _, frames = h.track()
+    got = by_frame(frames)
+    assert sorted(got) == list(range(N))  # the stream still carries every frame, once
+    # the fake's correction changes 28-32. The pass starts LEAD (20) frames
+    # before it, primed from the cache, where its first AGREE_RUN frames
+    # (10-19) agree, and runs forward until AGREE_RUN agree after it (33-42)
+    assert h.engine.stretches == [(1, 10, 0, N - 1, list(range(10, 43)))]
+    after = stored(h)
+    assert all(after[f] == before[f] for f in range(N) if not 10 <= f <= 42)  # untouched, byte for byte
+    assert all(not (rle.decode(after[f]) == FakeEngine.mask(1, f, h.engine.shape)).all() for f in range(28, 33))
+    assert h.state(1) == TRACKED  # tracked for the new seeds
+
+
+def test_the_bounded_result_matches_a_full_retrack(h):
+    h.click(1, frame=0)
+    h.track()
+    correct(h, 30)
+    h.track()
+    bounded = stored(h)
+    h.track([1])  # a tracked object asked for again: re-tracked whole
+    assert len(h.engine.stretches) == 1  # no second bounded pass
+    assert stored(h) == bounded
+
+
+def test_provenance_says_which_pass_made_each_frame(h):
+    h.click(1, frame=0)
+    h.track()
+    first = meta(h)
+    assert [p["kind"] for p in first["passes"]] == ["full"]
+    assert first["provenance"] == [[0, N - 1, first["passes"][0]["id"]]]
+    correct(h, 30)
+    h.track()
+    m = meta(h)
+    full, bounded = m["passes"]
+    assert full == first["passes"][0]  # the first job's pass, as it was
+    assert bounded["kind"] == "bounded" and bounded["start"] == 30 and bounded["frames"] == [10, 42]
+    assert bounded["attempts"] == 1
+    assert bounded["seeds_hash"] == m["seeds_hash"] and bounded["window"] == [0, None]
+    assert bounded["stops"] == {"forward": "agreed", "backward": "agreed"}
+    assert m["provenance"] == [[0, 9, full["id"]], [10, 42, bounded["id"]], [43, N - 1, full["id"]]]
+    assert m["seed_keys"] == seed_keys(h.service.seeds.seeds(h.video, 1))
+    fp = frame_passes(m)
+    assert fp[9] == full["id"] and fp[10] == bounded["id"] and len(fp) == N
+
+
+def test_a_later_full_retrack_drops_passes_no_frame_uses(h):
+    h.click(1, frame=0)
+    h.track()
+    correct(h, 30)
+    h.track()
+    h.track([1])
+    m = meta(h)
+    assert [p["kind"] for p in m["passes"]] == ["full"] and m["provenance"] == [[0, N - 1, m["passes"][0]["id"]]]
+
+
+def test_a_bounded_pass_stops_at_the_window_edge_and_never_enters_a_gap(h):
+    h.click(1, frame=0), h.click(1, frame=50)
+    h.service.set_range(h.video, 1, 40, 45, ABSENT)
+    h.track()
+    before = stored(h)
+    correct(h, 36)
+    _, frames = h.track()
+    (o, start, lo, hi, ran), = h.engine.stretches
+    assert (start, lo, hi) == (16, 0, 39) and max(ran) == 39 and not set(ran) & set(range(40, N))
+    after = stored(h)
+    assert all(after[f] == before[f] for f in range(40, N))  # the gap and the far window: kept
+    assert meta(h)["passes"][-1]["stops"] == {"forward": "edge", "backward": "agreed"}
+    assert h.engine.units[-1:] == [(46, None, {1: [50]})]  # the far window ran only in the first job
+    assert sorted(by_frame(frames)) == list(range(N)) and h.state(1) == TRACKED
+
+
+def test_two_corrections_near_each_other_recompute_each_frame_once(h):
+    h.click(1, frame=0)
+    h.track()
+    correct(h, 20), correct(h, 26)
+    _, frames = h.track()
+    (_, s1, lo1, hi1, ran1), (_, s2, lo2, hi2, ran2) = h.engine.stretches
+    # the first starts at the first seed (20 - LEAD is no earlier) and stops
+    # short of the second correction, whose pass starts where it stopped
+    assert (s1, hi1) == (0, 25) and (s2, lo2) == (26, 26)
+    assert ran1 == list(range(0, 26)) and ran2 == list(range(26, 39))
+    assert sorted(by_frame(frames)) == list(range(N))
+
+
+def test_a_change_that_reaches_further_back_starts_the_pass_earlier(tmp_path):
+    h = Harness(tmp_path, engine=FakeEngine(n_frames=100, influence=15))  # 46-74 change
+    h.click(1, frame=0)
+    h.track()
+    before = stored(h)
+    correct(h, 60)
+    _, frames = h.track()
+    (_, s1, _, _, ran1), (_, s2, _, _, ran2) = h.engine.stretches
+    assert (s1, ran1[-1]) == (40, 46)  # the lead-in failed on 46: dropped, unsent
+    assert (s2, ran2) == (20, list(range(20, 85)))  # from 20 its first frames agree
+    assert sorted(by_frame(frames)) == list(range(100))  # once each, the failed start included
+    after = stored(h)
+    assert all(after[f] == before[f] for f in range(100) if not 20 <= f <= 84)
+    p = meta(h)["passes"][-1]
+    assert p["attempts"] == 2 and p["frames"] == [20, 84] and p["stops"] == {"forward": "agreed",
+                                                                            "backward": "agreed"}
+
+
+def test_a_correction_of_the_first_seed_also_runs_back_from_it(h):
+    h.click(1, frame=30)
+    h.track()
+    correct(h, 30)  # replaces the only seed: the first seed changed
+    _, frames = h.track()
+    assert h.engine.stretches == [(1, 30, 0, N - 1, list(range(30, 43)) + list(range(29, 17, -1)))]
+    assert sorted(by_frame(frames)) == list(range(N))
+    assert meta(h)["passes"][-1]["stops"] == {"forward": "agreed", "backward": "agreed"}
+
+
+def test_a_removed_seed_retracks_its_window_whole(h):
+    h.click(1, frame=0), h.click(1, frame=30)
+    h.track()
+    h.service.clear_frame(h.video, 1, 30)
+    h.track()
+    assert h.engine.stretches == [] and len(h.engine.calls) == 2
+
+
+def test_an_engine_without_stretches_retracks_whole(tmp_path):
+    h = Harness(tmp_path, engine=_NoStretches(n_frames=N, influence=INFLUENCE))
+    h.click(1, frame=0)
+    h.track()
+    correct(h, 30)
+    _, frames = h.track()
+    assert len(h.engine.calls) == 2 and sorted(by_frame(frames)) == list(range(N))
+    assert [p["kind"] for p in meta(h)["passes"]] == ["full"]
+
+
+def test_a_track_from_before_provenance_retracks_whole_then_gains_it(h):
+    h.click(1, frame=0)
+    h.track()
+    p = h.root / h.video / "1" / "fake" / "track.json"
+    old = json.loads(p.read_text())
+    for k in ("passes", "provenance", "seed_keys"):
+        old.pop(k)
+    p.write_text(json.dumps(old))  # what an older sam-ui wrote
+    assert h.state(1) == TRACKED and len(frame_passes(meta(h))) == N  # it reads as one full pass
+    correct(h, 30)
+    h.track()
+    assert h.engine.stretches == [] and len(h.engine.calls) == 2
+    assert "seed_keys" in meta(h) and h.state(1) == TRACKED
+
+
+def test_the_full_flag_skips_the_bounded_pass(h):
+    h.click(1, frame=0)
+    h.track()
+    correct(h, 30)
+    r = h.client.post("/track_objects", json={"session_id": "s", "full": True})
+    assert sorted(by_frame(parse(r.data))) == list(range(N))
+    assert h.engine.stretches == [] and len(h.engine.calls) == 2 and h.state(1) == TRACKED
+
+
+def test_the_job_total_counts_every_part_a_bounded_job_sends(h):
+    h.click(1, frame=0), h.click(2, frame=4)
+    h.track()
+    correct(h, 30)
+    h.click(3, frame=2)  # a new object: tracked whole, in the same job
+    ids = h.service.select(h.video)
+    assert ids == [1, 3]
+    total = h.service.job_frames(h.video, ids, N)
+    _, frames = h.track()
+    assert total == len(frames)
+    assert sorted(by_frame(frames, 3)) == list(range(N)) and h.state(1) == h.state(3) == TRACKED
+
+
+def test_the_running_job_says_which_objects_it_retracks_bounded(h):
+    h.click(1, frame=0), h.click(2, frame=0)
+    h.track()
+    correct(h, 30)
+    h.click(2, frame=0, points=[[0.4, 0.4]])  # the first seed of 2 changed: bounded too
+    assert h.service.bounded_objects(h.video, [1, 2], N) == [1, 2]
+    h.service.clear_track(h.video, 2)
+    assert h.service.bounded_objects(h.video, [1, 2], N) == [1]
+    r = h.client.post("/track_objects", json={"session_id": "s"})
+    assert r.headers["Objects-Tracked"] == "1,2" and r.headers["Objects-Bounded"] == "1"
+    parse(r.data)
+    job = h.service.jobs.claim("s", h.video, [1, 2], N, "fake", bounded=[2, 9])
+    assert job.info()["bounded"] == [2]  # only objects the job holds
+
+
+def test_a_canceled_bounded_job_caches_nothing(h):
+    h.click(1, frame=0)
+    h.track()
+    before = meta(h)
+    correct(h, 30)
+    it = h.service.track(h.video, str(h.video_path), [1], n_frames=N)
+    next(it), next(it)
+    it.close()
+    assert meta(h) == before and h.state(1) == STALE
+
+
+def test_the_disagreement_review_lists_the_bounded_stretches(h):
+    h.service._specs["sam3"] = EngineSpec("sam3", "fake-1", lambda: _Named("sam3", n_frames=N))
+    h.click(1, frame=0)
+    h.track()
+    correct(h, 30)
+    h.track()
+    parse(h.client.post("/track_objects", json={"session_id": "s", "engine": "sam3"}).data)
+    d = h.service.disagreement(h.video, [1], "fake", "sam3")
+    assert d["objects"]["1"]["bounded"] == {"fake": [[10, 42]], "sam3": []}
+
+
+class _Named(FakeEngine):
+    def __init__(self, name, **kw):
+        super().__init__(**kw)
+        self.name = name
+
+
+def test_track_provenance_route(h):
+    h.click(1, frame=0)
+    assert h.client.post("/track_provenance", json={"session_id": "s", "object_id": 1}).status_code == 404
+    h.track()
+    correct(h, 30)
+    h.track()
+    got = h.client.post("/track_provenance", json={"session_id": "s", "object_id": 1}).json
+    assert got["state"] == TRACKED and got["bounded"] == [[10, 42]]
+    assert [p["kind"] for p in got["passes"]] == ["full", "bounded"] and len(got["provenance"]) == 3
+
