@@ -87,3 +87,14 @@
 .layer-info { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 16px; margin: 0; }
 .layer-info dt { color: var(--text-muted); }
 .layer-info dd { margin: 0; overflow-wrap: anywhere; }
+.layer-summary[role='option'] { cursor: pointer; outline-offset: -2px; }
+.layer-detail-summary { padding: 0 8px 4px 24px; font-size: 12px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.suite-dock .layer-details { max-height: none; padding: 0; border: 0; }
+.swimlane:focus-visible { outline-offset: -2px; }
+.shortcut-sheet { width: min(720px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 20px; border: 1px solid var(--line); color: var(--text); background: var(--panel); }
+.shortcut-sheet::backdrop { background: #0009; }
+.shortcut-sheet header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.shortcut-sheet h2 { margin: 0; font-size: 20px; }
+.shortcut-sheet dl > div { display: grid; grid-template-columns: minmax(140px, .8fr) minmax(0, 1fr); gap: 16px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.shortcut-sheet dd { margin: 0; }
+.shortcut-sheet kbd { white-space: normal; }

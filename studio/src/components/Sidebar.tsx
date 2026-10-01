@@ -67,8 +67,8 @@ export default function Sidebar({sections}: {sections: Section[]}) {
 function SectionColumn({sections}: {sections: Section[]}) {
   const [open, setOpen] = useState<Record<string, boolean>>(() => readJson(OPEN_KEY, {}));
   return <div className="sidebar suite-dock">{sections.map(section => {
-    const expanded = open[section.id] ?? section.id === 'review';
-    return <section className="section" key={section.id}>
+    const expanded = open[section.id] ?? (section.id === 'review' || section.id === 'info');
+    return <section className="section" data-section={section.id} key={section.id}>
       <Header section={section} open={expanded} onToggle={() => {
         const next = {...open, [section.id]: !expanded};
         setOpen(next); writeJson(OPEN_KEY, next);

@@ -54,7 +54,7 @@ import {ReviewGlyph} from './ReviewSection';
 
 const FILMSTRIP_HEIGHT = 44;
 
-type Props = {session: StudioSessionApi; actions?: ReactNode};
+type Props = {session: StudioSessionApi; actions?: ReactNode; inspector?: HTMLElement | null};
 
 function useWidth() {
   const ref = useRef<HTMLDivElement>(null);
@@ -81,7 +81,7 @@ function candidatesOf(o: StudioObject | undefined): Mark[] {
   return o?.marks.filter(m => m.state === CANDIDATE) ?? [];
 }
 
-export default function Timeline({session, actions}: Props) {
+export default function Timeline({session, actions, inspector}: Props) {
   const {bridge, meta, frame, playing, state, tracklets, seek, togglePlay} = session;
   const n = meta.numFrames;
   const {ref: trackRef, width} = useWidth();
@@ -151,7 +151,7 @@ export default function Timeline({session, actions}: Props) {
       if (e.metaKey || e.ctrlKey || e.altKey || (target != null && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))) {
         return;
       }
-      if (document.querySelector('.modal-backdrop') != null) {
+      if (document.querySelector('.modal-backdrop, .shortcut-sheet[open]') != null) {
         return; // a dialog is open: its keys are its own
       }
       if (e.key === 'Escape') {
@@ -366,6 +366,8 @@ export default function Timeline({session, actions}: Props) {
                 seek(frameAt(e));
               }
             }}
+            onPointerCancel={() => { dragging.current = false; }}
+            onLostPointerCapture={() => { dragging.current = false; }}
             onPointerUp={e => {
               dragging.current = false;
               e.currentTarget.releasePointerCapture(e.pointerId);
@@ -396,13 +398,34 @@ export default function Timeline({session, actions}: Props) {
           </div>
           </div>
         </div>
-          <ObjectsSection session={session} renderLane={o => {
+          <ObjectsSection session={session} inspector={inspector} renderLane={o => {
             const lane = tracklets.get(o.id);
             const sel = selection?.id === o.id && span != null ? span : null;
             return (
               <div
                 key={o.id}
                 className={`swimlane${o.id === state.activeId ? ' active' : ''}`}
+                tabIndex={0}
+                role="group"
+                aria-label={`${objectName(o)} frame lane. Left and Right step frames, Shift selects a span; K and Shift K step keyframes.`}
+                onKeyDown={e => {
+                  if (e.target !== e.currentTarget || e.altKey || e.ctrlKey || e.metaKey) return;
+                  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+                    e.preventDefault(); e.stopPropagation();
+                    const next = Math.max(0, Math.min(n - 1, frame + (e.key === 'ArrowRight' ? 1 : -1)));
+                    session.selectObject(o.id);
+                    if (e.shiftKey) setSelection({id: o.id, start: selection?.id === o.id ? selection.start : frame, end: next});
+                    seek(next);
+                  } else if (e.key.toLowerCase() === 'k') {
+                    e.preventDefault(); e.stopPropagation();
+                    const keys = seedFrames(o).sort((a, b) => a - b);
+                    const next = e.shiftKey ? keys.filter(f => f < frame).at(-1) : keys.find(f => f > frame);
+                    if (next != null) seek(next);
+                    session.selectObject(o.id);
+                  }
+                }}
+                onPointerCancel={() => { laneDrag.current = null; }}
+                onLostPointerCapture={() => { laneDrag.current = null; }}
                 onPointerDown={e => {
                   if (e.button !== 0 || (e.target as HTMLElement).closest('button') != null || n === 0) {
                     return;
@@ -431,7 +454,7 @@ export default function Timeline({session, actions}: Props) {
                     setSelection(null); // a plain click on a lane drops the selection
                   }
                 }}
-                onClick={() => session.selectObject(o.id)}>
+                onClick={e => { e.stopPropagation(); session.selectObject(o.id); }}>
                 {n > 0 && <div className="playhead" style={{left: pos(frame)}} />}
                 <div className="swimlane-line" style={{background: o.color}} />
                 {lane?.segments.map(([a, b]) => (
@@ -443,6 +466,7 @@ export default function Timeline({session, actions}: Props) {
                 ))}
                 {[...o.ranges, ...o.marks.filter(m => m.state === PRESENT)].map(r => (
                   <button
+                    tabIndex={-1}
                     key={`${r.state}-${r.start}`}
                     className={r.state === ABSENT ? 'swimlane-absent' : 'swimlane-present'}
                     title={`${describeRange(r)}. Click to select, then Unmark.`}
@@ -459,6 +483,7 @@ export default function Timeline({session, actions}: Props) {
                   const on = picked?.id === o.id && picked.start === c.start && picked.end === c.end;
                   return (
                     <button
+                    tabIndex={-1}
                       key={`candidate-${c.start}`}
                       className={`swimlane-candidate${on ? ' picked' : ''}`}
                       title={`${describeRange(c)}. Click to review (] and [ step through candidates).`}
@@ -486,6 +511,7 @@ export default function Timeline({session, actions}: Props) {
                 )}
                 {session.disagreement.get(o.id)?.flagged.map(f => (
                   <button
+                    tabIndex={-1}
                     key={`flag-${f}`}
                     className="swimlane-flag"
                     title={`Frame ${f + 1}: SAM 2 and SAM 3 disagree`}
@@ -499,6 +525,7 @@ export default function Timeline({session, actions}: Props) {
                 ))}
                 {flagsOf(session.flags, o.id).map(f => (
                   <button
+                    tabIndex={-1}
                     key={`mark-${f}`}
                     className="swimlane-mark"
                     title={`Frame ${f + 1}: flagged for a correction (F on it unflags; clicks there clear it)`}
@@ -512,6 +539,7 @@ export default function Timeline({session, actions}: Props) {
                 ))}
                 {seedFrames(o).map(f => (
                   <button
+                    tabIndex={-1}
                     key={f}
                     className="swimlane-seed"
                     title={o.texts[f] != null ? `"${o.texts[f]}" on frame ${f + 1}` : `Clicks on frame ${f + 1}`}

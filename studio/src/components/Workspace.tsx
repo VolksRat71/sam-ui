@@ -28,6 +28,7 @@ import ReviewSection from './ReviewSection';
 import Sidebar from './Sidebar';
 import Timeline from './Timeline';
 import UpdateBanner from './UpdateBanner';
+import ShortcutSheet from './ShortcutSheet';
 
 type Props = {
   video: VideoItem;
@@ -37,6 +38,8 @@ type Props = {
 export default function Workspace({video, renderMedia}: Props) {
   const session = useStudioSession(video);
   const {state, dirty, meta} = session;
+  const [inspector, setInspector] = useState<HTMLDivElement | null>(null);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [mode, setMode] = useState<LabelMode>('positive');
   const [confirmStartOver, setConfirmStartOver] = useState(false);
   const [exporting, setExporting] = useState<ExportChoice | null>(null);
@@ -55,6 +58,7 @@ export default function Workspace({video, renderMedia}: Props) {
   // the review keys also work with a button focused, as after clicking a stop)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (document.querySelector('.shortcut-sheet[open]') != null) return;
       const step = historyShortcut(e);
       if (step != null) {
         e.preventDefault();
@@ -69,6 +73,13 @@ export default function Workspace({video, renderMedia}: Props) {
       }
       const plain = !e.metaKey && !e.ctrlKey && !e.altKey;
       if (plain && document.querySelector('.modal-backdrop') == null) {
+        if (e.key === '?') { e.preventDefault(); setShortcutsOpen(true); return; }
+        if (e.key.toLowerCase() === 'o' && session.ordered.length > 0) {
+          e.preventDefault();
+          const at = session.ordered.findIndex(o => o.id === state.activeId);
+          const next = (at + (e.shiftKey ? -1 : 1) + session.ordered.length) % session.ordered.length;
+          session.selectObject(session.ordered[next].id); return;
+        }
         if (e.key === '.' || e.key === ',') {
           e.preventDefault();
           session.stepReview(e.key === '.' ? 1 : -1);
@@ -96,7 +107,7 @@ export default function Workspace({video, renderMedia}: Props) {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [session]);
+  }, [session, state.activeId]);
 
   const trackLabel =
     dirty.length === 0
@@ -110,7 +121,7 @@ export default function Workspace({video, renderMedia}: Props) {
           <span className="brand-mark" />
           sam-ui <span className="muted">studio</span>
         </div>
-        <div className="topbar-status">
+        <div className="topbar-status" role="status" aria-live="polite" aria-atomic="true">
           {jobs.map(job => (
             <span key={job.key} className="job-chip">
               <span className="spinner small" />
@@ -167,6 +178,7 @@ export default function Workspace({video, renderMedia}: Props) {
           )}
         </div>
         <div className="topbar-actions">
+          <button className="button subtle" onClick={() => setShortcutsOpen(true)} aria-label="Keyboard shortcuts (?)">Shortcuts <kbd>?</kbd></button>
           {jobs.length > 1 && (
             <button className="button" onClick={() => session.cancelTrack()} title="Cancel every job of this session">
               <Close size={16} /> Cancel all
@@ -217,12 +229,10 @@ export default function Workspace({video, renderMedia}: Props) {
                   },
                   {
                     id: 'info', title: 'Layer info',
-                    content: selectedLayer == null ? <p className="empty">Select a layer in the timeline.</p> : <dl className="layer-info">
-                      <dt>Layer</dt><dd>{objectName(selectedLayer)}</dd>
-                      <dt>Engine</dt><dd>{engineLabel(state.engine)}</dd>
-                      <dt>Track</dt><dd>{selectedLayer.state}</dd>
-                      <dt>Group</dt><dd>{state.layout.groups.find(g => g.members.includes(selectedLayer.id))?.name ?? 'Ungrouped'}</dd>
-                    </dl>,
+                    content: <>
+                      {selectedLayer == null && <p className="empty">Select a layer in the timeline.</p>}
+                      <div ref={setInspector} />
+                    </>,
                   },
                   {
                     id: 'effects',
@@ -239,7 +249,7 @@ export default function Workspace({video, renderMedia}: Props) {
         </Panel>
         <PanelResizeHandle className="resize-handle horizontal" />
         <Panel id="timeline" order={1} defaultSize={45} minSize={30}>
-          <Timeline session={session} actions={<>
+          <Timeline session={session} inspector={inspector} actions={<>
           <EnginePicker session={session} />
           <div className="track-action">
             <button
@@ -253,6 +263,8 @@ export default function Workspace({video, renderMedia}: Props) {
           </>} />
         </Panel>
       </PanelGroup>
+
+      {shortcutsOpen && <ShortcutSheet onClose={() => setShortcutsOpen(false)} />}
 
       {exporting === 'effects' && (
         <ExportVideoModal session={session} videoName={videoName} onClose={() => setExporting(null)} />

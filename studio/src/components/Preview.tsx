@@ -246,7 +246,7 @@ export default function Preview({session, mode, onModeChange}: Props) {
           style={{transform: `translate(${view.x}px, ${view.y}px) scale(${view.zoom})`}}>
           {bridge != null && (
             // width/height are set once: a canvas handed to a worker cannot be resized here
-            <canvas ref={canvasRef} className="stage-canvas" width={size.width} height={size.height} />
+            <canvas ref={canvasRef} role="img" aria-label={`Composition viewer, frame ${frame + 1}${active ? `, selected layer ${objectName(active)}` : ''}. Click to refine the matte; use the toolbar to choose add or subtract.`} className="stage-canvas" width={size.width} height={size.height} />
           )}
           <div
             ref={layerRef}
