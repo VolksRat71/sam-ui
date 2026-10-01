@@ -128,6 +128,17 @@ python3 -m http.server 7390 --bind 127.0.0.1 --directory /tmp/pages   # http://1
   track stale; confirming absent does, and Cmd-Z takes it back. Exports list
   every range with its state in README.txt and the roto folder's JSON;
   candidates never blank a mask.
+- **Review.** The Review section lists the few stops worth a look on the
+  engine on screen, best first, each with why (engines disagree, track stops,
+  reappears, area jump, jumps, pieces change, re-tracked, candidate starts,
+  flagged) and a score, and its badge counts the ones left. Click a stop, or
+  press . and , to step through them; *Looks right* (Y) marks the one on screen
+  reviewed and goes to the next. If it is wrong, correct it with clicks as
+  usual and track again: only the stops the re-track remade open again. On the
+  timeline a stop is a downward triangle above its lane, a check mark once
+  reviewed. Without a backend the browser engine's queue is built in the tab
+  and its marks kept in this browser. The roto folder's `data/review.json`
+  carries the queue, reviewed or not.
 - **Undo.** Cmd-Z undoes the selected object's last click, cleared frame or
   range edit, and Shift-Cmd-Z redoes it (Ctrl-Z and Ctrl-Y elsewhere; Undo and
   Redo on the object's row do the same). Neither fires while you type in a
@@ -226,7 +237,8 @@ python3 -m http.server 7390 --bind 127.0.0.1 --directory /tmp/pages   # http://1
   shows real pixels.
 - **Keys**: Space plays and pauses, the arrow keys step one frame, F flags
   the frame for a correction, Cmd-Z / Shift-Cmd-Z undo and redo the selected
-  object's clicks, and Escape drops a lane selection.
+  object's clicks, . and , step through the review queue, Y says its stop looks
+  right, and Escape drops a lane selection.
 
 ## Features
 
