@@ -5,6 +5,7 @@ brings the earlier track back from disk with no track job."""
 import json
 import os
 import shutil
+import time
 
 import pytest
 
@@ -432,3 +433,72 @@ def test_moving_clicks_is_refused_while_either_object_is_tracking(world):
         a.move_clicks(sid, 5, 1, 2)
     with pytest.raises(ValueError, match="itself"):
         a.move_clicks(sid, 3, 1, 1)
+
+
+# -- the real model ---------------------------------------------------------------------
+
+from pathlib import Path  # noqa: E402
+
+import numpy as np  # noqa: E402
+import torch  # noqa: E402
+
+from test_inference_api import CKPT, _twotone  # noqa: E402
+from inference.predictor import InferenceAPI  # noqa: E402
+
+
+def _du(path: Path) -> int:
+    """Bytes on disk under path, each hard-linked file counted once."""
+    seen, total = set(), 0
+    for p in path.rglob("*"):
+        if p.is_file():
+            st = p.stat()
+            if (st.st_dev, st.st_ino) not in seen:
+                seen.add((st.st_dev, st.st_ino))
+                total += st.st_size
+    return total
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(not CKPT.exists() or os.environ.get("SAM_UI_SLOW") != "1",
+                    reason="set SAM_UI_SLOW=1 with the large checkpoint in checkpoints/")
+def test_real_sam2_undo_of_an_accidental_click_brings_the_track_back_with_no_job(tmp_path):
+    from sam2.build_sam import build_sam2_video_predictor
+
+    h, w = 240, 320
+    _twotone(tmp_path / "bar.mp4")
+    dev = "mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu")
+    pred = build_sam2_video_predictor("configs/sam2.1/sam2.1_hiera_l.yaml", str(CKPT), device=dev)
+    a = InferenceAPI(predictor=pred, device=torch.device(dev), tracks_root=str(tmp_path / "tracks"))
+    sid = start(a, str(tmp_path / "bar.mp4"))
+    e, runs = a.tracks.engine, []
+    real_track, real_stretch = e.track, e.track_stretch
+    e.track = lambda *args, **kw: (runs.append("track"), real_track(*args, **kw))[1]
+    e.track_stretch = lambda *args, **kw: (runs.append("stretch"), real_stretch(*args, **kw))[1]
+    ctx = a.track_context(sid)
+    obj_dir = Path(tmp_path / "tracks" / ctx.video / "0")
+    masks = obj_dir / "sam2" / "masks.jsonl"
+    y = 125 / h
+
+    def track():
+        with a.inference_lock, a.autocast_context():
+            list(ctx.service.track(ctx.video, ctx.path, [0], video_handle=ctx.video_handle))
+
+    with torch.inference_mode():
+        click(a, sid, 0, 0, [[55 / w, y]], [1])  # the red half
+        track()
+        original = masks.read_bytes()
+        click(a, sid, 0, 10, [[(30 + 50 + 75) / w, y]], [1])  # the accident: a click on the orange half
+        track()
+        assert masks.read_bytes() != original
+        ran = list(runs)
+        t0 = time.perf_counter()
+        info = a.undo_seeds(sid, 0)
+        undo_ms = (time.perf_counter() - t0) * 1000
+        assert info["state"] == TRACKED and sorted(info["seeds"]) == [0]
+        assert masks.read_bytes() == original and runs == ran  # byte for byte, and no job ran
+        # SAM 2's session forgot the accident: a click on frame 10 refines the cached (red) mask
+        out = click(a, sid, 0, 10, [[(30 + 50 + 25) / w, y]], [1])[0]
+        x = 30 + 50
+        assert out[100:150, x + 50:x + 100].sum() < 0.05 * out[100:150, x:x + 50].sum()
+    print(f"\nundo in {undo_ms:.0f} ms; a {len(original)} B track ({len(original) // 20} B a frame at {w}x{h}); "
+          f"versions dir {_du(obj_dir / 'versions')} B, object dir {_du(obj_dir)} B; engine runs {ran}")
