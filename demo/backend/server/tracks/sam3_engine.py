@@ -321,6 +321,12 @@ class Sam3Engine:
                 box = (out.pred_boxes[0, best].float().cpu() * torch.tensor([w, h, w, h])).tolist()  # xyxy, 0-1
                 return TextMatch(mask=(logits > 0).cpu().numpy(), score=score, instances=n, box=box)
 
+    def text_scanner(self, video_path: str, text: str, threshold: float = THRESHOLD) -> "TextScan":
+        """segment_text for many frames of one clip and phrase (discovery,
+        tracks/discovery.py): one decoder and one tokenization for them all,
+        and no mask (only score, count and box)."""
+        return TextScan(self, video_path, text, threshold)
+
     def plan(self, objects: Dict[int, Seeds], windows: Optional[Windows] = None) -> List[Unit]:
         """One session per window, all of the window's objects together (SAM 3
         has no MPS trap to split them by first seed)."""
@@ -383,3 +389,50 @@ class Sam3Engine:
                     masks = proc.post_process_masks([out.pred_masks.float()], original_sizes=[[h, w]], binarize=True)[0]
                     masks = masks.reshape(len(sess.obj_ids), -1, h, w)[:, 0].cpu().numpy().astype(bool)
                     yield out.frame_idx, {int(o): masks[k] for k, o in enumerate(sess.obj_ids)}
+
+
+class TextScan:
+    """Sam3Engine.text_scanner: call it with a frame for a TextMatch with no
+    mask; len() is the clip's frame count. Each call is one use of the
+    engine (it may unload between calls when idle, and loads again)."""
+
+    def __init__(self, engine: Sam3Engine, video_path: str, text: str, threshold: float = THRESHOLD):
+        self.engine, self.video_path, self.text, self.threshold = engine, video_path, text, threshold
+        self._frames = None
+        self._ids = None
+
+    def _ready(self):
+        proc, _, dev = self.engine._load()
+        det, tok = self.engine._load_detector()
+        if self._frames is None:
+            self._frames = Sam3Frames(self.video_path, proc, dtype=self.engine.dtype)
+        if self._ids is None:
+            self._ids = tok(self.text, return_tensors="pt", padding="max_length", max_length=32, truncation=True)
+        return det, dev
+
+    def __len__(self) -> int:
+        with self.engine._using("detector"):
+            self._ready()
+            return len(self._frames)
+
+    def __call__(self, frame: int) -> TextMatch:
+        import torch
+
+        with self.engine._using("detector"):
+            det, dev = self._ready()
+            frames = self._frames
+            if not 0 <= frame < len(frames):
+                raise ValueError(f"frame {frame} is outside the video (0-{len(frames) - 1})")
+            h, w = frames.height, frames.width
+            with torch.inference_mode():
+                ids = self._ids.to(dev)
+                out = det(pixel_values=frames[frame][None].to(dev), input_ids=ids.input_ids,
+                          attention_mask=ids.attention_mask)
+                scores = out.pred_logits.sigmoid()[0]
+                if out.presence_logits is not None:
+                    scores = scores * out.presence_logits.sigmoid()[0]
+                best, n, score = pick(scores.float().cpu().tolist(), self.threshold)
+                if best is None:
+                    return TextMatch(mask=None, score=score, instances=0, box=None)
+                box = (out.pred_boxes[0, best].float().cpu() * torch.tensor([w, h, w, h])).tolist()
+                return TextMatch(mask=None, score=score, instances=n, box=box)
