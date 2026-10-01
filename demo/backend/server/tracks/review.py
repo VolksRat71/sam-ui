@@ -7,19 +7,25 @@ saying "looks right" never makes a track stale and is not a seed change to
 undo. Removing the object removes it with the rest of its directory.
 
 A mark is {"frame", "span": [first, last], "engine", "at", "seeds_hash",
-"pass": {"id", "created"} | None, "mask", "reasons": [kind]}: the frame the
-person looked at, the stretch of the location it reviewed, which engine's
-track it was, the object's seeds hash then, the pass that made that frame
-(tracks/bounded.py provenance; a track from before provenance reads as one
-legacy pass) and a fingerprint of the mask itself.
+"pass": {"id", "created"} | None, "passes": [[id, created]], "mask",
+"span_mask", "reasons": [kind]}: the frame the person looked at, the stretch
+of the location it reviewed, which engine's track it was, the object's seeds
+hash then, the pass that made that frame and every pass that made a frame of
+the span (tracks/bounded.py provenance; a track from before provenance reads
+as one legacy pass), a fingerprint of the frame's mask and a digest of the
+whole span's masks.
 
 A mark stays valid only while the track still holds what was reviewed: the
-same pass made that frame (when the mark and the track both say), and the
-mask there is the same. So a correction that re-tracks a stretch (#19)
-invalidates the marks in that stretch and no others, a full re-track
-invalidates them all, and an undo that brings an earlier track back (#18)
-brings its marks back too. Invalid marks are kept for that reason, up to
-KEEP per object, oldest dropped first.
+same passes made its span (when the mark and the track both say), and the
+masks there are the same, every one of them. So a correction that re-tracks
+a stretch (#19) invalidates the marks it reaches and no others, a full
+re-track invalidates them all, and an undo that brings an earlier track back
+(#18) brings its marks back too. Invalid marks are kept for that reason, up
+to KEEP per object, oldest dropped first.
+
+A valid mark reviews a queue location whose peak frame lies in its span: the
+peak may move a little as the queue is ranked again, but a location peaking
+somewhere nobody looked is never reviewed by a neighbour's mark.
 """
 import hashlib
 import json
@@ -29,6 +35,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
 KEEP = 500
+EMPTY = "empty"  # the fingerprint of a frame the track holds no mask for
 
 
 def fingerprint(rle: Dict) -> str:
@@ -45,21 +52,32 @@ def _mark_ok(m) -> bool:
         span is None or (isinstance(span, list) and len(span) == 2 and all(isinstance(x, int) for x in span)))
 
 
-def valid(mark: Dict, engine: str, pass_now: Optional[Dict], mask_now: Optional[str]) -> bool:
-    """Whether `mark` still holds for `engine`'s track, whose frame there was
-    made by `pass_now` ({"id", "created"}) and holds a mask whose fingerprint
-    is `mask_now` (None: no track there)."""
-    if mark.get("engine") != engine or mask_now is None:
+def digest(fingerprints: Sequence[str]) -> str:
+    """One hash of a stretch's masks, from their fingerprints in frame order."""
+    return hashlib.sha1("|".join(fingerprints).encode()).hexdigest()[:16]
+
+
+def valid(mark: Dict, engine: str, now: Optional[Dict]) -> bool:
+    """Whether `mark` still holds for `engine`'s track, which looks like `now`
+    over the mark's frame and span ({"pass", "passes", "mask", "span_mask"},
+    as a mark records them; None: no track there). A field either side lacks
+    (an older mark, a track from before provenance) is not compared."""
+    if mark.get("engine") != engine or now is None or mark.get("mask") is None:
         return False
-    then = mark.get("pass")
-    if then is not None and pass_now is not None and (then.get("id"), then.get("created")) != \
-            (pass_now.get("id"), pass_now.get("created")):
-        return False
-    return mark.get("mask") is None or mark["mask"] == mask_now
+    for key in ("mask", "span_mask", "pass", "passes"):
+        if mark.get(key) is not None and now.get(key) is not None and mark[key] != now[key]:
+            return False
+    return True
+
+
+def reviews(mark: Dict, loc: Dict) -> bool:
+    """Whether a valid mark reviews the location: its peak lies in the mark's span."""
+    a, b = mark.get("span") or [mark["frame"], mark["frame"]]
+    return a <= loc["frame"] <= b
 
 
 def covers(mark: Dict, start: int, end: int) -> bool:
-    """Whether the mark reviewed a location covering frames start-end."""
+    """Whether the mark's span touches frames start-end (what unmarking them drops)."""
     a, b = mark.get("span") or [mark["frame"], mark["frame"]]
     return a <= end and start <= b
 
@@ -90,13 +108,13 @@ class ReviewStore:
         tmp.write_text(json.dumps({"marks": marks[-KEEP:]}, indent=1))
         os.replace(tmp, p)
 
-    def mark(self, video: str, obj_id: int, frame: int, engine: str, *, span: Optional[Sequence[int]],
-             seeds_hash: Optional[str], pass_now: Optional[Dict], mask: str, reasons: Sequence[str] = ()) -> Dict:
-        """Mark `frame` reviewed on `engine`, replacing any mark there."""
-        span = [int(span[0]), int(span[1])] if span is not None else [int(frame), int(frame)]
-        m = {"frame": int(frame), "span": [min(span), max(span)], "engine": engine,
-             "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "seeds_hash": seeds_hash, "pass": pass_now, "mask": mask,
-             "reasons": list(reasons)}
+    def mark(self, video: str, obj_id: int, frame: int, engine: str, *, span: Sequence[int],
+             seeds_hash: Optional[str], now: Dict, reasons: Sequence[str] = ()) -> Dict:
+        """Mark `frame` reviewed on `engine` over `span`, replacing any mark
+        there. `now` is what the track holds there (valid()'s fields)."""
+        m = {"frame": int(frame), "span": [int(span[0]), int(span[1])], "engine": engine,
+             "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "seeds_hash": seeds_hash,
+             **{k: now.get(k) for k in ("pass", "passes", "mask", "span_mask")}, "reasons": list(reasons)}
         rest = [x for x in self.marks(video, obj_id) if not (x["engine"] == engine and x["frame"] == m["frame"])]
         self._write(video, obj_id, rest + [m])
         return m

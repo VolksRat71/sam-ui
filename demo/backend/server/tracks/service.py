@@ -816,7 +816,7 @@ class TrackService:
             locs = audit.locations(reasons, n, absent)
             marks = self._valid_marks(video, o, name, meta, masks)
             for loc in locs:
-                hit = next((m for m in reversed(marks) if rv.covers(m, loc["start"], loc["end"])), None)
+                hit = next((m for m in reversed(marks) if rv.reviews(m, loc)), None)
                 loc["reviewed"] = hit is not None
                 loc["reviewed_at"] = hit["at"] if hit else None
             by_object[o] = locs
@@ -826,15 +826,37 @@ class TrackService:
         return out
 
     @staticmethod
-    def _frame_pass(meta: Optional[Dict], by_frame: Dict[int, int], frame: int) -> Optional[Dict]:
-        p = {x["id"]: x for x in bnd.passes(meta)}.get(by_frame.get(frame))
-        return None if p is None else {"id": p["id"], "created": p.get("created")}
+    def _review_now(meta: Optional[Dict], by_frame: Dict[int, int], masks: Dict[int, Dict], n: int, frame: int,
+                    span: Tuple[int, int]) -> Optional[Dict]:
+        """What the track holds over a mark's frame and span, in tracks/review.py's
+        terms; None when the frame is outside it. A frame with no stored mask is empty."""
+        if meta is None or not 0 <= frame < n:
+            return None
+        passes = {p["id"]: p for p in bnd.passes(meta)}
+
+        def pass_of(f):
+            p = passes.get(by_frame.get(f))
+            return None if p is None else {"id": p["id"], "created": p.get("created")}
+
+        def fp(f):
+            return rv.fingerprint(masks[f]) if f in masks else rv.EMPTY
+
+        a, b = max(0, span[0]), min(n - 1, span[1])
+        frames = range(a, b + 1)
+        seen = sorted({(p["id"], p["created"]) for p in map(pass_of, frames) if p is not None},
+                      key=lambda x: (x[0], x[1] or ""))
+        return {"pass": pass_of(frame), "passes": [list(p) for p in seen] or None, "mask": fp(frame),
+                "span_mask": rv.digest([fp(f) for f in frames])}
 
     def _valid_marks(self, video: str, o: int, name: str, meta: Optional[Dict], masks: Dict[int, Dict]) -> List[Dict]:
         by_frame = bnd.frame_passes(meta)
-        return [m for m in self.reviews.marks(video, o)
-                if rv.valid(m, name, self._frame_pass(meta, by_frame, m["frame"]),
-                            rv.fingerprint(masks[m["frame"]]) if m["frame"] in masks else None)]
+        n = max(int((meta or {}).get("n_frames") or 0), 1 + max(masks, default=-1))
+        out = []
+        for m in self.reviews.marks(video, o):
+            span = tuple(m.get("span") or (m["frame"], m["frame"]))
+            if rv.valid(m, name, self._review_now(meta, by_frame, masks, n, m["frame"], span)):
+                out.append(m)
+        return out
 
     def set_reviewed(self, video: str, obj_id: int, frame: int, engine: Optional[str] = None, reviewed: bool = True,
                      span: Optional[Tuple[int, int]] = None, reasons: Optional[List[str]] = None) -> Dict:
@@ -849,10 +871,13 @@ class TrackService:
             self.reviews.unmark(video, obj_id, name, int(a), int(b))
             return {"object_id": int(obj_id), "frame": frame, "engine": name, "reviewed": False}
         meta = self.tracks.meta(video, obj_id, name)
-        mask = self.tracks.mask_at(video, obj_id, name, frame) if meta is not None else None
-        if mask is None:
+        masks = dict(self.tracks.masks(video, obj_id, name)) if meta is not None else {}
+        n = max(int((meta or {}).get("n_frames") or 0), 1 + max(masks, default=-1))
+        span = (int(span[0]), int(span[1])) if span is not None else (frame, frame)
+        span = (min(span), max(span))
+        now = self._review_now(meta, bnd.frame_passes(meta), masks, n, frame, span)
+        if now is None:
             raise KeyError(f"object {obj_id} has no {name} track on frame {frame}")
         m = self.reviews.mark(video, obj_id, frame, name, span=span, seeds_hash=self.seeds.hash(video, obj_id),
-                              pass_now=self._frame_pass(meta, bnd.frame_passes(meta), frame),
-                              mask=rv.fingerprint(mask), reasons=reasons or [])
+                              now=now, reasons=reasons or [])
         return {"object_id": int(obj_id), "frame": frame, "engine": name, "reviewed": True, "at": m["at"]}

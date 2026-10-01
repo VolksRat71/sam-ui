@@ -61,6 +61,7 @@ import numpy as np
 from PIL import Image
 
 from tracks import rle
+from tracks.audit import fmt2
 from tracks.ranges import absent_at
 from tracks.store import STALE, TRACKED
 
@@ -204,7 +205,7 @@ def export(service, video: str, video_path: str, out_dir: str, objects: Optional
 
 def _note(loc: Dict) -> str:
     done = ", reviewed in sam-ui: looks right" if loc.get("reviewed") else ""
-    return f"{REVIEW_NOTE} (score {loc['score']:.2f}{done}): " + "; ".join(r["detail"] for r in loc["reasons"])
+    return f"{REVIEW_NOTE} (score {fmt2(loc['score'])}{done}): " + "; ".join(r["detail"] for r in loc["reasons"])
 
 
 def _write_review(path: Path, notes: Dict[str, str]) -> None:

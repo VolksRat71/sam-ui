@@ -444,6 +444,9 @@ def parity_case():
             m = np.zeros((H, W), bool)  # vanishes
         elif 8 <= f <= 10:
             m = sq(2 + f, 2, 6) | sq(2 + f, 30, 6)  # splits
+        elif f >= 38:
+            m = np.zeros((H, W), bool)
+            m[10:21, f:f + 9] = True  # 144 px to 99: a change of exactly 0.3125, a rounding tie
         elif f >= 25:
             m = sq(f, 10, 12)  # jumps back and grows
         else:
@@ -451,7 +454,7 @@ def parity_case():
         masks[f] = enc(m)
     inputs = {"absent": [{"start": 33, "end": 35, "state": "absent"}],
               "candidates": [{"start": 20, "end": 24, "state": "candidate", "source": "text:dog@sam3", "score": 0.7}],
-              "disagreement": {"5": 0.4, "6": 0.9}, "bounded": [[27, 31]], "flags": [2], "seeds": [0]}
+              "disagreement": {"5": 0.4, "6": 0.9, "36": 0.125}, "bounded": [[27, 31]], "flags": [2], "seeds": [0]}
     return masks, inputs
 
 
@@ -474,3 +477,45 @@ def test_the_studio_parity_fixture_is_current():
     if os.environ.get("SAM_UI_WRITE_PARITY"):
         PARITY.write_text(json.dumps(want, indent=1) + "\n")
     assert json.loads(PARITY.read_text()) == json.loads(json.dumps(want))
+
+
+# -- review fixes -------------------------------------------------------------------------
+
+def test_a_flag_inside_an_absent_range_is_dropped_not_a_crash():
+    absent = [{"start": 10, "end": 14, "state": "absent"}]
+    got = signals(stats_of(moving()), 30, absent=absent, flags=[12, 20])
+    assert 12 not in got and kinds(got, 20) == ["flag"]
+    # and a stray reason inside one never crashes the ranking
+    assert locations({12: [R("flag", 12)]}, 30, absent) == []
+
+
+def test_a_tie_rounds_half_up_as_the_studio_does():
+    assert audit.round3(0.5625) == 0.563 and audit.fmt2(0.125) == "0.13" and audit.pct(0.625) == 63
+
+
+def test_a_mark_stops_holding_when_any_frame_of_its_span_is_remade(hs):
+    tracked(hs)
+    hs.service.set_reviewed(hs.video, 1, 5, span=(5, 12))  # reviewed a stretch, peak at 5
+    meta = hs.service.tracks.meta(hs.video, 1, "fake")
+    masks = dict(hs.service.tracks.masks(hs.video, 1, "fake"))
+    marks = hs.service._valid_marks(hs.video, 1, "fake", meta, masks)
+    assert len(marks) == 1
+    masks[11] = masks[40]  # one frame of the span changed, the peak did not
+    assert hs.service._valid_marks(hs.video, 1, "fake", meta, masks) == []
+
+
+def test_a_mark_reviews_only_locations_peaking_inside_its_span(hs):
+    tracked(hs)
+    q = queue(hs, flags={1: [30]})  # the flag and the wrap at 28 make one stop: peak 30, frames 28-30
+    assert [(loc["frame"], loc["start"], loc["end"]) for loc in q["objects"]["1"]["locations"]][0] == (30, 28, 30)
+    hs.service.set_reviewed(hs.video, 1, 24, span=(20, 28))  # overlaps it, but its peak was never looked at
+    assert reviewed_frames(queue(hs, flags={1: [30]})) == []
+    hs.service.set_reviewed(hs.video, 1, 30, span=(28, 30))
+    assert reviewed_frames(queue(hs, flags={1: [30]})) == [30]
+
+
+def test_marking_a_frame_past_the_track_is_refused_but_any_frame_of_it_can_be_marked(hs):
+    tracked(hs)
+    with pytest.raises(KeyError):
+        hs.service.set_reviewed(hs.video, 1, N + 5)
+    assert hs.service.set_reviewed(hs.video, 1, N - 1)["reviewed"] is True

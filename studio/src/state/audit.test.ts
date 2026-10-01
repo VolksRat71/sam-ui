@@ -12,6 +12,11 @@ import {
   buildQueue,
   covers,
   fingerprint,
+  fmt2,
+  pct,
+  reviewNow,
+  reviews,
+  round3,
   frameStats,
   locations,
   markValid,
@@ -275,9 +280,9 @@ describe('reviewed marks', () => {
   const mark: ReviewMark = {frame: 5, span: [4, 6], engine: 'browser-sam2', at: 'now', mask: fingerprint(mask), reasons: []};
 
   it('hold while the mask on that frame is the same, on the same engine', () => {
-    expect(markValid(mark, 'browser-sam2', fingerprint(mask))).toBe(true);
-    expect(markValid(mark, 'browser-sam2', fingerprint(enc(sq(3, 2))))).toBe(false);
-    expect(markValid(mark, 'sam2', fingerprint(mask))).toBe(false);
+    expect(markValid(mark, 'browser-sam2', {mask: fingerprint(mask), spanMask: 'x'})).toBe(true);
+    expect(markValid(mark, 'browser-sam2', {mask: fingerprint(enc(sq(3, 2))), spanMask: 'x'})).toBe(false);
+    expect(markValid(mark, 'sam2', {mask: fingerprint(mask), spanMask: 'x'})).toBe(false);
     expect(markValid(mark, 'browser-sam2', null)).toBe(false);
   });
 
@@ -372,5 +377,33 @@ describe('a queue built in the browser', () => {
     expect(q.queue.filter(e => e.reviewed).map(e => e.frame)).toEqual([3]);
     expect(maskFingerprint(masks, 3, 20)).toBe(EMPTY_MASK);
     expect(maskFingerprint(masks, 25, 20)).toBeNull();
+  });
+});
+
+describe('review fixes', () => {
+  it('drops a flag left inside an absent range, and never ranks a frame in one', () => {
+    const absent = [{start: 10, end: 14, state: 'absent'}];
+    const got = signals(statsOf(moving()), 30, {absent, flags: [12, 20]});
+    expect(got.has(12)).toBe(false);
+    expect(kinds(got, 20)).toEqual(['flag']);
+    expect(locations(new Map([[12, [R('flag', 12)]]]), 30, absent)).toEqual([]);
+  });
+
+  it('rounds ties half up, as the backend does', () => {
+    expect(round3(0.5625)).toBe(0.563);
+    expect(fmt2(0.125)).toBe('0.13');
+    expect(pct(0.625)).toBe(63);
+  });
+
+  it('lets a mark go once any frame of its span changes, and reviews only a stop peaking inside it', () => {
+    const masks = new Map<number, RLEObject>();
+    for (let f = 0; f < 20; f++) masks.set(f, enc(sq(f < 12 ? 2 + f : f - 10, 10)));
+    const now = reviewNow(masks, 12, [10, 13], 20)!;
+    const mark: ReviewMark = {frame: 12, span: [10, 13], engine: 'browser-sam2', at: 't', reasons: [], ...now};
+    expect(markValid(mark, 'browser-sam2', reviewNow(masks, 12, [10, 13], 20))).toBe(true);
+    masks.set(11, masks.get(3)!); // a frame of the span, not the peak
+    expect(markValid(mark, 'browser-sam2', reviewNow(masks, 12, [10, 13], 20))).toBe(false);
+    expect(reviews(mark, {frame: 13})).toBe(true);
+    expect(reviews(mark, {frame: 14})).toBe(false);
   });
 });

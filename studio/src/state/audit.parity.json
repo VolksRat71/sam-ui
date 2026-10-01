@@ -271,14 +271,14 @@
     48,
     64
    ],
-   "counts": "Zi1<T1000000000000000000000fd0"
+   "counts": "Zi1;U1000000000000000Vi0"
   },
   "39": {
    "size": [
     48,
     64
    ],
-   "counts": "jj1<T1000000000000000000000Vc0"
+   "counts": "jj1;U1000000000000000fg0"
   }
  },
  "inputs": {
@@ -300,7 +300,8 @@
   ],
   "disagreement": {
    "5": 0.4,
-   "6": 0.9
+   "6": 0.9,
+   "36": 0.125
   },
   "bounded": [
    [
@@ -818,30 +819,30 @@
     "components": 1
    },
    "38": {
-    "area": 144,
+    "area": 99,
     "bbox": [
      38,
      10,
-     49,
-     21
+     46,
+     20
     ],
     "centroid": [
-     43.5,
-     15.5
+     42.0,
+     15.0
     ],
     "components": 1
    },
    "39": {
-    "area": 144,
+    "area": 99,
     "bbox": [
      39,
      10,
-     50,
-     21
+     47,
+     20
     ],
     "centroid": [
-     44.5,
-     15.5
+     43.0,
+     15.0
     ],
     "components": 1
    }
@@ -924,6 +925,32 @@
     ]
    },
    {
+    "frame": 36,
+    "start": 36,
+    "end": 38,
+    "score": 3.907,
+    "reasons": [
+     {
+      "kind": "disagree",
+      "frame": 36,
+      "strength": 0.922,
+      "detail": "the engines disagree (IoU 0.13)"
+     },
+     {
+      "kind": "reappear",
+      "frame": 36,
+      "strength": 1.0,
+      "detail": "the object comes back after a gap"
+     },
+     {
+      "kind": "area",
+      "frame": 38,
+      "strength": 0.563,
+      "detail": "the mask shrinks by 31% in one frame"
+     }
+    ]
+   },
+   {
     "frame": 31,
     "start": 29,
     "end": 32,
@@ -940,20 +967,6 @@
       "frame": 32,
       "strength": 1.0,
       "detail": "the track stops after this frame"
-     }
-    ]
-   },
-   {
-    "frame": 36,
-    "start": 36,
-    "end": 36,
-    "score": 1.5,
-    "reasons": [
-     {
-      "kind": "reappear",
-      "frame": 36,
-      "strength": 1.0,
-      "detail": "the object comes back after a gap"
      }
     ]
    }

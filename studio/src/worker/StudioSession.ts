@@ -47,7 +47,7 @@ import {
   type ReasonKind,
   type ReviewQueue,
   buildQueue,
-  maskFingerprint,
+  reviewNow,
 } from '~/state/audit';
 import {LocalEngine, type LocalOptions} from '~/local/LocalEngine';
 import {OfflineService, SeedStore} from '~/local/offlineStores';
@@ -1831,11 +1831,11 @@ export default class StudioSession {
       return;
     }
     const track = await this._local.store.get(video, objectId);
-    const mask = maskFingerprint(track?.masks ?? null, frame, this._context['_decodedVideo']?.numFrames ?? 0);
-    if (mask == null) {
+    const now = reviewNow(track?.masks ?? null, frame, span, this._context['_decodedVideo']?.numFrames ?? 0);
+    if (now == null) {
       throw new Error(`there is no ${engineLabel(BROWSER_ENGINE)} track on frame ${frame + 1} to mark reviewed`);
     }
-    await this._reviews.mark(video, objectId, {frame, span, engine: BROWSER_ENGINE, at: new Date().toISOString(), mask, reasons});
+    await this._reviews.mark(video, objectId, {frame, span, engine: BROWSER_ENGINE, at: new Date().toISOString(), reasons, ...now});
   }
 
   setActiveObject(objectId: number | null): void {

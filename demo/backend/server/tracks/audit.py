@@ -168,10 +168,24 @@ def frame_stats(rle: Dict) -> Stats:
 
 
 # -- signals ------------------------------------------------------------------------------
+# Numbers are rounded half up, as JavaScript's Math.round does, so the studio's
+# twin writes the same strengths, scores and words (Python's round() goes to even).
+
+def round3(v: float) -> float:
+    return math.floor(v * 1000 + 0.5) / 1000
+
+
+def fmt2(v: float) -> str:
+    return f"{math.floor(v * 100 + 0.5) / 100:.2f}"
+
+
+def pct(v: float) -> int:
+    return int(math.floor(v * 100 + 0.5))
+
 
 def _ramp(v: float, lo: float, hi: float) -> float:
     """0.5 at the threshold, 1 at full: any frame that crosses one counts."""
-    return round(0.5 + 0.5 * min(1.0, max(0.0, (v - lo) / (hi - lo))), 3)
+    return round3(0.5 + 0.5 * min(1.0, max(0.0, (v - lo) / (hi - lo))))
 
 
 def _box_iou(a: Sequence[float], b: Sequence[float]) -> float:
@@ -195,7 +209,7 @@ def _median(xs: List[float]) -> float:
 
 
 def _reason(kind: str, frame: int, strength: float, detail: str) -> Reason:
-    return {"kind": kind, "frame": int(frame), "strength": round(float(strength), 3), "detail": detail}
+    return {"kind": kind, "frame": int(frame), "strength": round3(float(strength)), "detail": detail}
 
 
 def signals(stats: Dict[int, Stats], n_frames: int, *, absent: Iterable[Dict] = (), candidates: Iterable[Dict] = (),
@@ -239,7 +253,7 @@ def signals(stats: Dict[int, Stats], n_frames: int, *, absent: Iterable[Dict] = 
         rel = abs(a1 - a0) / max(a0, a1)
         if rel >= AREA_JUMP:
             out[f].append(_reason("area", f, _ramp(rel, AREA_JUMP, AREA_FULL),
-                                  f"the mask {'grows' if a1 > a0 else 'shrinks'} by {round(100 * rel)}% in one frame"))
+                                  f"the mask {'grows' if a1 > a0 else 'shrinks'} by {pct(rel)}% in one frame"))
         if st["components"] != pv["components"]:
             out[f].append(_reason("components", f, 1.0,
                                   f"the mask goes from {pv['components']} to {st['components']} pieces"))
@@ -253,8 +267,8 @@ def signals(stats: Dict[int, Stats], n_frames: int, *, absent: Iterable[Dict] = 
                        _ramp(surprise, BOX_SURPRISE, BOX_FULL) if surprise >= BOX_SURPRISE else 0.0)
         if strength > 0:
             out[f].append(_reason("jump", f, strength,
-                                  f"the mask moves {off:.2f} of its size off its course, and its box overlaps "
-                                  f"the expected one by {1 - surprise:.0%}"))
+                                  f"the mask moves {fmt2(off)} of its size off its course, and its box overlaps "
+                                  f"the expected one by {pct(1 - surprise)}%"))
         moves.append((cx1 - cx0, cy1 - cy0))
 
     a_name, b_name = pair
@@ -263,7 +277,7 @@ def signals(stats: Dict[int, Stats], n_frames: int, *, absent: Iterable[Dict] = 
         if iou < threshold and 0 <= f < n_frames and not gone(f):
             who = f"{a_name} and {b_name}" if b_name else a_name
             out[f].append(_reason("disagree", f, _ramp(threshold - iou, 0, threshold),
-                                  f"{who} disagree (IoU {iou:.2f})"))
+                                  f"{who} disagree (IoU {fmt2(iou)})"))
 
     for a, b in bounded:
         for f in range(int(a), int(b) + 1):
@@ -277,7 +291,7 @@ def signals(stats: Dict[int, Stats], n_frames: int, *, absent: Iterable[Dict] = 
 
     for c in candidates:
         if c.get("state") == rng.CANDIDATE and 0 <= c["start"] < n_frames and not gone(c["start"]):
-            score = f", score {c['score']:.2f}" if c.get("score") is not None else ""
+            score = f", score {fmt2(c['score'])}" if c.get("score") is not None else ""
             out[c["start"]].append(_reason("candidate", c["start"], 1.0,
                                            f"an unconfirmed candidate range from {c.get('source')}{score} starts here "
                                            f"(frames {c['start'] + 1}-{c['end'] + 1})"))
@@ -286,7 +300,7 @@ def signals(stats: Dict[int, Stats], n_frames: int, *, absent: Iterable[Dict] = 
     for f in seed_frames:  # the user drew that mask: only their own flag still counts
         out.pop(f, None)
     for f in sorted(set(int(f) for f in flags)):
-        if 0 <= f < n_frames:
+        if 0 <= f < n_frames and not gone(f):  # a flag left inside a range marked absent since
             out[f].append(_reason("flag", f, 1.0, "flagged for a correction"))
     return {f: rs for f, rs in sorted(out.items()) if rs}
 
@@ -304,9 +318,10 @@ def locations(reasons: Dict[int, List[Reason]], n_frames: int, absent: Iterable[
     wins = rng.windows([r for r in absent if r.get("state") == rng.ABSENT])
 
     def window_of(f: int) -> int:
-        return next(i for i, w in enumerate(wins) if rng.in_window(f, w))
+        return next((i for i, w in enumerate(wins) if rng.in_window(f, w)), -1)
 
-    scores = {f: frame_score(rs) for f, rs in reasons.items() if rs}
+    # a frame inside an absent range is in no window, and never a stop
+    scores = {f: frame_score(rs) for f, rs in reasons.items() if rs and window_of(f) >= 0}
     taken = set()
     out = []
     for f in sorted(scores, key=lambda g: (-scores[g], g)):
@@ -322,7 +337,7 @@ def locations(reasons: Dict[int, List[Reason]], n_frames: int, absent: Iterable[
                     best[r["kind"]] = r
         kept = sorted(best.values(), key=lambda r: (-WEIGHTS[r["kind"]] * r["strength"], r["frame"]))
         out.append({"frame": int(f), "start": int(min(members)), "end": int(max(members)),
-                    "score": round(frame_score(kept), 3), "reasons": kept})
+                    "score": round3(frame_score(kept)), "reasons": kept})
     out = [loc for loc in out if loc["score"] >= min_score]
     out.sort(key=lambda loc: (-loc["score"], loc["frame"]))
     return out[:cap]

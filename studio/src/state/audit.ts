@@ -176,7 +176,10 @@ export function frameStats(rle: RleLike): FrameStats {
 
 // -- signals ------------------------------------------------------------------------
 
-const round3 = (v: number) => Math.round(v * 1000) / 1000;
+// rounded half up, as tracks/audit.py's round3, fmt2 and pct: the same numbers and words
+export const round3 = (v: number) => Math.floor(v * 1000 + 0.5) / 1000;
+export const fmt2 = (v: number) => (Math.floor(v * 100 + 0.5) / 100).toFixed(2);
+export const pct = (v: number) => Math.floor(v * 100 + 0.5);
 
 function ramp(v: number, lo: number, hi: number): number {
   return round3(0.5 + 0.5 * Math.min(1, Math.max(0, (v - lo) / (hi - lo))));
@@ -244,7 +247,7 @@ export function signals(stats: ReadonlyMap<number, FrameStats>, nFrames: number,
     const pv = stats.get(f - 1)!;
     const rel = Math.abs(st.area - pv.area) / Math.max(st.area, pv.area);
     if (rel >= AREA_JUMP) {
-      add(reason('area', f, ramp(rel, AREA_JUMP, AREA_FULL), `the mask ${st.area > pv.area ? 'grows' : 'shrinks'} by ${Math.round(100 * rel)}% in one frame`));
+      add(reason('area', f, ramp(rel, AREA_JUMP, AREA_FULL), `the mask ${st.area > pv.area ? 'grows' : 'shrinks'} by ${pct(rel)}% in one frame`));
     }
     if (st.components !== pv.components) {
       add(reason('components', f, 1, `the mask goes from ${pv.components} to ${st.components} pieces`));
@@ -264,7 +267,7 @@ export function signals(stats: ReadonlyMap<number, FrameStats>, nFrames: number,
           'jump',
           f,
           strength,
-          `the mask moves ${off.toFixed(2)} of its size off its course, and its box overlaps the expected one by ${Math.round(100 * (1 - surprise))}%`,
+          `the mask moves ${fmt2(off)} of its size off its course, and its box overlaps the expected one by ${pct(1 - surprise)}%`,
         ),
       );
     }
@@ -275,7 +278,7 @@ export function signals(stats: ReadonlyMap<number, FrameStats>, nFrames: number,
   const [a, b] = inputs.pair ?? ['the engines', ''];
   for (const [f, iou] of [...(inputs.disagreement ?? new Map<number, number>())].sort((x, y) => x[0] - y[0])) {
     if (iou < threshold && f >= 0 && f < nFrames && !gone(f)) {
-      add(reason('disagree', f, ramp(threshold - iou, 0, threshold), `${b !== '' ? `${a} and ${b}` : a} disagree (IoU ${iou.toFixed(2)})`));
+      add(reason('disagree', f, ramp(threshold - iou, 0, threshold), `${b !== '' ? `${a} and ${b}` : a} disagree (IoU ${fmt2(iou)})`));
     }
   }
 
@@ -294,7 +297,7 @@ export function signals(stats: ReadonlyMap<number, FrameStats>, nFrames: number,
 
   for (const c of inputs.candidates ?? []) {
     if (c.state === CANDIDATE && c.start >= 0 && c.start < nFrames && !gone(c.start)) {
-      const score = c.score != null ? `, score ${c.score.toFixed(2)}` : '';
+      const score = c.score != null ? `, score ${fmt2(c.score)}` : '';
       add(reason('candidate', c.start, 1, `an unconfirmed candidate range from ${c.source}${score} starts here (frames ${c.start + 1}-${c.end + 1})`));
     }
   }
@@ -303,7 +306,8 @@ export function signals(stats: ReadonlyMap<number, FrameStats>, nFrames: number,
     out.delete(f); // the user drew that mask: only their own flag still counts
   }
   for (const f of [...new Set(inputs.flags ?? [])].sort((x, y) => x - y)) {
-    if (f >= 0 && f < nFrames) {
+    if (f >= 0 && f < nFrames && !gone(f)) {
+      // (a flag left inside a range marked absent since is no stop)
       add(reason('flag', f, 1, 'flagged for a correction'));
     }
   }
@@ -327,7 +331,8 @@ export function locations(
 ): Location[] {
   const wins = rangeWindows(normalizeRanges(absent.filter(r => r.state === ABSENT)));
   const windowOf = (f: number) => wins.findIndex(w => inWindow(f, w));
-  const scores = new Map([...reasons].filter(([, rs]) => rs.length > 0).map(([f, rs]) => [f, frameScore(rs)] as const));
+  // a frame inside an absent range is in no window, and never a stop
+  const scores = new Map([...reasons].filter(([f, rs]) => rs.length > 0 && windowOf(f) >= 0).map(([f, rs]) => [f, frameScore(rs)] as const));
   const taken = new Set<number>();
   const out: Location[] = [];
   for (const f of [...scores.keys()].sort((x, y) => scores.get(y)! - scores.get(x)! || x - y)) {
@@ -363,8 +368,20 @@ export function rank<T extends Location>(byObject: ReadonlyMap<number, ReadonlyA
 
 // -- reviewed marks -------------------------------------------------------------------
 
-/** "Looks right" on one location: the frame looked at, the stretch it covered, and the mask then. */
-export type ReviewMark = {frame: number; span: [number, number] | null; engine: string; at: string; mask: string; reasons: ReasonKind[]};
+/**
+ * "Looks right" on one location: the frame looked at, the stretch it
+ * covered, the frame's mask then and a digest of the whole stretch's
+ * (spanMask; a mark from before it has none).
+ */
+export type ReviewMark = {
+  frame: number;
+  span: [number, number] | null;
+  engine: string;
+  at: string;
+  mask: string;
+  spanMask?: string;
+  reasons: ReasonKind[];
+};
 
 /** A short hash of one frame's mask (cyrb53, hex). The backend's is its own (sha1): they never meet. */
 export function fingerprint(rle: RleLike | RLEObject): string {
@@ -381,12 +398,27 @@ export function fingerprint(rle: RleLike | RLEObject): string {
   return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16).padStart(14, '0');
 }
 
-/** Whether a mark still holds: the same engine, and the same mask on its frame (null: none there). */
-export function markValid(mark: ReviewMark, engine: string, maskNow: string | null): boolean {
-  return mark.engine === engine && maskNow != null && mark.mask === maskNow;
+/** What a track holds over a mark's frame and span: reviewNow(). */
+export type ReviewNow = {mask: string; spanMask: string};
+
+/**
+ * Whether a mark still holds: the same engine, and the same masks on its
+ * frame and over its whole span (`now` null: no track there). A mark with no
+ * spanMask (an older one) is checked on its frame only.
+ */
+export function markValid(mark: ReviewMark, engine: string, now: ReviewNow | null): boolean {
+  return (
+    mark.engine === engine && now != null && mark.mask === now.mask && (mark.spanMask == null || mark.spanMask === now.spanMask)
+  );
 }
 
-/** Whether a mark reviewed a location covering frames start-end. */
+/** Whether a valid mark reviews a location: its peak lies in the mark's span. */
+export function reviews(mark: Pick<ReviewMark, 'frame' | 'span'>, loc: {frame: number}): boolean {
+  const [a, b] = mark.span ?? [mark.frame, mark.frame];
+  return a <= loc.frame && loc.frame <= b;
+}
+
+/** Whether a mark's span touches frames start-end (what unmarking them drops). */
 export function covers(mark: Pick<ReviewMark, 'frame' | 'span'>, start: number, end: number): boolean {
   const [a, b] = mark.span ?? [mark.frame, mark.frame];
   return a <= end && start <= b;
@@ -502,6 +534,24 @@ export type QueueObject = {
   flags: ReadonlyArray<number>;
 };
 
+/** What a browser track holds over `frame` and `span`, for a mark; null past the clip. */
+export function reviewNow(
+  masks: ReadonlyMap<number, RleLike> | null,
+  frame: number,
+  span: readonly [number, number],
+  nFrames: number,
+): ReviewNow | null {
+  const mask = maskFingerprint(masks, frame, nFrames);
+  if (mask == null) {
+    return null;
+  }
+  const fps: string[] = [];
+  for (let f = Math.max(0, span[0]); f <= Math.min(nFrames - 1, span[1]); f++) {
+    fps.push(maskFingerprint(masks, f, nFrames)!);
+  }
+  return {mask, spanMask: fingerprint({size: [fps.length, 0], counts: fps.join('|')})};
+}
+
 /** The queue of tracks the tab holds (the browser engine's), as the backend's review_queue builds it. */
 export function buildQueue(objects: ReadonlyArray<QueueObject>, nFrames: number, engine: string): ReviewQueue {
   const out: ReviewQueue = {engine, compare: null, objects: {}, queue: [], skipped: {}, supported: true};
@@ -516,9 +566,9 @@ export function buildQueue(objects: ReadonlyArray<QueueObject>, nFrames: number,
       stats.set(f, frameStats(m));
     }
     const reasons = signals(stats, nFrames, {absent: o.ranges, candidates: o.candidates, seeds: o.seeds, flags: o.flags});
-    const valid = o.marks.filter(m => markValid(m, engine, maskFingerprint(o.masks, m.frame, nFrames)));
+    const valid = o.marks.filter(m => markValid(m, engine, reviewNow(o.masks, m.frame, m.span ?? [m.frame, m.frame], nFrames)));
     const locs = locations(reasons, nFrames, o.ranges).map(l => {
-      const hit = [...valid].reverse().find(m => covers(m, l.start, l.end));
+      const hit = [...valid].reverse().find(m => reviews(m, l));
       return {...l, reviewed: hit != null, reviewedAt: hit?.at ?? null};
     });
     byObject.set(o.id, locs);

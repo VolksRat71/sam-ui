@@ -20,7 +20,7 @@
 // as tracks/export.py writes it: "<pid>:<1-based frame>": ["sam-ui review
 // (score s): why"], marked reviewed where a person said it looks right, and
 // the manifest holds each product's queue as data.
-import type {QueueEntry} from './audit';
+import {type QueueEntry, fmt2} from './audit';
 import {safeFileName} from './fileNames';
 import {arrange, type Layout} from './layout';
 import {type FrameRange, type Mark, type TimelineRange, absentAt, provenanceLabel, timelineView} from './ranges';
@@ -215,7 +215,7 @@ export type Seeds = ReadonlyMap<number, ReadonlyArray<readonly [number, number, 
 /** One stop's note in data/review.json, word for word as tracks/export.py's _note. */
 export function reviewNote(e: Pick<QueueEntry, 'score' | 'reviewed' | 'reasons'>): string {
   const done = e.reviewed ? ', reviewed in sam-ui: looks right' : '';
-  return `sam-ui review (score ${e.score.toFixed(2)}${done}): ${e.reasons.map(r => r.detail).join('; ')}`;
+  return `sam-ui review (score ${fmt2(e.score)}${done}): ${e.reasons.map(r => r.detail).join('; ')}`;
 }
 
 /**
