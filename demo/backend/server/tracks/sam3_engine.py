@@ -27,9 +27,9 @@ which is discovery, not a prompt. The detector and the tracker share the
 checkpoint's ViT backbone (446M parameters, identical weights), so the
 detector is loaded on the first text prompt with its backbone swapped for the
 tracker's: it adds its text encoder, DETR and heads (394M parameters, about
-2 GB of MPS driver memory) instead of a second 840M model. It stays loaded
-with the tracker. A text seed is stored as a mask, which the tracker takes
-like any seed mask.
+2 GB of MPS driver memory) instead of a second 840M model; only its own
+weights are read (shared_detector). A text seed is stored as a mask, which the
+tracker takes like any seed mask.
 """
 import importlib.util
 import json
@@ -45,6 +45,8 @@ from tracks.streaming import Sam3Frames, sam3_prune
 from tracks.text import THRESHOLD, TextMatch, pick
 
 DEFAULT_WEIGHTS = Path.home() / ".cache/rotoscoping-video-subjects/weights/sam3-hf"
+
+SHARED = "vision_encoder.backbone."  # the detector's part that is the tracker's
 
 
 def weights_path() -> Path:
@@ -85,6 +87,51 @@ def text_available() -> Optional[str]:
     return None
 
 
+def shared_detector(backbone, device, dtype):
+    """SAM 3's detector (transformers' Sam3Model) with `backbone`, the
+    tracker's, as its vision backbone. The model is built on the meta device
+    (no memory), the backbone put in, and only the detector's own weights
+    (text encoder, DETR, heads: 394M of its 840M parameters) read from the
+    checkpoint, one tensor at a time, straight onto `device` in `dtype`, the
+    dtypes Sam3Model.from_pretrained(dtype=...) gives them (outside the
+    backbone the detector has no float buffers, only int position ids). That
+    would read all 840M, and at any dtype but the checkpoint's fp32 convert
+    each one on the CPU, only for the backbone to be thrown away."""
+    import torch
+    from safetensors import safe_open
+    from transformers import Sam3Config, Sam3Model
+
+    cfg = Sam3Config.from_pretrained(str(weights_path()))
+    with torch.device("meta"):
+        det = Sam3Model(cfg)
+    det.vision_encoder.backbone = backbone
+    own = [k for k in det.state_dict() if not k.startswith(SHARED)]
+    sd = {}
+    with safe_open(str(weights_path() / "model.safetensors"), framework="pt", device="cpu") as f:
+        for k in own:
+            t = f.get_tensor(f"{det.base_model_prefix}.{k}")
+            sd[k] = t.to(device, dtype) if t.is_floating_point() else t.to(device)
+    missing, unexpected = det.load_state_dict(sd, strict=False, assign=True)
+    missing = [k for k in missing if not k.startswith(SHARED)]
+    if missing or unexpected:
+        raise RuntimeError(f"SAM 3 detector weights do not match its model: missing {missing[:5]}, "
+                           f"unexpected {unexpected[:5]}")
+    # buffers that are not saved (only the text encoder's position ids, outside
+    # the backbone) are made as the model makes them
+    for name, buf in list(det.named_buffers()):
+        if buf.device.type != "meta":
+            continue
+        if not name.endswith("position_ids"):
+            raise RuntimeError(f"SAM 3 detector buffer {name} is not in the checkpoint")
+        mod_name, _, leaf = name.rpartition(".")
+        mod = det.get_submodule(mod_name)
+        mod.register_buffer(leaf, torch.arange(buf.shape[-1], device=device).expand(buf.shape), persistent=False)
+    left = [n for n, p in list(det.named_parameters()) + list(det.named_buffers()) if p.device.type == "meta"]
+    if left:
+        raise RuntimeError(f"SAM 3 detector left unloaded: {left[:5]}")
+    return det.eval()
+
+
 class Sam3Engine:
     name = "sam3"
     model = "sam3-tracker"
@@ -116,17 +163,16 @@ class Sam3Engine:
 
     def _load_detector(self):
         """(detector, tokenizer), loaded on first use, sharing the tracker's
-        backbone. Loaded on the CPU first, so the second backbone never
-        reaches the GPU."""
+        backbone: only the detector's own weights are read, straight onto the
+        device, so no second backbone is ever in memory (shared_detector)."""
         proc, model, dev = self._load()
         with self._load_lock:
             if self._detector is None:
-                from transformers import AutoTokenizer, Sam3Model
+                from transformers import AutoTokenizer
 
-                det = Sam3Model.from_pretrained(str(weights_path()), dtype=self.dtype).eval()
-                det.vision_encoder.backbone = model.vision_encoder.backbone
+                det = shared_detector(model.vision_encoder.backbone, dev, self.dtype)
                 tok = AutoTokenizer.from_pretrained(str(weights_path()))
-                self._detector = (det.to(dev), tok)
+                self._detector = (det, tok)
         return self._detector
 
     def segment_text(self, video_path: str, frame: int, text: str, threshold: float = THRESHOLD) -> TextMatch:
