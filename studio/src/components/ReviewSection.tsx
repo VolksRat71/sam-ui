@@ -33,7 +33,7 @@ export default function ReviewSection({session}: {session: StudioSessionApi}) {
   const [sort, setSort] = useState<'priority' | 'frame'>('priority');
   const [scope, setScope] = useState<'all' | 'selected'>('all');
   const nameOf = (id: number) => objectName(state.objects.find(o => o.id === id) ?? {id});
-  if (review == null || Object.keys(review.objects).length === 0) return <div className="empty">Track a layer to find frames worth reviewing.</div>;
+  if (review == null) return <div className="empty">{state.objects.some(o => o.state === 'tracked' || o.state === 'stale') ? 'Loading review markers…' : 'Track a layer to find frames worth reviewing.'}</div>;
   if (!review.supported) return <div className="empty">This backend cannot list review markers. Update it to enable review.</div>;
   const queue = review.queue;
   const scoped = scope === 'selected' ? queue.filter(e => e.objectId === state.activeId) : queue;

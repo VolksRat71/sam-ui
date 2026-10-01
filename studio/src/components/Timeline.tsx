@@ -407,7 +407,7 @@ export default function Timeline({session, actions, inspector}: Props) {
             return (
               <div
                 key={o.id}
-                className={`swimlane${o.id === state.activeId ? ' active' : ''}`}
+                className={`swimlane${o.id === state.activeId ? ' active' : ''}${o.state === 'stale' ? ' changed' : ''}${o.running || o.state === 'tracking' ? ' updating' : ''}`}
                 tabIndex={0}
                 role="group"
                 aria-label={`${objectName(o)} frame lane. Left and Right step frames, Shift selects a span; K and Shift K step keyframes.`}

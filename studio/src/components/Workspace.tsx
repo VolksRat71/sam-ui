@@ -209,7 +209,7 @@ export default function Workspace({video, renderMedia}: Props) {
       )}
 
       <PanelGroup direction="vertical" autoSaveId="sam-ui-suite:rows" storage={panelStorage} className="main">
-        <Panel id="top" order={0} defaultSize={55} minSize={25}>
+        <Panel id="top" order={0} defaultSize={45} minSize={25}>
           <PanelGroup direction="horizontal" autoSaveId="sam-ui-studio:cols" storage={panelStorage}>
             <Panel id="preview" order={0} defaultSize={65} minSize={30}>
               <Preview session={session} mode={mode} onModeChange={setMode} />
@@ -248,7 +248,7 @@ export default function Workspace({video, renderMedia}: Props) {
           </PanelGroup>
         </Panel>
         <PanelResizeHandle className="resize-handle horizontal" />
-        <Panel id="timeline" order={1} defaultSize={45} minSize={30}>
+        <Panel id="timeline" order={1} defaultSize={55} minSize={30}>
           <Timeline session={session} inspector={inspector} actions={<>
           <EnginePicker session={session} />
           <div className="track-action">

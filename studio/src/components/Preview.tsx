@@ -11,6 +11,7 @@
 // touch screen a tap adds a point of the selected kind, a long press the
 // other kind, one finger pans a zoomed view and two fingers pinch
 // (lib/gestures.ts).
+import {trackPresentation} from './trackPresentation';
 import {AddFilled, SubtractFilled, ZoomIn, ZoomOut} from '@carbon/icons-react';
 import {useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type PointerEvent} from 'react';
 import {labelFor, longPressStartsOn} from '~/lib/gestures';
@@ -86,6 +87,8 @@ export default function Preview({session, mode, onModeChange}: Props) {
 
   const active = state.objects.find(o => o.id === state.activeId);
   const points = active?.points[frame] ?? [];
+  const track = active == null ? null : trackPresentation(active.state, active.running);
+  const changedCount = state.objects.filter(o => o.state === 'stale').length;
   const hint = needsPositiveClick(active, frame, maskedAt(active && tracklets.get(active.id)?.segments, frame));
 
   // zoom and pan
@@ -216,7 +219,7 @@ export default function Preview({session, mode, onModeChange}: Props) {
             </span>
           ) : (
             <span className="muted">
-              {state.objects.length === 0 ? 'Click the video to add an object' : 'Select an object, or click to add one'}
+              {state.objects.length === 0 ? 'Click the footage to add a layer' : 'Select a layer, or click to add one'}
             </span>
           )}
         </div>
@@ -232,6 +235,10 @@ export default function Preview({session, mode, onModeChange}: Props) {
           </button>
         </div>
       </div>
+      {(track?.kind === 'changed' || track?.kind === 'updating' || changedCount > 0) && <div className={`matte-status ${track?.kind ?? 'changed'}`} role="status">
+        <strong>{track?.kind === 'changed' || track?.kind === 'updating' ? `${objectName(active!)} · ${track.label}` : `${changedCount} changed ${changedCount === 1 ? 'layer' : 'layers'}`}</strong>
+        <span>{track?.kind === 'changed' || track?.kind === 'updating' ? track.detail : 'Cached mattes need tracking again.'}</span>
+      </div>}
       <div
         className="stage"
         ref={ref}

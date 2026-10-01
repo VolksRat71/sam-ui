@@ -11,6 +11,7 @@
 // (SAM 3 only; with another engine the field is disabled and says why).
 import {
   Add,
+  OverflowMenuHorizontal,
   ArrowDown,
   ArrowUp,
   ChevronDown,
@@ -25,6 +26,7 @@ import {
   View,
   ViewOff,
 } from '@carbon/icons-react';
+import {trackPresentation} from './trackPresentation';
 import {createPortal} from 'react-dom';
 import {highlightEffects, moreEffects} from '@/common/components/effects/EffectsUtils';
 import {useEffect, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode} from 'react';
@@ -57,14 +59,8 @@ import type {StudioSessionApi} from '~/workspace/useStudioSession';
 type Props = {session: StudioSessionApi; renderLane?: (o: StudioObject) => ReactNode; inspector?: HTMLElement | null};
 
 function StateBadge({o}: {o: StudioObject}) {
-  if (isTracking(o)) {
-    return (
-      <span className="badge running">
-        <span className="spinner small" /> tracking
-      </span>
-    );
-  }
-  return <span className={`badge ${o.state}`}>{o.state === 'stale' ? 'Changed' : o.state === 'tracked' ? 'Tracked' : o.state === 'untracked' ? 'Untracked' : o.state}</span>;
+  const track = trackPresentation(o.state, o.running);
+  return <span className={`badge ${track.kind}`} title={track.detail}>{track.label}</span>;
 }
 
 /** The object's name; double-click it, or the pencil, to rename in place. */
@@ -396,7 +392,7 @@ function ObjectRow({
       }}
       onClick={() => session.selectObject(active ? null : o.id)}>
       <div className="layer-controls">
-        <div className="layer-summary" role="option" aria-selected={active} aria-label={`${name}, ${o.state}`} data-layer-option={o.id} tabIndex={active ? 0 : -1}
+        <div className="layer-summary" role="option" aria-selected={active} aria-label={`${name}, ${trackPresentation(o.state, o.running).label}`} data-layer-option={o.id} tabIndex={active ? 0 : -1}
           onKeyDown={e => {
             const dir = stepKey(e);
             if (dir != null) { step(dir); return; }
@@ -406,7 +402,10 @@ function ObjectRow({
               document.getElementById('tab-info')?.click();
               const header = document.querySelector<HTMLButtonElement>('[data-section="info"] .section-header');
               if (header?.getAttribute('aria-expanded') === 'false') header.click();
-              requestAnimationFrame(() => inspector.querySelector<HTMLElement>('input, button, summary, select')?.focus());
+              requestAnimationFrame(() => {
+                const controls = inspector.querySelectorAll<HTMLElement>('input:not(:disabled), button:not(:disabled), summary, select:not(:disabled)');
+                controls[0]?.focus();
+              });
             }
           }}>
           <span className="layer-swatch" aria-hidden="true" />
@@ -642,14 +641,7 @@ function GroupBlock({
             }}>
             {group.collapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
           </button>
-          <input
-            type="color"
-            className="group-color"
-            value={group.color}
-            aria-label={`Colour of group ${group.name}`}
-            title="Group colour"
-            onChange={e => session.updateGroup(group.id, {color: e.target.value})}
-          />
+          <span className="layer-swatch" aria-hidden="true" />
           <GroupName group={group} onRename={name => session.updateGroup(group.id, {name})} />
           <span className="muted small">{count}</span>
           <button
@@ -661,7 +653,16 @@ function GroupBlock({
             {group.hidden ? <ViewOff size={16} /> : <View size={16} />}
           </button>
         </div>
-        <details className="group-options"><summary>Group actions</summary><div className="object-actions group-actions">
+        <details className="group-options"><summary aria-label={`Actions for ${group.name}`} title="Group actions"><OverflowMenuHorizontal size={16} /></summary><div className="object-actions group-actions">
+          <input
+            type="color"
+            className="group-color"
+            value={group.color}
+            aria-label={`Colour of group ${group.name}`}
+            title="Group colour"
+            onChange={e => session.updateGroup(group.id, {color: e.target.value})}
+          />
+
           <button
             className="link-button"
             disabled={busy || toTrack.length === 0}
