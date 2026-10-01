@@ -47,14 +47,20 @@ class ExportError(ValueError):
 
 
 def export_root() -> Path:
-    return Path(os.environ.get("SAM_UI_EXPORT_ROOT", str(Path.home() / "Movies"))).expanduser().resolve()
+    """Where exports may write: SAM_UI_EXPORT_ROOT, else ~/Movies/sam-ui (the
+    folder studio suggests). The desktop app sets it to the user's home, since
+    only its own window can reach that backend; a backend on a network keeps
+    the narrow default, so `force` cannot replace files across ~/Movies."""
+    default = Path.home() / "Movies" / "sam-ui"
+    return Path(os.environ.get("SAM_UI_EXPORT_ROOT", str(default))).expanduser().resolve()
 
 
 def _check_out(out_dir: str) -> Path:
     out = Path(out_dir).expanduser().resolve()
     root = export_root()
     if out != root and root not in out.parents:
-        raise ExportError(f"export folder {out} is outside the export root {root} (set SAM_UI_EXPORT_ROOT)")
+        # name only the folder asked for, never the server's own root
+        raise ExportError(f"export folder {out_dir!r} is outside the export root (set SAM_UI_EXPORT_ROOT)")
     return out
 
 
@@ -77,7 +83,7 @@ def export(service, video: str, video_path: str, out_dir: str, objects: Optional
     if not force:
         clash = [n for n in DECISIONS if (out / n).exists()]
         if clash:
-            raise ExportError(f"{out} already has {clash}; pass force to replace them")
+            raise ExportError(f"{out_dir!r} already has {clash}; pass force to replace them")
     wanted = sorted(int(o) for o in objects) if objects else service.seeds.objects(video)
     ok_states = (TRACKED, STALE) if include_stale else (TRACKED,)
     specs, skipped = {}, {}

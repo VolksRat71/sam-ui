@@ -79,6 +79,34 @@ def test_exports_stay_under_the_export_root(h, tmp_path):
     assert code == 400
 
 
+def test_refusals_and_replies_never_name_the_servers_own_paths(h, tmp_path):
+    """The export root and the source video's path are the server's business:
+    a refusal names only the folder the caller asked for, and the reply gives
+    back that folder as asked, without the video's path (which stays in
+    notes/sam-ui-export.json, beside the exported files)."""
+    h.click(1)
+    h.track()
+    code, m = export(h, out_dir=str(tmp_path.parent / "elsewhere"))
+    assert code == 400 and str(tmp_path) not in m["error"]
+    out = tmp_path / "build"
+    out.mkdir()
+    (out / "products.json").write_text('{"products": []}')
+    code, m = export(h, out_dir=str(out))
+    assert code == 400 and m["error"].startswith(repr(str(out)))
+    code, m = export(h, out_dir=str(out), force=True)
+    assert code == 200 and m["out_dir"] == str(out) and "video_path" not in m
+    notes = json.loads((out / "notes" / "sam-ui-export.json").read_text())
+    assert notes["video_path"]  # still recorded beside the export
+
+
+def test_the_default_export_root_is_sam_uis_own_folder(monkeypatch, tmp_path):
+    from tracks.export import export_root
+
+    monkeypatch.delenv("SAM_UI_EXPORT_ROOT", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert export_root() == (tmp_path / "Movies" / "sam-ui").resolve()
+
+
 def test_bad_ids_and_colours_are_refused(h, tmp_path):
     h.click(1), h.click(2)
     h.track()
