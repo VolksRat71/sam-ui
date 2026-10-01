@@ -155,7 +155,7 @@ const ON = /^(1|on|true|yes)$/i;
 function autoCheckEnabled({env = process.env, settings = {}, packaged}) {
   const v = (env.SAM_UI_UPDATE_CHECK ?? '').trim();
   if (OFF.test(v)) return false;
-  if (settings.updateCheck === false) return false;
+  if (settings?.updateCheck === false) return false;
   return packaged || ON.test(v);
 }
 

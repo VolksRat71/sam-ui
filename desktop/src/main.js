@@ -71,7 +71,9 @@ function paths() {
 
 function readSettings() {
   try {
-    return JSON.parse(fs.readFileSync(paths().settings, 'utf8'));
+    const s = JSON.parse(fs.readFileSync(paths().settings, 'utf8'));
+    // a file holding null, a number or a list is no settings, not a crash at start
+    return s !== null && typeof s === 'object' && !Array.isArray(s) ? s : {};
   } catch {
     return {};
   }

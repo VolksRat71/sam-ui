@@ -182,6 +182,8 @@ describe('checkLatest, with a fake fetch', () => {
 describe('when to check', () => {
   test('on by default when packaged; off by env or setting; dev needs the env', () => {
     assert.strictEqual(autoCheckEnabled({env: {}, settings: {}, packaged: true}), true);
+    // a settings.json holding null must not stop the app starting
+    assert.strictEqual(autoCheckEnabled({env: {}, settings: null, packaged: true}), true);
     for (const v of ['0', 'off', 'FALSE', 'no']) assert.strictEqual(autoCheckEnabled({env: {SAM_UI_UPDATE_CHECK: v}, packaged: true}), false, v);
     assert.strictEqual(autoCheckEnabled({env: {}, settings: {updateCheck: false}, packaged: true}), false);
     assert.strictEqual(autoCheckEnabled({env: {}, settings: {}, packaged: false}), false);
