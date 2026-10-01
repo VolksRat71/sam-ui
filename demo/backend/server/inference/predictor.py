@@ -2,7 +2,7 @@
 # All rights reserved.
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
-# Modified by sam-ui: clicks are recorded as seeds, track jobs run through tracks/, a correction refines the cached track mask (with an anchor click for a lone negative), and a click inside an absent range is refused.
+# Modified by sam-ui: clicks are recorded as seeds, track jobs run through tracks/, a correction refines the cached track mask (with an anchor click for a lone negative), and a click inside an absent range is refused; undo, redo and versions of an object's seeds, and moving a frame's clicks to another object.
 
 import contextlib
 import logging
@@ -44,7 +44,7 @@ from tracks.features import VIDEO_KEY, FeatureCache, default_cache_gb, install a
 from tracks.streaming import install_sam2_streaming
 from tracks.routes import TrackContext
 from tracks import sam3_engine
-from tracks.service import EngineSpec, TrackService
+from tracks.service import EngineSpec, ObjectBusy, TrackService
 
 
 logger = logging.getLogger(__name__)
@@ -186,76 +186,9 @@ class InferenceAPI:
     ) -> PropagateDataResponse:
         with self.autocast_context(), self.inference_lock:
             session = self.__get_session(request.session_id)
-            inference_state = session["state"]
-
-            frame_idx = request.frame_index
-            obj_id = request.object_id
-            points = request.points
-            labels = request.labels
-            clear_old_points = request.clear_old_points
-
-            # sam-ui: the object is marked absent here, so there is nothing to
-            # click on; the studio says so before it sends. Refusing also keeps
-            # the cached track from priming a frame the object is not in.
-            if self.tracks.is_absent(session["video"], obj_id, frame_idx):
-                raise ValueError(
-                    f"frame {frame_idx} is inside a range where object {obj_id} is marked absent; "
-                    "unmark that part of the range to click here"
-                )
-
-            # sam-ui: a first click on a frame SAM 2 holds no mask for (a frame
-            # tracked by a job, not in this state) refines that frame's cached
-            # mask, as a correction should, instead of starting from nothing.
-            primed = False
-            if not self.__has_output(inference_state, obj_id, frame_idx):
-                prime = self.tracks.prime_mask(session["video"], obj_id, frame_idx)
-                if prime is not None:
-                    self.predictor.add_new_mask(
-                        inference_state=inference_state,
-                        frame_idx=frame_idx,
-                        obj_id=obj_id,
-                        mask=track_rle.decode(prime),
-                    )
-                    primed = True
-
-            # sam-ui: SAM 2 empties a frame whose clicks are all negative, even
-            # with a mask to refine. So a correction of only negatives gets an
-            # anchor: one positive deep inside the frame's mask, away from the
-            # clicks. SAM sees it; the seed store records only the user's clicks.
-            sam_points, sam_labels = points, labels
-            if 1 not in self.__frame_labels(inference_state, obj_id, frame_idx, labels, clear_old_points):
-                current = self.__current_mask(inference_state, obj_id, frame_idx)
-                anchor = None if current is None else anchor_point(current, points)
-                if anchor is not None:
-                    sam_points, sam_labels = [anchor] + list(points), [1] + list(labels)
-
-            # add new prompts and instantly get the output on the same frame
-            try:
-                frame_idx, object_ids, masks = self.predictor.add_new_points_or_box(
-                    inference_state=inference_state,
-                    frame_idx=frame_idx,
-                    obj_id=obj_id,
-                    points=sam_points,
-                    labels=sam_labels,
-                    clear_old_points=clear_old_points,
-                    normalize_coords=False,
-                )
-            except Exception:
-                if primed:  # keep the session in step with the seed store, which records nothing
-                    self.predictor.clear_all_prompts_in_frame(inference_state, frame_idx, obj_id)
-                raise
-
-            masks_binary = (masks > self.score_thresh)[:, 0].cpu().numpy()
-            self.tracks.record_points(
-                session["video"],
-                obj_id,
-                frame_idx,
-                points,
-                labels,
-                clear_old_points,
-                mask=track_rle.encode(masks_binary[list(object_ids).index(obj_id)]),
-            )
-
+            frame_idx, object_ids, masks_binary = self._add_points_locked(
+                session, request.frame_index, request.object_id, request.points, request.labels,
+                request.clear_old_points)
             rle_mask_list = self.__get_rle_mask_list(
                 object_ids=object_ids, masks=masks_binary
             )
@@ -264,6 +197,74 @@ class InferenceAPI:
                 frame_index=frame_idx,
                 results=rle_mask_list,
             )
+
+    def _add_points_locked(self, session, frame_idx, obj_id, points, labels, clear_old_points):
+        """sam-ui: add_points' work, with the inference lock held: SAM 2's
+        answer on the frame, recorded as the object's seed there."""
+        inference_state = session["state"]
+
+        # sam-ui: the object is marked absent here, so there is nothing to
+        # click on; the studio says so before it sends. Refusing also keeps
+        # the cached track from priming a frame the object is not in.
+        if self.tracks.is_absent(session["video"], obj_id, frame_idx):
+            raise ValueError(
+                f"frame {frame_idx} is inside a range where object {obj_id} is marked absent; "
+                "unmark that part of the range to click here"
+            )
+
+        # sam-ui: a first click on a frame SAM 2 holds no mask for (a frame
+        # tracked by a job, not in this state) refines that frame's cached
+        # mask, as a correction should, instead of starting from nothing.
+        primed = False
+        if not self.__has_output(inference_state, obj_id, frame_idx):
+            prime = self.tracks.prime_mask(session["video"], obj_id, frame_idx)
+            if prime is not None:
+                self.predictor.add_new_mask(
+                    inference_state=inference_state,
+                    frame_idx=frame_idx,
+                    obj_id=obj_id,
+                    mask=track_rle.decode(prime),
+                )
+                primed = True
+
+        # sam-ui: SAM 2 empties a frame whose clicks are all negative, even
+        # with a mask to refine. So a correction of only negatives gets an
+        # anchor: one positive deep inside the frame's mask, away from the
+        # clicks. SAM sees it; the seed store records only the user's clicks.
+        sam_points, sam_labels = points, labels
+        if 1 not in self.__frame_labels(inference_state, obj_id, frame_idx, labels, clear_old_points):
+            current = self.__current_mask(inference_state, obj_id, frame_idx)
+            anchor = None if current is None else anchor_point(current, points)
+            if anchor is not None:
+                sam_points, sam_labels = [anchor] + list(points), [1] + list(labels)
+
+        # add new prompts and instantly get the output on the same frame
+        try:
+            frame_idx, object_ids, masks = self.predictor.add_new_points_or_box(
+                inference_state=inference_state,
+                frame_idx=frame_idx,
+                obj_id=obj_id,
+                points=sam_points,
+                labels=sam_labels,
+                clear_old_points=clear_old_points,
+                normalize_coords=False,
+            )
+        except Exception:
+            if primed:  # keep the session in step with the seed store, which records nothing
+                self.predictor.clear_all_prompts_in_frame(inference_state, frame_idx, obj_id)
+            raise
+
+        masks_binary = (masks > self.score_thresh)[:, 0].cpu().numpy()
+        self.tracks.record_points(
+            session["video"],
+            obj_id,
+            frame_idx,
+            points,
+            labels,
+            clear_old_points,
+            mask=track_rle.encode(masks_binary[list(object_ids).index(obj_id)]),
+        )
+        return frame_idx, object_ids, masks_binary
 
     def add_mask(self, request: AddMaskRequest) -> PropagateDataResponse:
         """
@@ -512,6 +513,80 @@ class InferenceAPI:
         with self.inference_lock:  # not while a job is writing
             session = self.__get_session(session_id)
             return self.tracks.clear_track(session["video"], object_id, engine)
+
+    # -- sam-ui: undo, versions and moving clicks (issue #18) ---------------------
+    def undo_seeds(self, session_id: str, object_id: int) -> Dict:
+        """Undo the object's last seed change; its earlier track comes back
+        from its version when it has one (tracks/service.py)."""
+        return self.__seed_step(session_id, object_id, self.tracks.undo)
+
+    def redo_seeds(self, session_id: str, object_id: int) -> Dict:
+        return self.__seed_step(session_id, object_id, self.tracks.redo)
+
+    def restore_version(self, session_id: str, object_id: int, key: str) -> Dict:
+        return self.__seed_step(session_id, object_id, lambda v, o: self.tracks.restore_version(v, o, key))
+
+    def object_versions(self, session_id: str, object_id: int) -> Dict:
+        return self.tracks.versions_info(self.__get_session(session_id)["video"], object_id)
+
+    def __seed_step(self, session_id: str, object_id: int, step) -> Dict:
+        with self.autocast_context(), self.inference_lock:  # not while a job reads the seeds or saves
+            session = self.__get_session(session_id)
+            before = self.tracks.seeds.seeds(session["video"], object_id)
+            info = step(session["video"], object_id)
+            self.__resync(session["state"], object_id, before, info["seeds"])
+            return info
+
+    def __resync(self, inference_state, obj_id: int, before: Dict, after: Dict) -> None:
+        """Bring the session's SAM 2 state in step with seeds that changed
+        under it: each frame that differs is cleared, then seeded again from
+        the restored seed (its approved mask), as start_session replays one."""
+        for frame in sorted(set(before) | set(after)):
+            old, new = before.get(frame), after.get(frame)
+            if old == new:
+                continue
+            if obj_id in inference_state["obj_id_to_idx"]:
+                self.predictor.clear_all_prompts_in_frame(inference_state, frame, obj_id)
+            if new and (new.get("mask") or new.get("points")):
+                seed_into_state(self.predictor, inference_state, obj_id, frame, new)
+
+    def move_clicks(self, session_id: str, frame_index: int, from_id: int, to_id: int) -> List[Dict]:
+        """Move one object's clicks on a frame to another object (clicks that
+        landed on the wrong one). The source loses the frame; the target gets
+        the clicks after its own on that frame, segmented as a click there
+        would be. Each object's change is one undo step of its own. Refused
+        into the target's absent range, and while a job holds either object."""
+        with self.autocast_context(), self.inference_lock:
+            if from_id == to_id:
+                raise ValueError("cannot move clicks to the object itself")
+            session = self.__get_session(session_id)
+            video, state = session["video"], session["state"]
+            held = self.tracks.jobs.held(video)
+            for o in (from_id, to_id):
+                if o in held:
+                    raise ObjectBusy(f"object {o} is being tracked: wait for its job to finish, or cancel it")
+            seed = self.tracks.seeds.seeds(video, from_id).get(frame_index)
+            if not seed or not seed.get("points"):
+                raise ValueError(f"object {from_id} has no clicks on frame {frame_index}")
+            if self.tracks.is_absent(video, to_id, frame_index):
+                raise ValueError(
+                    f"frame {frame_index} is inside a range where object {to_id} is marked absent; "
+                    "unmark that part of its range to move clicks there"
+                )
+            target = self.tracks.seeds.seeds(video, to_id).get(frame_index) or {"points": [], "labels": []}
+            if from_id in state["obj_id_to_idx"]:
+                self.predictor.clear_all_prompts_in_frame(state, frame_index, from_id)
+            self.tracks.clear_frame(video, from_id, frame_index)
+            try:
+                self._add_points_locked(session, frame_index, to_id, target["points"] + seed["points"],
+                                        target["labels"] + seed["labels"], True)
+            except Exception:
+                # the target never took them: give the source its clicks back
+                before = self.tracks.seeds.seeds(video, from_id)
+                info = self.tracks.undo(video, from_id)
+                self.__resync(state, from_id, before, info["seeds"])
+                raise
+            return [self.tracks.object_info(video, from_id), self.tracks.object_info(video, to_id)]
 
     def track_context(self, session_id: str) -> TrackContext:
         session = self.__get_session(session_id)

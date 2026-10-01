@@ -15,6 +15,9 @@ An optional <obj_id>/ranges.json holds the object's frame ranges
 name, ranges change what a track job does, so they join the seeds hash; an
 object without any keeps the hash it had before ranges existed.
 
+The files above that make the seeds hash (RECORD_FILES) are the object's seed
+record: tracks/versions.py snapshots them as they are, for undo.
+
 A seed frame's "mask" is the mask the user approved there: the result of their
 last click on that frame. Track jobs condition on it (not on replayed clicks),
 because SAM 2 reads a click as a correction only against a mask already on
@@ -198,6 +201,38 @@ class SeedStore:
     def paint_range(self, video: str, obj_id: int, start: int, end: int, state: Optional[str]) -> List[Dict]:
         """Set frames start-end to `state` ("absent"), or clear them (None)."""
         return self.set_ranges(video, obj_id, rng.paint(self.ranges(video, obj_id), start, end, state))
+
+    # -- the seed record, for versions and undo (tracks/versions.py) ---------------
+    RECORD_FILES = ("seeds.json", "ranges.json")  # every file the seeds hash reads
+
+    def record(self, video: str, obj_id: int) -> Dict[str, object]:
+        """The object's seed record as stored: each file's JSON, None where absent."""
+        d = self.root / video / str(int(obj_id))
+        out: Dict[str, object] = {}
+        for name in self.RECORD_FILES:
+            try:
+                out[name] = json.loads((d / name).read_text())
+            except FileNotFoundError:
+                out[name] = None
+        return out
+
+    def put_record(self, video: str, obj_id: int, files: Dict[str, object]) -> None:
+        """Write a seed record back as it was recorded (absent files removed)."""
+        d = self.root / video / str(int(obj_id))
+        d.mkdir(parents=True, exist_ok=True)
+        for name in self.RECORD_FILES:
+            if files.get(name) is None:
+                (d / name).unlink(missing_ok=True)
+            else:
+                _write_json_atomic(d / name, files[name])
+
+    @staticmethod
+    def record_key(files: Dict[str, object]) -> str:
+        """The seeds hash of a seed record, also for one with no seeds (which
+        hash() calls None): the key its version and undo entries go under."""
+        seeds = {int(f): v for f, v in (files.get("seeds.json") or {}).items()}
+        ranges = (files.get("ranges.json") or {}).get("ranges", [])
+        return seeds_hash(seeds, ranges)
 
     def hash(self, video: str, obj_id: int) -> Optional[str]:
         seeds = self.seeds(video, obj_id)
