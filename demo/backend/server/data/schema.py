@@ -82,7 +82,7 @@ class Query:
         # Fallback is returning the first video
         if not all_videos:  # sam-ui: a clear error, not a bare StopIteration
             raise ValueError(
-                f"no videos: put an .mp4 in {DATA_PATH}/gallery or upload one"
+                "no videos: put an .mp4 in the data folder's gallery/ or upload one"
             )
         return next(iter(all_videos.values()))
 
@@ -303,17 +303,29 @@ class Mutation:
 
 
 def session_video_path(rel: str) -> str:
-    """`rel` (as the page sends it, e.g. "gallery/x.mp4") under DATA_PATH, or
-    ValueError. The check is on the path's text, not its resolved target, so a
-    link the backend made itself under DATA_PATH (an in-place link to footage
-    elsewhere) still opens, while an absolute path or a `..` that climbs out of
-    DATA_PATH is refused."""
-    root = os.path.normpath(str(DATA_PATH))
+    """The file a session opens for `rel` (as the page sends it, e.g.
+    "gallery/x.mp4"), or ValueError naming only `rel`, never the server's own
+    path. `rel` must be one of the listed videos, stay inside DATA_PATH once
+    normalised, and exist. The check is on the path's text, not its resolved
+    target, so a link the backend made itself under DATA_PATH (an in-place link
+    to footage elsewhere) still opens, while an absolute path or a `..` that
+    climbs out of DATA_PATH is refused."""
+    refused = ValueError(f"not a video path under the data folder: {rel!r}")
+    root = os.path.abspath(str(DATA_PATH))  # abspath, not realpath: lexical
     if not rel or os.path.isabs(rel) or "\x00" in rel:
-        raise ValueError(f"not a video path under the data folder: {rel!r}")
+        raise refused
     full = os.path.normpath(os.path.join(root, rel))
-    if os.path.commonpath([root, full]) != root or full == root:
-        raise ValueError(f"not a video path under the data folder: {rel!r}")
+    try:
+        inside = os.path.commonpath([root, full]) == root and full != root
+    except ValueError:  # e.g. another drive on Windows
+        inside = False
+    if not inside:
+        raise refused
+    listed = get_videos() or {}  # upstream starts the store as [] until videos are set
+    if os.path.normpath(rel) not in {os.path.normpath(v.path) for v in listed.values()}:
+        raise ValueError(f"not a listed video: {rel!r}")
+    if not os.path.isfile(full):
+        raise ValueError(f"no video file for {rel!r}")
     return full
 
 
