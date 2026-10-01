@@ -110,6 +110,19 @@ def test_an_ntsc_rate_matches_within_tolerance(tmp_path):
     assert abs(record["native"]["fps"] - 23.976) < 1e-3
 
 
+def test_a_file_trimmed_with_an_edit_list_is_refused(tmp_path):
+    from data.linked import LinkRefused, native_metadata
+
+    full = moving_square(tmp_path / "full.mp4")
+    cut = tmp_path / "cut.mp4"
+    # a stream copy from mid-GOP keeps the GOP's earlier packets behind an edit list
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", str(7 / FPS), "-i", str(full), "-c", "copy", str(cut)],
+                   check=True)
+    with pytest.raises(LinkRefused, match="edit list"):
+        native_metadata(str(cut))
+    assert native_metadata(str(full))["frames"] == N
+
+
 def test_what_cannot_be_linked_says_why(tmp_path):
     from data.linked import LinkRefused, register
 

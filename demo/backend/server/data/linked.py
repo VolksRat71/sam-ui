@@ -52,7 +52,12 @@ class LinkRefused(ValueError):
 def native_metadata(path: str) -> Dict:
     """The file's size, rate and frame count, as the decoders index it: the
     frame count is the video stream's packets, counted without decoding
-    (what studio and decord both treat as the clip's frames)."""
+    (what studio and decord both treat as the clip's frames).
+
+    A file trimmed without re-encoding (an mp4 edit list, `ffmpeg -ss ... -c
+    copy`) carries packets from before its start: PyAV and After Effects skip
+    them, decord does not, so frame N would differ between decoders. Such a
+    file is refused rather than counted either way."""
     try:
         with av.open(path) as cont:
             if not cont.streams.video:
@@ -61,10 +66,17 @@ def native_metadata(path: str) -> Dict:
             rate = vs.guessed_rate or vs.average_rate
             fps = float(rate) if rate else None
             width, height = vs.width, vs.height
-            frames = sum(1 for p in cont.demux(vs) if p.pts is not None)
+            start = vs.start_time or 0
+            pts = [p.pts for p in cont.demux(vs) if p.pts is not None]
+            frames = len(pts)
+            before = sum(1 for t in pts if t < start)
             duration = float(cont.duration / av.time_base) if cont.duration else None
     except av.FFmpegError as e:
         raise LinkRefused(f"not a video sam-ui can read ({e})") from e
+    if before:
+        raise LinkRefused(
+            f"the file was trimmed without re-encoding ({before} frames before its start are hidden by an edit list), "
+            "so decoders disagree on which frame is which: re-encode or re-export it, then link it again")
     return {"width": width, "height": height, "fps": fps, "frames": frames, "duration": duration}
 
 
