@@ -144,11 +144,17 @@ export class SeedStore {
     return out;
   }
 
-  /** Write a seed record back as it was recorded. */
+  /**
+   * Write a seed record back as it was recorded. A record from before the
+   * object's first click still writes an empty seeds.json, so the object stays
+   * listed, with its history to redo.
+   */
   async putRecord(video: string, obj: number, record: SeedRecord): Promise<void> {
     for (const name of SeedStore.RECORD_FILES) {
       const path = `${this._dir(video, obj)}/${name}`;
-      if (record[name] == null) {
+      if (name === 'seeds.json' && record[name] == null) {
+        await writeJson(this._kv, path, {});
+      } else if (record[name] == null) {
         await this._kv.remove(path);
       } else {
         await writeJson(this._kv, path, record[name]);
@@ -304,6 +310,13 @@ export class KvTrackStore implements LocalTrackStore {
   }
 
   async delete(video: string, objectId: number, opts?: {keepVersions?: boolean}): Promise<void> {
+    if (opts?.keepVersions) {
+      const old = await readJson<StoredTrack & {ref?: string}>(this._kv, this._path(video, objectId));
+      const legacy = old?.ref == null ? KvTrackStore._track(old) : null;
+      if (legacy != null) {
+        await this._keep(video, legacy); // the only copy of a track from before versions
+      }
+    }
     await this._kv.remove(opts?.keepVersions ? this._path(video, objectId) : this._dir(video, objectId));
   }
 

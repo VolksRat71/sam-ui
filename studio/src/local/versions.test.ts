@@ -69,6 +69,19 @@ for (const [name, make] of [
 }
 
 describe('KvTrackStore', () => {
+  it('keeps a track stored before versions when only the current track is cleared', async () => {
+    const kv = new MemoryKv();
+    await kv.write(
+      `tracks/${V}/1/browser-sam2.json`,
+      JSON.stringify({objectId: 1, seedsKey: 'old', variant: VARIANT, nFrames: 1, masks: [[0, mask('04')]]}),
+    );
+    const s = new KvTrackStore(kv);
+    await s.delete(V, 1, {keepVersions: true});
+    expect(await s.get(V, 1)).toBeNull();
+    expect(await s.adopt(V, 1, 'old', VARIANT)).toBe(true);
+    expect((await s.get(V, 1))!.masks.get(0)).toEqual(mask('04'));
+  });
+
   it('reads a track stored before versions existed', async () => {
     const kv = new MemoryKv();
     await kv.write(
@@ -150,6 +163,16 @@ describe('OfflineService undo (test_versions.py)', () => {
     expect(await stateOf(svc)).toBe('untracked');
     await svc.undo(V, 1, VARIANT);
     expect(await stateOf(svc)).toBe('tracked');
+  });
+
+  it('undoing the first click keeps the object listed, to redo', async () => {
+    const kv = new MemoryKv();
+    const svc = new OfflineService(kv);
+    await svc.recordPoints(V, 1, 0, [[0.5, 0.5, 1]], null);
+    await svc.undo(V, 1, VARIANT);
+    const again = new OfflineService(kv);
+    expect(await again.seeds.objects(V)).toEqual([1]);
+    expect((await info(again)).history?.canRedo).toBe(true);
   });
 
   it('is refused while a job holds the object', async () => {

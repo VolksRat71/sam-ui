@@ -42,7 +42,7 @@ import {
 } from '~/api/trackStream';
 import {OpfsKv} from '~/local/kv';
 import {LocalEngine, type LocalOptions} from '~/local/LocalEngine';
-import {OfflineService} from '~/local/offlineStores';
+import {OfflineService, SeedStore} from '~/local/offlineStores';
 import {localTrackEntry, seedsKey, variantModel, withLocalTracks, type LocalTrackEntry} from '~/local/localTracks';
 import type {ExportedObject, ExportKind} from '~/state/maskExport';
 import {buildExport} from './maskExports';
@@ -1284,7 +1284,10 @@ export default class StudioSession {
     // Frames outside every seeded window get no mask: empty.
     if (this._offline != null) {
       for (const id of selected) {
-        records.set(id, await this._offline.seeds.record(video, id)); // so the list can restore its version
+        // so the list can restore its version; a click that came in since makes
+        // the record another set of clicks, which the version must not claim
+        const record = await this._offline.seeds.record(video, id);
+        records.set(id, SeedStore.recordKey(record) === keys.get(id) ? record : null);
       }
     }
     const units = planUnits(jobObjects).map(u => ({
