@@ -44,7 +44,8 @@ import {OpfsKv} from '~/local/kv';
 import {LocalEngine, type LocalOptions} from '~/local/LocalEngine';
 import {OfflineService, SeedStore} from '~/local/offlineStores';
 import {localTrackEntry, seedsKey, variantModel, withLocalTracks, type LocalTrackEntry} from '~/local/localTracks';
-import {EMPTY_LAYOUT, type Layout, parseLayout} from '~/state/layout';
+import type {Layout} from '~/state/layout';
+import {layoutFromResponse} from '~/state/layoutSync';
 import type {ExportedObject, ExportGroup, ExportKind} from '~/state/maskExport';
 import {buildExport} from './maskExports';
 import type {TrackObject} from '~/local/sam2/tracker';
@@ -1419,7 +1420,11 @@ export default class StudioSession {
     return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
   }
 
-  /** POST /object_layout; a backend from before layouts has none (creation order, no groups). */
+  /**
+   * POST /object_layout. Only a missing route (a backend from before layouts)
+   * is "unsupported"; a network or server error throws, because the stored
+   * layout is then unknown, not empty (state/layoutSync.ts).
+   */
   async objectLayout(): Promise<{layout: Layout; supported: boolean}> {
     if (this._offline != null) {
       return {layout: await this._offline.layout(this._storeKey!), supported: true};
@@ -1429,13 +1434,8 @@ export default class StudioSession {
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({session_id: this.sessionId}),
     }).catch(() => null);
-    if (response == null || response.status === 404 || response.status === 405) {
-      return {layout: EMPTY_LAYOUT, supported: false};
-    }
-    if (!response.ok) {
-      throw new Error(`object_layout: HTTP ${response.status}`);
-    }
-    return {layout: parseLayout(((await response.json()) as {layout?: unknown}).layout), supported: true};
+    const body = response?.ok ? await response.json().catch(() => null) : null;
+    return layoutFromResponse(response?.status ?? null, body);
   }
 
   /** POST /set_object_layout. A backend from before layouts answers 404: not saved, no error. */

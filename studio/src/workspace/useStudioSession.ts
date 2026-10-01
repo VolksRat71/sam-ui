@@ -38,6 +38,7 @@ import {
   newGroupId,
   nextGroupColor,
 } from '~/state/layout';
+import {CLOSED_GATE, type SaveGate, saveStep} from '~/state/layoutSync';
 import {
   DEFAULT_ENGINE,
   NormPoint,
@@ -148,8 +149,13 @@ export default function useStudioSession(video: VideoItem) {
   const idFloor = useRef<number>(readJson<number>(nextIdKey, 0));
   const namesWarned = useRef(false);
   const layoutWarned = useRef(false);
-  /** The layout as last loaded or saved (JSON; null right after loading): a change from it is saved. */
-  const savedLayout = useRef<string | null>(null);
+  /**
+   * Whether layout changes are saved: only after a load that read the stored
+   * layout. A failed load must never let a save replace the stored groups.
+   */
+  const layoutGate = useRef<SaveGate>(CLOSED_GATE);
+  /** Why saves are closed, for the one warning a change gets. */
+  const layoutClosed = useRef("The object order and groups won't be saved until the backend is updated");
   const layoutQueue = useRef<Promise<unknown>>(Promise.resolve());
 
   const stateRef = useRef(state);
@@ -308,9 +314,15 @@ export default function useStudioSession(video: VideoItem) {
         .call('objectLayout', {})
         .then(res => {
           dispatch({type: 'setLayout', layout: res.layout});
-          savedLayout.current = null; // the layout as loaded is the baseline: nothing to save yet
+          // the layout as loaded is the baseline; saving opens only if the stored one was read
+          layoutGate.current = {savable: res.supported, baseline: null};
         })
-        .catch(error => setWarning(`could not load the object order and groups: ${message(error)}`))
+        .catch(error => {
+          layoutGate.current = CLOSED_GATE;
+          layoutClosed.current = `could not load the object order and groups, so changes to them won't be saved: ${message(error)}`;
+          setWarning(layoutClosed.current);
+          layoutWarned.current = true;
+        })
         .finally(() => setLayoutLoaded(true));
       // show an engine that has tracks: a SAM 3-only video opens on SAM 3
       const shown = preferredEngine(
@@ -653,12 +665,15 @@ export default function useStudioSession(video: VideoItem) {
     if (bridge == null || !layoutLoaded || status !== 'ready') {
       return;
     }
-    const json = JSON.stringify(state.layout);
-    if (savedLayout.current == null || json === savedLayout.current) {
-      savedLayout.current = json;
+    const step = saveStep(layoutGate.current, JSON.stringify(state.layout));
+    layoutGate.current = step.gate;
+    if (step.blocked && !layoutWarned.current) {
+      layoutWarned.current = true;
+      setWarning(layoutClosed.current);
+    }
+    if (!step.save) {
       return;
     }
-    savedLayout.current = json;
     const layout = state.layout;
     layoutQueue.current = layoutQueue.current
       .then(() => bridge.call('setObjectLayout', {layout}))
