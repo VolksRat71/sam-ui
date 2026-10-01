@@ -133,7 +133,7 @@ export default function EffectsSection({session}: Props) {
   return (
     <div className="effects">
       <EffectGrid
-        title={focusedName ?? 'Selected object'}
+        title={focusedName ?? 'Selected layer'}
         effects={[...highlightEffects, ...moreEffects]}
         active={active}
         disabled={locked || focused == null}
@@ -142,8 +142,8 @@ export default function EffectsSection({session}: Props) {
         onPick={e => session.pickObjectEffect(e.effectName)}>
         <div className="effect-note">
           {focused == null
-            ? 'Select an object to choose its effect. Each object keeps its own.'
-            : `${focusedName}'s effect. Every object keeps its own until you change it.`}
+            ? 'Select a layer to choose its effect. Each layer keeps its own.'
+            : `${focusedName}'s effect. Every layer keeps its own until you change it.`}
         </div>
       </EffectGrid>
       <EffectGrid

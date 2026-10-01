@@ -50,6 +50,7 @@ import {
 import type {StudioObject} from '~/state/objects';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
 import ObjectsSection from './ObjectsSection';
+import {reviewSpans} from './reviewPresentation';
 import {ReviewGlyph} from './ReviewSection';
 
 const FILMSTRIP_HEIGHT = 44;
@@ -271,14 +272,14 @@ export default function Timeline({session, actions, inspector}: Props) {
                 ? ' is marked absent here'
                 : kindHere === 'present'
                   ? ' is confirmed present here'
-                  : ` may be here: candidate (${markHere != null && markHere.state === CANDIDATE ? provenanceLabel(markHere) : ''}), ] to review`}
+                  : ` may be here: unconfirmed span (${markHere != null && markHere.state === CANDIDATE ? provenanceLabel(markHere) : ''}), ] to review`}
             </span>
           )}
         </span>
         {pickedObject != null && pickedMark != null && (
-          <span className="range-bar candidate-bar" role="group" aria-label="Candidate to review">
+          <span className="range-bar candidate-bar" role="group" aria-label="Unconfirmed span to review">
             <span>
-              {objectName(pickedObject)}: candidate, frames {pickedMark.start + 1}–{pickedMark.end + 1}
+              {objectName(pickedObject)}: unconfirmed span, frames {pickedMark.start + 1}–{pickedMark.end + 1}
               <span className="muted"> · {provenanceLabel(pickedMark)}</span>
             </span>
             <button
@@ -357,6 +358,7 @@ export default function Timeline({session, actions, inspector}: Props) {
           <div
             className="scrubber"
             onPointerDown={e => {
+              if ((e.target as HTMLElement).closest('button')) return;
               dragging.current = true;
               e.currentTarget.setPointerCapture(e.pointerId);
               seek(frameAt(e));
@@ -373,10 +375,11 @@ export default function Timeline({session, actions, inspector}: Props) {
               e.currentTarget.releasePointerCapture(e.pointerId);
             }}>
             <canvas ref={filmstripRef} className="filmstrip" />
-                {(session.review?.queue ?? [])
-                  .map(e => (
+                {reviewSpans(session.review?.queue ?? [])
+                  .map(span => { const e = span.peak; return (
                     <button
-                      key={`review-${e.frame}`}
+                      tabIndex={-1}
+                      key={`review-${e.objectId}-${span.start}-${span.reviewed}`}
                       className={`swimlane-review${e.reviewed ? ' reviewed' : ''}${session.currentStop === e ? ' current' : ''}`}
                       title={stopLabel(e, objectName(state.objects.find(o => o.id === e.objectId) ?? {id: e.objectId}))}
                       aria-label={stopLabel(e, objectName(state.objects.find(o => o.id === e.objectId) ?? {id: e.objectId}))}
@@ -387,7 +390,7 @@ export default function Timeline({session, actions, inspector}: Props) {
                       }}>
                       <ReviewGlyph reviewed={e.reviewed} size={9} />
                     </button>
-                  ))}
+                  ); })}
             <div className="ticks">
               {ticks.map(t => (
                 <span key={t} className="tick" style={{left: pos(t)}}>
@@ -576,7 +579,7 @@ export default function Timeline({session, actions, inspector}: Props) {
             </li>
             <li>
               <span className="legend-swatch swimlane-candidate" />
-              candidate (unconfirmed)
+              unconfirmed span
             </li>
             <li>
               <span className="legend-swatch swimlane-present" />
@@ -604,7 +607,7 @@ export default function Timeline({session, actions, inspector}: Props) {
             <li>
               <kbd>]</kbd>
               <kbd>[</kbd>
-              review candidates
+              review unconfirmed spans
             </li>
             <li>
               <kbd>.</kbd>

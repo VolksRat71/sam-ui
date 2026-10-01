@@ -64,7 +64,7 @@ function StateBadge({o}: {o: StudioObject}) {
       </span>
     );
   }
-  return <span className={`badge ${o.state}`}>{o.state}</span>;
+  return <span className={`badge ${o.state}`}>{o.state === 'stale' ? 'Changed' : o.state === 'tracked' ? 'Tracked' : o.state === 'untracked' ? 'Untracked' : o.state}</span>;
 }
 
 /** The object's name; double-click it, or the pencil, to rename in place. */
@@ -218,7 +218,7 @@ function HistoryControls({o, session}: {o: StudioObject; session: StudioSessionA
                       : `Go back to these clicks and this track${parseCreated(v.created) != null ? `, tracked ${parseCreated(v.created)!.toLocaleString()}` : ''} (undoable)`
                 }>
                 <span>{versionLabel(v)}</span>
-                {v.bounded && <span className="muted">near corrections</span>}
+                {v.bounded && <span className="muted">around changed keyframes</span>}
                 {v.current && <span className="badge tracked">current</span>}
               </button>
             </li>
@@ -237,7 +237,7 @@ function describe(o: StudioObject): string {
       ? texts.length === 0
         ? 'no clicks yet'
         : ''
-      : `clicks on ${clicked.length === 1 ? 'frame' : 'frames'} ${clicked.map(f => f + 1).join(', ')}`;
+      : `keyframes on ${clicked.length === 1 ? 'frame' : 'frames'} ${clicked.map(f => f + 1).join(', ')}`;
   const track = o.frames != null ? `track ${o.frames[0] + 1}–${o.frames[1] + 1}` : '';
   return [clicks, texts.join(', '), track].filter(x => x !== '').join(' · ');
 }
@@ -594,7 +594,7 @@ function GroupBlock({
   const anyHeld = members.some(isTracking);
   const stepAction = (dir: -1 | 1): LayoutAction => ({type: 'stepGroup', groupId: group.id, dir});
   const step = (dir: -1 | 1) => session.layoutAction(stepAction(dir));
-  const count = `${members.length} ${members.length === 1 ? 'object' : 'objects'}`;
+  const count = `${members.length} ${members.length === 1 ? 'layer' : 'layers'}`;
   return (
     <li role="group" aria-label={group.name} className={`object-group${group.hidden ? ' hidden-group' : ''}`} style={{borderColor: group.color}}>
       <div
@@ -666,7 +666,7 @@ function GroupBlock({
             className="link-button"
             disabled={busy || toTrack.length === 0}
             onClick={() => session.trackGroup(group.id)}
-            title={toTrack.length === 0 ? 'No member is stale or untracked' : `Track the ${toTrack.length} stale or untracked ${toTrack.length === 1 ? 'member' : 'members'}`}>
+            title={toTrack.length === 0 ? 'No member is changed or untracked' : `Track the ${toTrack.length} changed or untracked ${toTrack.length === 1 ? 'member' : 'members'}`}>
             Track ({toTrack.length})
           </button>
           <button
@@ -749,7 +749,7 @@ export default function ObjectsSection({session, renderLane, inspector}: Props) 
             onClick={session.addObject}
             disabled={!canAdd}
             title={state.objects.length >= OBJECT_LIMIT ? `A video holds at most ${OBJECT_LIMIT} objects` : undefined}>
-            <Add size={16} /> Add object
+            <Add size={16} /> Add layer
           </button>
           <button
             className="button subtle"

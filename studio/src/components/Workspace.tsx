@@ -112,7 +112,7 @@ export default function Workspace({video, renderMedia}: Props) {
   const trackLabel =
     dirty.length === 0
       ? 'Nothing to track'
-      : `Track ${dirty.length} ${dirty.length === 1 ? 'object' : 'objects'}`;
+      : `Track ${dirty.length} ${dirty.length === 1 ? 'layer' : 'layers'}`;
 
   return (
     <div className="app">
@@ -131,7 +131,7 @@ export default function Workspace({video, renderMedia}: Props) {
                 <span
                   className="muted"
                   title={`Re-tracking ${job.bounded.map(nameOf).join(', ')} only around the corrections, keeping the cached frames beyond`}>
-                  near corrections
+                  around changed keyframes
                 </span>
               )}
               {job.frames === 0 && session.engines.find(e => e.name === job.engine)?.loading && (
@@ -256,7 +256,7 @@ export default function Workspace({video, renderMedia}: Props) {
               className="button cta"
               onClick={session.track}
               disabled={dirty.length === 0 || session.busy}
-              title="Track the objects that are untracked or stale; running jobs keep theirs">
+              title="Track the objects that are untracked or changed; running jobs keep theirs">
               {trackLabel}
             </button>
           </div>

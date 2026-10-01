@@ -98,3 +98,10 @@
 .shortcut-sheet dl > div { display: grid; grid-template-columns: minmax(140px, .8fr) minmax(0, 1fr); gap: 16px; padding: 8px 0; border-bottom: 1px solid var(--line); }
 .shortcut-sheet dd { margin: 0; }
 .shortcut-sheet kbd { white-space: normal; }
+.review-filters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.review-filters label { display: grid; gap: 4px; color: var(--text-muted); }
+.review-filters select { width: 100%; min-width: 0; }
+.review-scale, .review-summary, .review-keys { margin: 8px 0; }
+.review-accept-all { width: 100%; height: auto; min-height: 28px; white-space: normal; margin-block: 4px 12px; }
+.review-go { grid-template-columns: 16px minmax(0, 1fr) auto; }
+.review-go .review-why { grid-column: 2 / -1; color: var(--text-muted); }
