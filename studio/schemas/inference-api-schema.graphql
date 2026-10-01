@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # Modified by sam-ui: ObjectTrack, EngineTrack, SeedFrame, objectTracks, clearTrack, StartSession.objects,
-# deleteVideo (closeIdleSessions, sessionsClosed), ObjectRange, setObjectRange.
+# deleteVideo (closeIdleSessions, sessionsClosed), ObjectRange, setObjectRange,
+# SeedHistory, TrackVersion, undoSeeds, redoSeeds, restoreVersion, moveClicks.
 
 input AddPointsInput {
   sessionId: String!
@@ -67,6 +68,13 @@ type Mutation {
   clearTrack(input: ClearTrackInput!): ObjectTrack!
   # sam-ui: mark frames of an object absent, or clear them (state null)
   setObjectRange(input: SetObjectRangeInput!): ObjectTrack!
+  # sam-ui: undo or redo an object's last seed change; its kept track comes back with no job
+  undoSeeds(input: SeedHistoryInput!): ObjectTrack!
+  redoSeeds(input: SeedHistoryInput!): ObjectTrack!
+  # sam-ui: go back to one of an object's kept versions (undoable)
+  restoreVersion(input: RestoreVersionInput!): ObjectTrack!
+  # sam-ui: move one object's clicks on a frame to another object
+  moveClicks(input: MoveClicksInput!): [ObjectTrack!]!
   # sam-ui: delete an uploaded video (never a gallery one)
   deleteVideo(input: DeleteVideoInput!): DeleteVideo!
 }
@@ -114,6 +122,51 @@ type ObjectRange {
   state: String!
 }
 
+# sam-ui: undo or redo one object's last seed change
+input SeedHistoryInput {
+  sessionId: String!
+  objectId: Int!
+}
+
+input RestoreVersionInput {
+  sessionId: String!
+  objectId: Int!
+  # a TrackVersion's key
+  key: String!
+}
+
+input MoveClicksInput {
+  sessionId: String!
+  frameIndex: Int!
+  fromObjectId: Int!
+  toObjectId: Int!
+}
+
+# sam-ui: one kept track of an object's earlier (or current) seeds
+type TrackVersion {
+  # the seeds hash it was made from
+  key: String!
+  engine: String!
+  model: String!
+  # when it was tracked
+  created: String
+  elapsedS: Float
+  nFrames: Int
+  clicks: Int!
+  seedFrames: Int!
+  # bounded passes made part of it
+  bounded: Boolean!
+  # made from the object's current seeds
+  current: Boolean!
+}
+
+# sam-ui: what an object can undo or redo, and its kept versions
+type SeedHistory {
+  canUndo: Boolean!
+  canRedo: Boolean!
+  versions: [TrackVersion!]!
+}
+
 type EngineTrack {
   engine: String!
   model: String!
@@ -144,6 +197,8 @@ type ObjectTrack {
   tracks: [EngineTrack!]!
   # absent ranges, sorted
   ranges: [ObjectRange!]!
+  # undo, redo and the kept track versions
+  history: SeedHistory!
 }
 
 input PingInput {

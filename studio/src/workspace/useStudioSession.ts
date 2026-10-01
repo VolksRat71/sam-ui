@@ -40,10 +40,12 @@ import {
   preferredEngine,
   hasSeeds,
   initialState,
+  isTracking,
   nextObjectId,
   reducer,
   staleIds,
 } from '~/state/objects';
+import {moveTargets, undoBlock} from '~/state/history';
 import {clearFlag, parseFlagMap, pruneFlags, toggleFlag as toggled, type FlagMap} from '~/state/flags';
 import {absentAt, normalizeRanges, paintRange, type RangeState} from '~/state/ranges';
 import type {EngineInfo, RunningJob, TrackletSummary} from '~/worker/protocol';
@@ -598,6 +600,71 @@ export default function useStudioSession(video: VideoItem) {
     [bridge, serial, sync],
   );
 
+  /**
+   * Undo (or redo) the selected object's last seed change. A kept track of the
+   * clicks it goes back to shows at once, tracked, with no job; without one the
+   * object is stale, as after any click. Refused while a job holds the object.
+   */
+  const stepSeeds = useCallback(
+    (which: 'undo' | 'redo', objectId: number | null = stateRef.current.activeId) => {
+      if (bridge == null || busy) {
+        return;
+      }
+      const o = stateRef.current.objects.find(x => x.id === objectId);
+      const why = undoBlock(o, which);
+      // a click still on its way has not reached the history yet: let the backend say
+      if (why != null && (o == null || isTracking(o) || pending === 0)) {
+        setWarning(why);
+        return;
+      }
+      serial(async () => {
+        const res = await bridge.call(which, {objectId: o!.id});
+        dispatch({type: 'objectChanged', object: res});
+        await sync();
+      });
+    },
+    [bridge, busy, pending, serial, sync],
+  );
+
+  /** Go back to one of an object's kept versions (an undoable seed change). */
+  const restoreVersion = useCallback(
+    (objectId: number, key: string, engine: string) => {
+      if (bridge == null || busy) {
+        return;
+      }
+      serial(async () => {
+        const res = await bridge.call('restoreVersion', {objectId, key, engine});
+        dispatch({type: 'objectChanged', object: res});
+        await sync();
+      });
+    },
+    [bridge, busy, serial, sync],
+  );
+
+  /** Move the selected object's clicks on this frame to another object: one undo step each. */
+  const moveClicks = useCallback(
+    (toId: number) => {
+      const s = stateRef.current;
+      const fromId = s.activeId;
+      if (bridge == null || busy || fromId == null) {
+        return;
+      }
+      const target = moveTargets(s, fromId, frame).find(t => t.id === toId);
+      if (target == null || target.blocked != null) {
+        setWarning(target?.blocked != null ? `Cannot move the clicks there: that object is ${target.blocked}` : 'No clicks to move on this frame');
+        return;
+      }
+      serial(async () => {
+        const res = await bridge.call('moveClicks', {frameIndex: frame, fromId, toId});
+        for (const o of res) {
+          dispatch({type: 'objectChanged', object: o});
+        }
+        await sync();
+      });
+    },
+    [bridge, busy, frame, serial, sync],
+  );
+
   /** Track with, and show, another engine. */
   const setEngine = useCallback(
     (engine: string) => {
@@ -905,6 +972,11 @@ export default function useStudioSession(video: VideoItem) {
     cancelTrack,
     clearTrack,
     setRange,
+    undo: () => stepSeeds('undo'),
+    redo: () => stepSeeds('redo'),
+    stepSeeds,
+    restoreVersion,
+    moveClicks,
     removeObject,
     startOver,
     seek,
