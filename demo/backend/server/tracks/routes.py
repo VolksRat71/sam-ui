@@ -38,8 +38,9 @@ POST /object_layout {session_id}: {"layout": {"order", "groups"}}, the objects'
 POST /set_object_layout {session_id, layout}: store it (400 when malformed).
   Metadata only: no track goes stale and nothing joins the undo history.
   Answers {"layout"} as /object_layout would.
-POST /export {session_id, out_dir, objects?, include_stale?, frames?, force?, engine?}:
-  write tracked objects as a rotoscoping working folder (see tracks/export.py);
+POST /export {session_id, out_dir, objects?, include_stale?, frames?, force?, engine?, union?}:
+  write tracked objects as a rotoscoping working folder (see tracks/export.py),
+  in the layout's order, with a folder per group (union: a union matte each);
   out_dir must be under SAM_UI_EXPORT_ROOT (default ~/Movies). 400 on a refusal.
 
 The routes get everything through `resolve(session_id)`, so tests can mount
@@ -260,7 +261,8 @@ def make_blueprint(resolve: Callable[[str], TrackContext], service: Optional[Tra
         try:
             manifest = export(ctx.service, ctx.video, ctx.path, data["out_dir"], objects=data.get("objects"),
                               include_stale=bool(data.get("include_stale")), frames=bool(data.get("frames")),
-                              force=bool(data.get("force")), engine=data.get("engine"))
+                              force=bool(data.get("force")), engine=data.get("engine"),
+                              union=bool(data.get("union")))
         except ExportError as err:
             return jsonify({"error": str(err)}), 400
         return jsonify(manifest)
