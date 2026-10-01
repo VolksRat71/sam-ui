@@ -56,7 +56,7 @@ function EffectGrid({
       <button className="effect-group-title" onClick={onToggle} aria-expanded={open}>
         {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         <span>{title}</span>
-        <span className="effect-current">{current}</span>
+        {current !== '' && <span className="effect-current">{current}</span>}
       </button>
       {open && children}
       {open && (
@@ -68,6 +68,7 @@ function EffectGrid({
               <button
                 key={`${title}-${effect.effectName}`}
                 className={on ? 'effect-button active' : 'effect-button'}
+                aria-pressed={on}
                 disabled={disabled}
                 onClick={() => onPick(effect)}
                 title={on ? 'Click again for the next variant' : effect.title}>

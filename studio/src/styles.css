@@ -32,7 +32,14 @@
   --error: #e6193b;
   --radius: 0.35rem;
   --rainbow: linear-gradient(to right bottom, #fb73a5, #595fef, #94eae2, #fccb6b);
+  /* the keyboard ring and the text cursor: the update banner's blue, which
+     clears 3:1 on every surface (6.3:1 on --panel-raised) */
+  --focus: #6ea8fe;
+  --selection: #3880f366;
+  --scrollbar: var(--gray-600);
+  --scrollbar-hover: var(--gray-500);
   color-scheme: dark;
+  scrollbar-color: var(--scrollbar) transparent;
 }
 
 * {
@@ -58,6 +65,58 @@ body {
 button {
   font: inherit;
   color: inherit;
+}
+
+/* -- browser surfaces: the parts the browser draws, in the palette ---------- */
+
+::selection {
+  background: var(--selection);
+  color: #fff;
+}
+input,
+textarea {
+  caret-color: var(--focus);
+}
+/* one keyboard ring for every control; a mouse click shows none */
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+/* rows that fill a scrolling list or popover: the ring goes inside, where
+   overflow cannot clip it */
+.menu-item:focus-visible,
+.section-header:focus-visible,
+.section-tab:focus-visible,
+.effect-group-title:focus-visible {
+  outline-offset: -2px;
+}
+/* counts and readouts keep their width as the digits change */
+.section-badge,
+.media-dims,
+.effect-variant {
+  font-variant-numeric: tabular-nums;
+}
+a {
+  text-underline-offset: 0.2em;
+}
+/* thin, quiet scrollbars (the side panel, the timeline, long modals) */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: var(--scrollbar) padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-hover) padding-box;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 .muted {
@@ -526,19 +585,31 @@ button {
 /* media */
 .dropzone {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
   border: 1px dashed var(--gray-600);
   border-radius: 8px;
   color: var(--gray-300);
-  cursor: pointer;
 }
-.dropzone:hover {
+.dropzone:has(.dropzone-button:not([aria-disabled='true']):hover) {
   border-color: var(--gray-300);
   color: #fff;
 }
-.dropzone.busy {
+.dropzone-button {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.dropzone-button[aria-disabled='true'] {
+  cursor: default;
+}
+.dropzone.busy .dropzone-button {
   cursor: progress;
 }
 .media-error {
@@ -628,6 +699,8 @@ button {
   margin: 0;
   padding: 0;
   display: grid;
+  /* a long name ellipsizes instead of widening every row */
+  grid-template-columns: minmax(0, 1fr);
   gap: 6px;
 }
 .object-row {
@@ -690,7 +763,9 @@ button {
 }
 .object-actions {
   display: flex;
-  gap: 14px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
   margin-top: 2px;
 }
 
@@ -726,6 +801,7 @@ button {
   border-radius: 10px;
   padding: 6px;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 6px;
 }
 .object-group.hidden-group .group-members {
@@ -748,6 +824,9 @@ button {
 .group-title .object-name {
   flex: 1;
 }
+.group-title > :not(.object-name) {
+  flex: none;
+}
 .group-actions {
   flex-wrap: wrap;
   gap: 10px;
@@ -761,6 +840,10 @@ button {
   background: none;
   cursor: pointer;
 }
+.group-select:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
 .group-select {
   background: var(--panel);
   color: var(--text);
@@ -772,8 +855,10 @@ button {
   max-width: 140px;
 }
 .layout-actions {
+  display: flex;
   align-items: center;
   gap: 10px;
+  margin-left: auto;
 }
 .group-members {
   padding-left: 4px;
@@ -871,10 +956,11 @@ button {
   gap: 5px;
   padding: 1px 8px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  line-height: 18px;
+  text-transform: capitalize;
+  white-space: nowrap;
   border: 1px solid;
 }
 .badge.untracked {
@@ -906,28 +992,43 @@ button {
   align-items: center;
   gap: 6px;
   width: 100%;
+  min-height: 32px;
   margin-bottom: 6px;
-  padding: 4px 0;
+  padding: 4px 6px 4px 2px;
   border: none;
+  border-radius: var(--radius);
   background: none;
-  color: var(--text-muted);
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  color: var(--gray-200);
+  font-weight: 500;
   cursor: pointer;
   text-align: left;
+  transition:
+    color 120ms ease-out,
+    background-color 120ms ease-out;
+}
+.effect-group-title > svg {
+  flex: none;
+  color: var(--text-muted);
+}
+.effect-group-title > span:not(.effect-current) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .effect-group-title:hover {
   color: #fff;
+  background: #ffffff0d;
 }
 .effect-current {
+  flex: none;
   margin-left: auto;
-  text-transform: none;
-  letter-spacing: 0;
-  color: var(--gray-300);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 400;
 }
 .effect-note {
-  margin-bottom: 8px;
+  margin: -2px 0 8px;
   font-size: 12px;
   color: var(--gray-300);
 }
@@ -943,17 +1044,34 @@ button {
   align-items: center;
   gap: 4px;
   padding: 10px 4px 8px;
+  min-height: 64px;
   border-radius: 8px;
   border: 1px solid var(--gray-700);
   background: var(--panel-raised);
+  color: var(--gray-200);
   font-size: 12px;
   cursor: pointer;
+  transition:
+    background-color 120ms ease-out,
+    border-color 120ms ease-out,
+    color 120ms ease-out;
+}
+.effect-button > span:not(.effect-variant) {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .effect-button:hover:not(:disabled) {
   background: var(--gray-700);
+  color: #fff;
+}
+.effect-button:active:not(:disabled) {
+  background: #3c4150;
 }
 .effect-button.active {
   border-color: #fff;
+  color: #fff;
 }
 .effect-button:disabled {
   opacity: 0.45;
@@ -1114,12 +1232,25 @@ code {
   height: 20px;
   display: flex;
   align-items: center;
-  font-size: 10px;
+  min-width: 0;
+  font-size: 11px;
   color: var(--gray-300);
   white-space: nowrap;
 }
+.lane-label.active {
+  color: var(--text);
+  font-weight: 500;
+}
+/* a long name ends in an ellipsis instead of running under the lanes (the title has it whole) */
+.lane-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* centred on the filmstrip, not on the filmstrip plus the frame ruler under it */
 .lane-label.scrub-label {
   height: 60px;
+  padding-bottom: 16px;
 }
 .lane-tracks {
   position: relative;
@@ -1157,6 +1288,7 @@ code {
 }
 .tick:first-child {
   transform: none;
+  margin-left: 4px; /* clear of the playhead parked on frame 1 */
 }
 .swimlane {
   position: relative;
@@ -1270,31 +1402,63 @@ code {
 .engine-badges {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: 2px 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 .engine-badge {
-  padding: 0 6px;
-  border-radius: 4px;
-  border: 1px solid var(--gray-600);
-  color: var(--gray-300);
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
 }
-.engine-badge.tracked {
+.engine-badge .engine-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px var(--gray-400);
+}
+.engine-badge.current .engine-name {
+  color: var(--gray-100);
+}
+.engine-badge.tracked .engine-dot {
+  background: var(--success);
+  box-shadow: none;
+}
+.engine-badge.tracked .engine-state {
   color: #6fe675;
-  border-color: #28d23266;
 }
-.engine-badge.stale {
+.engine-badge.stale .engine-dot {
+  background: var(--warning);
+  box-shadow: none;
+}
+.engine-badge.stale .engine-state {
   color: #fcb45a;
-  border-color: #fa871966;
 }
-.engine-badge.tracking {
+.engine-badge.tracking .engine-dot {
+  background: #3880f3;
+  box-shadow: none;
+  animation: engine-pulse 1.2s ease-in-out infinite alternate;
+}
+.engine-badge.tracking .engine-state {
   color: #8ab8ff;
-  border-color: #3880f366;
+  font-variant-numeric: tabular-nums;
 }
-.engine-badge.current {
-  background: #ffffff12;
+@keyframes engine-pulse {
+  to {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .engine-badge.tracking .engine-dot {
+    animation: none;
+  }
 }
 .swimlane-flag {
   position: absolute;
@@ -1318,6 +1482,19 @@ code {
   border-radius: 1px;
   background: #f1c21b;
   cursor: pointer;
+}
+/* a 3 px bar is a hard target: give it a 9 px one that draws nothing */
+.swimlane-flag::after,
+.swimlane-mark::after {
+  content: '';
+  position: absolute;
+  inset: -1px -3px;
+}
+.swimlane-flag:focus-visible,
+.swimlane-mark:focus-visible,
+.swimlane-seed:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 1px;
 }
 /* an absent range: the object is not in the shot, so nothing is tracked or shown */
 .swimlane-absent {
@@ -1373,14 +1550,40 @@ code {
   outline: 2px solid #fff;
   outline-offset: 1px;
 }
-.candidate-bar kbd {
-  margin-left: 4px;
-  padding: 0 3px;
+/* a key, as a keycap: the timeline's and the review queue's shortcut hints */
+.candidate-bar kbd,
+.review-bar kbd,
+.review-keys kbd,
+.lane-keys kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
   border: 1px solid var(--gray-600);
-  border-radius: 3px;
-  font-size: 10px;
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--gray-900);
   font-family: inherit;
-  color: var(--gray-300);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--gray-100);
+  font-variant-numeric: tabular-nums;
+}
+.candidate-bar kbd,
+.review-bar kbd {
+  margin-left: 2px;
+}
+/* under the lanes: what the marks mean, then the keys, quieter and pushed right */
+.lane-footer {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 20px;
+  padding-left: 76px;
+  font-size: 11px;
 }
 .lane-legend {
   display: flex;
@@ -1388,10 +1591,59 @@ code {
   align-items: center;
   gap: 4px 14px;
   margin: 0;
-  padding: 0 0 0 76px;
+  padding: 0;
   list-style: none;
-  font-size: 10px;
   color: var(--gray-300);
+}
+.lane-keys {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+  margin: 0 0 0 auto;
+  padding: 0;
+  list-style: none;
+  color: var(--text-muted);
+}
+.lane-keys li {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.lane-keys kbd + kbd {
+  margin-right: 2px;
+}
+.legend-toggle {
+  display: none;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--gray-700);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--gray-300);
+  font-size: 12px;
+  cursor: pointer;
+}
+.legend-toggle:hover {
+  background: var(--gray-700);
+  color: var(--text);
+}
+/* a phone: the legend folds behind its toggle so the lanes keep their room,
+   and the frame counter drops the fps before it would cut a word */
+@media (max-width: 599.98px) {
+  .legend-toggle {
+    display: inline-flex;
+    align-items: center;
+  }
+  .lane-footer:not(.open) > ul {
+    display: none;
+  }
+  .lane-keys {
+    margin-left: 0;
+  }
+  .frame-fps {
+    display: none;
+  }
 }
 .lane-legend li {
   display: inline-flex;
@@ -1774,9 +2026,9 @@ code {
 .menu-heading {
   padding: 6px 10px 2px;
   color: var(--text-muted);
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  font-size: 12px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
 }
 .menu-item {
   display: flex;
@@ -1964,16 +2216,6 @@ code {
 .review-bar > .review-glyph {
   color: #6fdcff;
 }
-.review-bar kbd,
-.review-keys kbd {
-  margin-left: 4px;
-  padding: 0 3px;
-  border: 1px solid var(--gray-600);
-  border-radius: 3px;
-  font-size: 10px;
-  font-family: inherit;
-  color: var(--gray-300);
-}
 .review {
   display: grid;
   gap: 8px;
@@ -1985,6 +2227,7 @@ code {
 }
 .review-keys {
   font-size: 11px;
+  line-height: 20px;
 }
 .review-list {
   display: grid;
@@ -2002,8 +2245,16 @@ code {
   border-radius: 8px;
   background: var(--panel-raised);
 }
+.review-item:hover:not(.current) {
+  border-color: var(--gray-600);
+}
 .review-item.current {
   border-color: #fff;
+}
+.review-go:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 1px;
+  border-radius: 6px;
 }
 .review-item.reviewed .review-where {
   color: var(--gray-300);
@@ -2047,11 +2298,16 @@ code {
   gap: 3px;
 }
 .review-reason {
-  padding: 0 6px;
+  max-width: 100%;
+  padding: 0 7px;
+  overflow: hidden;
   border-radius: 999px;
   background: var(--gray-700);
   font-size: 10px;
-  color: var(--gray-200);
+  line-height: 16px;
+  color: var(--gray-100);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* After Effects: Media > Open from After Effects (AeOpenModal.tsx) and its export (AeExportModal.tsx) */

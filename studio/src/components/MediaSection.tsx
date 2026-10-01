@@ -44,7 +44,6 @@ export default function MediaSection({videos, current, locked, offline, onSelect
     <div className="media">
       <div
         className={uploading ? 'dropzone busy' : 'dropzone'}
-        onClick={() => !uploading && !locked && input.current?.click()}
         onDragOver={e => e.preventDefault()}
         onDrop={e => {
           e.preventDefault();
@@ -53,16 +52,23 @@ export default function MediaSection({videos, current, locked, offline, onSelect
             upload(file);
           }
         }}>
-        <Upload size={18} />
-        <span>
-          {offline
-            ? uploading
-              ? 'Opening…'
-              : 'Open a video (mp4 or mov): it stays in this browser'
-            : uploading
-              ? 'Uploading…'
-              : 'Upload a video (mp4 or mov)'}
-        </span>
+        <button
+          type="button"
+          className="dropzone-button"
+          aria-disabled={uploading || locked}
+          title={locked && !uploading ? 'Wait for the running track jobs' : undefined}
+          onClick={() => !uploading && !locked && input.current?.click()}>
+          <Upload size={18} />
+          <span>
+            {offline
+              ? uploading
+                ? 'Opening…'
+                : 'Open a video (mp4 or mov): it stays in this browser'
+              : uploading
+                ? 'Uploading…'
+                : 'Upload a video (mp4 or mov)'}
+          </span>
+        </button>
         <input
           ref={input}
           type="file"

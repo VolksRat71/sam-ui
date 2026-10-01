@@ -80,6 +80,11 @@
     min-height: 44px;
     padding: 0 2px;
   }
+  /* the icon-only reorder arrows (ObjectsSection.tsx) get a square target */
+  .layout-actions .link-button {
+    min-width: 44px;
+    justify-content: center;
+  }
   .menu-item,
   .engine-option-head {
     min-height: 44px;
@@ -121,7 +126,8 @@
   }
   /* small marks keep their look and get a 44 px target around them */
   .rename-button,
-  .chip-close {
+  .chip-close,
+  .legend-toggle {
     position: relative;
   }
   .icon-button.rename-button {
@@ -136,6 +142,7 @@
   }
   .rename-button::after,
   .chip-close::after,
+  .legend-toggle::after,
   .swimlane-seed::after,
   .swimlane-flag::after {
     content: '';
@@ -302,6 +309,24 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  /* the legend and the keys in one row that scrolls sideways: wrapped, they
+     took the short timeline pane's height and squeezed the lanes out */
+  .lane-footer {
+    flex: none;
+    flex-wrap: nowrap;
+    padding-left: 68px; /* the 56 px labels and the 12 px gap */
+    overflow-x: auto;
+    scrollbar-width: none;
+    white-space: nowrap;
+  }
+  .lane-footer::-webkit-scrollbar {
+    display: none;
+  }
+  .lane-legend,
+  .lane-keys {
+    flex: none;
+    flex-wrap: nowrap;
+  }
 
   /* popovers become a sheet along the bottom: a popover anchored to a
      button can run off a narrow screen */
@@ -366,8 +391,10 @@
 
 /* phone held upright: lib/layout.ts's phone-portrait, exactly */
 @media (max-width: 599.98px) and (orientation: portrait), (max-width: 599.98px) and (min-height: 500.02px) {
+  /* the timeline's floor (200 px) holds its transport, the scrubber, one
+     44 px object lane and the legend toggle without scrolling */
   .main {
-    grid-template-rows: minmax(0, 1.3fr) clamp(150px, 24%, 220px) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1.3fr) clamp(200px, 28%, 248px) minmax(0, 1fr);
   }
   /* the top bar in two rows: engine, then Track (wide), Export, Start over */
   .topbar-actions {
@@ -426,6 +453,13 @@
   .topbar-actions {
     gap: 6px;
   }
+  /* the mark sits on the first row of a wrapped top bar, not between rows */
+  .topbar {
+    align-items: flex-start;
+  }
+  .brand {
+    min-height: 44px;
+  }
 }
 
 /* a tablet or a phone on its side: the top bar in one row, height is scarce */
@@ -483,6 +517,10 @@
   }
   .frame-counter .muted {
     display: none; /* the frame number is what matters at this size */
+  }
+  /* the legend would take the lanes' only rows: the lanes win */
+  .lane-footer {
+    display: none;
   }
 }
 

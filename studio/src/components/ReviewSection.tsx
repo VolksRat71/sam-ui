@@ -50,7 +50,9 @@ export default function ReviewSection({session}: {session: StudioSessionApi}) {
         ) : (
           <span>
             <strong>{queue.length}</strong> {queue.length === 1 ? 'stop' : 'stops'} to check, of {nFrames} frames
-            {reviewed > 0 && <span className="muted"> · {reviewed} reviewed</span>}
+            {reviewed > 0 && (
+              <span className="muted"> · {reviewed === queue.length ? 'all reviewed' : `${reviewed} reviewed`}</span>
+            )}
           </span>
         )}
         <span className="muted review-keys">

@@ -88,6 +88,8 @@ export default function Timeline({session}: Props) {
   const dragging = useRef(false);
   const [selection, setSelectionState] = useState<Selection | null>(null);
   const [picked, setPicked] = useState<Picked | null>(null);
+  // the legend folds behind a toggle on a phone, where it would crowd out the lanes
+  const [legendOpen, setLegendOpen] = useState(false);
   const laneDrag = useRef<{id: number; from: number; x: number; moved: boolean} | null>(null);
   // a drag selection and a picked candidate are never both open
   const setSelection = useCallback((s: Selection | null) => {
@@ -253,7 +255,10 @@ export default function Timeline({session}: Props) {
         <span className="frame-counter">
           Frame <strong>{n > 0 ? frame + 1 : 0}</strong> / {n}
           {meta.fps > 0 && (
-            <span className="muted"> · {(frame / meta.fps).toFixed(2)} s · {Math.round(meta.fps)} fps</span>
+            <span className="muted">
+              {' · '}
+              {(frame / meta.fps).toFixed(2)} s<span className="frame-fps"> · {Math.round(meta.fps)} fps</span>
+            </span>
           )}
           {!meta.decoded && n > 0 && <span className="muted"> · decoding…</span>}
           {active != null && selection == null && picked == null && kindHere !== 'unknown' && (
@@ -373,9 +378,9 @@ export default function Timeline({session}: Props) {
           {session.ordered.map(o => {
             const group = state.layout.groups.find(g => g.members.includes(o.id));
             return (
-              <div key={o.id} className="lane-label" style={{color: o.id === state.activeId ? '#fff' : undefined}}>
+              <div key={o.id} className={`lane-label${o.id === state.activeId ? ' active' : ''}`} title={objectName(o)}>
                 {group != null && <span className="lane-group-mark" style={{background: group.color}} title={group.name} />}
-                {objectName(o)}
+                <span className="lane-name">{objectName(o)}</span>
               </div>
             );
           })}
@@ -555,41 +560,63 @@ export default function Timeline({session}: Props) {
         </div>
       </div>
       {session.ordered.length > 0 && (
-        <ul className="lane-legend" aria-label="Timeline legend">
-          <li>
-            <span className="legend-swatch legend-tracked" />
-            tracked
-          </li>
-          <li>
-            <span className="legend-swatch legend-unknown" />
-            unknown
-          </li>
-          <li>
-            <span className="legend-swatch swimlane-candidate" />
-            candidate (unconfirmed)
-          </li>
-          <li>
-            <span className="legend-swatch swimlane-present" />
-            present
-          </li>
-          <li>
-            <span className="legend-swatch swimlane-absent" />
-            absent
-          </li>
-          <li>
-            <span className="legend-glyph">
-              <ReviewGlyph reviewed={false} />
-            </span>
-            review stop
-          </li>
-          <li>
-            <span className="legend-glyph reviewed">
-              <ReviewGlyph reviewed />
-            </span>
-            reviewed
-          </li>
-          <li className="muted">drag a lane to mark · ] [ review candidates · . , review stops</li>
-        </ul>
+        <div className={`lane-footer${legendOpen ? ' open' : ''}`}>
+          <button
+            type="button"
+            className="legend-toggle"
+            aria-expanded={legendOpen}
+            aria-controls="lane-legend lane-keys"
+            onClick={() => setLegendOpen(v => !v)}>
+            {legendOpen ? 'Hide legend' : 'Legend'}
+          </button>
+          <ul className="lane-legend" id="lane-legend" aria-label="Timeline legend">
+            <li>
+              <span className="legend-swatch legend-tracked" />
+              tracked
+            </li>
+            <li>
+              <span className="legend-swatch legend-unknown" />
+              unknown
+            </li>
+            <li>
+              <span className="legend-swatch swimlane-candidate" />
+              candidate (unconfirmed)
+            </li>
+            <li>
+              <span className="legend-swatch swimlane-present" />
+              present
+            </li>
+            <li>
+              <span className="legend-swatch swimlane-absent" />
+              absent
+            </li>
+            <li>
+              <span className="legend-glyph">
+                <ReviewGlyph reviewed={false} />
+              </span>
+              review stop
+            </li>
+            <li>
+              <span className="legend-glyph reviewed">
+                <ReviewGlyph reviewed />
+              </span>
+              reviewed
+            </li>
+          </ul>
+          <ul className="lane-keys" id="lane-keys" aria-label="Timeline shortcuts">
+            <li>drag a lane to mark</li>
+            <li>
+              <kbd>]</kbd>
+              <kbd>[</kbd>
+              review candidates
+            </li>
+            <li>
+              <kbd>.</kbd>
+              <kbd>,</kbd>
+              review stops
+            </li>
+          </ul>
+        </div>
       )}
     </div>
   );

@@ -43,7 +43,15 @@ import {
   type LayoutAction,
   type ObjectGroup,
 } from '~/state/layout';
-import {clearTarget, groupDirtyIds, isTracking, needsPositiveClick, seedFrames, type StudioObject} from '~/state/objects';
+import {
+  clearTarget,
+  groupDirtyIds,
+  isTracking,
+  jobProgress,
+  needsPositiveClick,
+  seedFrames,
+  type StudioObject,
+} from '~/state/objects';
 import {maskedAt} from '~/state/segments';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
 
@@ -408,20 +416,29 @@ function ObjectRow({
         </div>
         <div className="object-meta">{describe(o)}</div>
         {badgeEngines.length > 1 && (
-          <div className="engine-badges">
+          <ul className="engine-badges" aria-label={`${name}'s track per engine`}>
             {badgeEngines.map(e => {
               const et = o.engines[e.name];
-              const st = et?.state ?? 'untracked';
+              // a running job on this page holds the object before the backend says so
+              const job = state.jobs.find(j => j.engine === e.name && j.ids.includes(o.id));
+              const st = job != null ? 'tracking' : (et?.state ?? 'untracked');
+              const progress = job != null ? jobProgress(job, session.meta.numFrames) : null;
+              const pct = progress != null && progress.total != null ? ` ${Math.round(progress.fraction * 100)}%` : '';
               return (
-                <span
+                <li
                   key={e.name}
                   className={`engine-badge ${st}${e.name === state.engine ? ' current' : ''}`}
-                  title={`${engineLabel(e.name)}: ${st}${et?.frames ? `, frames ${et.frames[0] + 1}-${et.frames[1] + 1}` : ''}`}>
-                  {engineLabel(e.name)} {st}
-                </span>
+                  title={`${engineLabel(e.name)}: ${st}${pct}${et?.frames != null && job == null ? `, frames ${et.frames[0] + 1}-${et.frames[1] + 1}` : ''}${e.name === state.engine ? ' (the engine in use)' : ''}`}>
+                  <span className="engine-dot" aria-hidden />
+                  <span className="engine-name">{engineLabel(e.name)}</span>
+                  <span className="engine-state">
+                    {st}
+                    {pct}
+                  </span>
+                </li>
               );
             })}
-          </div>
+          </ul>
         )}
         {session.disagreement.get(o.id) != null && (
           <div
@@ -473,39 +490,39 @@ function ObjectRow({
             title="Remove the object, its clicks and its track">
             <TrashCan size={14} /> Remove
           </button>
-        </div>
-        <div className="object-actions layout-actions" onClick={e => e.stopPropagation()}>
-          <button
-            className="link-button"
-            disabled={!moves(layout, stepAction(-1))}
-            onClick={() => step(-1)}
-            title="Move up (Alt-Up)"
-            aria-label={`Move ${name} up`}>
-            <ArrowUp size={14} />
-          </button>
-          <button
-            className="link-button"
-            disabled={!moves(layout, stepAction(1))}
-            onClick={() => step(1)}
-            title="Move down (Alt-Down)"
-            aria-label={`Move ${name} down`}>
-            <ArrowDown size={14} />
-          </button>
-          {layout.groups.length > 0 && (
-            <select
-              className="group-select"
-              value={group?.id ?? ''}
-              aria-label={`Group of ${name}`}
-              title="The group this object is in"
-              onChange={e => session.layoutAction({type: 'setGroup', id: o.id, groupId: e.target.value === '' ? null : e.target.value})}>
-              <option value="">No group</option>
-              {layout.groups.map(g => (
-                <option key={g.id} value={g.id}>
-                  {g.name}
-                </option>
-              ))}
-            </select>
-          )}
+          <span className="layout-actions">
+            <button
+              className="link-button"
+              disabled={!moves(layout, stepAction(-1))}
+              onClick={() => step(-1)}
+              title="Move up (Alt-Up)"
+              aria-label={`Move ${name} up`}>
+              <ArrowUp size={14} />
+            </button>
+            <button
+              className="link-button"
+              disabled={!moves(layout, stepAction(1))}
+              onClick={() => step(1)}
+              title="Move down (Alt-Down)"
+              aria-label={`Move ${name} down`}>
+              <ArrowDown size={14} />
+            </button>
+            {layout.groups.length > 0 && (
+              <select
+                className="group-select"
+                value={group?.id ?? ''}
+                aria-label={`Group of ${name}`}
+                title="The group this object is in"
+                onChange={e => session.layoutAction({type: 'setGroup', id: o.id, groupId: e.target.value === '' ? null : e.target.value})}>
+                <option value="">No group</option>
+                {layout.groups.map(g => (
+                  <option key={g.id} value={g.id}>
+                    {g.name}
+                  </option>
+                ))}
+              </select>
+            )}
+          </span>
         </div>
       </div>
     </li>
@@ -738,7 +755,11 @@ export default function ObjectsSection({session}: Props) {
     <div className="objects">
       <div className="objects-actions">
         <span className="objects-buttons">
-          <button className="button" onClick={session.addObject} disabled={!canAdd}>
+          <button
+            className="button"
+            onClick={session.addObject}
+            disabled={!canAdd}
+            title={state.objects.length >= OBJECT_LIMIT ? `A video holds at most ${OBJECT_LIMIT} objects` : undefined}>
             <Add size={16} /> Add object
           </button>
           <button
@@ -754,9 +775,6 @@ export default function ObjectsSection({session}: Props) {
             }>
             <FolderAdd size={16} /> New group
           </button>
-        </span>
-        <span className="muted small">
-          {state.objects.length} / {OBJECT_LIMIT}
         </span>
       </div>
       {state.objects.length === 0 && (
