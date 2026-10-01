@@ -12,7 +12,7 @@ import {
 import type {Tracklet} from '@/common/tracker/Tracker';
 import type {RLEObject} from '@/jscocotools/mask';
 import type {CanvasForm} from 'pts';
-import {FILL_ALPHA, paintMask} from './maskPixels';
+import {FILL_ALPHA, maskStyle, paintMask} from './maskPixels';
 
 const CACHE_FRAMES = 24;
 /** Fill opacity per variant; clicking the active effect again cycles them, as in Meta's demo. */
@@ -21,7 +21,10 @@ const VARIANT_FILL = [FILL_ALPHA, 0.7, 0.25, 0.9];
 const STALE_FADE = 0.4;
 
 export default class MaskOverlayEffect extends AbstractEffect {
-  /** The object being edited is drawn a little stronger (off in exports). */
+  /**
+   * The object being edited is drawn stronger, with a wider outline ringed in
+   * white, and the others dimmed (off in exports).
+   */
   public activeObjectId: number | null = null;
   /** Each object's own Overlay variant (per-object effects); `variant` otherwise. */
   public variantOf: (objectId: number) => number | undefined = () => undefined;
@@ -76,6 +79,7 @@ export default class MaskOverlayEffect extends AbstractEffect {
           m.bitmap as RLEObject,
           maskColors[i],
           active ? Math.min(1, fill + 0.15) : fill,
+          maskStyle({selected: active, otherSelected: this.activeObjectId != null}),
         );
       });
       ctx.putImageData(image, 0, 0);
