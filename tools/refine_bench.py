@@ -292,24 +292,24 @@ def unpack(packed: np.ndarray, f: int, H: int, W: int) -> np.ndarray:
 
 class SubVideo:
     """A video SAM 2 can track (it stands in for inference_state["images"]):
-    a chosen list of source frames, each whole (resized to 1024 by decord, as
+    a chosen list of source frames, each whole (resized to 1024 by PyAV, as
     upstream and tracks.streaming do) or a square crop of it (cropped at native
     resolution, then resized). Masks come out at the source size for whole
     frames and at 1024 x 1024 for crops (paste_logits maps them back)."""
 
     def __init__(self, video_path: str, frames: Sequence[int], boxes: Optional[Sequence[Box]] = None):
-        from tracks.streaming import _DecordRuns
+        from tracks.streaming import _PyAVRuns
 
         self.frames = list(frames)
         self.boxes = list(boxes) if boxes is not None else None
         if self.boxes is not None and len(self.boxes) != len(self.frames):
             raise ValueError("one box per frame")
-        native = _DecordRuns(video_path)
+        native = _PyAVRuns(video_path)
         h, w = native.get(0).shape[:2]
         self.source_hw = (int(h), int(w))
         if self.boxes is None:
             del native
-            self._runs = _DecordRuns(video_path, IMAGE_SIZE, IMAGE_SIZE)
+            self._runs = _PyAVRuns(video_path, IMAGE_SIZE, IMAGE_SIZE)
             self.height, self.width = self.source_hw
         else:
             self._runs = native
@@ -457,9 +457,7 @@ def run_child(spec: Dict) -> Dict:
 
         probe = SubVideo(clip, [0])
         H, W = probe.source_hw
-        import decord
-
-        n = len(decord.VideoReader(clip))
+        n = probe._runs.n
         e = Sam2Engine(pred, model=spec["model"], offload_video_to_cpu=_device() == "mps")
         seeds = {1: {seed_f: {"points": [[sx / W, sy / H]], "labels": [1]}}}
         for f, by_obj in e.track(clip, seeds):
