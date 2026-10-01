@@ -31,7 +31,7 @@ into Applications.
 **Or try it in the browser:** [volksrat71.github.io/sam-ui](https://volksrat71.github.io/sam-ui/)
 runs SAM 2.1 tiny on WebGPU with no install, no server and nothing uploaded (your
 video stays in the browser). Chrome or Edge on desktop; Safari and Firefox are
-untested. It is a demo: clips up to 2 minutes, and the app's SAM 2.1 large and SAM 3
+untested. It is a demo: clips up to 5 minutes, and the app's SAM 2.1 large and SAM 3
 give much better masks. Or run it from source, below.
 
 ## Hardware
