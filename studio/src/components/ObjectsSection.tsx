@@ -27,7 +27,7 @@ import {
   ViewOff,
 } from '@carbon/icons-react';
 import {highlightEffects, moreEffects} from '@/common/components/effects/EffectsUtils';
-import {useEffect, useRef, useState, type DragEvent, type KeyboardEvent} from 'react';
+import {useEffect, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode} from 'react';
 import {OBJECT_LIMIT} from '~/config';
 import {BROWSER_ENGINE, engineLabel, textPromptNote} from '~/state/engines';
 import {NAME_MAX, objectName} from '~/state/fileNames';
@@ -55,7 +55,7 @@ import {
 import {maskedAt} from '~/state/segments';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
 
-type Props = {session: StudioSessionApi};
+type Props = {session: StudioSessionApi; renderLane?: (o: StudioObject) => ReactNode};
 
 function StateBadge({o}: {o: StudioObject}) {
   if (isTracking(o)) {
@@ -338,12 +338,14 @@ function ObjectRow({
   layout,
   dragged,
   setDragged,
+  renderLane,
 }: {
   o: StudioObject;
   session: StudioSessionApi;
   layout: Layout;
   dragged: Dragged | null;
   setDragged: (d: Dragged | null) => void;
+  renderLane?: (o: StudioObject) => ReactNode;
 }) {
   const {state, tracklets, frame, busy} = session;
   const [drop, setDrop] = useState<'before' | 'after' | null>(null);
@@ -393,6 +395,7 @@ function ObjectRow({
         }
       }}
       onClick={() => session.selectObject(active ? null : o.id)}>
+      <div className="layer-controls">
       <button
         className="icon-button small drag-handle"
         title="Drag to reorder, or Alt-Up / Alt-Down"
@@ -525,6 +528,8 @@ function ObjectRow({
           </span>
         </div>
       </div>
+      </div>
+      {renderLane?.(o)}
     </li>
   );
 }
@@ -596,12 +601,14 @@ function GroupBlock({
   layout,
   dragged,
   setDragged,
+  renderLane,
 }: {
   group: ObjectGroup;
   session: StudioSessionApi;
   layout: Layout;
   dragged: Dragged | null;
   setDragged: (d: Dragged | null) => void;
+  renderLane?: (o: StudioObject) => ReactNode;
 }) {
   const {state, busy} = session;
   const [drop, setDrop] = useState<'into' | 'before' | null>(null);
@@ -737,7 +744,7 @@ function GroupBlock({
       {!group.collapsed && (
         <ul className="object-list group-members">
           {members.map(o => (
-            <ObjectRow key={o.id} o={o} session={session} layout={layout} dragged={dragged} setDragged={setDragged} />
+            <ObjectRow key={o.id} o={o} session={session} layout={layout} dragged={dragged} setDragged={setDragged} renderLane={renderLane} />
           ))}
           {members.length === 0 && <li className="empty small">Drag objects here, or pick this group in an object's Group menu.</li>}
         </ul>
@@ -746,14 +753,20 @@ function GroupBlock({
   );
 }
 
-export default function ObjectsSection({session}: Props) {
+export default function ObjectsSection({session, renderLane}: Props) {
   const {state, canAdd} = session;
+  const [groupFilter, setGroupFilter] = useState('');
   const [dragged, setDragged] = useState<Dragged | null>(null);
   const layout = arrange(state.layout, state.objects.map(o => o.id));
   const byId = new Map(state.objects.map(o => [o.id, o]));
   return (
     <div className="objects">
       <div className="objects-actions">
+        <label className="group-filter">Show <select aria-label="Filter layers by group" value={groupFilter} onChange={e => setGroupFilter(e.target.value)}>
+          <option value="">All layers</option>
+          <option value="ungrouped">Ungrouped</option>
+          {state.layout.groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+        </select></label>
         <span className="objects-buttons">
           <button
             className="button"
@@ -783,13 +796,13 @@ export default function ObjectsSection({session}: Props) {
         </p>
       )}
       <ul className="object-list">
-        {listItems(layout).map(item =>
+        {listItems(layout).filter(item => groupFilter === '' || (item.kind === 'group' ? item.group.id === groupFilter : groupFilter === 'ungrouped')).map(item =>
           item.kind === 'object' ? (
             byId.get(item.id) != null && (
-              <ObjectRow key={item.id} o={byId.get(item.id)!} session={session} layout={layout} dragged={dragged} setDragged={setDragged} />
+              <ObjectRow key={item.id} o={byId.get(item.id)!} session={session} layout={layout} dragged={dragged} setDragged={setDragged} renderLane={renderLane} />
             )
           ) : (
-            <GroupBlock key={item.group.id} group={item.group} session={session} layout={layout} dragged={dragged} setDragged={setDragged} />
+            <GroupBlock key={item.group.id} group={item.group} session={session} layout={layout} dragged={dragged} setDragged={setDragged} renderLane={renderLane} />
           ),
         )}
       </ul>

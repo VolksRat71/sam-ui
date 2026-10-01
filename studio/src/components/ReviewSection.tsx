@@ -44,6 +44,16 @@ export default function ReviewSection({session}: {session: StudioSessionApi}) {
   }
   return (
     <div className="review">
+      {session.currentStop != null && <div className="review-current">
+        <strong>{nameOf(session.currentStop.objectId)} · Frame {session.currentStop.frame + 1}</strong>
+        <p>{session.currentStop.reasons.map(r => KIND_LABELS[r.kind]).join(', ')}</p>
+        <div className="object-actions">
+          <button className="button" onClick={() => session.stepReview(-1)}>Previous <kbd>,</kbd></button>
+          <button className="button" onClick={() => session.stepReview(1)}>Next <kbd>.</kbd></button>
+          <button className="button primary" onClick={() => session.markReviewed(session.currentStop!, !session.currentStop!.reviewed, true)}>{session.currentStop.reviewed ? 'Reopen' : 'Looks right (Y)'}</button>
+        </div>
+      </div>}
+
       <div className="review-summary">
         {queue.length === 0 ? (
           <span>Nothing stood out: no frame needs a look.</span>

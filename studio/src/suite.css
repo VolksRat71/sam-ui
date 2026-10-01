@@ -1,0 +1,75 @@
+/* sam-ui (Apache-2.0). Docked compositing workspace. */
+:root {
+  --bg: #1b1b1c;
+  --panel: #262628;
+  --panel-raised: #303033;
+  --line: #3a3a3d;
+  --text: #f1f1f3;
+  --text-muted: #aaaab0;
+  --primary: #2d8ceb;
+  --focus: #78b8f5;
+  --selection: #2d8ceb55;
+  --radius: 2px;
+  --success: #b8b8bf;
+  --warning: #e8b339;
+  --error: #f1b8b8;
+  --lane-ink: #b8b8c0;
+  --lane-height: 28px;
+}
+.app { padding: env(safe-area-inset-top, 0px) 0 env(safe-area-inset-bottom, 0px); }
+.topbar { height: 44px; border-bottom: 1px solid var(--line); }
+.brand-mark { display: none; }
+.preview, .sidebar, .timeline { border-radius: 0; }
+.resize-handle { background: var(--line); }
+.resize-handle.vertical { width: 4px; }
+.resize-handle.horizontal { height: 4px; }
+.suite-dock { display: block; overflow-y: auto; }
+.suite-dock .section { height: auto; border-bottom: 1px solid var(--line); }
+.suite-dock .section-body { overflow: visible; }
+.section-body[hidden] { display: none; }
+.section-header { height: 32px; background: var(--panel); }
+.section-badge { white-space: normal; text-align: end; }
+.timeline { padding: 0; display: flex; flex-direction: column; }
+.transport { padding: 4px 8px; border-bottom: 1px solid var(--line); }
+.suite-timeline-header { order: -1; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 4px 8px; border-bottom: 1px solid var(--line); }
+.suite-timeline-header .button.cta { background: var(--primary); border: 1px solid var(--primary); color: #fff; }
+.label-width { margin-inline-start: auto; display: flex; gap: 8px; align-items: center; color: var(--text-muted); }
+.label-width input { width: 80px; accent-color: var(--primary); }
+.suite-lanes { display: block; overflow: auto; position: relative; }
+.suite-ruler { display: grid; grid-template-columns: var(--label-width) minmax(0, 1fr); position: sticky; top: 0; z-index: 3; background: var(--panel); border-bottom: 1px solid var(--line); }
+.suite-ruler .scrub-label { padding: 8px; }
+.filmstrip { border-radius: 0; }
+.suite-lanes .objects { padding: 0; }
+.suite-lanes .objects-actions { padding: 4px 8px; border-bottom: 1px solid var(--line); }
+.suite-lanes .object-list { display: block; padding: 0; margin: 0; }
+.suite-lanes .object-row { display: grid; grid-template-columns: var(--label-width) minmax(0, 1fr); gap: 0; padding: 0; margin: 0; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; box-shadow: none !important; }
+.layer-controls { display: flex; min-width: 0; padding: 4px; border-inline-end: 1px solid var(--line); }
+.suite-lanes .swimlane { min-height: var(--lane-height); height: 100%; overflow: hidden; }
+.suite-lanes .object-row.active { background: #2d8ceb1c; }
+.suite-lanes .object-row:nth-child(even) { --lane-ink: #727e8c; }
+.suite-lanes .thumb { width: 20px; height: 20px; flex: none; background: var(--lane-ink) !important; border-radius: 0; }
+.suite-lanes .thumb-image { display: none; }
+.suite-lanes .swimlane-line, .suite-lanes .swimlane-segment, .suite-lanes .swimlane-seed { background: var(--lane-ink) !important; }
+.suite-lanes .swimlane-segment { height: 8px; border-radius: 0; }
+.suite-lanes .swimlane-seed { border-radius: 0; transform: translateY(-50%) rotate(45deg); width: 8px; height: 8px; }
+.suite-lanes .playhead { background: var(--primary); box-shadow: none; }
+.suite-lanes .object-group { border: 0; border-radius: 0; margin: 0; }
+.suite-lanes .group-header { background: var(--panel-raised); border-bottom: 1px solid var(--line); padding: 4px 8px; }
+.lane-footer { padding: 4px 8px; border-top: 1px solid var(--line); }
+.tick:last-child { transform: translateX(-100%); }
+@media (max-width: 1023.98px) {
+  .main { grid-template-rows: minmax(160px, .8fr) minmax(230px, 1.2fr) minmax(140px, .7fr); gap: 1px; }
+  .suite-lanes { --label-width: 220px !important; }
+  .label-width { display: none; }
+  .topbar { height: auto; }
+  .brand { font-size: 14px; }
+}
+@media (max-width: 599.98px) {
+  .suite-lanes { --label-width: 160px !important; }
+  .main { overflow: auto; grid-template-rows: 230px 360px 300px; }
+  .suite-timeline-header { gap: 4px; }
+}
+.review-current { padding-bottom: 12px; margin-bottom: 12px; border-bottom: 1px solid var(--line); }
+.review-current p { margin: 4px 0 8px; color: var(--text-muted); }
+.scrubber > .swimlane-review { top: 38px; color: var(--warning); z-index: 2; }
+.group-filter { display: flex; align-items: center; gap: 8px; }

@@ -6,7 +6,6 @@
 import {Close, Renew} from '@carbon/icons-react';
 import {useEffect, useState, type ReactNode} from 'react';
 import {Panel, PanelGroup, PanelResizeHandle} from 'react-resizable-panels';
-import {OBJECT_LIMIT} from '~/config';
 import {panelStorage} from '~/lib/storage';
 import {videoDisplayName} from '~/lib/uploadNames';
 import {BROWSER_ENGINE, engineLabel} from '~/state/engines';
@@ -24,7 +23,6 @@ import ExportMenu, {type ExportChoice} from './ExportMenu';
 import ExportPanel from './ExportPanel';
 import MaskExportModal from './MaskExportModal';
 import ExportVideoModal from './ExportVideoModal';
-import ObjectsSection from './ObjectsSection';
 import Preview, {type LabelMode} from './Preview';
 import ReviewSection from './ReviewSection';
 import Sidebar from './Sidebar';
@@ -174,16 +172,6 @@ export default function Workspace({video, renderMedia}: Props) {
             </button>
           )}
           {state.engine === BROWSER_ENGINE && !session.noEngine && <DemoTag />}
-          <EnginePicker session={session} />
-          <div className="gradient-border">
-            <button
-              className="button cta"
-              onClick={session.track}
-              disabled={dirty.length === 0 || session.busy}
-              title="Track the objects that are untracked or stale; running jobs keep theirs">
-              {trackLabel}
-            </button>
-          </div>
           <ExportMenu session={session} videoPath={video.path} onChoose={setExporting} />
           <button
             className="button subtle"
@@ -207,23 +195,16 @@ export default function Workspace({video, renderMedia}: Props) {
         </div>
       )}
 
-      <PanelGroup direction="vertical" autoSaveId="sam-ui-studio:rows" storage={panelStorage} className="main">
-        <Panel id="top" order={0} defaultSize={74} minSize={35}>
+      <PanelGroup direction="vertical" autoSaveId="sam-ui-suite:rows" storage={panelStorage} className="main">
+        <Panel id="top" order={0} defaultSize={55} minSize={25}>
           <PanelGroup direction="horizontal" autoSaveId="sam-ui-studio:cols" storage={panelStorage}>
-            <Panel id="preview" order={0} defaultSize={70} minSize={30}>
+            <Panel id="preview" order={0} defaultSize={65} minSize={30}>
               <Preview session={session} mode={mode} onModeChange={setMode} />
             </Panel>
             <PanelResizeHandle className="resize-handle vertical" />
-            <Panel id="sidebar" order={1} defaultSize={30} minSize={16} collapsible collapsedSize={0}>
+            <Panel id="sidebar" order={1} defaultSize={35} minSize={24} collapsible collapsedSize={0}>
               <Sidebar
                 sections={[
-                  {id: 'media', title: 'Media', content: renderMedia(jobs.length > 0)},
-                  {
-                    id: 'objects',
-                    title: 'Objects',
-                    badge: `${state.objects.length}/${OBJECT_LIMIT}`,
-                    content: <ObjectsSection session={session} />,
-                  },
                   {
                     id: 'review',
                     title: 'Review',
@@ -240,14 +221,26 @@ export default function Workspace({video, renderMedia}: Props) {
                       <EffectsSection session={session} />
                     ),
                   },
+                  {id: 'media', title: 'Media', content: renderMedia(jobs.length > 0)},
                 ]}
               />
             </Panel>
           </PanelGroup>
         </Panel>
         <PanelResizeHandle className="resize-handle horizontal" />
-        <Panel id="timeline" order={1} defaultSize={26} minSize={12}>
-          <Timeline session={session} />
+        <Panel id="timeline" order={1} defaultSize={45} minSize={30}>
+          <Timeline session={session} actions={<>
+          <EnginePicker session={session} />
+          <div className="track-action">
+            <button
+              className="button cta"
+              onClick={session.track}
+              disabled={dirty.length === 0 || session.busy}
+              title="Track the objects that are untracked or stale; running jobs keep theirs">
+              {trackLabel}
+            </button>
+          </div>
+          </>} />
         </Panel>
       </PanelGroup>
 

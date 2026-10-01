@@ -29,8 +29,8 @@ import {
   PauseFilled,
   PlayFilledAlt,
 } from '@carbon/icons-react';
-import {useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent} from 'react';
-import {KIND_LABELS, stopLabel} from '~/state/audit';
+import {useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent, type ReactNode, type CSSProperties} from 'react';
+import {stopLabel} from '~/state/audit';
 import {objectName} from '~/state/fileNames';
 import {flagsOf} from '~/state/flags';
 import {seedFrames} from '~/state/objects';
@@ -49,11 +49,12 @@ import {
 } from '~/state/ranges';
 import type {StudioObject} from '~/state/objects';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
+import ObjectsSection from './ObjectsSection';
 import {ReviewGlyph} from './ReviewSection';
 
 const FILMSTRIP_HEIGHT = 44;
 
-type Props = {session: StudioSessionApi};
+type Props = {session: StudioSessionApi; actions?: ReactNode};
 
 function useWidth() {
   const ref = useRef<HTMLDivElement>(null);
@@ -80,7 +81,7 @@ function candidatesOf(o: StudioObject | undefined): Mark[] {
   return o?.marks.filter(m => m.state === CANDIDATE) ?? [];
 }
 
-export default function Timeline({session}: Props) {
+export default function Timeline({session, actions}: Props) {
   const {bridge, meta, frame, playing, state, tracklets, seek, togglePlay} = session;
   const n = meta.numFrames;
   const {ref: trackRef, width} = useWidth();
@@ -89,6 +90,7 @@ export default function Timeline({session}: Props) {
   const [selection, setSelectionState] = useState<Selection | null>(null);
   const [picked, setPicked] = useState<Picked | null>(null);
   // the legend folds behind a toggle on a phone, where it would crowd out the lanes
+  const [labelWidth, setLabelWidth] = useState(320);
   const [legendOpen, setLegendOpen] = useState(false);
   const laneDrag = useRef<{id: number; from: number; x: number; moved: boolean} | null>(null);
   // a drag selection and a picked candidate are never both open
@@ -273,35 +275,6 @@ export default function Timeline({session}: Props) {
             </span>
           )}
         </span>
-        {session.currentStop != null && picked == null && selection == null && (() => {
-          const stop = session.currentStop;
-          const queue = session.review?.queue ?? [];
-          const at = queue.findIndex(e => e.objectId === stop.objectId && e.frame === stop.frame);
-          const o = state.objects.find(x => x.id === stop.objectId);
-          return (
-            <span className="range-bar review-bar" role="group" aria-label="Review stop">
-              <ReviewGlyph reviewed={stop.reviewed} />
-              <span title={stop.reasons.map(r => `Frame ${r.frame + 1}: ${r.detail}`).join('\n')}>
-                Review {at + 1}/{queue.length}: {o != null ? objectName(o) : `Object ${stop.objectId}`}
-                <span className="muted"> · {stop.reasons.map(r => KIND_LABELS[r.kind]).join(', ')}</span>
-                {stop.reviewed && <span className="muted"> · reviewed</span>}
-              </span>
-              <button
-                className="button compact"
-                onClick={() => session.markReviewed(stop, !stop.reviewed, true)}
-                title={stop.reviewed ? 'Open this stop again' : 'The masks here look right (Y): mark the stop reviewed and go to the next one. To fix them, click on the preview instead'}>
-                {stop.reviewed ? 'Reopen' : (
-                  <>
-                    Looks right <kbd>Y</kbd>
-                  </>
-                )}
-              </button>
-              <button className="button subtle compact" onClick={() => session.stepReview(1)} title="The next stop in the queue (.); , goes back">
-                Next <kbd>.</kbd>
-              </button>
-            </span>
-          );
-        })()}
         {pickedObject != null && pickedMark != null && (
           <span className="range-bar candidate-bar" role="group" aria-label="Candidate to review">
             <span>
@@ -372,20 +345,15 @@ export default function Timeline({session}: Props) {
           </span>
         )}
       </div>
-      <div className="lanes">
-        <div className="lane-labels">
-          <div className="lane-label scrub-label">Video</div>
-          {session.ordered.map(o => {
-            const group = state.layout.groups.find(g => g.members.includes(o.id));
-            return (
-              <div key={o.id} className={`lane-label${o.id === state.activeId ? ' active' : ''}`} title={objectName(o)}>
-                {group != null && <span className="lane-group-mark" style={{background: group.color}} title={group.name} />}
-                <span className="lane-name">{objectName(o)}</span>
-              </div>
-            );
-          })}
-        </div>
-        <div className="lane-tracks" ref={trackRef}>
+      <div className="suite-timeline-header">
+        <strong>Layers</strong><span className="muted">{state.objects.length}</span>
+        {actions}
+        <label className="label-width">Label width <input type="range" min="200" max="480" step="20" value={labelWidth} onChange={e => setLabelWidth(Number(e.target.value))} /></label>
+      </div>
+      <div className="lanes suite-lanes" style={{'--label-width': `${labelWidth}px`} as CSSProperties}>
+        <div className="suite-ruler">
+          <div className="lane-label scrub-label">Layer / keyframes</div>
+          <div className="lane-tracks" ref={trackRef}>
           <div
             className="scrubber"
             onPointerDown={e => {
@@ -403,6 +371,21 @@ export default function Timeline({session}: Props) {
               e.currentTarget.releasePointerCapture(e.pointerId);
             }}>
             <canvas ref={filmstripRef} className="filmstrip" />
+                {(session.review?.queue ?? [])
+                  .map(e => (
+                    <button
+                      key={`review-${e.frame}`}
+                      className={`swimlane-review${e.reviewed ? ' reviewed' : ''}${session.currentStop === e ? ' current' : ''}`}
+                      title={stopLabel(e, objectName(state.objects.find(o => o.id === e.objectId) ?? {id: e.objectId}))}
+                      aria-label={stopLabel(e, objectName(state.objects.find(o => o.id === e.objectId) ?? {id: e.objectId}))}
+                      style={{left: pos(e.frame) - 5}}
+                      onClick={ev => {
+                        ev.stopPropagation();
+                        session.goToStop(e);
+                      }}>
+                      <ReviewGlyph reviewed={e.reviewed} size={9} />
+                    </button>
+                  ))}
             <div className="ticks">
               {ticks.map(t => (
                 <span key={t} className="tick" style={{left: pos(t)}}>
@@ -411,13 +394,15 @@ export default function Timeline({session}: Props) {
               ))}
             </div>
           </div>
-          {session.ordered.map(o => {
+          </div>
+        </div>
+          <ObjectsSection session={session} renderLane={o => {
             const lane = tracklets.get(o.id);
             const sel = selection?.id === o.id && span != null ? span : null;
             return (
               <div
                 key={o.id}
-                className="swimlane"
+                className={`swimlane${o.id === state.activeId ? ' active' : ''}`}
                 onPointerDown={e => {
                   if (e.button !== 0 || (e.target as HTMLElement).closest('button') != null || n === 0) {
                     return;
@@ -447,6 +432,7 @@ export default function Timeline({session}: Props) {
                   }
                 }}
                 onClick={() => session.selectObject(o.id)}>
+                {n > 0 && <div className="playhead" style={{left: pos(frame)}} />}
                 <div className="swimlane-line" style={{background: o.color}} />
                 {lane?.segments.map(([a, b]) => (
                   <div
@@ -524,22 +510,6 @@ export default function Timeline({session}: Props) {
                     }}
                   />
                 ))}
-                {(session.review?.queue ?? [])
-                  .filter(e => e.objectId === o.id)
-                  .map(e => (
-                    <button
-                      key={`review-${e.frame}`}
-                      className={`swimlane-review${e.reviewed ? ' reviewed' : ''}${session.currentStop === e ? ' current' : ''}`}
-                      title={stopLabel(e, objectName(o))}
-                      aria-label={stopLabel(e, objectName(o))}
-                      style={{left: pos(e.frame) - 5}}
-                      onClick={ev => {
-                        ev.stopPropagation();
-                        session.goToStop(e);
-                      }}>
-                      <ReviewGlyph reviewed={e.reviewed} size={9} />
-                    </button>
-                  ))}
                 {seedFrames(o).map(f => (
                   <button
                     key={f}
@@ -555,9 +525,7 @@ export default function Timeline({session}: Props) {
                 ))}
               </div>
             );
-          })}
-          {n > 0 && <div className="playhead" style={{left: pos(frame)}} />}
-        </div>
+          }} />
       </div>
       {session.ordered.length > 0 && (
         <div className={`lane-footer${legendOpen ? ' open' : ''}`}>
