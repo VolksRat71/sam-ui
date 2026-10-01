@@ -8,6 +8,9 @@ finished track under that engine. The default engine (SAM 2) also serves the
 interactive clicks; others (SAM 3) are registered by spec and built on first
 use. Locking is the caller's job (the backend's single inference lock).
 
+Present and candidate ranges (draft 5) are annotations on the timeline: they
+never change a track or the seeds hash, so they are not seed changes either.
+
 Absent ranges (issue #20, tracks/ranges.py) split an object's timeline into
 windows. A job tracks each window with a seed on its own, and stores every
 other frame as an empty mask, so a track always covers the whole clip. A
@@ -200,13 +203,25 @@ class TrackService:
             if not self.seeds.clear_frame(video, obj_id, frame):
                 self.tracks.clear(video, obj_id)
 
-    def set_range(self, video: str, obj_id: int, start: int, end: int, state: Optional[str]) -> Dict:
-        """Mark frames start-end of an object with a range state ("absent"), or
-        clear them (state None). ValueError on a bad span or state. The seeds
-        hash changes, so the object's tracks go stale; a re-track runs only
-        the windows the change touched."""
+    def set_range(self, video: str, obj_id: int, start: int, end: int, state: Optional[str],
+                  source: Optional[str] = None, score: Optional[float] = None,
+                  clear: Optional[List[str]] = None) -> Dict:
+        """Set frames start-end of an object to a range state, or clear them
+        (state None: every state, or those in `clear`). ValueError on a bad
+        span, state or provenance. A candidate needs a `source` (and may have a
+        `score`). Only a change of absent frames changes the seeds hash: the
+        object's tracks go stale, a re-track runs only the windows the change
+        touched, and it goes on the undo history. Present and candidate ranges
+        are annotations: no track goes stale and there is nothing to undo."""
         with self._seed_change(video, obj_id):
-            self.seeds.paint_range(video, obj_id, start, end, state)
+            self.seeds.paint_range(video, obj_id, start, end, state, source, score, clear)
+        return self.object_info(video, obj_id)
+
+    def write_candidates(self, video: str, obj_id: int, candidates: List[Dict], replace: bool = False) -> Dict:
+        """Write candidate ranges in bulk, each {"start", "end", "source",
+        "score"?} (a discovery job's results); `replace` drops the object's
+        old candidates. All or nothing (ValueError). Never a seed change."""
+        self.seeds.write_candidates(video, obj_id, candidates, replace)
         return self.object_info(video, obj_id)
 
     def is_absent(self, video: str, obj_id: int, frame: int) -> bool:
@@ -401,7 +416,9 @@ class TrackService:
         ranges = self.seeds.ranges(video, obj_id)
         tracks = {n: self._track_state(video, obj_id, n, seeds, ranges) for n in self.engine_names()}
         main = tracks[self._engine_model(engine or self.default)[0]]
-        return {"object_id": obj_id, **main, "seeds": seeds, "ranges": ranges, "tracks": list(tracks.values()),
+        # "ranges" is the timeline: absent, present and candidate (tracks/ranges.py view())
+        return {"object_id": obj_id, **main, "seeds": seeds, "ranges": self.seeds.timeline(video, obj_id),
+                "tracks": list(tracks.values()),
                 "history": self.versions_info(video, obj_id)}
 
     def objects(self, video: str, engine: Optional[str] = None) -> List[Dict]:

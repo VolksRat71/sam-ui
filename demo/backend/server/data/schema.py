@@ -5,6 +5,7 @@
 # Modified by sam-ui: objectTracks query, clearTrack mutation, startSession returns known objects.
 # Modified by sam-ui: setObjectRange mutation (absent ranges).
 # Modified by sam-ui: undoSeeds, redoSeeds, restoreVersion and moveClicks mutations.
+# Modified by sam-ui: setObjectRange by state (present, candidate), setObjectCandidates mutation.
 
 import hashlib
 import os
@@ -42,6 +43,7 @@ from data.data_types import (
     RLEMaskForObject,
     RLEMaskListOnFrame,
     SeedHistoryInput,
+    SetObjectCandidatesInput,
     SetObjectRangeInput,
     StartSession,
     StartSessionInput,
@@ -188,14 +190,26 @@ class Mutation:
 
     @strawberry.mutation
     def set_object_range(self, input: SetObjectRangeInput, info: strawberry.Info) -> ObjectTrack:
-        """sam-ui: mark frames start-end of an object absent (state "absent"),
-        or clear them (state null). Its tracks go stale; a re-track runs only
-        the windows the change touched."""
+        """sam-ui: set frames start-end of an object to a range state, or
+        clear them (state null; `clear` limits which states). Marking or
+        unmarking absent frames makes its tracks stale (a re-track runs only
+        the windows the change touched); present and candidate ranges never do."""
         inference_api: InferenceAPI = info.context["inference_api"]
         return ObjectTrack.from_info(
             inference_api.set_object_range(
-                input.session_id, input.object_id, input.start, input.end, input.state
+                input.session_id, input.object_id, input.start, input.end, input.state,
+                source=input.source, score=input.score, clear=input.clear,
             )
+        )
+
+    @strawberry.mutation
+    def set_object_candidates(self, input: SetObjectCandidatesInput, info: strawberry.Info) -> ObjectTrack:
+        """sam-ui: write candidate ranges in bulk; no track goes stale."""
+        inference_api: InferenceAPI = info.context["inference_api"]
+        cands = [{"start": c.start, "end": c.end, "source": c.source, **({} if c.score is None else {"score": c.score})}
+                 for c in input.candidates]
+        return ObjectTrack.from_info(
+            inference_api.write_object_candidates(input.session_id, input.object_id, cands, input.replace)
         )
 
     @strawberry.mutation
