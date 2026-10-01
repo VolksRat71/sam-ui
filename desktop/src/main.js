@@ -23,6 +23,7 @@ const path = require('node:path');
 const {createAeClient, describeError} = require('./ae-bridge');
 const roto = require('./ae-roto');
 const {downloadRepo, downloadVerified} = require('./hf-download');
+const {autoCheckEnabled, createUpdateChecker, fileLogger, fileStore, releasePageUrl} = require('./update-check');
 
 const CHECKPOINT_URL = 'https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_large.pt';
 const CHECKPOINT_NAME = 'sam2.1_hiera_large.pt';
@@ -78,7 +79,9 @@ function paths() {
 
 function readSettings() {
   try {
-    return JSON.parse(fs.readFileSync(paths().settings, 'utf8'));
+    const s = JSON.parse(fs.readFileSync(paths().settings, 'utf8'));
+    // a file holding null, a number or a list is no settings, not a crash at start
+    return s !== null && typeof s === 'object' && !Array.isArray(s) ? s : {};
   } catch {
     return {};
   }
@@ -247,6 +250,8 @@ function menu(p) {
         {label: 'Open backend log', click: () => shell.openPath(path.join(p.logDir, 'backend.log'))},
         {label: 'Show data folder', click: () => shell.openPath(p.userData)},
         {label: 'sam-ui on GitHub', click: () => shell.openExternal('https://github.com/VolksRat71/sam-ui')},
+        {type: 'separator'},
+        {label: 'Check for Updates…', click: () => checkForUpdatesFromMenu()},
       ],
     },
   ];
@@ -256,6 +261,7 @@ function menu(p) {
 async function main() {
   const p = paths();
   menu(p);
+  updates.startup().then(showUpdate, () => {}); // never awaited: the start does not wait on GitHub
   const {win: splashWin, say} = splash();
   try {
     if (!fs.existsSync(path.join(p.studioDist, 'index.html'))) {
@@ -298,6 +304,78 @@ async function main() {
   await mainWindow.loadURL(`${appOrigin}/`);
   if (!app.isPackaged && process.env.SAM_UI_OPEN_SAM3) openSam3Window(); // dev and tests only
 }
+
+// -- updates (update-check.js) ---------------------------------------------
+// Studio's banner asks what the last check found and hears of a new one; its
+// link and its close come back here. Only the main window is answered, and the
+// link opened is the checked release page, never one the page names.
+
+const updates = createUpdateChecker({
+  currentVersion: app.getVersion(),
+  fetch: (url, init) => require('electron').net.fetch(url, init), // Chromium's stack: the system proxy and certificates
+  store: fileStore(path.join(paths().userData, 'update-check.json')),
+  log: fileLogger(path.join(paths().logDir, 'app.log')),
+  autoCheck: autoCheckEnabled({settings: readSettings(), packaged: app.isPackaged}),
+});
+const isMainWindow = event => mainWindow != null && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents;
+const bannerOf = r => ({version: r.version, name: r.name, url: r.url, current: app.getVersion()});
+let checkingForUpdates = false;
+
+function showUpdate(release) {
+  if (release != null && mainWindow != null && !mainWindow.isDestroyed()) mainWindow.webContents.send('updates:available', bannerOf(release));
+}
+
+function openRelease(url) {
+  const safe = releasePageUrl(url);
+  if (safe != null) shell.openExternal(safe);
+}
+
+async function checkForUpdatesFromMenu() {
+  if (checkingForUpdates) return;
+  checkingForUpdates = true;
+  try {
+    const result = await updates.now();
+    const current = app.getVersion();
+    const parent = mainWindow != null && !mainWindow.isDestroyed() ? mainWindow : null;
+    const box = opts => (parent ? dialog.showMessageBox(parent, opts) : dialog.showMessageBox(opts));
+    if (result.state === 'available') {
+      showUpdate(result.release);
+      const {response} = await box({
+        type: 'info',
+        message: `sam-ui ${result.release.version} is available`,
+        detail: `You have ${current}. Download the new dmg from the release page and replace the app (it is not signed yet, so it does not update itself).`,
+        buttons: ['View Release', 'Later'],
+        defaultId: 0,
+        cancelId: 1,
+      });
+      if (response === 0) openRelease(result.release.url);
+    } else if (result.state === 'current') {
+      const latest = result.latest != null && result.latest !== current ? ` The latest release is ${result.latest}.` : '';
+      await box({type: 'info', message: 'sam-ui is up to date', detail: `You have ${current}.${latest}`, buttons: ['OK']});
+    } else {
+      await box({
+        type: 'warning',
+        message: 'Could not check for updates',
+        detail: `${result.reason}.\n\nThe releases are at https://github.com/VolksRat71/sam-ui/releases`,
+        buttons: ['OK'],
+      });
+    }
+  } finally {
+    checkingForUpdates = false;
+  }
+}
+
+ipcMain.handle('updates:pending', event => {
+  const r = isMainWindow(event) ? updates.pending() : null;
+  return r != null ? bannerOf(r) : null;
+});
+ipcMain.on('updates:dismiss', (event, version) => {
+  if (isMainWindow(event) && typeof version === 'string') updates.dismiss(version);
+});
+ipcMain.on('updates:open', event => {
+  const r = updates.pending();
+  if (isMainWindow(event) && r != null) openRelease(r.url);
+});
 
 // -- SAM 3 download --------------------------------------------------------
 
