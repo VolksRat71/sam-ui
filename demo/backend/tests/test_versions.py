@@ -133,6 +133,29 @@ def test_undo_to_seeds_never_tracked_leaves_the_object_stale(h):
     assert h.state(1) == TRACKED
 
 
+def test_taking_the_accidental_click_off_by_hand_also_brings_the_track_back(h):
+    """Any seed change that lands on kept seeds restores their track, not only undo."""
+    h.click(1, frame=0)
+    h.track()
+    original = masks_bytes(h)
+    accident(h)
+    h.track()
+    h.service.clear_frame(h.video, 1, 12)  # removing the click, not undoing it
+    assert h.state(1) == TRACKED and masks_bytes(h) == original
+
+
+def test_a_change_during_a_job_never_swaps_the_track_under_it(h):
+    h.click(1, frame=0)
+    h.track()
+    accident(h)
+    h.track()
+    job = h.service.jobs.claim("s", h.video, [1], engine="fake")
+    before = masks_bytes(h)
+    h.service.clear_frame(h.video, 1, 12)  # clicks go on during jobs; the swap waits
+    assert masks_bytes(h) == before
+    h.service.jobs.release(job)
+
+
 def test_nothing_to_undo_is_an_error_and_changes_nothing(h):
     h.click(1, frame=0)
     h.service.undo(h.video, 1)  # back to no clicks

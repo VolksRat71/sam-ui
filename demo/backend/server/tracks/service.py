@@ -270,11 +270,17 @@ class TrackService:
     def _seed_change(self, video: str, obj_id: int):
         """Around a change of the object's seed record: the record before it
         goes on the undo history (if the change changed anything), and redo
-        is cleared, as in any editor."""
+        is cleared, as in any editor. Seeds a version keeps get its track."""
         key, files = self._record(video, obj_id)
         self._remember(video, obj_id, key, files)
         yield
-        if self._record(video, obj_id)[0] != key:
+        after, now_files = self._record(video, obj_id)
+        if after != key:
+            # back on seeds a version keeps (a click taken off by hand): their
+            # track comes back too. Never under a running job, which would save
+            # over it; the object is then stale until its job ends, as before.
+            if (now_files.get("seeds.json") or {}) and obj_id not in self.jobs.held(video):
+                self._adopt_versions(video, obj_id, after)
             h = self.versions.history(video, obj_id)
             h["undo"].append({"key": key, "at": ver.now()})
             h["redo"] = []
@@ -291,10 +297,13 @@ class TrackService:
         version of it, make that version the current track (no job). An engine
         without one keeps its current track, which is now stale."""
         self.seeds.put_record(video, obj_id, files)
-        key = self.seeds.record_key(files)
         if not (files.get("seeds.json") or {}):
             self.tracks.clear(video, obj_id)  # no seeds, no track (as clear_frame does); versions stay
             return
+        self._adopt_versions(video, obj_id, self.seeds.record_key(files))
+
+    def _adopt_versions(self, video: str, obj_id: int, key: str) -> None:
+        """For each engine with a kept track of seeds `key`, make it current."""
         for name in self.engine_names():
             src = self.versions.track_dir(video, obj_id, name, key)
             if src is None:
