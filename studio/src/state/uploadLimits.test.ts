@@ -60,4 +60,13 @@ describe('the duration notice', () => {
     });
     expect(checkUpload(10 * MB, 60, browser).error).toBeNull();
   });
+
+  it('does not point at the desktop app when it takes no longer a clip', () => {
+    const five = {...browser, maxSeconds: 300};
+    expect(checkUpload(10 * MB, 400, five)).toEqual({
+      error: 'The browser demo handles clips up to 5:00. Trim the clip and try again.',
+      notice: null,
+      desktop: false,
+    });
+  });
 });
