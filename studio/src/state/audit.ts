@@ -442,6 +442,11 @@ export function describeStop(l: Pick<Location, 'frame' | 'start' | 'end' | 'reas
   return `${where}: ${l.reasons.map(r => r.detail).join('; ')} · score ${l.score.toFixed(2)}`;
 }
 
+/** A stop in words, with its object's name, for a title or a screen reader. */
+export function stopLabel(e: Pick<QueueEntry, 'frame' | 'start' | 'end' | 'reasons' | 'score' | 'reviewed'>, name: string): string {
+  return `Review ${name}, ${describeStop(e)}${e.reviewed ? ' (reviewed: looks right)' : ''}`;
+}
+
 /** Short names of the reason kinds, for the list's chips. */
 export const KIND_LABELS: Record<ReasonKind, string> = {
   flag: 'flagged',

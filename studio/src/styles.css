@@ -1876,3 +1876,140 @@ code {
   gap: 6px;
   margin: 8px 0;
 }
+
+/* -- the review queue (draft 7) ------------------------------------------------ */
+/* a stop: a downward triangle above the lane (a check once reviewed), apart from
+   the flag bars, the candidate outline and the seed dots by its shape */
+.swimlane-review {
+  position: absolute;
+  top: -3px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 11px;
+  height: 11px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #6fdcff;
+  cursor: pointer;
+  filter: drop-shadow(0 0 1px #000);
+}
+.swimlane-review.reviewed {
+  color: var(--gray-300);
+}
+.swimlane-review.current,
+.swimlane-review:hover {
+  color: #fff;
+}
+.swimlane-review:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 1px;
+}
+.review-glyph {
+  display: block;
+  flex: none;
+}
+.legend-glyph {
+  display: inline-flex;
+  color: #6fdcff;
+}
+.legend-glyph.reviewed {
+  color: var(--gray-300);
+}
+.review-bar {
+  color: var(--gray-100);
+}
+.review-bar > .review-glyph {
+  color: #6fdcff;
+}
+.review-bar kbd,
+.review-keys kbd {
+  margin-left: 4px;
+  padding: 0 3px;
+  border: 1px solid var(--gray-600);
+  border-radius: 3px;
+  font-size: 10px;
+  font-family: inherit;
+  color: var(--gray-300);
+}
+.review {
+  display: grid;
+  gap: 8px;
+}
+.review-summary {
+  display: grid;
+  gap: 2px;
+  font-size: 13px;
+}
+.review-keys {
+  font-size: 11px;
+}
+.review-list {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.review-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px 4px 4px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: var(--panel-raised);
+}
+.review-item.current {
+  border-color: #fff;
+}
+.review-item.reviewed .review-where {
+  color: var(--gray-300);
+}
+.review-go {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  grid-template-columns: auto auto 1fr auto;
+  align-items: center;
+  gap: 2px 6px;
+  padding: 2px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.review-mark-icon {
+  color: #6fdcff;
+}
+.review-item.reviewed .review-mark-icon {
+  color: var(--gray-300);
+}
+.review-where {
+  overflow: hidden;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.review-score {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.review-why {
+  display: flex;
+  flex-wrap: wrap;
+  grid-column: 3 / -1;
+  gap: 3px;
+}
+.review-reason {
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--gray-700);
+  font-size: 10px;
+  color: var(--gray-200);
+}

@@ -57,6 +57,7 @@ import {
   staleIds,
 } from '~/state/objects';
 import {moveTargets, undoBlock} from '~/state/history';
+import {type QueueEntry, type ReviewQueue, stepQueue} from '~/state/audit';
 import {clearFlag, parseFlagMap, pruneFlags, toggleFlag as toggled, type FlagMap} from '~/state/flags';
 import {
   ABSENT,
@@ -110,6 +111,12 @@ export type VideoItem = {
   /** The file's sha256, for videos kept in this browser (no backend). */
   key?: string;
 };
+
+/** Where a stop (by object and frame) sits in the ranked queue; null when it is not in it. */
+function queueIndex(q: ReadonlyArray<QueueEntry>, at: {objectId: number; frame: number} | null): number | null {
+  const i = at == null ? -1 : q.findIndex(e => e.objectId === at.objectId && e.frame === at.frame);
+  return i < 0 ? null : i;
+}
 
 export type SessionStatus = 'starting' | 'ready' | 'failed';
 
@@ -992,6 +999,7 @@ export default function useStudioSession(video: VideoItem) {
           model: modelOf(s.engine),
           groups,
           union,
+          review: kind === 'folder' && reviewRef.current?.engine === s.engine ? reviewRef.current.queue : undefined,
         });
         return new Blob([buffer], {type: 'application/zip'});
       } finally {
@@ -1052,6 +1060,132 @@ export default function useStudioSession(video: VideoItem) {
       stale = true;
     };
   }, [bridge, compareKey]);
+
+  // -- the audit queue (draft 7): a few frames worth a look, instead of every frame --------
+
+  const [review, setReview] = useState<ReviewQueue | null>(null);
+  /** The stop last stepped to or picked, by object and frame. */
+  const [reviewAt, setReviewAt] = useState<{objectId: number; frame: number} | null>(null);
+  const [reviewTick, setReviewTick] = useState(0);
+  const reviewRef = useRef(review);
+  reviewRef.current = review;
+  const reviewWarned = useRef(false);
+  // built again whenever a track, a click, a range, a flag or the engine changes
+  const reviewKey = JSON.stringify([
+    state.engine,
+    state.jobs.map(j => j.key),
+    state.objects.map(o => [
+      o.id,
+      o.state,
+      o.engines,
+      Object.entries(o.points).map(([f, p]) => `${f}:${p.length}`),
+      o.ranges,
+      o.marks,
+    ]),
+    flags,
+    reviewTick,
+  ]);
+  useEffect(() => {
+    if (bridge == null || status !== 'ready') {
+      return;
+    }
+    let stale = false;
+    const s = stateRef.current;
+    const timer = setTimeout(() => {
+      bridge
+        .call('reviewQueue', {
+          engine: s.engine,
+          flags,
+          candidates: Object.fromEntries(s.objects.map(o => [o.id, o.marks.filter(m => m.state === CANDIDATE)])),
+        })
+        .then(q => {
+          if (!stale) {
+            setReview(q);
+          }
+        })
+        .catch(error => {
+          if (!stale && !reviewWarned.current) {
+            reviewWarned.current = true;
+            setWarning(`could not build the review queue: ${message(error)}`);
+          }
+        });
+    }, 200);
+    return () => {
+      stale = true;
+      clearTimeout(timer);
+    };
+    // reviewKey stands for every input the queue reads
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bridge, status, reviewKey]);
+
+  /** Show one stop: its object selected, its frame on screen. */
+  const goToStop = useCallback(
+    (e: Pick<QueueEntry, 'objectId' | 'frame'>) => {
+      setReviewAt({objectId: e.objectId, frame: e.frame});
+      dispatch({type: 'select', id: e.objectId});
+      bridge?.call('setActiveObject', {objectId: e.objectId}).catch(() => {});
+      if (bridge != null && meta.numFrames > 0) {
+        bridge.goToFrame(Math.max(0, Math.min(meta.numFrames - 1, e.frame)));
+      }
+    },
+    [bridge, meta.numFrames],
+  );
+
+  /** The next (or previous) stop in rank order, from the one last shown. */
+  const stepReview = useCallback(
+    (dir: 1 | -1) => {
+      const q = reviewRef.current?.queue ?? [];
+      const i = stepQueue(q, queueIndex(q, reviewAt), dir);
+      if (i != null) {
+        goToStop(q[i]);
+      }
+    },
+    [reviewAt, goToStop],
+  );
+
+  /** The stop on screen: the one last shown while its frame is within it, else one peaking here on the selected object. */
+  const stops = review?.queue ?? [];
+  const shownStop = stops[queueIndex(stops, reviewAt) ?? -1];
+  const currentStop =
+    shownStop != null && shownStop.objectId === state.activeId && shownStop.start <= frame && frame <= shownStop.end
+      ? shownStop
+      : (stops.find(e => e.objectId === state.activeId && e.frame === frame) ?? null);
+
+  /**
+   * "Looks right" on a stop (reviewed false: open it again). With `advance`
+   * (the stop on screen: Y, the transport's button) it moves on to the next
+   * stop not yet reviewed, as a candidate's decision does; marking another
+   * from the list leaves the playhead alone.
+   */
+  const markReviewed = useCallback(
+    (e: QueueEntry, reviewed = true, advance = false) => {
+      if (bridge == null) {
+        return;
+      }
+      const q = reviewRef.current?.queue ?? [];
+      setReview(r => (r == null ? r : {...r, queue: r.queue.map(x => (x === e || (x.objectId === e.objectId && x.frame === e.frame) ? {...x, reviewed} : x))}));
+      if (reviewed && advance) {
+        const i = queueIndex(q, {objectId: e.objectId, frame: e.frame});
+        const marked = q.map(x => (x.objectId === e.objectId && x.frame === e.frame ? {...x, reviewed: true} : x));
+        const next = stepQueue(marked, i, 1, true);
+        if (next != null) {
+          goToStop(marked[next]);
+        }
+      }
+      bridge
+        .call('setReviewed', {
+          objectId: e.objectId,
+          frame: e.frame,
+          engine: stateRef.current.engine,
+          reviewed,
+          span: [e.start, e.end],
+          reasons: e.reasons.map(r => r.kind),
+        })
+        .catch(error => setWarning(`could not save the review: ${message(error)}`))
+        .finally(() => setReviewTick(t => t + 1));
+    },
+    [bridge, goToStop],
+  );
 
   const removeObject = useCallback(
     (objectId: number) => {
@@ -1148,6 +1282,11 @@ export default function useStudioSession(video: VideoItem) {
     setLocalOptions,
     localModel,
     disagreement,
+    review,
+    currentStop,
+    goToStop,
+    stepReview,
+    markReviewed,
     flags,
     toggleFlag,
     objectEffects,

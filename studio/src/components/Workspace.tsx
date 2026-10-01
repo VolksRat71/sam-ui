@@ -25,6 +25,7 @@ import MaskExportModal from './MaskExportModal';
 import ExportVideoModal from './ExportVideoModal';
 import ObjectsSection from './ObjectsSection';
 import Preview, {type LabelMode} from './Preview';
+import ReviewSection from './ReviewSection';
 import Sidebar from './Sidebar';
 import Timeline from './Timeline';
 
@@ -48,7 +49,9 @@ export default function Workspace({video, renderMedia}: Props) {
   const n = meta.numFrames;
 
   // keyboard: space plays, arrows step, F flags the frame, Cmd-Z / Shift-Cmd-Z undo
-  // and redo the selected object's clicks (none of them while typing in a field)
+  // and redo the selected object's clicks, . and , step through the review
+  // queue and Y says its stop looks right (none of them while typing in a field;
+  // the review keys also work with a button focused, as after clicking a stop)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const step = historyShortcut(e);
@@ -60,7 +63,23 @@ export default function Workspace({video, renderMedia}: Props) {
         return;
       }
       const target = e.target as HTMLElement | null;
-      if (target != null && ['INPUT', 'TEXTAREA', 'BUTTON'].includes(target.tagName)) {
+      if (target != null && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) {
+        return;
+      }
+      const plain = !e.metaKey && !e.ctrlKey && !e.altKey;
+      if (plain && document.querySelector('.modal-backdrop') == null) {
+        if (e.key === '.' || e.key === ',') {
+          e.preventDefault();
+          session.stepReview(e.key === '.' ? 1 : -1);
+          return;
+        }
+        if ((e.key === 'y' || e.key === 'Y') && session.currentStop != null && !e.repeat) {
+          e.preventDefault();
+          session.markReviewed(session.currentStop, true, true);
+          return;
+        }
+      }
+      if (target != null && target.tagName === 'BUTTON') {
         return;
       }
       if (e.key === ' ') {
@@ -201,6 +220,15 @@ export default function Workspace({video, renderMedia}: Props) {
                     title: 'Objects',
                     badge: `${state.objects.length}/${OBJECT_LIMIT}`,
                     content: <ObjectsSection session={session} />,
+                  },
+                  {
+                    id: 'review',
+                    title: 'Review',
+                    badge:
+                      session.review != null && session.review.queue.length > 0
+                        ? `${session.review.queue.filter(e => !e.reviewed).length} to check / ${session.review.queue.length}`
+                        : undefined,
+                    content: <ReviewSection session={session} />,
                   },
                   {
                     id: 'effects',
