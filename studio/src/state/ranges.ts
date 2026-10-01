@@ -379,3 +379,15 @@ export function nextRange<T extends TimelineRange>(view: ReadonlyArray<T>, frame
 export function provenanceLabel(m: Mark): string {
   return `${m.source ?? 'unknown source'} · ${m.score == null ? 'no score' : `score ${m.score.toFixed(2)}`}`;
 }
+
+/** A range in words, frames 1-based (the lanes' labels: no state is told by colour alone). */
+export function describeRange(r: TimelineRange): string {
+  const frames = r.start === r.end ? `Frame ${r.start + 1}` : `Frames ${r.start + 1}–${r.end + 1}`;
+  const what =
+    r.state === ABSENT
+      ? 'absent (not in the shot)'
+      : r.state === PRESENT
+        ? 'present (confirmed)'
+        : `candidate, unconfirmed (${provenanceLabel(r)})`;
+  return `${frames}: ${what}`;
+}

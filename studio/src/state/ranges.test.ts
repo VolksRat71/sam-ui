@@ -5,6 +5,7 @@ import {
   CANDIDATE,
   PRESENT,
   absentAt,
+  describeRange,
   nextRange,
   normalizeMarks,
   normalizeRanges,
@@ -161,5 +162,11 @@ describe('candidate and confirmed ranges', () => {
     expect(nextRange(view, 31, 1, CANDIDATE)).toBeNull();
     expect(provenanceLabel(c(0, 1, DOG, 0.875))).toBe('text:dog@sam3 · score 0.88');
     expect(provenanceLabel(c(0, 1, DOG))).toBe('text:dog@sam3 · no score');
+  });
+
+  it('describes a range in words, frames 1-based, so no state is told by colour alone', () => {
+    expect(describeRange(r(0, 4))).toBe('Frames 1–5: absent (not in the shot)');
+    expect(describeRange(p(9, 9))).toBe('Frame 10: present (confirmed)');
+    expect(describeRange(c(2, 3, DOG, 0.5))).toBe('Frames 3–4: candidate, unconfirmed (text:dog@sam3 · score 0.50)');
   });
 });
