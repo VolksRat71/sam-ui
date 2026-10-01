@@ -443,9 +443,17 @@ export default function useStudioSession(video: VideoItem) {
         return;
       }
       const current = o.points[frame] ?? [];
-      setPoints(o.id, frame, current.filter((_, i) => i !== index));
+      const rest = current.filter((_, i) => i !== index);
+      const text = o.texts[frame];
+      if (rest.length === 0 && text != null) {
+        // undoing the last refinement of a text frame goes back to the text's
+        // mask; sending no clicks would clear the frame, text and all
+        void textPrompt(o.id, text);
+        return;
+      }
+      setPoints(o.id, frame, rest);
     },
-    [busy, playing, frame, setPoints],
+    [busy, playing, frame, setPoints, textPrompt],
   );
 
   const addObject = useCallback(() => {
