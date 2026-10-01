@@ -15,6 +15,7 @@ it at a scratch backend; --api is required so it never defaults to one in use.
     python tools/track_cache_e2e.py --api http://127.0.0.1:7373 --responsive  # any time
     python tools/track_cache_e2e.py --api http://127.0.0.1:7373 --absent      # any time
     python tools/track_cache_e2e.py --api http://127.0.0.1:7373 --bounded     # any time
+    python tools/track_cache_e2e.py --api http://127.0.0.1:7373 --undo        # any time
 
 Phase 1 leaves its upload for phase 2 (remembered in ~/.cache/sam-ui-e2e/),
 which deletes it. A phase 1 that finds a leftover from an earlier run deletes
@@ -43,6 +44,13 @@ frame once, answer clicks on another object within 2 s while it runs, and
 match a full re-track of the same seeds (full: true) within BOUNDED_MIN_IOU
 on every frame and BOUNDED_MEAN_IOU on average. It prints frames re-tracked, both wall times
 and the IoU against the full re-track.
+Undo: square A tracked from one click; an accidental click on square B goes
+to A and is re-tracked. undoSeeds must make A tracked again at once, with no
+track job (the next job id follows the last one, and a Track press has
+nothing to do), and its cached masks byte for byte the first track's; redo
+brings the accidental track back the same way. A new session (a reload) must
+still list both versions. An accidental click left stale must undo the same
+way, and moveClicks must hand it to B while A gets its first track back.
 """
 import argparse
 import json
@@ -475,6 +483,104 @@ def bounded_retrack():
           f"over all {CN} frames")
 
 
+def cached_counts(sid, obj):
+    """{frame: RLE counts} of the object's cached track, as /track_masks streams it, undecoded."""
+    req = urllib.request.Request(f"{API}/track_masks", json.dumps({"session_id": sid, "object_ids": [obj]}).encode(),
+                                 {"Content-Type": "application/json"})
+    data, out, pos = urllib.request.urlopen(req).read(), {}, 0
+    while (h := data.find(b"Content-Length: ", pos)) != -1:
+        n = int(data[h + 16:data.index(b"\r\n", h)])
+        start = data.index(b"\r\n\r\n", h) + 4
+        d = json.loads(data[start:start + n])
+        pos = start + n
+        for r in d.get("results", []):
+            if r["object_id"] == obj:
+                out[d["frame_index"]] = r["mask"]["counts"]
+    return out
+
+
+OBJ = "objectId state seeds { frameIndex } history { canUndo canRedo versions { key engine clicks created current } }"
+
+
+def undo_check():
+    use_clip(make_video, "squares.mp4")
+    sid, _ = start()
+    gql('mutation($s: String!) { clearPointsInVideo(input: {sessionId: $s}) { success } }', {"s": sid})
+
+    def add(obj, frame, sq):
+        y, x0, _ = SQUARES[sq]
+        x = x0 + 5 * frame if x0 < W // 2 else x0 - 5 * frame
+        gql('mutation($i: AddPointsInput!) { addPoints(input: $i) { frameIndex } }',
+            {"i": {"sessionId": sid, "frameIndex": frame, "objectId": obj, "clearOldPoints": True, "labels": [1],
+                   "points": [[(x + S / 2) / W, (y + S / 2) / H]]}})
+
+    def obj(o):
+        return next(x for x in gql(f'query($s: String!) {{ objectTracks(sessionId: $s) {{ {OBJ} }} }}',
+                                   {"s": sid})["objectTracks"] if x["objectId"] == o)
+
+    def step(name, o=A):
+        t0 = time.time()
+        d = gql(f'mutation($i: SeedHistoryInput!) {{ {name}(input: $i) {{ {OBJ} }} }}',
+                {"i": {"sessionId": sid, "objectId": o}})[name]
+        return d, time.time() - t0
+
+    add(A, 0, A)
+    _, _, t1 = post_stream("/track_objects", {"session_id": sid})
+    first_job = HEADERS["Job-Id"]
+    original = cached_counts(sid, A)
+    check(len(original) == N and obj(A)["state"] == "tracked", f"A is tracked over {N} frames ({t1:.1f} s)")
+    add(A, 6, B)  # the accident: a click on B while A is selected
+    check(obj(A)["state"] == "stale", "an accidental click on B makes A stale")
+    _, _, t2 = post_stream("/track_objects", {"session_id": sid})
+    second_job = HEADERS["Job-Id"]
+    wrong = cached_counts(sid, A)
+    check(wrong != original, f"re-tracked, A's track now takes in B ({t2:.1f} s)")
+    vs = obj(A)["history"]["versions"]
+    check(len(vs) == 2 and vs[0]["current"] and [v["clicks"] for v in vs] == [2, 1],
+          f"A keeps two versions: {[(v['clicks'], v['created']) for v in vs]}")
+
+    d, t = step("undoSeeds")
+    check(d["state"] == "tracked" and [s["frameIndex"] for s in d["seeds"]] == [0],
+          f"undo makes A tracked at once, with its one click ({t * 1000:.0f} ms)")
+    check(json.load(urllib.request.urlopen(urllib.request.Request(
+        f"{API}/track_jobs", json.dumps({"session_id": sid}).encode(),
+        {"Content-Type": "application/json"})))["jobs"] == [], "no track job is running")
+    check(cached_counts(sid, A) == original, "A's cached masks are the first track's, byte for byte")
+    d, t = step("redoSeeds")
+    check(d["state"] == "tracked" and cached_counts(sid, A) == wrong,
+          f"redo brings the accidental track back the same way ({t * 1000:.0f} ms)")
+    step("undoSeeds")
+
+    sid2, states = start()  # a reload
+    sid, sid_old = sid2, sid
+    check(states[A] == "tracked" and len(obj(A)["history"]["versions"]) == 2 and obj(A)["history"]["canRedo"],
+          "a new session still lists both versions and can redo")
+
+    add(A, 6, B)  # the same accident again: the same seeds, if SAM 2 gives the same mask
+    print(f"NOTE the same accident again reads {obj(A)['state']} (tracked when SAM 2 repeats its mask exactly)")
+    step("undoSeeds")
+    add(A, 10, B)  # a new accident, never tracked
+    check(obj(A)["state"] == "stale", "a new accidental click on frame 10 makes A stale")
+    d, t = step("undoSeeds")
+    check(d["state"] == "tracked" and cached_counts(sid, A) == original,
+          f"undo of a stale accident: tracked, first track's masks ({t * 1000:.0f} ms)")
+
+    add(A, 10, B)
+    moved = gql(f'mutation($i: MoveClicksInput!) {{ moveClicks(input: $i) {{ {OBJ} }} }}',
+                {"i": {"sessionId": sid, "frameIndex": 10, "fromObjectId": A, "toObjectId": B}})["moveClicks"]
+    a, b = moved
+    check(a["state"] == "tracked" and [s["frameIndex"] for s in a["seeds"]] == [0] and cached_counts(sid, A) == original,
+          "moveClicks takes the click off A, which gets its first track back")
+    check([s["frameIndex"] for s in b["seeds"]] == [10] and b["history"]["canUndo"], "and gives it to B, undoably")
+    ids, _, t3 = post_stream("/track_objects", {"session_id": sid})
+    third_job = HEADERS["Job-Id"]
+    n = lambda j: int(j.split("-")[1])
+    check(ids == "1" and n(third_job) == n(second_job) + 1,
+          f"no job ran for any undo, redo or move: the next one is {third_job} after {second_job} "
+          f"(first {first_job}), and it runs only B ({t3:.1f} s)")
+    del sid_old
+
+
 def responsive():
     import threading
     sid, _ = start()
@@ -504,11 +610,12 @@ if __name__ == "__main__":
     ap.add_argument("--responsive", action="store_true")
     ap.add_argument("--absent", action="store_true")
     ap.add_argument("--bounded", action="store_true")
+    ap.add_argument("--undo", action="store_true")
     a = ap.parse_args()
     API = a.api.rstrip("/")
-    if a.absent or a.bounded:
+    if a.absent or a.bounded or a.undo:
         try:
-            absent() if a.absent else bounded_retrack()
+            absent() if a.absent else bounded_retrack() if a.bounded else undo_check()
         finally:
             cleanup(REL)
     elif a.correction or a.responsive:

@@ -4,6 +4,7 @@
 # LICENSE file in the root directory of this source tree.
 # Modified by sam-ui: types for per-object tracks (ObjectTrack, SeedFrame, clearTrack).
 # Modified by sam-ui: frame ranges on an object (ObjectRange, setObjectRange).
+# Modified by sam-ui: track versions and seed undo (SeedHistory, TrackVersion, undoSeeds, moveClicks).
 
 from dataclasses import dataclass
 from typing import Iterable, List, Optional
@@ -107,6 +108,46 @@ class EngineTrack:
 
 
 @strawberry.type
+class TrackVersion:
+    """sam-ui: one kept track of an object's earlier (or current) seeds."""
+
+    key: str  # the seeds hash it was made from
+    engine: str
+    model: str
+    created: Optional[str]  # when it was tracked
+    elapsed_s: Optional[float]
+    n_frames: Optional[int]
+    clicks: int
+    seed_frames: int
+    bounded: bool  # bounded passes made part of it
+    current: bool  # made from the object's current seeds
+
+
+@strawberry.type
+class SeedHistory:
+    """sam-ui: what an object can undo or redo, and its kept versions, newest first."""
+
+    can_undo: bool
+    can_redo: bool
+    versions: List[TrackVersion]
+
+    @staticmethod
+    def from_info(h: Optional[dict]) -> "SeedHistory":
+        h = h or {}
+        return SeedHistory(
+            can_undo=bool(h.get("can_undo")),
+            can_redo=bool(h.get("can_redo")),
+            versions=[
+                TrackVersion(key=v["key"], engine=v["engine"], model=v.get("model") or "", created=v.get("created"),
+                             elapsed_s=v.get("elapsed_s"), n_frames=v.get("n_frames"), clicks=v.get("clicks") or 0,
+                             seed_frames=v.get("seed_frames") or 0, bounded=bool(v.get("bounded")),
+                             current=bool(v.get("current")))
+                for v in h.get("versions", [])
+            ],
+        )
+
+
+@strawberry.type
 class ObjectTrack:
     """sam-ui: an object's seeds and the state of its cached track (the
     default engine's in the top-level fields, every engine's in `tracks`)."""
@@ -120,6 +161,7 @@ class ObjectTrack:
     seeds: List[SeedFrame]
     tracks: List[EngineTrack]
     ranges: List[ObjectRange]
+    history: SeedHistory
 
     @staticmethod
     def from_info(info: dict) -> "ObjectTrack":
@@ -152,6 +194,7 @@ class ObjectTrack:
                 for t in info.get("tracks", [])
             ],
             ranges=[ObjectRange(start=r["start"], end=r["end"], state=r["state"]) for r in info.get("ranges", [])],
+            history=SeedHistory.from_info(info.get("history")),
         )
 
 
@@ -188,6 +231,31 @@ class SetObjectRangeInput:
     start: int
     end: int
     state: Optional[str] = None
+
+
+@strawberry.input
+class SeedHistoryInput:
+    """sam-ui: undo or redo one object's last seed change."""
+
+    session_id: str
+    object_id: int
+
+
+@strawberry.input
+class RestoreVersionInput:
+    session_id: str
+    object_id: int
+    key: str  # a TrackVersion's key
+
+
+@strawberry.input
+class MoveClicksInput:
+    """sam-ui: move one object's clicks on a frame to another object."""
+
+    session_id: str
+    frame_index: int
+    from_object_id: int
+    to_object_id: int
 
 
 @strawberry.type

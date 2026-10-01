@@ -74,3 +74,59 @@ def test_object_ranges_are_listed_and_set_by_mutation():
     d = run('mutation { setObjectRange(input: {sessionId: "s1", objectId: 3, start: 4, end: 8}) { ranges { start } } }',
             api)["setObjectRange"]
     assert d == {"ranges": []} and api.ranged[-1] is None
+
+
+HISTORY = {"can_undo": True, "can_redo": False, "versions": [
+    {"key": "k2", "engine": "sam2", "model": "large", "created": "2026-09-30T21:00:00-0500", "elapsed_s": 4.2,
+     "n_frames": 10, "clicks": 3, "seed_frames": 2, "bounded": True, "current": True},
+    {"key": "k1", "engine": "sam2", "model": "large", "created": "2026-09-30T20:00:00-0500", "elapsed_s": 8.0,
+     "n_frames": 10, "clicks": 2, "seed_frames": 1, "bounded": False, "current": False}]}
+
+
+class VersionsAPI(FakeAPI):
+    def object_tracks(self, session_id):
+        return [{**INFO, "history": HISTORY}]
+
+    def undo_seeds(self, session_id, object_id):
+        self.step = ("undo", session_id, object_id)
+        return {**INFO, "state": "tracked", "history": {**HISTORY, "can_redo": True}}
+
+    def redo_seeds(self, session_id, object_id):
+        self.step = ("redo", session_id, object_id)
+        return INFO
+
+    def restore_version(self, session_id, object_id, key):
+        self.step = ("restore", session_id, object_id, key)
+        return INFO
+
+    def move_clicks(self, session_id, frame_index, from_id, to_id):
+        self.step = ("move", session_id, frame_index, from_id, to_id)
+        return [{**INFO, "object_id": from_id}, {**INFO, "object_id": to_id}]
+
+
+def test_an_objects_history_lists_its_versions():
+    d = run('{ objectTracks(sessionId: "s1") { history { canUndo canRedo versions { key engine model created '
+            'elapsedS nFrames clicks seedFrames bounded current } } } }', VersionsAPI())
+    h = d["objectTracks"][0]["history"]
+    assert h["canUndo"] is True and h["canRedo"] is False
+    assert h["versions"][0] == {"key": "k2", "engine": "sam2", "model": "large", "created": "2026-09-30T21:00:00-0500",
+                                "elapsedS": 4.2, "nFrames": 10, "clicks": 3, "seedFrames": 2, "bounded": True,
+                                "current": True}
+
+
+def test_an_object_without_history_has_an_empty_one():
+    d = run('{ objectTracks(sessionId: "s1") { history { canUndo canRedo versions { key } } } }', FakeAPI())
+    assert d["objectTracks"][0]["history"] == {"canUndo": False, "canRedo": False, "versions": []}
+
+
+def test_undo_redo_restore_and_move_mutations_reach_the_api():
+    api = VersionsAPI()
+    d = run('mutation { undoSeeds(input: {sessionId: "s1", objectId: 3}) { state history { canRedo } } }', api)
+    assert d["undoSeeds"] == {"state": "tracked", "history": {"canRedo": True}} and api.step == ("undo", "s1", 3)
+    run('mutation { redoSeeds(input: {sessionId: "s1", objectId: 3}) { objectId } }', api)
+    assert api.step == ("redo", "s1", 3)
+    run('mutation { restoreVersion(input: {sessionId: "s1", objectId: 3, key: "k1"}) { objectId } }', api)
+    assert api.step == ("restore", "s1", 3, "k1")
+    d = run('mutation { moveClicks(input: {sessionId: "s1", frameIndex: 4, fromObjectId: 1, toObjectId: 2}) '
+            '{ objectId } }', api)
+    assert d["moveClicks"] == [{"objectId": 1}, {"objectId": 2}] and api.step == ("move", "s1", 4, 1, 2)

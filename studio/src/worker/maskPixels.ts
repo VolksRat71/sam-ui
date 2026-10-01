@@ -2,7 +2,9 @@
 //
 // Paints RLE masks (COCO order: column-major, size [height, width]) into RGBA
 // pixels: a translucent fill and a solid outline in each object's colour,
-// the look of Meta's Overlay highlight, for any number of objects.
+// the look of Meta's Overlay highlight, for any number of objects. The
+// selected object gets a wider outline ringed in white, and the others are
+// dimmed while it is selected, so the preview says which one a click goes to.
 import {decode, type RLEObject} from '@/jscocotools/mask';
 
 export const FILL_ALPHA = 0.45;
@@ -13,6 +15,20 @@ export function parseHex(hex: string): [number, number, number] {
   return m == null
     ? [255, 0, 0]
     : [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)];
+}
+
+/** How one mask is drawn: fill (a share of the fill alpha), outline width and alpha, a white ring outside. */
+export type MaskStyle = {fill: number; edge: number; edgeAlpha: number; halo: boolean};
+
+/** The selected object stands out; while one is selected, the others step back. */
+export function maskStyle({selected = false, otherSelected = false}: {selected?: boolean; otherSelected?: boolean}): MaskStyle {
+  if (selected) {
+    return {fill: 1, edge: 3, edgeAlpha: 1, halo: true};
+  }
+  if (otherSelected) {
+    return {fill: 0.55, edge: 2, edgeAlpha: 0.6, halo: false};
+  }
+  return {fill: 1, edge: EDGE, edgeAlpha: 1, halo: false};
 }
 
 /** One little-endian RGBA pixel as a Uint32. */
@@ -31,6 +47,7 @@ export function paintMask(
   rle: RLEObject,
   color: string,
   fillAlpha: number = FILL_ALPHA,
+  style: MaskStyle = maskStyle({}),
 ): void {
   const [h, w] = rle.size;
   if (h !== height || w !== width) {
@@ -38,8 +55,9 @@ export function paintMask(
   }
   const data = decode([rle]).data as Uint8Array; // index x * h + y
   const [r, g, b] = parseHex(color);
-  const fill = pack(r, g, b, Math.round(fillAlpha * 255));
-  const edge = pack(r, g, b, 255);
+  const fill = pack(r, g, b, Math.round(fillAlpha * style.fill * 255));
+  const edge = pack(r, g, b, Math.round(style.edgeAlpha * 255));
+  const edgeWidth = style.edge;
   const on = (x: number, y: number) =>
     x >= 0 && y >= 0 && x < w && y < h && data[x * h + y] > 0;
   for (let x = 0; x < w; x++) {
@@ -49,10 +67,20 @@ export function paintMask(
         continue;
       }
       let border = false;
-      for (let d = 1; d <= EDGE && !border; d++) {
+      for (let d = 1; d <= edgeWidth && !border; d++) {
         border = !on(x - d, y) || !on(x + d, y) || !on(x, y - d) || !on(x, y + d);
       }
       out[y * w + x] = border ? edge : fill;
+    }
+  }
+  if (style.halo) {
+    const white = pack(255, 255, 255, 255);
+    for (let x = 0; x < w; x++) {
+      for (let y = 0; y < h; y++) {
+        if (!on(x, y) && (on(x - 1, y) || on(x + 1, y) || on(x, y - 1) || on(x, y + 1))) {
+          out[y * w + x] = white;
+        }
+      }
     }
   }
 }

@@ -1,5 +1,5 @@
 /**
- * @generated SignedSource<<d870ba6c9d12d44cf1b80b8e6572ae79>>
+ * @generated SignedSource<<1af509b13d261805c3811781c79eb0f7>>
  * @lightSyntaxTransform
  * @nogrep
  */
@@ -9,18 +9,17 @@
 // @ts-nocheck
 
 import { ConcreteRequest, Mutation } from 'relay-runtime';
-export type SetObjectRangeInput = {
-  end: number;
-  objectId: number;
+export type MoveClicksInput = {
+  frameIndex: number;
+  fromObjectId: number;
   sessionId: string;
-  start: number;
-  state?: string | null | undefined;
+  toObjectId: number;
 };
-export type StudioSessionSetRangeMutation$variables = {
-  input: SetObjectRangeInput;
+export type StudioSessionMoveClicksMutation$variables = {
+  input: MoveClicksInput;
 };
-export type StudioSessionSetRangeMutation$data = {
-  readonly setObjectRange: {
+export type StudioSessionMoveClicksMutation$data = {
+  readonly moveClicks: ReadonlyArray<{
     readonly frames: ReadonlyArray<number> | null | undefined;
     readonly history: {
       readonly canRedo: boolean;
@@ -61,11 +60,11 @@ export type StudioSessionSetRangeMutation$data = {
       readonly nFrames: number;
       readonly state: string;
     }>;
-  };
+  }>;
 };
-export type StudioSessionSetRangeMutation = {
-  response: StudioSessionSetRangeMutation$data;
-  variables: StudioSessionSetRangeMutation$variables;
+export type StudioSessionMoveClicksMutation = {
+  response: StudioSessionMoveClicksMutation$data;
+  variables: StudioSessionMoveClicksMutation$variables;
 };
 
 const node: ConcreteRequest = (function(){
@@ -116,8 +115,8 @@ v5 = [
     ],
     "concreteType": "ObjectTrack",
     "kind": "LinkedField",
-    "name": "setObjectRange",
-    "plural": false,
+    "name": "moveClicks",
+    "plural": true,
     "selections": [
       {
         "alias": null,
@@ -330,7 +329,7 @@ return {
     "argumentDefinitions": (v0/*: any*/),
     "kind": "Fragment",
     "metadata": null,
-    "name": "StudioSessionSetRangeMutation",
+    "name": "StudioSessionMoveClicksMutation",
     "selections": (v5/*: any*/),
     "type": "Mutation",
     "abstractKey": null
@@ -339,20 +338,20 @@ return {
   "operation": {
     "argumentDefinitions": (v0/*: any*/),
     "kind": "Operation",
-    "name": "StudioSessionSetRangeMutation",
+    "name": "StudioSessionMoveClicksMutation",
     "selections": (v5/*: any*/)
   },
   "params": {
-    "cacheID": "4ae4bb1ea2b72fd788ad792d6a3b2229",
+    "cacheID": "865e46107da731855b9067aa82958f55",
     "id": null,
     "metadata": {},
-    "name": "StudioSessionSetRangeMutation",
+    "name": "StudioSessionMoveClicksMutation",
     "operationKind": "mutation",
-    "text": "mutation StudioSessionSetRangeMutation(\n  $input: SetObjectRangeInput!\n) {\n  setObjectRange(input: $input) {\n    objectId\n    state\n    frames\n    nFrames\n    seeds {\n      frameIndex\n      points\n      labels\n      mask {\n        size\n        counts\n      }\n    }\n    tracks {\n      engine\n      state\n      frames\n      nFrames\n    }\n    ranges {\n      start\n      end\n      state\n    }\n    history {\n      canUndo\n      canRedo\n      versions {\n        key\n        engine\n        model\n        created\n        elapsedS\n        nFrames\n        clicks\n        seedFrames\n        bounded\n        current\n      }\n    }\n  }\n}\n"
+    "text": "mutation StudioSessionMoveClicksMutation(\n  $input: MoveClicksInput!\n) {\n  moveClicks(input: $input) {\n    objectId\n    state\n    frames\n    nFrames\n    seeds {\n      frameIndex\n      points\n      labels\n      mask {\n        size\n        counts\n      }\n    }\n    tracks {\n      engine\n      state\n      frames\n      nFrames\n    }\n    ranges {\n      start\n      end\n      state\n    }\n    history {\n      canUndo\n      canRedo\n      versions {\n        key\n        engine\n        model\n        created\n        elapsedS\n        nFrames\n        clicks\n        seedFrames\n        bounded\n        current\n      }\n    }\n  }\n}\n"
   }
 };
 })();
 
-(node as any).hash = "3faa111cc7664feba5a17bb07e077459";
+(node as any).hash = "997d45501b8ea7917f726ed3f02a879e";
 
 export default node;

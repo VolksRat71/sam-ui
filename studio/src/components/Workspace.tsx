@@ -11,6 +11,7 @@ import {panelStorage} from '~/lib/storage';
 import {videoDisplayName} from '~/lib/uploadNames';
 import {BROWSER_ENGINE, engineLabel} from '~/state/engines';
 import {objectName} from '~/state/fileNames';
+import {historyShortcut} from '~/state/history';
 import {jobProgress} from '~/state/objects';
 import useStudioSession, {type VideoItem} from '~/workspace/useStudioSession';
 import ConfirmModal from './ConfirmModal';
@@ -46,9 +47,18 @@ export default function Workspace({video, renderMedia}: Props) {
   const nameOf = (id: number) => objectName(state.objects.find(o => o.id === id) ?? {id});
   const n = meta.numFrames;
 
-  // keyboard: space plays, arrows step, F flags the frame (not while typing in a field)
+  // keyboard: space plays, arrows step, F flags the frame, Cmd-Z / Shift-Cmd-Z undo
+  // and redo the selected object's clicks (none of them while typing in a field)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const step = historyShortcut(e);
+      if (step != null) {
+        e.preventDefault();
+        if (!e.repeat) {
+          session.stepSeeds(step);
+        }
+        return;
+      }
       const target = e.target as HTMLElement | null;
       if (target != null && ['INPUT', 'TEXTAREA', 'BUTTON'].includes(target.tagName)) {
         return;

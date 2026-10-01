@@ -1,5 +1,5 @@
 /**
- * @generated SignedSource<<d870ba6c9d12d44cf1b80b8e6572ae79>>
+ * @generated SignedSource<<1a555d7d94d08b6d305d477b1cc9c8ec>>
  * @lightSyntaxTransform
  * @nogrep
  */
@@ -9,18 +9,15 @@
 // @ts-nocheck
 
 import { ConcreteRequest, Mutation } from 'relay-runtime';
-export type SetObjectRangeInput = {
-  end: number;
+export type SeedHistoryInput = {
   objectId: number;
   sessionId: string;
-  start: number;
-  state?: string | null | undefined;
 };
-export type StudioSessionSetRangeMutation$variables = {
-  input: SetObjectRangeInput;
+export type StudioSessionRedoMutation$variables = {
+  input: SeedHistoryInput;
 };
-export type StudioSessionSetRangeMutation$data = {
-  readonly setObjectRange: {
+export type StudioSessionRedoMutation$data = {
+  readonly redoSeeds: {
     readonly frames: ReadonlyArray<number> | null | undefined;
     readonly history: {
       readonly canRedo: boolean;
@@ -63,9 +60,9 @@ export type StudioSessionSetRangeMutation$data = {
     }>;
   };
 };
-export type StudioSessionSetRangeMutation = {
-  response: StudioSessionSetRangeMutation$data;
-  variables: StudioSessionSetRangeMutation$variables;
+export type StudioSessionRedoMutation = {
+  response: StudioSessionRedoMutation$data;
+  variables: StudioSessionRedoMutation$variables;
 };
 
 const node: ConcreteRequest = (function(){
@@ -116,7 +113,7 @@ v5 = [
     ],
     "concreteType": "ObjectTrack",
     "kind": "LinkedField",
-    "name": "setObjectRange",
+    "name": "redoSeeds",
     "plural": false,
     "selections": [
       {
@@ -330,7 +327,7 @@ return {
     "argumentDefinitions": (v0/*: any*/),
     "kind": "Fragment",
     "metadata": null,
-    "name": "StudioSessionSetRangeMutation",
+    "name": "StudioSessionRedoMutation",
     "selections": (v5/*: any*/),
     "type": "Mutation",
     "abstractKey": null
@@ -339,20 +336,20 @@ return {
   "operation": {
     "argumentDefinitions": (v0/*: any*/),
     "kind": "Operation",
-    "name": "StudioSessionSetRangeMutation",
+    "name": "StudioSessionRedoMutation",
     "selections": (v5/*: any*/)
   },
   "params": {
-    "cacheID": "4ae4bb1ea2b72fd788ad792d6a3b2229",
+    "cacheID": "8f1e21dfda27e9dcf1190a119872874d",
     "id": null,
     "metadata": {},
-    "name": "StudioSessionSetRangeMutation",
+    "name": "StudioSessionRedoMutation",
     "operationKind": "mutation",
-    "text": "mutation StudioSessionSetRangeMutation(\n  $input: SetObjectRangeInput!\n) {\n  setObjectRange(input: $input) {\n    objectId\n    state\n    frames\n    nFrames\n    seeds {\n      frameIndex\n      points\n      labels\n      mask {\n        size\n        counts\n      }\n    }\n    tracks {\n      engine\n      state\n      frames\n      nFrames\n    }\n    ranges {\n      start\n      end\n      state\n    }\n    history {\n      canUndo\n      canRedo\n      versions {\n        key\n        engine\n        model\n        created\n        elapsedS\n        nFrames\n        clicks\n        seedFrames\n        bounded\n        current\n      }\n    }\n  }\n}\n"
+    "text": "mutation StudioSessionRedoMutation(\n  $input: SeedHistoryInput!\n) {\n  redoSeeds(input: $input) {\n    objectId\n    state\n    frames\n    nFrames\n    seeds {\n      frameIndex\n      points\n      labels\n      mask {\n        size\n        counts\n      }\n    }\n    tracks {\n      engine\n      state\n      frames\n      nFrames\n    }\n    ranges {\n      start\n      end\n      state\n    }\n    history {\n      canUndo\n      canRedo\n      versions {\n        key\n        engine\n        model\n        created\n        elapsedS\n        nFrames\n        clicks\n        seedFrames\n        bounded\n        current\n      }\n    }\n  }\n}\n"
   }
 };
 })();
 
-(node as any).hash = "3faa111cc7664feba5a17bb07e077459";
+(node as any).hash = "c90382f1e4a4016ae5f0a4a58025a744";
 
 export default node;
