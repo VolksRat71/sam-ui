@@ -49,3 +49,18 @@ describe('grayPng', () => {
     expect([...raw]).toEqual([0, 0, 255, 0, 0, 255, 0, 255]);
   });
 });
+
+describe('unzipStored', () => {
+  it('reads back what zip wrote, and refuses a corrupted entry', async () => {
+    const {unzipStored} = await import('./zip');
+    const bin = Uint8Array.from({length: 300}, (_, i) => (i * 13) & 255);
+    const bytes = zip([{name: 'README.txt', data: 'hi'}, {name: 'a/b.bin', data: bin}]);
+    const got = unzipStored(bytes);
+    expect(got.map(e => e.name)).toEqual(['README.txt', 'a/b.bin']);
+    expect(new TextDecoder().decode(got[0].data)).toBe('hi');
+    expect(got[1].data).toEqual(bin);
+    const bad = bytes.slice();
+    bad[30 + 'README.txt'.length] ^= 0xff;
+    expect(() => unzipStored(bad)).toThrow(/CRC/);
+  });
+});

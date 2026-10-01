@@ -14,6 +14,7 @@ import {objectName} from '~/state/fileNames';
 import {historyShortcut} from '~/state/history';
 import {jobProgress} from '~/state/objects';
 import useStudioSession, {type VideoItem} from '~/workspace/useStudioSession';
+import AeExportModal from './AeExportModal';
 import ConfirmModal from './ConfirmModal';
 import {DemoBanner, DemoTag, UnsupportedNotice} from './DemoNotice';
 import {pageNotice} from '~/state/notices';
@@ -182,7 +183,7 @@ export default function Workspace({video, renderMedia}: Props) {
               {trackLabel}
             </button>
           </div>
-          <ExportMenu session={session} onChoose={setExporting} />
+          <ExportMenu session={session} videoPath={video.path} onChoose={setExporting} />
           <button
             className="button subtle"
             onClick={() => setConfirmStartOver(true)}
@@ -254,6 +255,7 @@ export default function Workspace({video, renderMedia}: Props) {
       {(exporting === 'videos' || exporting === 'vectors') && (
         <MaskExportModal session={session} kind={exporting} videoPath={videoName} onClose={() => setExporting(null)} />
       )}
+      {exporting === 'ae' && <AeExportModal session={session} video={video} onClose={() => setExporting(null)} />}
       {exporting === 'folder' && (
         <ExportPanel
           session={session}

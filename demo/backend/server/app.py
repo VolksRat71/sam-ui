@@ -4,7 +4,8 @@
 # LICENSE file in the root directory of this source tree.
 # Modified by sam-ui: registers the track routes (tracks/routes.py) and, with
 # SAM_UI_STUDIO_DIST, serves a built studio (studio_static.py); SAM_UI_CORS and
-# SAM_UI_ALLOWED_HOST lock it to its own page (local_guard.py).
+# SAM_UI_ALLOWED_HOST lock it to its own page (local_guard.py); videos opened
+# in place, with no transcode, are served and registered by data/linked.py.
 
 import logging
 import os
@@ -20,6 +21,7 @@ from app_conf import (
     UPLOADS_PATH,
     UPLOADS_PREFIX,
 )
+from data.linked import make_blueprint as make_linked_routes
 from data.loader import preload_data
 from data.schema import schema
 from data.store import set_videos
@@ -47,6 +49,7 @@ set_videos(videos)
 
 inference_api = InferenceAPI()
 app.register_blueprint(make_track_routes(inference_api.track_context, inference_api.tracks))
+app.register_blueprint(make_linked_routes())  # sam-ui: footage opened in place (After Effects)
 
 # sam-ui: serve a built studio from this server (the desktop app), when asked
 if os.environ.get("SAM_UI_STUDIO_DIST"):
