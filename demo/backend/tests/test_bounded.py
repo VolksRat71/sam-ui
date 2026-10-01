@@ -398,3 +398,103 @@ def test_track_provenance_route(h):
     assert got["state"] == TRACKED and got["bounded"] == [[10, 42]]
     assert [p["kind"] for p in got["passes"]] == ["full", "bounded"] and len(got["provenance"]) == 3
 
+
+# -- the real model ---------------------------------------------------------------------
+
+import os  # noqa: E402
+import time  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+CKPT = Path(__file__).resolve().parents[3] / "checkpoints" / "sam2.1_hiera_large.pt"
+CN, CH, CW, CS = 160, 240, 320, 40
+# bounded against a full re-track of the same seeds: on every frame, and on average
+# (measured on MPS: min 0.933 on one frame of the crossing, mean 0.9985)
+MIN_IOU_VS_FULL, MEAN_IOU_VS_FULL = 0.9, 0.99
+
+
+def cross_obj(i):
+    return 100, int(10 + (CW - 60) * i / (CN - 1))
+
+
+def cross_video(path):
+    """A red square moving right; a look-alike moving down crosses it mid-clip,
+    where a track from one click on frame 0 takes in some of the look-alike."""
+    import av
+    bg = np.random.default_rng(3).integers(90, 140, (CH, CW, 3), dtype=np.uint8)
+    truth = []
+    out = av.open(str(path), "w")
+    st = out.add_stream("libx264", rate=24, options={"crf": "12"})
+    st.width, st.height, st.pix_fmt = CW, CH, "yuv420p"
+    for i in range(CN):
+        img = bg.copy()
+        y, x = 100 + 3 * (i - CN // 2), cross_obj(CN // 2)[1]
+        if -CS < y < CH:
+            img[max(y, 0):y + CS, x:x + CS] = (215, 45, 45)
+        y, x = cross_obj(i)
+        img[y:y + CS, x:x + CS] = (220, 40, 40)
+        m = np.zeros((CH, CW), bool)
+        m[y:y + CS, x:x + CS] = True
+        truth.append(m)
+        for pkt in st.encode(av.VideoFrame.from_ndarray(img, format="rgb24")):
+            out.mux(pkt)
+    for pkt in st.encode():
+        out.mux(pkt)
+    out.close()
+    return truth
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(not CKPT.exists() or os.environ.get("SAM_UI_SLOW") != "1",
+                    reason="set SAM_UI_SLOW=1 with the large checkpoint in checkpoints/")
+def test_real_sam2_bounded_retrack_matches_a_full_retrack(tmp_path):
+    import torch
+    from sam2.build_sam import build_sam2_video_predictor
+
+    from inference.predictor import InferenceAPI
+    from test_inference_api import click, start
+    from tracks.bounded import mask_iou
+
+    truth = cross_video(tmp_path / "cross.mp4")
+    dev = "mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu")
+    pred = build_sam2_video_predictor("configs/sam2.1/sam2.1_hiera_l.yaml", str(CKPT), device=dev)
+    a = InferenceAPI(predictor=pred, device=torch.device(dev), tracks_root=str(tmp_path / "tracks"))
+    sid = start(a, str(tmp_path / "cross.mp4"))
+
+    def track(full=False):
+        ctx = a.track_context(sid)
+        got, t0 = {}, time.perf_counter()
+        with a.inference_lock, a.autocast_context():
+            for f, m in ctx.service.track(ctx.video, ctx.path, [1], video_handle=ctx.video_handle, n_frames=CN,
+                                          full=full):
+                assert f not in got
+                got[f] = rle.decode(m[1])
+        return got, time.perf_counter() - t0
+
+    with torch.inference_mode():
+        y, x = cross_obj(0)
+        click(a, sid, 1, 0, [[(x + CS / 2) / CW, (y + CS / 2) / CH]], [1])
+        old, _ = track()
+        extra = {f: int((old[f] & ~truth[f]).sum()) for f in range(CN)}
+        c = max(extra, key=extra.get)
+        if extra[c] > 50:  # cut the look-alike away where the track holds most of it
+            ys, xs = np.nonzero(old[c] & ~truth[c])
+            click(a, sid, 1, c, [[(xs.mean() + .5) / CW, (ys.mean() + .5) / CH]], [0])
+        else:  # a clean track: refine mid-clip
+            c = CN // 2
+            y, x = cross_obj(c)
+            click(a, sid, 1, c, [[(x + CS / 2) / CW, (y + CS / 2) / CH]], [1])
+        bnd, t_b = track()
+        video = a.track_context(sid).video
+        prov = a.tracks.provenance(video, 1)
+        full, t_f = track(full=True)
+    spans = prov["bounded"]
+    inside = {f for s, e in spans for f in range(s, e + 1)}
+    v = [mask_iou(bnd[f], full[f]) for f in range(CN)]
+    print(f"\nbounded re-track: correction on frame {c} ({extra[c]} look-alike px in the cached mask); "
+          f"re-tracked {len(inside)}/{CN} frames {spans} in {t_b:.1f} s against {t_f:.1f} s for a full "
+          f"re-track; IoU vs full min {min(v):.4f} (frame {int(np.argmin(v))}) mean {np.mean(v):.4f}; "
+          f"vs truth: bounded min {min(mask_iou(bnd[f], truth[f]) for f in range(CN)):.3f}, "
+          f"full {min(mask_iou(full[f], truth[f]) for f in range(CN)):.3f}")
+    assert prov["state"] == TRACKED and c in inside and 0 < len(inside) < CN
+    assert all((bnd[f] == old[f]).all() for f in range(CN) if f not in inside)  # outside: the cache, untouched
+    assert min(v) > MIN_IOU_VS_FULL and np.mean(v) > MEAN_IOU_VS_FULL
