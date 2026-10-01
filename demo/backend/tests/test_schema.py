@@ -1,6 +1,7 @@
 # sam-ui (Apache-2.0). New file, not from SAM 2.
 """The GraphQL fields reach the track service: run the real schema against a
 stand-in InferenceAPI (no model)."""
+import os
 from types import SimpleNamespace
 
 from data.schema import schema
@@ -34,13 +35,19 @@ def run(query, api):
     return r.data
 
 
-def test_start_session_returns_known_objects_with_seeds_in_frame_order():
-    d = run('mutation { startSession(input: {path: "gallery/x.mp4"}) { sessionId objects { objectId state '
-            'frames nFrames seeds { frameIndex points labels } } } }', FakeAPI())["startSession"]
-    assert d["sessionId"] == "s1"
-    o = d["objects"][0]
-    assert o["objectId"] == 3 and o["state"] == "stale" and o["frames"] == [0, 9] and o["nFrames"] == 10
-    assert [s["frameIndex"] for s in o["seeds"]] == [1, 4] and o["seeds"][1]["points"] == [[0.25, 0.75]]
+def test_start_session_returns_known_objects_with_seeds_in_frame_order(tmp_path, monkeypatch):
+    from data.store import set_videos
+
+    saved = _listed(monkeypatch, tmp_path, ["gallery/x.mp4"])
+    try:
+        d = run('mutation { startSession(input: {path: "gallery/x.mp4"}) { sessionId objects { objectId state '
+                'frames nFrames seeds { frameIndex points labels } } } }', FakeAPI())["startSession"]
+        assert d["sessionId"] == "s1"
+        o = d["objects"][0]
+        assert o["objectId"] == 3 and o["state"] == "stale" and o["frames"] == [0, 9] and o["nFrames"] == 10
+        assert [s["frameIndex"] for s in o["seeds"]] == [1, 4] and o["seeds"][1]["points"] == [[0.25, 0.75]]
+    finally:
+        set_videos(saved)
 
 
 def test_object_tracks_query_and_clear_track_mutation():
@@ -60,16 +67,88 @@ def test_object_tracks_lists_every_engines_track():
         {"engine": "sam3", "model": "sam3-tracker", "state": "tracked", "nFrames": 10}]
 
 
-def test_start_session_stays_inside_the_data_folder():
-    import os
+def _listed(monkeypatch, root, paths):
+    """DATA_PATH = root, with `paths` (relative) as files and as the listed videos."""
+    import data.schema as sch
+    from data.store import get_videos, set_videos
 
-    from app_conf import DATA_PATH
+    saved = get_videos()
+    monkeypatch.setattr(sch, "DATA_PATH", root)
+    for rel in paths:
+        f = os.path.join(str(root), rel)
+        os.makedirs(os.path.dirname(f), exist_ok=True)
+        if not os.path.lexists(f):
+            open(f, "wb").close()
+    set_videos({rel: SimpleNamespace(path=rel) for rel in paths})
+    return saved
 
-    api = FakeAPI()
-    run('mutation { startSession(input: {path: "gallery/x.mp4"}) { sessionId } }', api)
-    assert api.started == [os.path.join(os.path.normpath(str(DATA_PATH)), "gallery", "x.mp4")]
-    for bad in ["../../etc/passwd", "gallery/../../secret.mp4", "/etc/passwd", ""]:
-        r = schema.execute_sync('mutation($p: String!) { startSession(input: {path: $p}) { sessionId } }',
-                                variable_values={"p": bad}, context_value={"inference_api": api})
-        assert r.errors and "not a video path" in str(r.errors[0]), bad
-    assert len(api.started) == 1  # nothing outside the folder reached the engine
+
+def _start(api, path):
+    return schema.execute_sync('mutation($p: String!) { startSession(input: {path: $p}) { sessionId } }',
+                               variable_values={"p": path}, context_value={"inference_api": api})
+
+
+def test_start_session_opens_only_listed_videos_inside_the_data_folder(tmp_path, monkeypatch):
+    from data.store import set_videos
+
+    saved = _listed(monkeypatch, tmp_path, ["gallery/x.mp4"])
+    (tmp_path / "tracks" / "1").mkdir(parents=True)
+    (tmp_path / "tracks" / "1" / "seeds.json").write_text("{}")
+    try:
+        api = FakeAPI()
+        assert _start(api, "gallery/x.mp4").errors is None
+        assert api.started == [os.path.join(str(tmp_path), "gallery", "x.mp4")]
+        for bad in ["../../etc/passwd", "gallery/../../secret.mp4", "/etc/passwd", "//etc/passwd", "",
+                    "gallery/..", "gallery/x.mp4\x00", "tracks/1/seeds.json", "tracks", "gallery/nope.mp4"]:
+            r = _start(api, bad)
+            assert r.errors, bad
+            assert str(tmp_path) not in str(r.errors[0]), bad  # never the server's own path
+        assert len(api.started) == 1  # nothing else reached the engine
+    finally:
+        set_videos(saved)
+
+
+def test_a_listed_video_that_is_gone_from_disk_is_refused_without_the_servers_path(tmp_path, monkeypatch):
+    from data.store import set_videos
+
+    saved = _listed(monkeypatch, tmp_path, ["uploads/gone.mp4"])
+    os.remove(tmp_path / "uploads" / "gone.mp4")
+    try:
+        r = _start(FakeAPI(), "uploads/gone.mp4")
+        assert r.errors and "uploads/gone.mp4" in str(r.errors[0]) and str(tmp_path) not in str(r.errors[0])
+    finally:
+        set_videos(saved)
+
+
+def test_a_relative_data_path_still_opens_its_videos(tmp_path, monkeypatch):
+    from data.store import set_videos
+
+    monkeypatch.chdir(tmp_path)
+    saved = _listed(monkeypatch, ".", ["gallery/x.mp4"])
+    try:
+        api = FakeAPI()
+        assert _start(api, "gallery/x.mp4").errors is None
+        assert api.started == [os.path.join(str(tmp_path), "gallery", "x.mp4")]
+    finally:
+        set_videos(saved)
+
+
+def test_a_link_the_backend_made_under_the_data_folder_opens_but_cannot_be_climbed(tmp_path, monkeypatch):
+    """The check is on the path's text, on purpose: the AE round trip links
+    footage that lives elsewhere into linked/, and that must still open."""
+    from data.store import set_videos
+
+    outside = tmp_path / "elsewhere" / "shot.mp4"
+    outside.parent.mkdir()
+    outside.write_bytes(b"")
+    root = tmp_path / "data"
+    (root / "linked").mkdir(parents=True)
+    os.symlink(outside, root / "linked" / "abc.mp4")
+    saved = _listed(monkeypatch, root, ["linked/abc.mp4"])
+    try:
+        api = FakeAPI()
+        assert _start(api, "linked/abc.mp4").errors is None
+        assert _start(api, "linked/abc.mp4/../../elsewhere/shot.mp4").errors
+        assert len(api.started) == 1
+    finally:
+        set_videos(saved)
