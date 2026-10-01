@@ -339,6 +339,39 @@ It tracks the fixtures in `e2e/fixtures/parity/` (made by
 px, IoU >= 0.95 on every frame, and that the two-tone clip keeps only the red
 half after its frame-10 correction. Results go to `e2e/out/parity.json`.
 
+## Phones and tablets
+
+Below 1024 px wide studio stacks its panes, and the side panel's sections
+become tabs (Media, Objects, Effects; each keeps its state when hidden). An
+upload in flight survives a switch between the layouts (an iPad rotated): App
+holds it, not the Media section. At 1024 px and wider the desktop layout is
+unchanged.
+
+| Layout | When | Panes |
+| --- | --- | --- |
+| Phone, upright | narrower than 600 px | preview, timeline, tabs, stacked |
+| Phone, on its side | landscape, 500 px tall or less | preview on the left; timeline over tabs on the right |
+| Tablet, upright | 600-1023 px | preview, timeline, tabs, stacked |
+| Tablet, on its side | 600-1023 px, landscape | preview over timeline; tabs beside them |
+
+- **Touch**: a tap on the video adds a point of the kind the Add / Remove
+  toggle selects (Add by default). A **long press** (half a second, without
+  moving) adds the other kind, as a right click does, with a short vibration
+  where the device has one. A tap on a point removes it. One finger drags a
+  zoomed view; two fingers pinch to zoom. A pen behaves as a finger.
+- Controls are at least 44 px on a touch screen, at any width, and in the
+  compact layouts. Nothing shows only on hover there: the rename pencil and
+  the pane dividers are always visible.
+- Popovers (the engine and Export menus) open as a sheet along the bottom.
+- The page respects the safe areas (notch, home indicator) and never scrolls
+  sideways; the browser does not zoom or scroll when a finger is on the video.
+- Android Chrome shows a blank preview for now (#1), so the touch layout has
+  been checked in Chrome's device emulation only, and on no real Android or
+  iOS device yet.
+
+The breakpoints live in `src/lib/layout.ts` and `src/responsive.css`; the
+gestures in `src/lib/gestures.ts`.
+
 ## Layout of the code
 
 - `src/state/`: pure logic, with tests. The Objects reducer (`objects.ts`),
@@ -354,6 +387,8 @@ half after its frame-10 correction. Results go to `e2e/out/parity.json`.
 - `src/workspace/useStudioSession.ts`: one video's session: the calls, the
   reducer, and syncing from `objectTracks`.
 - `src/components/`: the panes.
+- `src/responsive.css`, `src/lib/layout.ts`, `src/lib/gestures.ts`: the
+  phone and tablet layouts, and the touch gestures on the preview.
 - `src/meta/`: Meta's demo frontend code that studio uses, in its original
   layout and with Meta's headers (`@/` points here). `scripts/meta-imports.py`
   lists what studio reaches; `--unused` lists vendored files nothing uses.

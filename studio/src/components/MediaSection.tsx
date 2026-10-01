@@ -4,14 +4,15 @@
 // (or, with no backend, the files opened into this browser and the bundled
 // samples), and an upload control. Picking a video starts a new session on it.
 // In the desktop app, Open from After Effects opens footage from the open AE
-// project in place (AeOpenModal), frame for frame.
+// project in place (AeOpenModal), frame for frame. The upload itself is held
+// above this section (media/uploads.ts), so it survives the section being
+// hidden or remounted.
 import {Launch, TrashCan, Upload} from '@carbon/icons-react';
 import {useRef, useState} from 'react';
 import {aeBridge} from '~/lib/desktop';
 import {videoDisplayName} from '~/lib/uploadNames';
-import {readDuration} from '~/lib/videoDuration';
+import type {UploadApi} from '~/media/uploads';
 import {RELEASES_URL} from '~/state/engines';
-import {checkUpload, FALLBACK_LIMITS, type UploadLimits} from '~/state/uploadLimits';
 import {isDeletable} from '~/state/media';
 import type {VideoItem} from '~/workspace/useStudioSession';
 import AeOpenModal from './AeOpenModal';
@@ -24,42 +25,20 @@ type Props = {
   locked: boolean;
   /** No backend: the file is opened into this browser, not uploaded. */
   offline: boolean;
-  /** The backend's (or the browser build's) limits; null while they are fetched. */
-  limits: UploadLimits | null;
   onSelect: (video: VideoItem) => void;
-  /** Upload (or, offline, store) a file. */
-  onAdd: (file: File) => Promise<VideoItem>;
+  /** The upload in flight, if any, and how to start one (App holds it). */
+  uploads: UploadApi;
+  /** A video opened in place from After Effects (not an upload). */
   onAdded: (video: VideoItem) => void;
   /** Ask to delete an upload (the app confirms it, above this pane). */
   onDelete: (video: VideoItem) => void;
 };
 
-export default function MediaSection({videos, current, locked, offline, limits, onSelect, onAdd, onAdded, onDelete}: Props) {
+export default function MediaSection({videos, current, locked, offline, onSelect, uploads, onAdded, onDelete}: Props) {
   const input = useRef<HTMLInputElement>(null);
-  const [error, setError] = useState<{text: string; desktop: boolean} | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [uploading, setUploading] = useState(false);
+  const {uploading, error, notice, upload} = uploads;
   const [fromAe, setFromAe] = useState(false);
   const canAe = !offline && aeBridge() != null;
-
-  async function upload(file: File) {
-    setError(null);
-    setNotice(null);
-    setUploading(true);
-    // the size and length first: a long clip is trimmed (backend) or refused
-    // (browser build), and either way the user hears it before it happens
-    const check = checkUpload(file.size, await readDuration(file), limits ?? FALLBACK_LIMITS);
-    if (check.error != null) {
-      setError({text: check.error, desktop: check.desktop});
-      setUploading(false);
-      return;
-    }
-    setNotice(check.notice);
-    onAdd(file)
-      .then(onAdded)
-      .catch((err: unknown) => setError({text: err instanceof Error ? err.message : String(err), desktop: false}))
-      .finally(() => setUploading(false));
-  }
 
   return (
     <div className="media">
@@ -71,7 +50,7 @@ export default function MediaSection({videos, current, locked, offline, limits, 
           e.preventDefault();
           const file = e.dataTransfer.files[0];
           if (file != null && !uploading && !locked) {
-            void upload(file);
+            upload(file);
           }
         }}>
         <Upload size={18} />
@@ -93,7 +72,7 @@ export default function MediaSection({videos, current, locked, offline, limits, 
             const file = e.target.files?.[0];
             e.target.value = '';
             if (file != null) {
-              void upload(file);
+              upload(file);
             }
           }}
         />
@@ -128,7 +107,7 @@ export default function MediaSection({videos, current, locked, offline, limits, 
       {notice != null && (
         <div className="media-notice" role="status">
           <span>{notice}</span>
-          <button className="link-button" onClick={() => setNotice(null)}>
+          <button className="link-button" onClick={uploads.dismissNotice}>
             Dismiss
           </button>
         </div>
