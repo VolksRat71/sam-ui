@@ -30,15 +30,25 @@ tracker's: it adds its text encoder, DETR and heads (394M parameters, about
 2 GB of MPS driver memory) instead of a second 840M model; only its own
 weights are read (shared_detector). A text seed is stored as a mask, which the
 tracker takes like any seed mask.
+
+Idle unloading (issue #11): the detector is dropped once no prompt has used it
+for SAM_UI_SAM3_DETECTOR_IDLE_S seconds (default 300), and the whole engine
+once nothing has for SAM_UI_SAM3_IDLE_S (default 600); "never" keeps either
+loaded. The next prompt or job loads it again (a few seconds). Every job and
+prompt hands the allocator's cached blocks back when it ends, after emptying
+transformers' SAM 3 lru caches, whose few live tensors would pin whole heaps
+(tracks/memory.py). None of this changes a mask.
 """
+import contextlib
 import importlib.util
 import json
 import os
 import threading
+import time
 from pathlib import Path
 from typing import Dict, Iterator, List, Optional
 
-from tracks import precision, rle
+from tracks import memory, precision, rle
 from tracks.engine import FrameMasks, Unit, Windows, plan_units
 from tracks.seeds import Seeds
 from tracks.streaming import Sam3Frames, sam3_prune
@@ -46,6 +56,9 @@ from tracks.text import THRESHOLD, TextMatch, pick
 
 DEFAULT_WEIGHTS = Path.home() / ".cache/rotoscoping-video-subjects/weights/sam3-hf"
 
+# Idle unloading (issue #11), in seconds; "never" keeps a part loaded.
+IDLE_ENV, DEFAULT_IDLE_S = "SAM_UI_SAM3_IDLE_S", 600.0
+DETECTOR_IDLE_ENV, DEFAULT_DETECTOR_IDLE_S = "SAM_UI_SAM3_DETECTOR_IDLE_S", 300.0
 SHARED = "vision_encoder.backbone."  # the detector's part that is the tracker's
 
 
@@ -141,11 +154,21 @@ class Sam3Engine:
         self.dtype = None  # set at load, from SAM_UI_SAM3_DTYPE (tracks/precision.py)
         self._loaded = None
         self._detector = None
-        self._load_lock = threading.Lock()
+        self._load_lock = threading.RLock()
+        # idle unloading (issue #11): how long each part may sit unused
+        self.idle_s = memory.idle_seconds(IDLE_ENV, DEFAULT_IDLE_S)
+        self.detector_idle_s = memory.idle_seconds(DETECTOR_IDLE_ENV, DEFAULT_DETECTOR_IDLE_S)
+        self._busy = 0
+        self._used = {"engine": 0.0, "detector": 0.0}
+        self._timer: Optional[threading.Timer] = None
 
     @property
     def loaded(self) -> bool:
         return self._loaded is not None
+
+    @property
+    def detector_loaded(self) -> bool:
+        return self._detector is not None
 
     def _load(self):
         with self._load_lock:
@@ -175,31 +198,101 @@ class Sam3Engine:
                 self._detector = (det, tok)
         return self._detector
 
+    # -- idle unloading ------------------------------------------------------------------
+
+    @contextlib.contextmanager
+    def _using(self, part: str):
+        """Mark the engine busy for one job or prompt; when it ends, hand the
+        allocator's cached blocks back and arm the idle timer."""
+        with self._load_lock:
+            self._busy += 1
+            if self._timer is not None:
+                self._timer.cancel()
+                self._timer = None
+        try:
+            yield
+        finally:
+            with self._load_lock:
+                self._busy -= 1
+                now = time.monotonic()
+                self._used["engine"] = now
+                if part == "detector":
+                    self._used["detector"] = now
+            if not self.release_idle():  # an unload releases the cache itself
+                memory.clear_lru_caches()
+                memory.release_cached()
+
+    def release_idle(self, now: Optional[float] = None) -> List[str]:
+        """Unload what has sat unused past its idle time (the detector after
+        detector_idle_s, the whole engine after idle_s), and re-arm the timer
+        for what is left. Never while a job or prompt runs. Returns what was
+        unloaded."""
+        dropped = []
+        with self._load_lock:
+            if self._busy:
+                return dropped
+            now = time.monotonic() if now is None else now
+            if self._detector is not None and self.detector_idle_s is not None and \
+                    now - self._used["detector"] >= self.detector_idle_s:
+                self._detector = None
+                dropped.append("detector")
+            if self._loaded is not None and self.idle_s is not None and now - self._used["engine"] >= self.idle_s:
+                self._detector = None
+                self._loaded = None
+                dropped.append("engine")
+            due = [self._used[k] + s - now for k, s, on in (
+                ("detector", self.detector_idle_s, self._detector is not None),
+                ("engine", self.idle_s, self._loaded is not None)) if on and s is not None]
+            if self._timer is not None:
+                self._timer.cancel()
+                self._timer = None
+            if due:
+                self._timer = threading.Timer(max(0.05, min(due)), self.release_idle)
+                self._timer.daemon = True
+                self._timer.start()
+        if dropped:
+            memory.clear_lru_caches()
+            memory.release_cached()
+        return dropped
+
+    def unload(self) -> None:
+        """Drop the tracker and the detector now (the next use loads them again)."""
+        with self._load_lock:
+            if self._busy:
+                raise RuntimeError("SAM 3 is in use")
+            self._detector = self._loaded = None
+            if self._timer is not None:
+                self._timer.cancel()
+                self._timer = None
+        memory.clear_lru_caches()
+        memory.release_cached()
+
     def segment_text(self, video_path: str, frame: int, text: str, threshold: float = THRESHOLD) -> TextMatch:
         """The phrase's best-scoring instance on one frame (mask at the video's
         size), how many instances reach `threshold`, and its box in pixels."""
         import torch
 
-        proc, _, dev = self._load()
-        det, tok = self._load_detector()
-        frames = Sam3Frames(video_path, proc, dtype=self.dtype)
-        if not 0 <= frame < len(frames):
-            raise ValueError(f"frame {frame} is outside the video (0-{len(frames) - 1})")
-        h, w = frames.height, frames.width
-        with torch.inference_mode():
-            ids = tok(text, return_tensors="pt", padding="max_length", max_length=32, truncation=True).to(dev)
-            out = det(pixel_values=frames[frame][None].to(dev), input_ids=ids.input_ids,
-                      attention_mask=ids.attention_mask)
-            scores = out.pred_logits.sigmoid()[0]
-            if out.presence_logits is not None:
-                scores = scores * out.presence_logits.sigmoid()[0]
-            best, n, score = pick(scores.float().cpu().tolist(), threshold)
-            if best is None:
-                return TextMatch(mask=None, score=score, instances=0, box=None)
-            logits = torch.nn.functional.interpolate(out.pred_masks[0, best][None, None].float(), size=(h, w),
-                                                     mode="bilinear", align_corners=False)[0, 0]
-            box = (out.pred_boxes[0, best].float().cpu() * torch.tensor([w, h, w, h])).tolist()  # xyxy, 0-1
-            return TextMatch(mask=(logits > 0).cpu().numpy(), score=score, instances=n, box=box)
+        with self._using("detector"):
+            proc, _, dev = self._load()
+            det, tok = self._load_detector()
+            frames = Sam3Frames(video_path, proc, dtype=self.dtype)
+            if not 0 <= frame < len(frames):
+                raise ValueError(f"frame {frame} is outside the video (0-{len(frames) - 1})")
+            h, w = frames.height, frames.width
+            with torch.inference_mode():
+                ids = tok(text, return_tensors="pt", padding="max_length", max_length=32, truncation=True).to(dev)
+                out = det(pixel_values=frames[frame][None].to(dev), input_ids=ids.input_ids,
+                          attention_mask=ids.attention_mask)
+                scores = out.pred_logits.sigmoid()[0]
+                if out.presence_logits is not None:
+                    scores = scores * out.presence_logits.sigmoid()[0]
+                best, n, score = pick(scores.float().cpu().tolist(), threshold)
+                if best is None:
+                    return TextMatch(mask=None, score=score, instances=0, box=None)
+                logits = torch.nn.functional.interpolate(out.pred_masks[0, best][None, None].float(), size=(h, w),
+                                                         mode="bilinear", align_corners=False)[0, 0]
+                box = (out.pred_boxes[0, best].float().cpu() * torch.tensor([w, h, w, h])).tolist()  # xyxy, 0-1
+                return TextMatch(mask=(logits > 0).cpu().numpy(), score=score, instances=n, box=box)
 
     def plan(self, objects: Dict[int, Seeds], windows: Optional[Windows] = None) -> List[Unit]:
         """One session per window, all of the window's objects together (SAM 3
@@ -211,12 +304,13 @@ class Sam3Engine:
         units = self.plan(objects, windows)
         if not units:
             return
-        proc, model, dev = self._load()
-        # frames processed as tracking reaches them, not the whole clip up front;
-        # shared by every window's session
-        frames = Sam3Frames(video_path, proc, dtype=self.dtype)
-        for unit in units:
-            yield from self._track_unit(proc, model, dev, frames, unit)
+        with self._using("engine"):
+            proc, model, dev = self._load()
+            # frames processed as tracking reaches them, not the whole clip up front;
+            # shared by every window's session
+            frames = Sam3Frames(video_path, proc, dtype=self.dtype)
+            for unit in units:
+                yield from self._track_unit(proc, model, dev, frames, unit)
 
     def _track_unit(self, proc, model, dev, frames, unit: Unit) -> Iterator[FrameMasks]:
         """A fresh session for one window, seeded only from its seeds, tracked
