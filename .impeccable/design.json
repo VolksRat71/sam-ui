@@ -1,0 +1,401 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-01T21:55:09.894500+00:00",
+  "title": "Design System: sam-ui Compositing Suite",
+  "extensions": {
+    "colorMeta": {
+      "primary": {
+        "role": "primary",
+        "displayName": "Primary",
+        "tonalRamp": [
+          "oklch(15.0% 0.1668 252.33)",
+          "oklch(26.43% 0.1668 252.33)",
+          "oklch(37.86% 0.1668 252.33)",
+          "oklch(49.29% 0.1668 252.33)",
+          "oklch(60.71% 0.1668 252.33)",
+          "oklch(72.14% 0.1668 252.33)",
+          "oklch(83.57% 0.1668 252.33)",
+          "oklch(95.0% 0.1668 252.33)"
+        ]
+      },
+      "focus": {
+        "role": "primary",
+        "displayName": "Focus",
+        "tonalRamp": [
+          "oklch(15.0% 0.1100 248.31)",
+          "oklch(26.43% 0.1100 248.31)",
+          "oklch(37.86% 0.1100 248.31)",
+          "oklch(49.29% 0.1100 248.31)",
+          "oklch(60.71% 0.1100 248.31)",
+          "oklch(72.14% 0.1100 248.31)",
+          "oklch(83.57% 0.1100 248.31)",
+          "oklch(95.0% 0.1100 248.31)"
+        ]
+      },
+      "warning": {
+        "role": "secondary",
+        "displayName": "Warning",
+        "tonalRamp": [
+          "oklch(15.0% 0.1451 83.89)",
+          "oklch(26.43% 0.1451 83.89)",
+          "oklch(37.86% 0.1451 83.89)",
+          "oklch(49.29% 0.1451 83.89)",
+          "oklch(60.71% 0.1451 83.89)",
+          "oklch(72.14% 0.1451 83.89)",
+          "oklch(83.57% 0.1451 83.89)",
+          "oklch(95.0% 0.1451 83.89)"
+        ]
+      },
+      "bg": {
+        "role": "neutral",
+        "displayName": "Bg",
+        "tonalRamp": [
+          "oklch(15.0% 0.0019 286.24)",
+          "oklch(26.43% 0.0019 286.24)",
+          "oklch(37.86% 0.0019 286.24)",
+          "oklch(49.29% 0.0019 286.24)",
+          "oklch(60.71% 0.0019 286.24)",
+          "oklch(72.14% 0.0019 286.24)",
+          "oklch(83.57% 0.0019 286.24)",
+          "oklch(95.0% 0.0019 286.24)"
+        ]
+      },
+      "panel": {
+        "role": "neutral",
+        "displayName": "Panel",
+        "tonalRamp": [
+          "oklch(15.0% 0.0037 286.15)",
+          "oklch(26.43% 0.0037 286.15)",
+          "oklch(37.86% 0.0037 286.15)",
+          "oklch(49.29% 0.0037 286.15)",
+          "oklch(60.71% 0.0037 286.15)",
+          "oklch(72.14% 0.0037 286.15)",
+          "oklch(83.57% 0.0037 286.15)",
+          "oklch(95.0% 0.0037 286.15)"
+        ]
+      },
+      "panel-raised": {
+        "role": "neutral",
+        "displayName": "Panel Raised",
+        "tonalRamp": [
+          "oklch(15.0% 0.0053 286.09)",
+          "oklch(26.43% 0.0053 286.09)",
+          "oklch(37.86% 0.0053 286.09)",
+          "oklch(49.29% 0.0053 286.09)",
+          "oklch(60.71% 0.0053 286.09)",
+          "oklch(72.14% 0.0053 286.09)",
+          "oklch(83.57% 0.0053 286.09)",
+          "oklch(95.0% 0.0053 286.09)"
+        ]
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "Line",
+        "tonalRamp": [
+          "oklch(15.0% 0.0051 286.13)",
+          "oklch(26.43% 0.0051 286.13)",
+          "oklch(37.86% 0.0051 286.13)",
+          "oklch(49.29% 0.0051 286.13)",
+          "oklch(60.71% 0.0051 286.13)",
+          "oklch(72.14% 0.0051 286.13)",
+          "oklch(83.57% 0.0051 286.13)",
+          "oklch(95.0% 0.0051 286.13)"
+        ]
+      },
+      "text": {
+        "role": "neutral",
+        "displayName": "Text",
+        "tonalRamp": [
+          "oklch(15.0% 0.0027 286.35)",
+          "oklch(26.43% 0.0027 286.35)",
+          "oklch(37.86% 0.0027 286.35)",
+          "oklch(49.29% 0.0027 286.35)",
+          "oklch(60.71% 0.0027 286.35)",
+          "oklch(72.14% 0.0027 286.35)",
+          "oklch(83.57% 0.0027 286.35)",
+          "oklch(95.0% 0.0027 286.35)"
+        ]
+      },
+      "text-muted": {
+        "role": "neutral",
+        "displayName": "Text Muted",
+        "tonalRamp": [
+          "oklch(15.0% 0.0085 286.19)",
+          "oklch(26.43% 0.0085 286.19)",
+          "oklch(37.86% 0.0085 286.19)",
+          "oklch(49.29% 0.0085 286.19)",
+          "oklch(60.71% 0.0085 286.19)",
+          "oklch(72.14% 0.0085 286.19)",
+          "oklch(83.57% 0.0085 286.19)",
+          "oklch(95.0% 0.0085 286.19)"
+        ]
+      },
+      "lane-ink": {
+        "role": "neutral",
+        "displayName": "Lane Ink",
+        "tonalRamp": [
+          "oklch(15.0% 0.0112 286.14)",
+          "oklch(26.43% 0.0112 286.14)",
+          "oklch(37.86% 0.0112 286.14)",
+          "oklch(49.29% 0.0112 286.14)",
+          "oklch(60.71% 0.0112 286.14)",
+          "oklch(72.14% 0.0112 286.14)",
+          "oklch(83.57% 0.0112 286.14)",
+          "oklch(95.0% 0.0112 286.14)"
+        ]
+      },
+      "lane-ink-alternate": {
+        "role": "neutral",
+        "displayName": "Lane Ink Alternate",
+        "tonalRamp": [
+          "oklch(15.0% 0.0258 252.30)",
+          "oklch(26.43% 0.0258 252.30)",
+          "oklch(37.86% 0.0258 252.30)",
+          "oklch(49.29% 0.0258 252.30)",
+          "oklch(60.71% 0.0258 252.30)",
+          "oklch(72.14% 0.0258 252.30)",
+          "oklch(83.57% 0.0258 252.30)",
+          "oklch(95.0% 0.0258 252.30)"
+        ]
+      },
+      "selection": {
+        "role": "primary",
+        "displayName": "Selection",
+        "tonalRamp": [
+          "oklch(15.0% 0.1668 252.33)",
+          "oklch(26.43% 0.1668 252.33)",
+          "oklch(37.86% 0.1668 252.33)",
+          "oklch(49.29% 0.1668 252.33)",
+          "oklch(60.71% 0.1668 252.33)",
+          "oklch(72.14% 0.1668 252.33)",
+          "oklch(83.57% 0.1668 252.33)",
+          "oklch(95.0% 0.1668 252.33)"
+        ]
+      },
+      "field-bg": {
+        "role": "neutral",
+        "displayName": "Field Bg",
+        "tonalRamp": [
+          "oklch(15.0% 0.0000 0.00)",
+          "oklch(26.43% 0.0000 0.00)",
+          "oklch(37.86% 0.0000 0.00)",
+          "oklch(49.29% 0.0000 0.00)",
+          "oklch(60.71% 0.0000 0.00)",
+          "oklch(72.14% 0.0000 0.00)",
+          "oklch(83.57% 0.0000 0.00)",
+          "oklch(95.0% 0.0000 0.00)"
+        ]
+      },
+      "white": {
+        "role": "neutral",
+        "displayName": "White",
+        "tonalRamp": [
+          "oklch(15.0% 0.0000 89.88)",
+          "oklch(26.43% 0.0000 89.88)",
+          "oklch(37.86% 0.0000 89.88)",
+          "oklch(49.29% 0.0000 89.88)",
+          "oklch(60.71% 0.0000 89.88)",
+          "oklch(72.14% 0.0000 89.88)",
+          "oklch(83.57% 0.0000 89.88)",
+          "oklch(95.0% 0.0000 89.88)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "title": {
+        "displayName": "Title",
+        "purpose": "Shortcut sheet heading."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "General reading text."
+      },
+      "control": {
+        "displayName": "Control",
+        "purpose": "Buttons, fields, and selects."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Operational labels, layer names, badges, and review text."
+      },
+      "ruler": {
+        "displayName": "Ruler",
+        "purpose": "Timeline ruler numerals only."
+      }
+    },
+    "shadows": [
+      {
+        "name": "floating-menu-toast",
+        "value": "0 8px 24px #0009",
+        "purpose": "Existing menus and toasts."
+      },
+      {
+        "name": "dialog",
+        "value": "0 16px 48px #000c",
+        "purpose": "Existing modal dialogs."
+      },
+      {
+        "name": "compact-menu-sheet",
+        "value": "0 -8px 40px #000c",
+        "purpose": "Existing bottom menu sheet below desktop width."
+      }
+    ],
+    "motion": [
+      {
+        "name": "divider-background",
+        "value": "background 0.15s",
+        "purpose": "Divider interaction; disabled for reduced motion."
+      },
+      {
+        "name": "divider-indicator",
+        "value": "opacity 0.15s",
+        "purpose": "Divider indicator reveal."
+      },
+      {
+        "name": "job-progress",
+        "value": "width 0.2s",
+        "purpose": "Progress updates; disabled for reduced motion."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "desktop-min",
+        "value": "1024px"
+      },
+      {
+        "name": "compact-max",
+        "value": "1023.98px"
+      },
+      {
+        "name": "phone-max",
+        "value": "599.98px"
+      },
+      {
+        "name": "short-landscape-max-height",
+        "value": "500px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Track button",
+      "kind": "button",
+      "refersTo": "button-track",
+      "description": "Timeline command.",
+      "html": "<button class=\"ds-track\">Track</button>",
+      "css": ".ds-track{font-family:Inter,system-ui,sans-serif;font-size:13px;color:var(--text,#f1f1f3);cursor:pointer;background:var(--primary,#2d8ceb);padding:0 16px;height:28px;min-height:24px;min-width:24px;font-weight:600;border:1px solid var(--primary,#2d8ceb);color:#fff;border-radius:var(--radius,2px);display:inline-flex;align-items:center;gap:6px;}.ds-track:hover:not(:disabled){filter:brightness(1.1)}.ds-track:focus-visible{outline:2px solid var(--focus,#78b8f5);outline-offset:2px}.ds-track:disabled{opacity:.45;cursor:default}@media(pointer:coarse),(max-width:1023.98px){.ds-track{height:44px;min-height:44px}}"
+    },
+    {
+      "name": "Secondary button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Supporting workspace action.",
+      "html": "<button class=\"ds-secondary\">Looks right</button>",
+      "css": ".ds-secondary{font-family:Inter,system-ui,sans-serif;font-size:13px;color:var(--text,#f1f1f3);cursor:pointer;background:var(--panel,#262628);padding:0 12px;height:34px;min-height:24px;min-width:24px;font-weight:400;border:1px solid var(--line,#3a3a3d);border-radius:var(--radius,2px);display:inline-flex;align-items:center;gap:6px;}.ds-secondary:hover:not(:disabled){background:var(--line,#3a3a3d)}.ds-secondary:focus-visible{outline:2px solid var(--focus,#78b8f5);outline-offset:2px}.ds-secondary:disabled{opacity:.45;cursor:default}@media(pointer:coarse),(max-width:1023.98px){.ds-secondary{height:44px;min-height:44px}}"
+    },
+    {
+      "name": "Subtle button",
+      "kind": "button",
+      "refersTo": "button-subtle",
+      "description": "Supporting workspace action.",
+      "html": "<button class=\"ds-subtle\">Start over</button>",
+      "css": ".ds-subtle{font-family:Inter,system-ui,sans-serif;font-size:13px;color:var(--text,#f1f1f3);cursor:pointer;background:transparent;padding:0 12px;height:34px;min-height:24px;min-width:24px;font-weight:400;border:1px solid var(--line,#3a3a3d);border-radius:var(--radius,2px);display:inline-flex;align-items:center;gap:6px;}.ds-subtle:hover:not(:disabled){background:var(--line,#3a3a3d)}.ds-subtle:focus-visible{outline:2px solid var(--focus,#78b8f5);outline-offset:2px}.ds-subtle:disabled{opacity:.45;cursor:default}@media(pointer:coarse),(max-width:1023.98px){.ds-subtle{height:44px;min-height:44px}}"
+    },
+    {
+      "name": "Text field",
+      "kind": "input",
+      "refersTo": "field",
+      "description": "Compact named field with touch sizing.",
+      "html": "<label class=\"ds-field\">File name<input value=\"matte-export\" /></label>",
+      "css": ".ds-field{display:grid;gap:4px;font:12px Inter,system-ui,sans-serif;color:var(--text-muted,#aaaab0)}.ds-field input{font:13px Inter,system-ui,sans-serif;height:32px;padding:0 8px;background:#000;color:#fff;border:1px solid var(--line,#3a3a3d);border-radius:var(--radius,2px);caret-color:var(--focus,#78b8f5)}.ds-field input:focus-visible{outline:2px solid var(--focus,#78b8f5);outline-offset:2px}@media(pointer:coarse),(max-width:1023.98px){.ds-field input{height:44px;font-size:16px}}"
+    },
+    {
+      "name": "Dock header",
+      "kind": "nav",
+      "refersTo": "dock-header",
+      "description": "Fixed-order section disclosure.",
+      "html": "<button class=\"ds-dock-header\" aria-expanded=\"true\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" aria-hidden=\"true\"><path fill=\"currentColor\" d=\"M8 10L3 5l.7-.7L8 8.6l4.3-4.3.7.7z\"/></svg><span>Review</span><span class=\"ds-dock-count\">3 to check / 8</span></button>",
+      "css": ".ds-dock-header{font-family:Inter,system-ui,sans-serif;font-size:13px;color:var(--text,#f1f1f3);cursor:pointer;display:flex;align-items:center;gap:6px;width:100%;height:32px;padding:0 12px;font-size:12px;font-weight:600;letter-spacing:.01em;background:var(--panel,#262628);border:0;border-bottom:1px solid var(--line,#3a3a3d);text-align:left}.ds-dock-count{margin-left:auto;color:var(--text-muted,#aaaab0);font-weight:400;font-variant-numeric:tabular-nums}.ds-dock-header:focus-visible{outline:2px solid var(--focus,#78b8f5);outline-offset:2px}.ds-dock-header:focus-visible{outline-offset:-2px}@media(pointer:coarse),(max-width:1023.98px){.ds-dock-header{height:44px}}"
+    },
+    {
+      "name": "Changed badge",
+      "kind": "chip",
+      "refersTo": "badge-changed",
+      "description": "Plain-language cached-matte state.",
+      "html": "<span class=\"ds-badge-changed\">Changed</span>",
+      "css": ".ds-badge-changed{display:inline-flex;align-items:center;padding:1px 8px;font:500 12px/18px Inter,system-ui,sans-serif;font-variant-numeric:tabular-nums;white-space:nowrap;color:var(--text,#f1f1f3);background:transparent;border:1px dashed var(--text-muted,#aaaab0);border-radius:2px}"
+    },
+    {
+      "name": "Workspace pane",
+      "kind": "card",
+      "refersTo": "workspace-pane",
+      "description": "Flat container, not an elevated card.",
+      "html": "<section class=\"ds-pane\"><div class=\"ds-pane-title\">Layer info</div><div class=\"ds-pane-body\">Select a layer in the timeline.</div></section>",
+      "css": ".ds-pane{background:var(--panel,#262628);color:var(--text,#f1f1f3);font:14px/1.4 Inter,system-ui,sans-serif;border-radius:0;overflow:hidden}.ds-pane-title{padding:8px 12px;border-bottom:1px solid var(--line,#3a3a3d);font-size:12px;font-weight:600}.ds-pane-body{padding:10px;color:var(--text-muted,#aaaab0)}"
+    },
+    {
+      "name": "Layer row",
+      "kind": "custom",
+      "refersTo": "layer-row",
+      "description": "Timeline summary paired with a frame span.",
+      "html": "<div class=\"ds-layer\"><button class=\"ds-layer-summary\"><i class=\"ds-swatch\"></i><span>Subject</span><span class=\"ds-layer-state\">Changed</span></button><div class=\"ds-lane\"><span class=\"ds-span\"></span><span class=\"ds-playhead\"></span></div></div>",
+      "css": ".ds-layer{display:grid;grid-template-columns:220px minmax(80px,1fr);background:var(--panel,#262628);border-bottom:1px solid var(--line,#3a3a3d)}.ds-layer-summary{font-family:Inter,system-ui,sans-serif;font-size:13px;color:var(--text,#f1f1f3);cursor:pointer;display:flex;align-items:center;gap:8px;padding:0 8px;height:28px;font-size:12px;border:0;border-right:1px solid var(--line,#3a3a3d);background:transparent;text-align:left}.ds-swatch{width:8px;height:12px;background:var(--lane-ink,#b8b8c0)}.ds-layer-state{margin-left:auto;padding:1px 8px;border:1px dashed var(--text-muted,#aaaab0);border-radius:2px;font-size:12px;line-height:18px}.ds-layer-summary:focus-visible{outline:2px solid var(--focus,#78b8f5);outline-offset:2px}.ds-layer-summary:focus-visible{outline-offset:-2px}.ds-lane{position:relative}.ds-span{position:absolute;left:12%;right:18%;top:10px;height:8px;border:1px dashed var(--lane-ink,#b8b8c0)}.ds-playhead{position:absolute;left:40%;top:0;bottom:0;width:1px;background:var(--primary,#2d8ceb)}@media(pointer:coarse),(max-width:1023.98px){.ds-layer-summary{height:44px}.ds-span{top:18px}}"
+    },
+    {
+      "name": "Review stop",
+      "kind": "custom",
+      "refersTo": "review-stop",
+      "description": "Queue row with marker, location, and reason.",
+      "html": "<div class=\"ds-review\"><button class=\"ds-review-go\"><svg class=\"ds-review-mark\" width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" aria-hidden=\"true\"><path fill=\"currentColor\" d=\"M8 1L15 8 8 15 1 8z\"/></svg><span>Frame 42 \u00b7 Subject</span><span>62</span><span class=\"ds-review-why\">Check the matte edge at this frame.</span></button></div>",
+      "css": ".ds-review{padding:4px 6px 4px 4px;background:var(--panel-raised,#303033);border:1px solid transparent;border-bottom-color:var(--line,#3a3a3d);border-radius:0;color:var(--text,#f1f1f3)}.ds-review:hover{border-color:var(--gray-600,#5c5c61)}.ds-review-go{font-family:Inter,system-ui,sans-serif;font-size:13px;color:var(--text,#f1f1f3);cursor:pointer;display:grid;grid-template-columns:16px minmax(0,1fr) auto;align-items:center;gap:2px 6px;width:100%;min-height:24px;padding:2px;border:0;background:transparent;text-align:left;font-size:12px;font-variant-numeric:tabular-nums}.ds-review-mark{color:var(--warning,#e8b339)}.ds-review-why{grid-column:2/-1;color:var(--text-muted,#aaaab0);line-height:1.45;overflow-wrap:anywhere}.ds-review-go:focus-visible{outline:2px solid #fff;outline-offset:1px;border-radius:6px}@media(pointer:coarse),(max-width:1023.98px){.ds-review-go{min-height:44px}}"
+    },
+    {
+      "name": "Viewer matte status",
+      "kind": "custom",
+      "refersTo": "matte-status",
+      "description": "Effect-independent explanation of changed cached mattes.",
+      "html": "<div class=\"ds-matte-status\" role=\"status\"><strong>Subject \u00b7 Changed</strong><span>The cached matte is from an earlier edit. Track again to refresh it.</span></div>",
+      "css": ".ds-matte-status{display:flex;flex-wrap:wrap;gap:4px 12px;padding:6px 12px;border-block:1px dashed var(--text-muted,#aaaab0);background:var(--panel-raised,#303033);color:var(--text,#f1f1f3);font:12px/1.4 Inter,system-ui,sans-serif}.ds-matte-status span{color:var(--text-muted,#aaaab0)}"
+    }
+  ],
+  "narrative": {
+    "northStar": "Compositing Suite",
+    "overview": "Compositing Suite uses the familiar visual grammar of After Effects and Nuke: neutral docked panels, compact controls, frame marks, and a timeline that also serves as the layer list. It supports long sessions beside footage without competing with that footage.\n\nThe approved dense timeline and Review dock are expressed through aligned rows, explicit state labels, and restrained blue interaction cues. Amber directs inspection. The interface makes changed mattes visible in the viewer chrome as well as the timeline, so effect selection cannot hide the need to refresh them.",
+    "keyCharacteristics": [
+      "Neutral panel greys with one blue interaction accent and amber inspection marks.",
+      "Square workspace panes, thin seams, compact layer rows, and tabular readouts.",
+      "A timeline that owns layer selection; a fixed dock for review, properties, effects, and media.",
+      "Explicit Changed, Refining, and Tracking language that remains visible outside the effect image."
+    ],
+    "rules": [
+      {
+        "name": "The Semantic Accent Rule",
+        "body": "Use blue for interaction and active work; use amber for review marks and the work area. Keep ordinary layers and panel chrome neutral.",
+        "section": "colors"
+      },
+      {
+        "name": "The Readable Density Rule",
+        "body": "Keep operational labels at the label role or larger; reserve the ruler role for ruler numerals. Use tabular numerals for changing frame values, counts, and scores.",
+        "section": "typography"
+      },
+      {
+        "name": "The Docked Surface Rule",
+        "body": "Keep the viewer, dock, timeline, and their rows flat and square. Floating menus and dialogs retain their existing elevation.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do preserve the fixed Review, Layer info, Effects, Media dock order.",
+      "Do use the shared focus ring and keep focus visible inside scrolling rows.",
+      "Do show Changed with a dashed badge and dashed cached span; show Refining or Tracking in viewer chrome independently of the active effect.",
+      "Do retain the larger compact and coarse-pointer targets while keeping desktop layers dense.",
+      "Do preserve Meta credits and asset provenance without adopting Meta branding as the studio identity."
+    ],
+    "donts": [
+      "Don't reintroduce rainbow accents, gradient action borders, or rounded cards around the workspace panes.",
+      "Don't make colour the only signal for a matte state or an inspection mark.",
+      "Don't use internal stale or seed terminology as the main user-facing state label.",
+      "Don't promote legacy history colours or unfinished state designs into new system rules."
+    ]
+  }
+}
