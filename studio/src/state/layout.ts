@@ -36,6 +36,11 @@ export type Layout = {order: number[]; groups: ObjectGroup[]};
 export const EMPTY_LAYOUT: Layout = {order: [], groups: []};
 
 export const GROUP_NAME_MAX = 64;
+/** The backend's limits (tracks/layout.py): it refuses a layout past them, and a read drops the excess. */
+export const MAX_GROUPS = 64;
+/** Per list: the order, and each group's members. */
+export const MAX_IDS = 4096;
+export const MAX_ID = 1_000_000;
 export const DEFAULT_GROUP_NAME = 'Group';
 const GROUP_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const COLOR = /^#[0-9a-fA-F]{6}$/;
@@ -75,7 +80,8 @@ function ids(raw: unknown): number[] {
   if (!Array.isArray(raw)) {
     return [];
   }
-  return [...new Set(raw.filter((x): x is number => typeof x === 'number' && Number.isInteger(x)))];
+  const valid = raw.filter((x): x is number => typeof x === 'number' && Number.isInteger(x) && x >= 0 && x <= MAX_ID);
+  return [...new Set(valid)].slice(0, MAX_IDS);
 }
 
 /** A stored or received layout, tolerating anything malformed (a damaged file reads as no layout). */
@@ -87,7 +93,7 @@ export function parseLayout(raw: unknown): Layout {
   const taken = new Set<number>();
   const seen = new Set<string>();
   const groups: ObjectGroup[] = [];
-  for (const x of Array.isArray(r.groups) ? r.groups : []) {
+  for (const x of Array.isArray(r.groups) ? r.groups.slice(0, MAX_GROUPS) : []) {
     const gr = (x ?? {}) as Record<string, unknown>;
     if (typeof gr.id !== 'string' || !GROUP_ID.test(gr.id) || seen.has(gr.id)) {
       continue;
@@ -377,7 +383,7 @@ export function layoutReducer(layout: Layout, action: LayoutAction, objectIds: R
       setGroup(t, action.id, action.groupId);
       break;
     case 'addGroup': {
-      if (!GROUP_ID.test(action.id) || t.members.has(action.id)) {
+      if (!GROUP_ID.test(action.id) || t.members.has(action.id) || t.groups.length >= MAX_GROUPS) {
         return base;
       }
       const members = (action.members ?? []).filter(m => base.order.includes(m));

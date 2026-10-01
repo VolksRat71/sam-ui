@@ -139,3 +139,18 @@ def test_a_layout_may_name_objects_not_clicked_yet(h):
     put(h, {"order": [5, 1], "groups": [group("g1", [5])]})
     h.click(5)
     assert get(h) == {"order": [5, 1], "groups": [group("g1", [5])]}
+
+
+def test_layouts_past_the_limits_are_refused(h):
+    h.click(1)
+    many = [group(f"g{i}", []) for i in range(lay.MAX_GROUPS + 1)]
+    assert put(h, {"order": [1], "groups": many}).status_code == 400
+    assert put(h, {"order": list(range(lay.MAX_IDS + 1)), "groups": []}).status_code == 400
+    assert put(h, {"order": [1], "groups": [group("g1", list(range(lay.MAX_IDS + 1)))]}).status_code == 400
+    assert put(h, {"order": [-1], "groups": []}).status_code == 400
+    assert put(h, {"order": [lay.MAX_ID + 1], "groups": []}).status_code == 400
+    assert put(h, {"order": [1], "groups": [group("g1", [1], name="x" * (lay.NAME_LIMIT + 1))]}).status_code == 400
+    assert get(h) == {"order": [1], "groups": []}  # nothing was stored
+    # at the limits is fine
+    ok = put(h, {"order": list(range(lay.MAX_IDS)), "groups": [group(f"g{i}", []) for i in range(lay.MAX_GROUPS)]})
+    assert ok.status_code == 200

@@ -3,6 +3,9 @@
 import {describe, expect, it} from 'vitest';
 import {
   EMPTY_LAYOUT,
+  MAX_GROUPS,
+  MAX_ID,
+  MAX_IDS,
   type Layout,
   type LayoutAction,
   type ObjectGroup,
@@ -70,6 +73,27 @@ describe('parseLayout', () => {
   it('trims and caps names, with a default', () => {
     const parsed = parseLayout({order: [], groups: [g('cast', [], {name: '  ' + 'x'.repeat(80)}), g('props', [], {name: ' '})]});
     expect(parsed.groups.map(x => x.name)).toEqual(['x'.repeat(64), 'Group']);
+  });
+});
+
+describe('limits (tracks/layout.py)', () => {
+  it('reads at most MAX_GROUPS groups and MAX_IDS ids per list, and only ids 0 to MAX_ID', () => {
+    const many = Array.from({length: MAX_GROUPS + 5}, (_, i) => g(`g${i}`, []));
+    expect(parseLayout({order: [], groups: many}).groups).toHaveLength(MAX_GROUPS);
+    const ids = Array.from({length: MAX_IDS + 5}, (_, i) => i);
+    expect(parseLayout({order: ids, groups: [g('cast', ids)]}).order).toHaveLength(MAX_IDS);
+    expect(parseLayout({order: [], groups: [g('cast', ids)]}).groups[0].members).toHaveLength(MAX_IDS);
+    expect(parseLayout({order: [-1, 2, MAX_ID + 1, MAX_ID], groups: [g('cast', [-3, 4])]})).toMatchObject({
+      order: [2, MAX_ID],
+      groups: [{members: [4]}],
+    });
+  });
+
+  it('makes no group past MAX_GROUPS', () => {
+    const full = {order: [], groups: Array.from({length: MAX_GROUPS}, (_, i) => g(`g${i}`, []))};
+    const next = layoutReducer(full, {type: 'addGroup', id: 'one-more', name: 'x', color: '#ffffff'}, []);
+    expect(next.groups).toHaveLength(MAX_GROUPS);
+    expect(next.groups.some(x => x.id === 'one-more')).toBe(false);
   });
 });
 

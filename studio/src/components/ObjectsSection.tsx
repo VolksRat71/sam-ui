@@ -31,6 +31,7 @@ import {NAME_MAX, objectName} from '~/state/fileNames';
 import {moveTargets, parseCreated, undoBlock, versionLabel} from '~/state/history';
 import {
   GROUP_NAME_MAX,
+  MAX_GROUPS,
   arrange,
   layoutReducer,
   listItems,
@@ -686,7 +687,14 @@ export default function ObjectsSection({session}: Props) {
           <button
             className="button subtle"
             onClick={() => session.addGroup()}
-            title={state.activeId != null ? 'A new group holding the selected object' : 'A new, empty group'}>
+            disabled={state.layout.groups.length >= MAX_GROUPS}
+            title={
+              state.layout.groups.length >= MAX_GROUPS
+                ? `A video holds at most ${MAX_GROUPS} groups`
+                : state.activeId != null
+                  ? 'A new group holding the selected object'
+                  : 'A new, empty group'
+            }>
             <FolderAdd size={16} /> New group
           </button>
         </span>

@@ -35,6 +35,13 @@ GROUP_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
 COLOR_RE = re.compile(r"#[0-9a-fA-F]{6}")
 NAME_MAX = 64
 DEFAULT_NAME = "Group"
+# A layout is a few dozen objects; these keep a bad or hostile request from
+# storing a file every later read and export re-parses (studio's state/layout.ts
+# drops the same things when it reads one).
+MAX_GROUPS = 64
+MAX_IDS = 4096  # per list: the order, and each group's members
+MAX_ID = 1_000_000  # object ids count up from 0 and are never reused
+NAME_LIMIT = 256  # a longer name is refused; up to this it is trimmed to NAME_MAX
 
 Layout = Dict[str, list]
 
@@ -50,6 +57,10 @@ def empty() -> Layout:
 def _ids(raw, what: str) -> List[int]:
     if not isinstance(raw, list) or any(isinstance(o, bool) or not isinstance(o, int) for o in raw):
         raise LayoutError(f"{what} must be a list of object ids")
+    if len(raw) > MAX_IDS:
+        raise LayoutError(f"{what} has {len(raw)} ids; at most {MAX_IDS}")
+    if any(not 0 <= o <= MAX_ID for o in raw):
+        raise LayoutError(f"{what}: object ids are 0 to {MAX_ID}")
     return list(dict.fromkeys(int(o) for o in raw))
 
 
@@ -63,6 +74,8 @@ def clean(raw) -> Layout:
     groups_raw = raw.get("groups", [])
     if not isinstance(groups_raw, list):
         raise LayoutError("groups must be a list")
+    if len(groups_raw) > MAX_GROUPS:
+        raise LayoutError(f"{len(groups_raw)} groups; at most {MAX_GROUPS}")
     groups, seen_ids, taken = [], set(), set()
     for g in groups_raw:
         if not isinstance(g, dict):
@@ -77,6 +90,8 @@ def clean(raw) -> Layout:
         if not isinstance(color, str) or not COLOR_RE.fullmatch(color):
             raise LayoutError(f"group {gid}: colour must be #rrggbb, got {color!r}")
         name = g.get("name")
+        if isinstance(name, str) and len(name) > NAME_LIMIT:
+            raise LayoutError(f"group {gid}: a name is at most {NAME_MAX} characters")
         name = (name if isinstance(name, str) else "").strip()[:NAME_MAX].strip() or DEFAULT_NAME
         members = [m for m in _ids(g.get("members", []), f"group {gid}'s members") if m not in taken]
         taken.update(members)
