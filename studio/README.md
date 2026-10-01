@@ -115,6 +115,19 @@ python3 -m http.server 7390 --bind 127.0.0.1 --directory /tmp/pages   # http://1
   the object after the gap" hint on the lane. A click inside an absent range is
   refused, with a note saying so: click the block to select it and *Unmark* it
   (all of it, or a dragged part) first. Escape drops a selection.
+- **Candidate and present ranges.** A lane draws four kinds of frame by shape,
+  not colour, with a legend under the lanes: *unknown* is the plain thin line, a
+  *candidate* (a model or tool thinks the object is there, nobody has said) a
+  dotted outline, *present* a solid bracket along the lane's foot, and *absent*
+  the hatched block. The solid line in the object's colour is still the tracked
+  mask, drawn apart from all four. Drag a span and *Mark present* to confirm the
+  object is there; *Unmark* makes a span unknown again. Click a candidate (or
+  press ] and [ to step through the selected object's) to see its source and
+  score, then *Present* (P), *Absent* (A) or *Reject* (R); the next candidate is
+  picked for you. Present and candidate ranges never change a mask or make a
+  track stale; confirming absent does, and Cmd-Z takes it back. Exports list
+  every range with its state in README.txt and the roto folder's JSON;
+  candidates never blank a mask.
 - **Undo.** Cmd-Z undoes the selected object's last click, cleared frame or
   range edit, and Shift-Cmd-Z redoes it (Ctrl-Z and Ctrl-Y elsewhere; Undo and
   Redo on the object's row do the same). Neither fires while you type in a
@@ -246,7 +259,7 @@ Compared with Meta's demo UI, which studio replaced:
 | Close the session on unload | missing: the backend expires idle sessions (30 min). A visible tab touches its session every 5 minutes to keep it |
 | Stats overlay (debug) | missing |
 
-Studio only: SAM 3 engine, the in-browser SAM 2.1 tiny engine, per-engine badges and disagreement flags, objects restored on reload (with their seed masks), track-state badges, Clear track, absent ranges, undo with kept track versions,
+Studio only: SAM 3 engine, the in-browser SAM 2.1 tiny engine, per-engine badges and disagreement flags, objects restored on reload (with their seed masks), track-state badges, Clear track, absent ranges, candidate and present ranges, undo with kept track versions,
 concurrent jobs, jobs from other tabs shown, zoom and pan, export for
 rotoscoping, and keyboard shortcuts.
 
