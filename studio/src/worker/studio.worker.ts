@@ -53,6 +53,8 @@ const context = new VideoWorkerContext();
 /** The effects the preview shows; an export swaps in its own, then restores these. */
 let previewEffects: Record<number, {name: string; variant: number}> = {};
 let exporting = false;
+/** The preview's hidden objects (a hidden group's members); an export draws them all. */
+let previewHidden: (id: number) => boolean = () => false;
 
 async function exportVideo(effects: Record<number, {name: string; variant: number}>): Promise<ArrayBuffer> {
   // Meta's context keeps its decoded frames and its frame renderer private;
@@ -69,6 +71,7 @@ async function exportVideo(effects: Record<number, {name: string; variant: numbe
   const faded = overlay.faded;
   overlay.activeObjectId = null; // no editing aids in the file
   overlay.faded = () => false;
+  highlight.hidden = () => false; // hiding a group is for the preview only
   try {
     await highlight.setEffects(effects);
     return await encodeMp4({
@@ -83,6 +86,7 @@ async function exportVideo(effects: Record<number, {name: string; variant: numbe
   } finally {
     overlay.activeObjectId = active;
     overlay.faded = faded;
+    highlight.hidden = previewHidden;
     await highlight.setEffects(previewEffects);
     exporting = false;
     context.goToFrame(context.frameIndex);
@@ -139,6 +143,16 @@ const handlers: Handlers = {
   renameObject: ({objectId, name}) => session.renameObject(objectId, name),
   exportMasks: args => session.exportMasks(args),
   objectNames: () => session.objectNames(),
+  objectLayout: () => session.objectLayout(),
+  setObjectLayout: ({layout}) => session.setObjectLayout(layout),
+  setHiddenObjects: ({objectIds}) => {
+    const hidden = new Set(objectIds);
+    previewHidden = id => hidden.has(id);
+    if (!exporting) {
+      highlight.hidden = previewHidden;
+      context.goToFrame(context.frameIndex);
+    }
+  },
 };
 
 async function handleCall(call: StudioCall): Promise<void> {
