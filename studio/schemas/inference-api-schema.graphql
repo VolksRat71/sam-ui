@@ -13,7 +13,8 @@
 # limitations under the License.
 # Modified by sam-ui: ObjectTrack, EngineTrack, SeedFrame, objectTracks, clearTrack, StartSession.objects,
 # deleteVideo (closeIdleSessions, sessionsClosed), ObjectRange, setObjectRange,
-# SeedHistory, TrackVersion, undoSeeds, redoSeeds, restoreVersion, moveClicks.
+# SeedHistory, TrackVersion, undoSeeds, redoSeeds, restoreVersion, moveClicks,
+# present and candidate ranges (ObjectRange.source/score, setObjectCandidates).
 
 input AddPointsInput {
   sessionId: String!
@@ -68,6 +69,8 @@ type Mutation {
   clearTrack(input: ClearTrackInput!): ObjectTrack!
   # sam-ui: mark frames of an object absent, or clear them (state null)
   setObjectRange(input: SetObjectRangeInput!): ObjectTrack!
+  # sam-ui: write candidate ranges in bulk (a discovery job's results); no track goes stale
+  setObjectCandidates(input: SetObjectCandidatesInput!): ObjectTrack!
   # sam-ui: undo or redo an object's last seed change; its kept track comes back with no job
   undoSeeds(input: SeedHistoryInput!): ObjectTrack!
   redoSeeds(input: SeedHistoryInput!): ObjectTrack!
@@ -110,16 +113,40 @@ input SetObjectRangeInput {
   objectId: Int!
   start: Int!
   end: Int!
-  # "absent"; null clears whatever range covers the frames
+  # "absent", "present" or "candidate"; null clears the frames (every state, or those in clear)
   state: String
+  # a candidate's provenance, e.g. "text:dog@sam3", and its score (0-1)
+  source: String
+  score: Float
+  clear: [String!]
 }
 
-# sam-ui: a span of an object's frames, inclusive. "absent" is the only state:
-# the object is not in the shot, so the frames are empty and never tracked.
+# sam-ui: one candidate range: where a model or tool thinks the object is
+input CandidateRangeInput {
+  start: Int!
+  end: Int!
+  source: String!
+  score: Float
+}
+
+# sam-ui: candidate ranges in bulk; replace drops the object's old candidates first
+input SetObjectCandidatesInput {
+  sessionId: String!
+  objectId: Int!
+  candidates: [CandidateRangeInput!]!
+  replace: Boolean! = false
+}
+
+# sam-ui: a span of an object's frames, inclusive, in a range state: "absent"
+# (confirmed not in the shot: empty, never tracked), "present" (confirmed there)
+# or "candidate" (a model or tool thinks it is there). Frames in none are unknown.
 type ObjectRange {
   start: Int!
   end: Int!
   state: String!
+  # a candidate's provenance and score; null on confirmed ranges
+  source: String
+  score: Float
 }
 
 # sam-ui: undo or redo one object's last seed change

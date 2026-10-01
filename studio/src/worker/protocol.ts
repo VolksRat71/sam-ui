@@ -9,6 +9,7 @@ import type {LocalModelStatus, LocalOptions} from '~/local/LocalEngine';
 import type {Layout} from '~/state/layout';
 import type {ExportedObject, ExportGroup, ExportKind} from '~/state/maskExport';
 import type {NormPoint, ServerObject} from '~/state/objects';
+import type {RangeState} from '~/state/ranges';
 
 export type SessionInfo = {
   sessionId: string;
@@ -97,8 +98,20 @@ export type StudioMethods = {
   };
   removeObject: {args: {objectId: number}; result: void};
   clearTrack: {args: {objectId: number; engine: string | null}; result: ServerObject};
-  /** Mark frames start-end of an object absent, or clear them (state null). */
-  setRange: {args: {objectId: number; start: number; end: number; state: 'absent' | null}; result: ServerObject};
+  /**
+   * Set frames start-end of an object to a range state (state/ranges.ts), or
+   * clear them (state null: every state, or those in `clear`). A candidate
+   * takes its `source` and optional `score`. Only absent ranges change a track.
+   */
+  setRange: {
+    args: {objectId: number; start: number; end: number; state: RangeState | null; source?: string; score?: number; clear?: RangeState[]};
+    result: ServerObject;
+  };
+  /** Write candidate ranges in bulk (a discovery job's results); `replace` drops the old ones. */
+  writeCandidates: {
+    args: {objectId: number; candidates: Array<{start: number; end: number; source: string; score?: number | null}>; replace?: boolean};
+    result: ServerObject;
+  };
   objectTracks: {args: Record<string, never>; result: ServerObject[]};
   /** Undo or redo one object's last seed change; a kept track of the restored clicks comes back with no job. */
   undo: {args: {objectId: number}; result: ServerObject};

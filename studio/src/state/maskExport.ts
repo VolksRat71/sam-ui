@@ -5,6 +5,9 @@
 // files, laid out as demo/backend/server/tracks/export.py writes them.
 // Frames inside an object's absent ranges export empty (a black matte, a null
 // outline), and its clicks there stay out of anchors.json, as the backend does.
+// Present and candidate ranges never change a mask: README.txt and the roto
+// folder's JSON record every range with its state (a candidate's source and
+// score too), as tracks/export.py's manifest does.
 //
 // Exports follow the object layout (state/layout.ts): objects in list order,
 // and a folder per group. In the zips (videos, vectors) a grouped object's
@@ -14,7 +17,7 @@
 // tracks/export.py writes it. README.txt and the JSON record each object's group.
 import {safeFileName} from './fileNames';
 import {arrange, type Layout} from './layout';
-import {absentAt, type FrameRange} from './ranges';
+import {type FrameRange, type Mark, type TimelineRange, absentAt, provenanceLabel, timelineView} from './ranges';
 
 export type ExportKind = 'videos' | 'vectors' | 'folder';
 
@@ -31,6 +34,8 @@ export type ExportedObject = {
   model?: string;
   /** Frames the object is marked absent on: exported empty. */
   ranges?: ReadonlyArray<FrameRange>;
+  /** Its present and candidate ranges: recorded, never applied to a mask. */
+  marks?: ReadonlyArray<Mark>;
   /** Its group, if it has one (set by groupExport). */
   group?: {id: string; name: string} | null;
 };
@@ -138,6 +143,19 @@ const KIND_TITLE: Record<ExportKind, string> = {
   folder: 'A rotoscoping working folder (PNG mattes), as the rotoscoping-video-subjects pipeline reads it.',
 };
 
+/** Every range of an object's timeline, one state a frame. */
+function rangesOf(o: Pick<ExportedObject, 'ranges' | 'marks'>) {
+  return timelineView(o.ranges ?? [], o.marks ?? []);
+}
+
+function rangeNote(r: TimelineRange): string {
+  return r.state === 'absent'
+    ? 'absent (empty mattes)'
+    : r.state === 'present'
+      ? 'present'
+      : `candidate, ${provenanceLabel(r)} (unconfirmed; masks unchanged)`;
+}
+
 /** README.txt of an export zip. */
 export function readme(
   kind: ExportKind,
@@ -160,10 +178,10 @@ export function readme(
     `Exported:   ${p.exported}`,
     '',
     'Objects:',
-    ...objects.map(
-      o =>
-        `  ${o.name}: object id ${o.objectId}, named "${o.label}", ${o.state}${o.model != null && o.model !== p.model ? `, model ${o.model}` : ''}${o.group != null ? `, group "${o.group.name}"` : ''}`,
-    ),
+    ...objects.flatMap(o => [
+      `  ${o.name}: object id ${o.objectId}, named "${o.label}", ${o.state}${o.model != null && o.model !== p.model ? `, model ${o.model}` : ''}${o.group != null ? `, group "${o.group.name}"` : ''}`,
+      ...rangesOf(o).map(r => `    frames ${r.start + 1}-${r.end + 1}: ${rangeNote(r)}`),
+    ]),
     '',
   ];
   if (groups.length > 0) {
@@ -246,6 +264,8 @@ export function rotoDecisions(
           model: o.model ?? p.model,
           frames: [0, p.frames - 1],
           n_frames: framesOf(o.objectId),
+          // 0-based, as tracks/export.py records them
+          ranges: rangesOf(o),
           group: o.group ?? null,
         },
       ]),

@@ -51,7 +51,7 @@ import {buildExport} from './maskExports';
 import type {TrackObject} from '~/local/sam2/tracker';
 import {BROWSER_ENGINE, engineLabel} from '~/state/engines';
 import {maskSegments} from '~/state/segments';
-import {type FrameRange, absentAt, normalizeRanges, planUnits} from '~/state/ranges';
+import {type FrameRange, type PaintOptions, type RangeState, absentAt, normalizeRanges, planUnits, rangesKey} from '~/state/ranges';
 import {colorFor, DEFAULT_ENGINE, type NormPoint, type ServerObject} from '~/state/objects';
 import type MaskOverlayEffect from './MaskOverlayEffect';
 import {paintAlpha} from './maskPixels';
@@ -73,6 +73,7 @@ import type {StudioSessionClearVideoMutation} from './__generated__/StudioSessio
 import type {StudioSessionCloseMutation} from './__generated__/StudioSessionCloseMutation.graphql';
 import type {StudioSessionObjectTracksQuery} from './__generated__/StudioSessionObjectTracksQuery.graphql';
 import type {StudioSessionRemoveObjectMutation} from './__generated__/StudioSessionRemoveObjectMutation.graphql';
+import type {StudioSessionSetCandidatesMutation} from './__generated__/StudioSessionSetCandidatesMutation.graphql';
 import type {StudioSessionSetRangeMutation} from './__generated__/StudioSessionSetRangeMutation.graphql';
 import type {StudioSessionStartMutation} from './__generated__/StudioSessionStartMutation.graphql';
 import type {StudioSessionUndoMutation} from './__generated__/StudioSessionUndoMutation.graphql';
@@ -115,6 +116,8 @@ const START = graphql`
           start
           end
           state
+          source
+          score
         }
         history {
           canUndo
@@ -209,6 +212,8 @@ const CLEAR_TRACK = graphql`
         start
         end
         state
+        source
+        score
       }
       history {
         canUndo
@@ -256,6 +261,57 @@ const SET_RANGE = graphql`
         start
         end
         state
+        source
+        score
+      }
+      history {
+        canUndo
+        canRedo
+        versions {
+          key
+          engine
+          model
+          created
+          elapsedS
+          nFrames
+          clicks
+          seedFrames
+          bounded
+          current
+        }
+      }
+    }
+  }
+`;
+
+const SET_CANDIDATES = graphql`
+  mutation StudioSessionSetCandidatesMutation($input: SetObjectCandidatesInput!) {
+    setObjectCandidates(input: $input) {
+      objectId
+      state
+      frames
+      nFrames
+      seeds {
+        frameIndex
+        points
+        labels
+        mask {
+          size
+          counts
+        }
+      }
+      tracks {
+        engine
+        state
+        frames
+        nFrames
+      }
+      ranges {
+        start
+        end
+        state
+        source
+        score
       }
       history {
         canUndo
@@ -303,6 +359,8 @@ const UNDO = graphql`
         start
         end
         state
+        source
+        score
       }
       history {
         canUndo
@@ -350,6 +408,8 @@ const REDO = graphql`
         start
         end
         state
+        source
+        score
       }
       history {
         canUndo
@@ -397,6 +457,8 @@ const RESTORE_VERSION = graphql`
         start
         end
         state
+        source
+        score
       }
       history {
         canUndo
@@ -444,6 +506,8 @@ const MOVE_CLICKS = graphql`
         start
         end
         state
+        source
+        score
       }
       history {
         canUndo
@@ -507,6 +571,8 @@ const OBJECT_TRACKS = graphql`
         start
         end
         state
+        source
+        score
       }
       history {
         canUndo
@@ -826,39 +892,87 @@ export default class StudioSession {
   }
 
   /**
-   * Mark frames start-end of an object absent, or clear them (state null).
-   * Marking empties those frames on screen at once; unmarking repaints the
-   * object from its cached track, which the backend blanks only where a
-   * range still stands.
+   * Set frames start-end of an object to a range state, or clear them (state
+   * null; opts.clear limits which states). Only absent frames touch the
+   * preview: marking empties them at once, unmarking repaints the object from
+   * its cached track, which the backend blanks only where a range still
+   * stands. Present and candidate ranges never change a mask.
    */
-  async setRange(objectId: number, start: number, end: number, state: 'absent' | null): Promise<ServerObject> {
+  async setRange(objectId: number, start: number, end: number, state: RangeState | null, opts: PaintOptions = {}): Promise<ServerObject> {
+    const [a, b] = [Math.min(start, end), Math.max(start, end)];
     let result: ServerObject | undefined;
     if (this._offline != null) {
-      await this._offline.setRange(this._storeKey!, objectId, start, end, state, this._variant);
+      await this._offline.setRange(this._storeKey!, objectId, a, b, state, this._variant, opts);
       result = (await this.objectTracks()).find(o => o.objectId === objectId);
     } else {
+      // only the fields in use, so an absent mark still reaches a backend from before candidates
+      const extra = {
+        ...(opts.source != null ? {source: opts.source} : {}),
+        ...(opts.score != null ? {score: opts.score} : {}),
+        ...(opts.clear != null ? {clear: [...opts.clear]} : {}),
+      };
       const res = await mutate<StudioSessionSetRangeMutation>(this.env, SET_RANGE, {
-        input: {sessionId: this.sessionId, objectId, start: Math.min(start, end), end: Math.max(start, end), state},
+        input: {sessionId: this.sessionId, objectId, start: a, end: b, state, ...extra},
       });
       result = (await this._withLocal([plain(res.setObjectRange) as ServerObject]))[0];
     }
     if (result == null) {
       throw new Error(`object ${objectId} is not known`);
     }
-    const ranges = normalizeRanges(result.ranges);
-    this._ranges.set(objectId, ranges);
-    const t = this._tracklet(objectId);
-    if (state != null) {
-      for (let f = Math.min(start, end); f <= Math.max(start, end); f++) {
-        this._setMask(t, f, undefined);
-      }
-      this._render(true);
+    await this._rangesChanged(objectId, normalizeRanges(result.ranges), a, b);
+    return result;
+  }
+
+  /** Write candidate ranges in bulk (what a discovery job makes); no mask changes. */
+  async writeCandidates(
+    objectId: number,
+    candidates: ReadonlyArray<{start: number; end: number; source: string; score?: number | null}>,
+    replace = false,
+  ): Promise<ServerObject> {
+    let result: ServerObject | undefined;
+    if (this._offline != null) {
+      await this._offline.writeCandidates(this._storeKey!, objectId, candidates, replace);
+      result = (await this.objectTracks()).find(o => o.objectId === objectId);
     } else {
+      const res = await mutate<StudioSessionSetCandidatesMutation>(this.env, SET_CANDIDATES, {
+        input: {
+          sessionId: this.sessionId,
+          objectId,
+          replace,
+          candidates: candidates.map(c => ({start: c.start, end: c.end, source: c.source, ...(c.score != null ? {score: c.score} : {})})),
+        },
+      });
+      result = (await this._withLocal([plain(res.setObjectCandidates) as ServerObject]))[0];
+    }
+    if (result == null) {
+      throw new Error(`object ${objectId} is not known`);
+    }
+    return result;
+  }
+
+  /** The object's absent ranges are now `ranges` (a change inside frames a-b): show it. */
+  private async _rangesChanged(objectId: number, ranges: FrameRange[], a: number, b: number): Promise<void> {
+    const before = this._ranges.get(objectId) ?? [];
+    this._ranges.set(objectId, ranges);
+    if (rangesKey(before) === rangesKey(ranges)) {
+      return; // annotations only: no mask changes
+    }
+    const t = this._tracklet(objectId);
+    let unmarked = false;
+    for (let f = a; f <= b; f++) {
+      if (absentAt(ranges, f) && !absentAt(before, f)) {
+        this._setMask(t, f, undefined);
+      } else if (!absentAt(ranges, f) && absentAt(before, f)) {
+        unmarked = true;
+      }
+    }
+    if (unmarked) {
       // the frames just unmarked show what the cache holds there again
       this._keepSeedMasksOnly(t);
       await this.repaint([objectId]);
+    } else {
+      this._render(true);
     }
-    return result;
   }
 
   // -- undo, versions and moving clicks (issue #18) -----------------------------

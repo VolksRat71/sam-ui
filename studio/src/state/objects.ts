@@ -15,7 +15,7 @@
 import {THEME_COLORS} from '@/theme/colors';
 import {EMPTY_HISTORY, type SeedHistory, type ServerHistory, normalizeHistory} from './history';
 import {EMPTY_LAYOUT, type Layout, type LayoutAction, arrange, layoutReducer, parseLayout} from './layout';
-import {type FrameRange, normalizeRanges, rangesKey} from './ranges';
+import {type FrameRange, type Mark, normalizeMarks, normalizeRanges, rangesKey, viewMarks} from './ranges';
 
 export type TrackState = 'untracked' | 'stale' | 'tracked' | 'tracking';
 export type Label = 0 | 1;
@@ -50,7 +50,14 @@ export type ServerObject = {
    * studio needs a backend that has it: the two ship together (desktop), and a
    * backend from before ranges fails the whole query rather than sending none.
    */
-  readonly ranges?: ReadonlyArray<{readonly start: number; readonly end: number; readonly state: string}> | null;
+  readonly ranges?: ReadonlyArray<{
+    readonly start: number;
+    readonly end: number;
+    readonly state: string;
+    /** A candidate's provenance (draft 5); null on confirmed ranges. */
+    readonly source?: string | null;
+    readonly score?: number | null;
+  }> | null;
   /** What the object can undo and redo, and its kept track versions (state/history.ts). */
   readonly history?: ServerHistory | null;
 };
@@ -77,6 +84,11 @@ export type StudioObject = {
   points: Record<number, NormPoint[]>;
   /** Frames where the object is marked absent: empty, never tracked or exported. */
   ranges: FrameRange[];
+  /**
+   * Its present and candidate ranges, as the timeline shows them (never over
+   * an absent frame). Annotations: they never touch a mask or a track's state.
+   */
+  marks: Mark[];
   /** Undo, redo and the kept track versions. */
   history: SeedHistory;
   /** Held by one of this page's running jobs on the current engine. */
@@ -130,8 +142,8 @@ export type Action =
   | {type: 'add'; id: number}
   | {type: 'select'; id: number | null}
   | {type: 'setPoints'; id: number; frame: number; points: NormPoint[]}
-  /** The object's absent ranges changed (marked or unmarked). */
-  | {type: 'setRanges'; id: number; ranges: FrameRange[]}
+  /** The object's ranges changed: absent ones, and (when given) its present and candidate ones. */
+  | {type: 'setRanges'; id: number; ranges: FrameRange[]; marks?: Mark[]}
   /** The backend's answer to an undo, redo, restore or move: the object as it now is. */
   | {type: 'objectChanged'; object: ServerObject}
   | {type: 'trackStarted'; key: number; ids: number[]; engine?: string}
@@ -219,6 +231,7 @@ export function fromServer(o: ServerObject, engine: string = DEFAULT_ENGINE): St
       engines,
       points: seedsToPoints(o.seeds),
       ranges: normalizeRanges(o.ranges),
+      marks: viewMarks(normalizeRanges(o.ranges), normalizeMarks(o.ranges)),
       history: normalizeHistory(o.history),
       running: false,
       error: null,
@@ -432,6 +445,7 @@ export function reducer(state: StudioState, action: Action): StudioState {
         engines: {},
         points: {},
         ranges: [],
+        marks: [],
         history: EMPTY_HISTORY,
         running: false,
         error: null,
@@ -472,15 +486,17 @@ export function reducer(state: StudioState, action: Action): StudioState {
     case 'setRanges':
       return update(state, action.id, o => {
         const ranges = normalizeRanges(action.ranges);
+        const marks = viewMarks(ranges, action.marks ?? o.marks);
         if (rangesKey(ranges) === rangesKey(o.ranges)) {
-          return o;
+          // present and candidate ranges are annotations: no track goes stale
+          return action.marks == null ? o : {...o, marks};
         }
         // ranges join the seeds hash: every engine's track goes stale
         const engines: Record<string, EngineTrack> = {};
         for (const [name, t] of Object.entries(o.engines)) {
           engines[name] = t.state === 'tracked' ? {...t, state: 'stale'} : t;
         }
-        return viewed({...o, ranges, engines, error: null}, state.engine);
+        return viewed({...o, ranges, marks, engines, error: null}, state.engine);
       });
 
     case 'objectChanged': {
