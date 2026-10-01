@@ -73,3 +73,17 @@
 .review-current p { margin: 4px 0 8px; color: var(--text-muted); }
 .scrubber > .swimlane-review { top: 38px; color: var(--warning); z-index: 2; }
 .group-filter { display: flex; align-items: center; gap: 8px; }
+.layer-controls { display: block; padding: 0; }
+.layer-summary { display: flex; align-items: center; gap: 8px; height: var(--lane-height); padding-inline: 8px; }
+.layer-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.layer-swatch { width: 8px; height: 12px; background: var(--lane-ink); flex: none; }
+.layer-summary .badge { flex: none; }
+.layer-details { padding: 8px; border-top: 1px solid var(--line); max-height: 220px; overflow: auto; }
+.layer-history summary, .group-options summary { cursor: pointer; padding-block: 4px; color: var(--text-muted); }
+.layer-details .object-actions { flex-wrap: wrap; }
+.group-header { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.group-title { flex: 1; min-width: 0; }
+.group-options[open] { width: 100%; }
+.layer-info { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 16px; margin: 0; }
+.layer-info dt { color: var(--text-muted); }
+.layer-info dd { margin: 0; overflow-wrap: anywhere; }

@@ -42,6 +42,7 @@ export default function Workspace({video, renderMedia}: Props) {
   const [exporting, setExporting] = useState<ExportChoice | null>(null);
   const videoName = videoDisplayName(video.path);
   const jobs = state.jobs;
+  const selectedLayer = state.objects.find(o => o.id === state.activeId);
   // no backend, or none of its engines can run: the browser engine is all there is
   const browserOnly = session.engines.length > 0 && session.engines.every(e => e.local || !e.available);
   const notice = pageNotice({backend: session.backend, webgpu: session.webgpu, browserOnly});
@@ -213,6 +214,15 @@ export default function Workspace({video, renderMedia}: Props) {
                         ? `${session.review.queue.filter(e => !e.reviewed).length} to check / ${session.review.queue.length}`
                         : undefined,
                     content: <ReviewSection session={session} />,
+                  },
+                  {
+                    id: 'info', title: 'Layer info',
+                    content: selectedLayer == null ? <p className="empty">Select a layer in the timeline.</p> : <dl className="layer-info">
+                      <dt>Layer</dt><dd>{objectName(selectedLayer)}</dd>
+                      <dt>Engine</dt><dd>{engineLabel(state.engine)}</dd>
+                      <dt>Track</dt><dd>{selectedLayer.state}</dd>
+                      <dt>Group</dt><dd>{state.layout.groups.find(g => g.members.includes(selectedLayer.id))?.name ?? 'Ungrouped'}</dd>
+                    </dl>,
                   },
                   {
                     id: 'effects',

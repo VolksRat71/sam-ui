@@ -15,7 +15,6 @@ import {
   ArrowUp,
   ChevronDown,
   ChevronRight,
-  Draggable,
   Edit,
   FolderAdd,
   Redo,
@@ -47,7 +46,6 @@ import {
   clearTarget,
   groupDirtyIds,
   isTracking,
-  jobProgress,
   needsPositiveClick,
   seedFrames,
   type StudioObject,
@@ -349,7 +347,6 @@ function ObjectRow({
 }) {
   const {state, tracklets, frame, busy} = session;
   const [drop, setDrop] = useState<'before' | 'after' | null>(null);
-  const badgeEngines = session.engines.filter(e => e.href == null);
   const t = tracklets.get(o.id);
   const active = o.id === state.activeId;
   const group = layout.groups.find(g => g.members.includes(o.id)) ?? null;
@@ -396,53 +393,17 @@ function ObjectRow({
       }}
       onClick={() => session.selectObject(active ? null : o.id)}>
       <div className="layer-controls">
-      <button
-        className="icon-button small drag-handle"
-        title="Drag to reorder, or Alt-Up / Alt-Down"
-        aria-label={`Reorder ${name}: Alt-Up or Alt-Down`}
-        onClick={e => e.stopPropagation()}
-        onKeyDown={e => {
-          const dir = stepKey(e);
-          if (dir != null) {
-            step(dir);
-          }
-        }}>
-        <Draggable size={16} />
-      </button>
-      <div className="thumb" style={{backgroundColor: o.color}}>
-        {t?.thumbnail != null && <div className="thumb-image" style={{backgroundImage: `url(${t.thumbnail})`}} />}
-      </div>
-      <div className="object-body">
-        <div className="object-title">
-          <ObjectName o={o} onRename={n => session.renameObject(o.id, n)} />
+        <div className="layer-summary">
+          <span className="layer-swatch" aria-hidden="true" />
+          <span className="layer-name" title={name}>{name}</span>
           <StateBadge o={o} />
+          <button className="icon-button small" aria-label={`${active ? 'Collapse' : 'Inspect'} ${name}`} aria-expanded={active} onClick={e => { e.stopPropagation(); session.selectObject(active ? null : o.id); }}>
+            {active ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          </button>
         </div>
+        {active && <div className="object-body layer-details">
+          <div className="object-title"><ObjectName o={o} onRename={n => session.renameObject(o.id, n)} /></div>
         <div className="object-meta">{describe(o)}</div>
-        {badgeEngines.length > 1 && (
-          <ul className="engine-badges" aria-label={`${name}'s track per engine`}>
-            {badgeEngines.map(e => {
-              const et = o.engines[e.name];
-              // a running job on this page holds the object before the backend says so
-              const job = state.jobs.find(j => j.engine === e.name && j.ids.includes(o.id));
-              const st = job != null ? 'tracking' : (et?.state ?? 'untracked');
-              const progress = job != null ? jobProgress(job, session.meta.numFrames) : null;
-              const pct = progress != null && progress.total != null ? ` ${Math.round(progress.fraction * 100)}%` : '';
-              return (
-                <li
-                  key={e.name}
-                  className={`engine-badge ${st}${e.name === state.engine ? ' current' : ''}`}
-                  title={`${engineLabel(e.name)}: ${st}${pct}${et?.frames != null && job == null ? `, frames ${et.frames[0] + 1}-${et.frames[1] + 1}` : ''}${e.name === state.engine ? ' (the engine in use)' : ''}`}>
-                  <span className="engine-dot" aria-hidden />
-                  <span className="engine-name">{engineLabel(e.name)}</span>
-                  <span className="engine-state">
-                    {st}
-                    {pct}
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
-        )}
         {session.disagreement.get(o.id) != null && (
           <div
             className={session.disagreement.get(o.id)!.flagged.length > 0 ? 'object-hint' : 'object-meta'}
@@ -458,7 +419,7 @@ function ObjectRow({
           <div className="object-hint">Add a positive click to keep part of the object</div>
         )}
         {o.error != null && <div className="object-error">Track failed: {o.error}</div>}
-        {active && <HistoryControls o={o} session={session} />}
+        <details className="layer-history"><summary>Keyframe history and versions</summary><HistoryControls o={o} session={session} /></details>
         <div className="object-actions" onClick={e => e.stopPropagation()}>
           {(() => {
             const target = clearTarget(o, state.engine);
@@ -527,7 +488,7 @@ function ObjectRow({
             )}
           </span>
         </div>
-      </div>
+      </div>}
       </div>
       {renderLane?.(o)}
     </li>
@@ -685,7 +646,7 @@ function GroupBlock({
             {group.hidden ? <ViewOff size={16} /> : <View size={16} />}
           </button>
         </div>
-        <div className="object-actions group-actions">
+        <details className="group-options"><summary>Group actions</summary><div className="object-actions group-actions">
           <button
             className="link-button"
             disabled={busy || toTrack.length === 0}
@@ -739,7 +700,7 @@ function GroupBlock({
             title="Delete the group; its objects stay, ungrouped">
             <TrashCan size={14} /> Ungroup
           </button>
-        </div>
+        </div></details>
       </div>
       {!group.collapsed && (
         <ul className="object-list group-members">
