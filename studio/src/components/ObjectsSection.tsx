@@ -22,6 +22,7 @@ import {
   TrashCan,
   Reset,
   Search,
+  SearchLocate,
   Undo,
   View,
   ViewOff,
@@ -31,7 +32,7 @@ import {createPortal} from 'react-dom';
 import {highlightEffects, moreEffects} from '@/common/components/effects/EffectsUtils';
 import {useEffect, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent, type ReactNode} from 'react';
 import {OBJECT_LIMIT} from '~/config';
-import {BROWSER_ENGINE, engineLabel, textPromptNote} from '~/state/engines';
+import {BROWSER_ENGINE, discoverTextNote, engineLabel, textPromptNote} from '~/state/engines';
 import {NAME_MAX, objectName} from '~/state/fileNames';
 import {moveTargets, parseCreated, undoBlock, versionLabel} from '~/state/history';
 import {
@@ -241,8 +242,9 @@ function TextPrompt({o, session}: {o: StudioObject; session: StudioSessionApi}) 
   const [draft, setDraft] = useState('');
   const [note, setNote] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
+  const [scanning, setScanning] = useState(false);
   const {ok, why} = session.textSupport;
-  const disabled = !ok || session.busy || running || isTracking(o);
+  const disabled = !ok || session.busy || running || scanning || isTracking(o);
   const submit = () => {
     const text = draft.trim();
     if (disabled || text === '') {
@@ -254,6 +256,20 @@ function TextPrompt({o, session}: {o: StudioObject; session: StudioSessionApi}) 
       setRunning(false);
       if (r != null) {
         setNote(textPromptNote(r));
+      }
+    });
+  };
+  const findInClip = () => {
+    const text = draft.trim();
+    if (disabled || text === '') {
+      return;
+    }
+    setScanning(true);
+    setNote(null);
+    void session.discoverText(o.id, text).then(r => {
+      setScanning(false);
+      if (r != null) {
+        setNote(discoverTextNote(r));
       }
     });
   };
@@ -278,6 +294,14 @@ function TextPrompt({o, session}: {o: StudioObject; session: StudioSessionApi}) 
         />
         <button className="button small" type="submit" disabled={disabled || draft.trim() === ''}>
           {running ? <span className="spinner small" /> : <Search size={14} />} Find
+        </button>
+        <button
+          className="button small"
+          type="button"
+          disabled={disabled || draft.trim() === ''}
+          title={why ?? 'Look for these words across the whole clip and mark where they appear as candidates (experimental)'}
+          onClick={findInClip}>
+          {scanning ? <span className="spinner small" /> : <SearchLocate size={14} />} Find in clip
         </button>
       </form>
       {why != null && <div className="object-meta text-prompt-why">{why}</div>}

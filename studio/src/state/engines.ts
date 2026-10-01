@@ -1,6 +1,6 @@
 // sam-ui (Apache-2.0). New file, not from SAM 2.
 import {NEEDS_WEBGPU} from '~/lib/webgpu';
-import type {EngineInfo, TextPromptResult} from '~/worker/protocol';
+import type {DiscoverTextResult, EngineInfo, TextPromptResult} from '~/worker/protocol';
 
 /** The in-browser SAM 2.1 tiny engine (studio/src/local). */
 export const BROWSER_ENGINE = 'browser-sam2';
@@ -102,4 +102,21 @@ export function textPromptNote(r: Pick<TextPromptResult, 'text' | 'frameIndex' |
   return r.instances > 1
     ? `Found ${r.instances} matches for "${r.text}" on frame ${frame} and took the best (score ${score}). Click to correct it, or to pick another.`
     : `Found "${r.text}" on frame ${frame} (score ${score}). Click to correct it.`;
+}
+
+/** What the Objects list says after finding a phrase across the clip (frames counted from 1, as on screen). */
+export function discoverTextNote(r: Pick<DiscoverTextResult, 'text' | 'intervals' | 'calls' | 'seconds' | 'canceled'>): string {
+  if (r.canceled) {
+    return `Stopped looking for "${r.text}". Nothing was marked.`;
+  }
+  const how = `${r.calls} ${r.calls === 1 ? 'frame' : 'frames'} checked in ${Math.round(r.seconds)} s`;
+  if (r.intervals.length === 0) {
+    return `No "${r.text}" found anywhere in the clip (${how}). Try other words, or click the object.`;
+  }
+  const spans = r.intervals.map(i => `${i.start + 1}–${i.end + 1}`).join(', ');
+  const n = r.intervals.length;
+  return (
+    `Found "${r.text}" ${n === 1 ? 'once' : `${n} times`}: frames ${spans} (${how}). ` +
+    `Marked as ${n === 1 ? 'a candidate' : 'candidates'}: ] and [ walk them, P or A confirms, R rejects.`
+  );
 }

@@ -68,6 +68,7 @@ import type MaskOverlayEffect from './MaskOverlayEffect';
 import {paintAlpha} from './maskPixels';
 import type {
   Disagreement,
+  DiscoverTextResult,
   EngineInfo,
   ExportManifest,
   ExportRequest,
@@ -949,6 +950,50 @@ export default class StudioSession {
       this._emitTracklets();
     }
     return result;
+  }
+
+  /**
+   * POST /discover_text (EXPERIMENTAL): the backend's text engine (SAM 3)
+   * looks for the phrase on a few frames across the clip, and writes each
+   * appearance as a candidate range of the object. No seed, mask or track
+   * changes. cancelPropagateInVideo cancels it (nothing is then written).
+   */
+  async discoverText(objectId: number, text: string, engine: string, stride?: number): Promise<DiscoverTextResult> {
+    if (this._offline != null) {
+      throw new Error('finding by text needs SAM 3 in the desktop app');
+    }
+    const response = await fetch(`${this._endpoint}/discover_text`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({session_id: this.sessionId, object_id: objectId, text, engine, ...(stride != null ? {stride} : {})}),
+    });
+    const body = (await response.json().catch(() => ({}))) as {
+      error?: string;
+      canceled?: boolean;
+      text?: string;
+      engine?: string;
+      source?: string;
+      intervals?: DiscoverTextResult['intervals'];
+      calls?: number;
+      seconds?: number;
+    };
+    if (!response.ok) {
+      throw new Error(body.error ?? `discover_text: HTTP ${response.status}`);
+    }
+    const canceled = body.canceled === true;
+    // the object's ranges as the backend now has them (its new candidates)
+    const object = canceled ? null : ((await this.objectTracks()).find(o => o.objectId === objectId) ?? null);
+    return {
+      objectId,
+      text: body.text ?? text,
+      engine: body.engine ?? engine,
+      source: body.source ?? '',
+      intervals: body.intervals ?? [],
+      calls: body.calls ?? 0,
+      seconds: body.seconds ?? 0,
+      canceled,
+      object,
+    };
   }
 
   async removeObject(objectId: number): Promise<void> {
