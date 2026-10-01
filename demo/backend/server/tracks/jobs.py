@@ -24,12 +24,14 @@ class Job:
     n_frames: Optional[int] = None
     engine: str = ""
     bounded: List[int] = field(default_factory=list)  # objects re-tracked in bounded passes (issue #19)
+    kind: str = "track"  # or "discover": a text discovery run (tracks/discovery.py), which claims no object
     frames_done: int = 0
     started: float = field(default_factory=time.time)
     canceled: bool = False
 
     def info(self) -> Dict:
-        return {"job_id": self.id, "engine": self.engine, "objects": self.objects, "bounded": self.bounded,
+        return {"job_id": self.id, "kind": self.kind, "engine": self.engine, "objects": self.objects,
+                "bounded": self.bounded,
                 "frames_done": self.frames_done,
                 "n_frames": self.n_frames, "elapsed_s": round(time.time() - self.started, 1)}
 
@@ -50,6 +52,15 @@ class JobRegistry:
             objs = sorted(o for o in set(wanted) if o not in held)
             job = Job(f"job-{next(self._ids)}", session_id, video, objs, n_frames, engine,
                       sorted(o for o in set(bounded) if o in objs))
+            self._jobs[job.id] = job
+            return job
+
+    def start_discovery(self, session_id: str, video: str, engine: str = "") -> Job:
+        """Register a discovery run: listed and cancellable like a track job,
+        but holding no object (it writes only candidate ranges, so clicks,
+        undo and tracking go on around it)."""
+        with self._lock:
+            job = Job(f"job-{next(self._ids)}", session_id, video, [], None, engine, kind="discover")
             self._jobs[job.id] = job
             return job
 
