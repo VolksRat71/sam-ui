@@ -151,7 +151,11 @@ export default function Timeline({session}: Props) {
         return;
       }
       if (e.key === ']' || e.key === '[') {
-        const o = pickedObject ?? state.objects.find(x => x.id === state.activeId);
+        // the picked candidate's object, else the selected one, else the first lane with candidates
+        const o =
+          pickedObject ??
+          state.objects.find(x => x.id === state.activeId) ??
+          session.ordered.find(x => candidatesOf(x).length > 0);
         const from = pickedMark != null ? (e.key === ']' ? pickedMark.end : pickedMark.start) : frame + (e.key === ']' ? -1 : 1);
         const c = o == null ? null : nextRange(candidatesOf(o), from, e.key === ']' ? 1 : -1);
         if (o != null && c != null) {
@@ -171,7 +175,7 @@ export default function Timeline({session}: Props) {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [pickedObject, pickedMark, state.objects, state.activeId, frame, pick, decide, setSelection]);
+  }, [pickedObject, pickedMark, state.objects, state.activeId, session.ordered, frame, pick, decide, setSelection]);
 
   const pos = useCallback(
     (index: number) => (n <= 1 ? 0 : (index / (n - 1)) * width),
