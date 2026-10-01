@@ -296,6 +296,8 @@ export type VectorJson = {
   engine: string;
   model: string;
   object?: {id: number; name: string};
+  /** The object's group (issue #21), or the group a union outline is of. */
+  group?: {id: string; name: string};
   fps: number;
   w: number;
   h: number;
@@ -315,7 +317,16 @@ function slots(perFrame: Array<Outline[] | null>): Array<Array<Outline | null>> 
  * 0/1 mask, or null where the track has none.
  */
 export function vectorJson(
-  meta: {engine: string; model: string; object?: {id: number; name: string}; fps: number; w: number; h: number; frames: number},
+  meta: {
+    engine: string;
+    model: string;
+    object?: {id: number; name: string};
+    group?: {id: string; name: string};
+    fps: number;
+    w: number;
+    h: number;
+    frames: number;
+  },
   frameMask: (index: number) => ArrayLike<number> | null,
   opts: TraceOptions = {},
 ): VectorJson {
@@ -329,6 +340,7 @@ export function vectorJson(
     engine: meta.engine,
     model: meta.model,
     ...(meta.object != null ? {object: meta.object} : {}),
+    ...(meta.group != null ? {group: meta.group} : {}),
     fps: meta.fps,
     w: meta.w,
     h: meta.h,

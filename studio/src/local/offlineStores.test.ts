@@ -129,6 +129,49 @@ describe('names (test_names.py)', () => {
   });
 });
 
+describe('the object layout (test_layout.py)', () => {
+  const cast = {id: 'g1', name: 'Cast', color: '#ff4fa3', members: [2, 1], collapsed: true, hidden: false};
+
+  it('keeps creation order with no layout, and persists one in OPFS next to the objects', async () => {
+    const kv = new MemoryKv();
+    const svc = new OfflineService(kv);
+    for (const o of [3, 1, 2]) {
+      await svc.recordPoints(V, o, 0, [[0.5, 0.5, 1]], null);
+    }
+    expect(await svc.layout(V)).toEqual({order: [1, 2, 3], groups: []});
+    await tracked(svc, 1);
+    await svc.setLayout(V, {order: [3, 2, 1], groups: [cast]});
+    expect(kv.files.has(`seeds/${V}/layout.json`)).toBe(true);
+    expect(await new OfflineService(kv).layout(V)).toEqual({order: [3, 2, 1], groups: [{...cast, members: [2, 1]}]});
+    // metadata only: the track stays tracked, and nothing goes on the undo history
+    expect(await state(svc, 1)).toBe('tracked');
+    expect((await svc.history(V, 1)).undo).toHaveLength(1); // the click only
+    expect(await svc.seeds.objects(V)).toEqual([1, 2, 3]);
+  });
+
+  it('a removed object leaves the order and its group; a cleared video forgets the layout', async () => {
+    const kv = new MemoryKv();
+    const svc = new OfflineService(kv);
+    for (const o of [1, 2, 3]) {
+      await svc.recordPoints(V, o, 0, [[0.5, 0.5, 1]], null);
+    }
+    await svc.setLayout(V, {order: [3, 2, 1], groups: [cast]});
+    await svc.removeObject(V, 2);
+    expect(await svc.layout(V)).toEqual({order: [3, 1], groups: [{...cast, members: [1]}]});
+    await svc.clearVideo(V);
+    await svc.recordPoints(V, 5, 0, [[0.5, 0.5, 1]], null);
+    expect(await svc.layout(V)).toEqual({order: [5], groups: []});
+  });
+
+  it('reads a damaged layout as none', async () => {
+    const kv = new MemoryKv();
+    const svc = new OfflineService(kv);
+    await svc.recordPoints(V, 1, 0, [[0.5, 0.5, 1]], null);
+    await kv.write(`seeds/${V}/layout.json`, 'not json');
+    expect(await svc.layout(V)).toEqual({order: [1], groups: []});
+  });
+});
+
 describe('job claims (test_jobs.py)', () => {
   it('never lets two jobs share an object, and frees them when released', () => {
     const engine = new LocalEngine({frame: async () => null, video: () => null, onModel: () => {}});

@@ -11,6 +11,15 @@ steps run on sam-ui's tracks unchanged:
     <out>/data/review.json {}  (no review flags yet)
     <out>/data/frames/%05d.jpg + data/clip.mp4  only with frames=True
     <out>/notes/sam-ui-export.json  provenance: engine, model, seeds hash per object
+    <out>/data/groups/<folder>/group.json  one folder per group with an exported member:
+                                {"id", "name", "color", "members": [pid, ...], "union"}
+    <out>/data/groups/<folder>/union/%05d.png  only with union=True: the members' union
+
+Products follow the video's object layout (tracks/layout.py): the order the
+Objects list and the timeline show. A grouped product carries
+meta.group = {"id", "name"}, and the manifest lists each product's group and
+the groups. The per-object mattes stay in data/mattes_tracked/<pid>/, where
+the roto pipeline reads them; a group's folder holds what is the group's own.
 
 `objects` ({obj_id: {"id", "prompt", "color"}}, each field optional) picks
 the objects to export and names them; without it every object is exported
@@ -74,16 +83,40 @@ def _spec(obj_id: int, given: Optional[Dict], index: int) -> Dict:
     return {"id": pid, "prompt": given.get("prompt") or pid.replace("_", " "), "color": color}
 
 
+def _folder(name: str, gid: str) -> str:
+    slug = re.sub(r"[^A-Za-z0-9_-]+", "_", name).strip("_-").lower()[:64]
+    return slug or gid.lower()
+
+
+def _union(group_dir: Path, member_dirs: List[Path]) -> None:
+    """union/%05d.png: per frame, the OR of the members' mattes (read back
+    from disk, one frame at a time, so no whole track is held in memory)."""
+    names = sorted({p.name for d in member_dirs for p in d.glob("*.png")})
+    udir = group_dir / "union"
+    udir.mkdir(parents=True)
+    for name in names:
+        acc = None
+        for d in member_dirs:
+            if (d / name).exists():
+                m = np.asarray(Image.open(d / name)) > 127
+                acc = m if acc is None else (acc | m)
+        Image.fromarray((acc * 255).astype(np.uint8)).save(udir / name)
+
+
 def export(service, video: str, video_path: str, out_dir: str, objects: Optional[Dict[int, Dict]] = None,
            include_stale: bool = False, frames: bool = False, force: bool = False,
-           engine: Optional[str] = None) -> Dict:
+           engine: Optional[str] = None, union: bool = False) -> Dict:
     out = _check_out(out_dir)
     engine = service.get_engine(engine).name if engine else service.default
     if not force:
         clash = [n for n in DECISIONS if (out / n).exists()]
         if clash:
             raise ExportError(f"{out} already has {clash}; pass force to replace them")
-    wanted = sorted(int(o) for o in objects) if objects else service.seeds.objects(video)
+    layout = service.layout(video)
+    rank = {o: i for i, o in enumerate(layout["order"])}
+    wanted = sorted({int(o) for o in objects} if objects else service.seeds.objects(video),
+                    key=lambda o: (rank.get(o, len(rank)), o))
+    group_of = {m: g for g in layout["groups"] for m in g["members"]}
     ok_states = (TRACKED, STALE) if include_stale else (TRACKED,)
     specs, skipped = {}, {}
     for i, o in enumerate(wanted):
@@ -124,11 +157,15 @@ def export(service, video: str, video_path: str, out_dir: str, objects: Optional
                                       for (x, y), lab in zip(seed["points"], seed["labels"])]
         if points:
             anchors[spec["id"]] = {"points": points}
+        g = group_of.get(o)
+        tag = {"id": g["id"], "name": g["name"]} if g else None
         products.append({"id": spec["id"], "shots": [1], "prompt": spec["prompt"], "color": spec["color"],
-                         "status": "confirmed", "meta": {"sam_ui_object": o}})
+                         "status": "confirmed", "meta": {"sam_ui_object": o, **({"group": tag} if tag else {})}})
         provenance[spec["id"]] = {"object_id": o, "state": info["state"], "engine": info["engine"],
                                   "model": info["model"], "frames": info["frames"], "n_frames": info["n_frames"],
-                                  "ranges": ranges}
+                                  "ranges": ranges, "group": tag}
+
+    groups = _write_groups(out, layout["groups"], {o: s["id"] for o, (s, _) in specs.items()}, union)
 
     (out / "products.json").write_text(json.dumps({"products": products}, indent=1))
     (out / "anchors.json").write_text(json.dumps(anchors, indent=1))
@@ -138,11 +175,39 @@ def export(service, video: str, video_path: str, out_dir: str, objects: Optional
         review.write_text("{}")
     manifest = {"exported": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "video": video, "video_path": video_path,
                 "products": provenance, "skipped": {str(o): s for o, s in skipped.items()}, "n_frames": n_frames,
-                "frames_extracted": False}
+                "groups": groups, "frames_extracted": False}
     if frames:
         manifest.update(_extract_frames(video_path, out, n_frames))
     (out / "notes" / "sam-ui-export.json").write_text(json.dumps(manifest, indent=1))
     return {"out_dir": str(out), **manifest}
+
+
+def _write_groups(out: Path, groups: List[Dict], pids: Dict[int, str], union: bool) -> List[Dict]:
+    """data/groups/<folder>/ for every group with an exported member, made
+    afresh (a group gone since the last export leaves nothing behind)."""
+    root = out / "data" / "groups"
+    if root.exists():
+        shutil.rmtree(root)
+    written, used = [], set()
+    for g in groups:
+        members = [pids[m] for m in g["members"] if m in pids]
+        if not members:
+            continue
+        base = folder = _folder(g["name"], g["id"])
+        for k in range(2, 10_000):
+            if folder not in used:
+                break
+            folder = f"{base}_{k}"
+        used.add(folder)
+        entry = {"id": g["id"], "name": g["name"], "color": g["color"], "folder": folder, "members": members,
+                 "union": bool(union)}
+        gdir = root / folder
+        gdir.mkdir(parents=True)
+        (gdir / "group.json").write_text(json.dumps({k: v for k, v in entry.items() if k != "folder"}, indent=1))
+        if union:
+            _union(gdir, [out / "data" / "mattes_tracked" / pid for pid in members])
+        written.append(entry)
+    return written
 
 
 def _extract_frames(video_path: str, out: Path, n_frames: int) -> Dict:

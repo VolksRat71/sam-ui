@@ -42,6 +42,7 @@ from tracks import rle
 from tracks.bounded import Agreement, Provenance, Stretch, mask_iou
 from tracks.engine import WHOLE, Engine, Windows
 from tracks.jobs import TRACKING, JobRegistry
+from tracks.layout import Layout, LayoutStore
 from tracks.ranges import Window, absent_at, seeded_windows, window_frames
 from tracks.seeds import Seeds, SeedStore, seeds_hash, video_key, window_key
 from tracks.store import TRACKED, TrackStore
@@ -125,6 +126,7 @@ class TrackService:
         self.seeds = SeedStore(root)
         self.tracks = TrackStore(root)
         self.versions = VersionStore(root)
+        self.layouts = LayoutStore(root)
         self.jobs = JobRegistry()
         self._engines: Dict[str, Engine] = {}
         self._specs: Dict[str, EngineSpec] = {s.name: s for s in (extra or [])}
@@ -231,6 +233,7 @@ class TrackService:
 
     def remove_object(self, video: str, obj_id: int):
         self.seeds.remove_object(video, obj_id)
+        self.layouts.remove_object(video, obj_id)  # out of the order and its group
 
     def rename_object(self, video: str, obj_id: int, name: Optional[str]) -> Optional[str]:
         """Metadata only: the seeds, their hash and every track stay as they are."""
@@ -240,7 +243,16 @@ class TrackService:
         return self.seeds.names(video)
 
     def clear_video(self, video: str):
-        self.seeds.clear_video(video)
+        self.seeds.clear_video(video)  # layout.json too: it sits in the video's directory
+
+    # -- the object layout (issue #21): order and groups, never in a seeds hash -----
+    def layout(self, video: str) -> Layout:
+        return self.layouts.get(video, self.seeds.objects(video))
+
+    def set_layout(self, video: str, raw) -> Layout:
+        """Store a layout (LayoutError when malformed); answers it as layout() reads it."""
+        self.layouts.set(video, raw)
+        return self.layout(video)
 
     # -- versions and undo (issue #18) ----------------------------------------------
     def _record(self, video: str, obj_id: int) -> Tuple[str, Dict]:

@@ -30,13 +30,24 @@ import type {LocalModelStatus, LocalOptions} from '~/local/LocalEngine';
 import {browserModelName, parseQuality} from '~/local/sam2/config';
 import {BROWSER_ENGINE, engineLabel, pickerEngines} from '~/state/engines';
 import {cleanObjectName, objectName, uniqueFileNames} from '~/state/fileNames';
-import type {ExportedObject, ExportKind} from '~/state/maskExport';
+import {type ExportedObject, type ExportKind, groupExport} from '~/state/maskExport';
+import {
+  type LayoutAction,
+  type GroupPatch,
+  hiddenIds,
+  newGroupId,
+  nextGroupColor,
+} from '~/state/layout';
+import {CLOSED_GATE, type SaveGate, saveStep} from '~/state/layoutSync';
 import {
   DEFAULT_ENGINE,
   NormPoint,
   canAddObject,
+  clearTarget,
   comparableIds,
   dirtyIds,
+  groupDirtyIds,
+  orderedObjects,
   preferredEngine,
   hasSeeds,
   initialState,
@@ -128,6 +139,8 @@ export default function useStudioSession(video: VideoItem) {
   const [disagreement, setDisagreement] = useState<Map<number, ObjectDisagreement>>(new Map());
   const [localOptions, setLocalOptionsState] = useState<LocalOptions>(readLocalOptions);
   const [localModel, setLocalModel] = useState<LocalModelStatus | null>(null);
+  /** The stored layout has been read: from then on, every change of it is saved. */
+  const [layoutLoaded, setLayoutLoaded] = useState(false);
   const localOptionsRef = useRef(localOptions);
   localOptionsRef.current = localOptions;
   // one past the highest object id ever used on this video, so a deleted
@@ -135,6 +148,15 @@ export default function useStudioSession(video: VideoItem) {
   const nextIdKey = `sam-ui-studio:next-object:${video.path}`;
   const idFloor = useRef<number>(readJson<number>(nextIdKey, 0));
   const namesWarned = useRef(false);
+  const layoutWarned = useRef(false);
+  /**
+   * Whether layout changes are saved: only after a load that read the stored
+   * layout. A failed load must never let a save replace the stored groups.
+   */
+  const layoutGate = useRef<SaveGate>(CLOSED_GATE);
+  /** Why saves are closed, for the one warning a change gets. */
+  const layoutClosed = useRef("The object order and groups won't be saved until the backend is updated");
+  const layoutQueue = useRef<Promise<unknown>>(Promise.resolve());
 
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -287,6 +309,21 @@ export default function useStudioSession(video: VideoItem) {
         .call('objectNames', {})
         .then(res => dispatch({type: 'names', names: res.names}))
         .catch(() => {});
+      // the order and groups: metadata too, and an older backend has none (creation order)
+      bridge
+        .call('objectLayout', {})
+        .then(res => {
+          dispatch({type: 'setLayout', layout: res.layout});
+          // the layout as loaded is the baseline; saving opens only if the stored one was read
+          layoutGate.current = {savable: res.supported, baseline: null};
+        })
+        .catch(error => {
+          layoutGate.current = CLOSED_GATE;
+          layoutClosed.current = `could not load the object order and groups, so changes to them won't be saved: ${message(error)}`;
+          setWarning(layoutClosed.current);
+          layoutWarned.current = true;
+        })
+        .finally(() => setLayoutLoaded(true));
       // show an engine that has tracks: a SAM 3-only video opens on SAM 3
       const shown = preferredEngine(
         info.objects,
@@ -465,13 +502,16 @@ export default function useStudioSession(video: VideoItem) {
     [bridge],
   );
 
-  /** Start a job for the dirty objects. Jobs already running keep theirs. */
-  const track = useCallback(async () => {
+  /**
+   * Start a job for the dirty objects (`pick`: of them, the ones it keeps).
+   * Jobs already running keep theirs.
+   */
+  const runTrack = useCallback(async (pick: (ids: number[]) => number[] = ids => ids) => {
     if (bridge == null) {
       return;
     }
     await queue.current; // clicks first
-    const ids = dirtyIds(stateRef.current);
+    const ids = pick(dirtyIds(stateRef.current));
     if (ids.length === 0) {
       return;
     }
@@ -493,6 +533,15 @@ export default function useStudioSession(video: VideoItem) {
     }
     await sync().catch(error => setWarning(message(error)));
   }, [bridge, sync]);
+
+  /** Start a job for the dirty objects. Jobs already running keep theirs. */
+  const track = useCallback(() => runTrack(), [runTrack]);
+
+  /** A group's Track: only its stale or untracked members, through the same job path as Track. */
+  const trackGroup = useCallback(
+    (groupId: string) => runTrack(() => groupDirtyIds(stateRef.current, groupId)),
+    [runTrack],
+  );
 
   /** Cancel one of this page's jobs, or (no key) every job of the session. */
   const cancelTrack = useCallback(
@@ -566,6 +615,84 @@ export default function useStudioSession(video: VideoItem) {
     },
     [bridge, serial, sync],
   );
+
+  /** Clear the tracks of a group's members, each as its own Clear track button would. */
+  const clearGroupTracks = useCallback(
+    (groupId: string) => {
+      const s = stateRef.current;
+      const members = s.layout.groups.find(g => g.id === groupId)?.members ?? [];
+      for (const id of members) {
+        const o = s.objects.find(x => x.id === id);
+        const target = o != null ? clearTarget(o, s.engine) : null;
+        if (target != null) {
+          clearTrack(id, target.engine);
+        }
+      }
+    },
+    [clearTrack],
+  );
+
+  // -- the object layout (issue #21): order and groups, metadata only --------------
+
+  /** A reorder or regroup; saved, never a seed change. */
+  const layoutAction = useCallback((action: LayoutAction) => dispatch({type: 'layout', action}), []);
+
+  /** A new group: holding the selected object, where it is, or empty at the end. */
+  const addGroup = useCallback(() => {
+    const s = stateRef.current;
+    const id = newGroupId(s.layout);
+    const n = s.layout.groups.length + 1;
+    dispatch({
+      type: 'layout',
+      action: {
+        type: 'addGroup',
+        id,
+        name: `Group ${n}`,
+        color: nextGroupColor(s.layout),
+        members: s.activeId != null ? [s.activeId] : [],
+      },
+    });
+    return id;
+  }, []);
+
+  const updateGroup = useCallback(
+    (groupId: string, patch: GroupPatch) => dispatch({type: 'layout', action: {type: 'updateGroup', groupId, patch}}),
+    [],
+  );
+
+  // every change of the layout is saved, one write at a time, the latest last
+  useEffect(() => {
+    if (bridge == null || !layoutLoaded || status !== 'ready') {
+      return;
+    }
+    const step = saveStep(layoutGate.current, JSON.stringify(state.layout));
+    layoutGate.current = step.gate;
+    if (step.blocked && !layoutWarned.current) {
+      layoutWarned.current = true;
+      setWarning(layoutClosed.current);
+    }
+    if (!step.save) {
+      return;
+    }
+    const layout = state.layout;
+    layoutQueue.current = layoutQueue.current
+      .then(() => bridge.call('setObjectLayout', {layout}))
+      .then(res => {
+        if (!res.saved && !layoutWarned.current) {
+          layoutWarned.current = true;
+          setWarning("The object order and groups won't be saved until the backend is updated");
+        }
+      })
+      .catch(error => setWarning(`could not save the object order and groups: ${message(error)}`));
+  }, [bridge, layoutLoaded, status, state.layout]);
+
+  // a hidden group's members stay off the preview
+  const hiddenKey = hiddenIds(state.layout).join(',');
+  useEffect(() => {
+    bridge
+      ?.call('setHiddenObjects', {objectIds: hiddenKey === '' ? [] : hiddenKey.split(',').map(Number)})
+      .catch(() => {});
+  }, [bridge, hiddenKey]);
 
   /**
    * Mark frames start-end of an object absent (the object is not in the
@@ -742,6 +869,21 @@ export default function useStudioSession(video: VideoItem) {
     [variantCounts],
   );
 
+  /** Give every member of a group the effect `name` (again: the next variant, for all of them). */
+  const setGroupEffect = useCallback(
+    (groupId: string, name: string) => {
+      const members = stateRef.current.layout.groups.find(g => g.id === groupId)?.members ?? [];
+      if (members.length === 0) {
+        return;
+      }
+      setObjectEffects(m => {
+        const effect = pickEffect(m, members[0], name, variantCounts[name] ?? 1)[members[0]];
+        return {...m, ...Object.fromEntries(members.map(id => [id, effect]))};
+      });
+    },
+    [variantCounts],
+  );
+
   const [exportProgress, setExportProgress] = useState<number | null>(null);
 
   /** The model an export names: the backend's for its engines, the chosen export for the browser one. */
@@ -758,7 +900,11 @@ export default function useStudioSession(video: VideoItem) {
    * engine on screen), each file named after its object.
    */
   const exportMasks = useCallback(
-    async (kind: ExportKind, rows?: Array<{objectId: number; name?: string; prompt?: string; color?: string}>): Promise<Blob> => {
+    async (
+      kind: ExportKind,
+      rows?: Array<{objectId: number; name?: string; prompt?: string; color?: string}>,
+      union = false,
+    ): Promise<Blob> => {
       if (bridge == null) {
         throw new Error('no session');
       }
@@ -766,9 +912,9 @@ export default function useStudioSession(video: VideoItem) {
       type Row = {objectId: number; name?: string; prompt?: string; color?: string};
       const chosen: Row[] =
         rows ?? s.objects.filter(o => o.state === 'tracked' || o.state === 'stale').map(o => ({objectId: o.id}));
-      const objs = chosen
-        .map(r => s.objects.find(o => o.id === r.objectId))
-        .filter((o): o is (typeof s.objects)[number] => o != null);
+      // in list order: names made unique in that order, and the files follow it
+      const wanted = new Set(chosen.map(r => r.objectId));
+      const objs = orderedObjects(s).filter(o => wanted.has(o.id));
       if (objs.length === 0) {
         throw new Error('No object has a track on this engine yet.');
       }
@@ -776,7 +922,7 @@ export default function useStudioSession(video: VideoItem) {
         objs.map(o => chosen.find(r => r.objectId === o.id)?.name ?? objectName(o)),
         i => objectName(objs[i]),
       );
-      const objects: ExportedObject[] = objs.map((o, i) => {
+      const exported: ExportedObject[] = objs.map((o, i) => {
         const row = chosen.find(r => r.objectId === o.id);
         return {
           objectId: o.id,
@@ -788,6 +934,7 @@ export default function useStudioSession(video: VideoItem) {
           ranges: o.ranges,
         };
       });
+      const {objects, groups} = groupExport(kind, exported, s.layout);
       setExportProgress(0);
       try {
         const buffer = await bridge.call('exportMasks', {
@@ -796,6 +943,8 @@ export default function useStudioSession(video: VideoItem) {
           engine: s.engine,
           engineLabel: engineLabel(s.engine),
           model: modelOf(s.engine),
+          groups,
+          union,
         });
         return new Blob([buffer], {type: 'application/zip'});
       } finally {
@@ -910,6 +1059,7 @@ export default function useStudioSession(video: VideoItem) {
   }, [bridge, playing]);
 
   const dirty = useMemo(() => dirtyIds(state), [state]);
+  const ordered = useMemo(() => orderedObjects(state), [state]);
 
   /** Flag the current frame of the selected object for a correction, or unflag it. */
   const toggleFlag = useCallback(() => {
@@ -930,6 +1080,8 @@ export default function useStudioSession(video: VideoItem) {
   return {
     bridge,
     state,
+    /** The objects in list order (the layout's): the list's, the lanes' and the exports' order. */
+    ordered,
     status,
     statusError,
     frame,
@@ -969,8 +1121,14 @@ export default function useStudioSession(video: VideoItem) {
     renameObject,
     selectObject,
     track,
+    trackGroup,
     cancelTrack,
     clearTrack,
+    clearGroupTracks,
+    layoutAction,
+    addGroup,
+    updateGroup,
+    setGroupEffect,
     setRange,
     undo: () => stepSeeds('undo'),
     redo: () => stepSeeds('redo'),
