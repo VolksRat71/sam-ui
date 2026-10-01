@@ -86,6 +86,13 @@ export default function Workspace({video, renderMedia}: Props) {
               <span className="spinner small" />
               {job.canceling ? 'Cancelling' : 'Tracking'} {job.ids.map(nameOf).join(', ')}
               <span className="engine-tag">{engineLabel(job.engine)}</span>
+              {job.bounded.length > 0 && (
+                <span
+                  className="muted"
+                  title={`Re-tracking ${job.bounded.map(nameOf).join(', ')} only around the corrections, keeping the cached frames beyond`}>
+                  near corrections
+                </span>
+              )}
               {job.frames === 0 && session.engines.find(e => e.name === job.engine)?.loading && (
                 <span className="muted">loading the model…</span>
               )}
