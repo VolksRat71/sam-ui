@@ -4,7 +4,6 @@
 # LICENSE file in the root directory of this source tree.
 # Modified by sam-ui: clicks are recorded as seeds, track jobs run through tracks/, a correction refines the cached track mask (with an anchor click for a lone negative), and a click inside an absent range is refused. A text prompt's seed mask (SAM 3, /text_prompt) joins the session like a replayed seed.
 
-import contextlib
 import logging
 import os
 import time
@@ -44,6 +43,7 @@ from tracks.features import VIDEO_KEY, FeatureCache, default_cache_gb, install a
 from tracks.streaming import install_sam2_streaming
 from tracks.routes import TrackContext
 from tracks import sam3_engine
+from tracks.precision import sam2_autocast
 from tracks.service import EngineSpec, TrackService
 from tracks.text import has_prompt
 
@@ -144,10 +144,9 @@ class InferenceAPI:
         )
 
     def autocast_context(self):
-        if self.device.type == "cuda":
-            return torch.autocast("cuda", dtype=torch.bfloat16)
-        else:
-            return contextlib.nullcontext()
+        # sam-ui: bf16 on CUDA as upstream; on MPS fp32 unless SAM_UI_SAM2_DTYPE
+        # asks otherwise (tracks/precision.py, issue #11)
+        return sam2_autocast(self.device.type)
 
     def start_session(self, request: StartSessionRequest) -> StartSessionResponse:
         with self.autocast_context(), self.inference_lock:

@@ -10,8 +10,10 @@ from a local folder (SAM_UI_SAM3_WEIGHTS, default the rotoscoping skill's
 copied into this repository.
 
 Measured on the synthetic squares (MPS, fp32): IoU min 0.989 against SAM 2's
-0.974, at 1.43 s/frame against SAM 2's 0.61, with about 20 GB of MPS driver
-memory. Hence opt-in, per track job.
+0.974, at 1.43 s/frame against SAM 2's 0.61. Hence opt-in, per track job.
+Memory (issue #11, tools/hardware_bench.py, M4 Max): a 5.5 GB peak physical
+footprint tracking at fp32, 3.5 GB at fp16 or bf16 (SAM_UI_SAM3_DTYPE,
+opt-in: masks move, see tracks/precision.py).
 
 Absent ranges (issue #20): each window of frames between them gets a session
 of its own, seeded only from its seeds, so nothing crosses a gap.
@@ -36,7 +38,7 @@ import threading
 from pathlib import Path
 from typing import Dict, Iterator, List, Optional
 
-from tracks import rle
+from tracks import precision, rle
 from tracks.engine import FrameMasks, Unit, Windows, plan_units
 from tracks.seeds import Seeds
 from tracks.streaming import Sam3Frames, sam3_prune
@@ -89,6 +91,7 @@ class Sam3Engine:
 
     def __init__(self, device: Optional[str] = None):
         self.device = device
+        self.dtype = None  # set at load, from SAM_UI_SAM3_DTYPE (tracks/precision.py)
         self._loaded = None
         self._detector = None
         self._load_lock = threading.Lock()
@@ -105,8 +108,9 @@ class Sam3Engine:
 
                 dev = self.device or ("mps" if torch.backends.mps.is_available()
                                       else "cuda" if torch.cuda.is_available() else "cpu")
+                self.dtype = precision.sam3_dtype()
                 proc = Sam3TrackerVideoProcessor.from_pretrained(str(weights_path()))
-                model = Sam3TrackerVideoModel.from_pretrained(str(weights_path())).to(dev).eval()
+                model = Sam3TrackerVideoModel.from_pretrained(str(weights_path()), dtype=self.dtype).to(dev).eval()
                 self._loaded = (proc, model, dev)
         return self._loaded
 
@@ -119,7 +123,7 @@ class Sam3Engine:
             if self._detector is None:
                 from transformers import AutoTokenizer, Sam3Model
 
-                det = Sam3Model.from_pretrained(str(weights_path())).eval()
+                det = Sam3Model.from_pretrained(str(weights_path()), dtype=self.dtype).eval()
                 det.vision_encoder.backbone = model.vision_encoder.backbone
                 tok = AutoTokenizer.from_pretrained(str(weights_path()))
                 self._detector = (det.to(dev), tok)
@@ -132,7 +136,7 @@ class Sam3Engine:
 
         proc, _, dev = self._load()
         det, tok = self._load_detector()
-        frames = Sam3Frames(video_path, proc, dtype=torch.float32)
+        frames = Sam3Frames(video_path, proc, dtype=self.dtype)
         if not 0 <= frame < len(frames):
             raise ValueError(f"frame {frame} is outside the video (0-{len(frames) - 1})")
         h, w = frames.height, frames.width
@@ -158,15 +162,13 @@ class Sam3Engine:
 
     def track(self, video_path: str, objects: Dict[int, Seeds], video_handle=None,
               windows: Optional[Windows] = None) -> Iterator[FrameMasks]:
-        import torch
-
         units = self.plan(objects, windows)
         if not units:
             return
         proc, model, dev = self._load()
         # frames processed as tracking reaches them, not the whole clip up front;
         # shared by every window's session
-        frames = Sam3Frames(video_path, proc, dtype=torch.float32)
+        frames = Sam3Frames(video_path, proc, dtype=self.dtype)
         for unit in units:
             yield from self._track_unit(proc, model, dev, frames, unit)
 
@@ -179,7 +181,7 @@ class Sam3Engine:
         h, w = frames.height, frames.width
         limits = {False: None if unit.hi is None else unit.hi - start, True: None if unit.lo == 0 else start - unit.lo}
         with torch.inference_mode():
-            sess = proc.init_video_session(inference_device=dev, video_storage_device="cpu", dtype=torch.float32)
+            sess = proc.init_video_session(inference_device=dev, video_storage_device="cpu", dtype=self.dtype)
             sess.processed_frames = frames
             sess.video_height, sess.video_width = h, w
             by_frame: Dict[int, list] = {}
@@ -211,6 +213,6 @@ class Sam3Engine:
                     sam3_prune(model, sess, out.frame_idx, start, reverse)
                     if reverse and out.frame_idx == start:
                         continue
-                    masks = proc.post_process_masks([out.pred_masks], original_sizes=[[h, w]], binarize=True)[0]
+                    masks = proc.post_process_masks([out.pred_masks.float()], original_sizes=[[h, w]], binarize=True)[0]
                     masks = masks.reshape(len(sess.obj_ids), -1, h, w)[:, 0].cpu().numpy().astype(bool)
                     yield out.frame_idx, {int(o): masks[k] for k, o in enumerate(sess.obj_ids)}
