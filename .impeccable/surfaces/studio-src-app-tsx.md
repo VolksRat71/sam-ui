@@ -35,3 +35,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
 ## Approved composition
 
 Nate approved `.impeccable/mocks/composition-b.png` for the dense timeline, combined with `.impeccable/mocks/composition-c.png` for the Review dock (2026-10-01, relayed by Claude). Generated footage and invented controls are illustrative only; preserve the real footage and existing capabilities. Stale/refining track status must remain legible with every effect; correction behavior belongs to Claude.
+
+## Explicit scope decision — 2026-10-01
+
+Nate, relayed by Claude: "Waive: comps were guidance." Generated A/B/C comps are composition guidance for this live-prototype finish, not fidelity targets. Nate explicitly authorizes downgrading their authority and waives measured comp-reproduction gates for this build. Existing behavior, protected data, server and branch guardrails remain in force. The finish verdict and build state record this decision; no pixel-fidelity pass is claimed.

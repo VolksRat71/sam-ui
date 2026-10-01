@@ -135,7 +135,7 @@ The approved dense timeline and Review dock are expressed through aligned rows, 
 - A timeline that owns layer selection; a fixed dock for review, properties, effects, and media.
 - Explicit Changed, Refining, and Tracking language that remains visible outside the effect image.
 
-This is a source-derived record of the current workspace, not a finish verdict. The composition-led state specification remains open and its process waiver is pending. Source authority is the CSS cascade (`styles.css`, then `responsive.css`, then `suite.css`) and the implemented components; the approved surface brief supplies the direction. No worker or correction behavior is specified here.
+This is a source-derived record of the current workspace, not a finish verdict. On 2026-10-01 Nate explicitly waived measured comp reproduction for this build: "Waive: comps were guidance." The comps guide composition; the finish verdict assesses the live prototype. Source authority is the CSS cascade (`styles.css`, then `responsive.css`, then `suite.css`) and the implemented components; the approved surface brief supplies the direction. No worker or correction behavior is specified here.
 
 ## Colors
 
@@ -255,4 +255,4 @@ A full-width status strip sits in the viewer chrome before the effect stage. Cha
 - Don't use internal stale or seed terminology as the main user-facing state label.
 - Don't promote legacy history colours or unfinished state designs into new system rules.
 
-Not canonized or repaired in this document: legacy hard-coded engine-history colours, older source comments that describe the pre-suite layout, and the unresolved composition-led state specification. These are drift or open process work, not authority for new visual rules. Raster provenance is maintained in the existing icon files; this document does not replace those embedded origins or alter asset pixels.
+Not canonized or repaired in this document: legacy hard-coded engine-history colours and older source comments that describe the pre-suite layout. These are drift, not authority for new visual rules. Raster provenance is maintained in the existing icon files; this document does not replace those embedded origins or alter asset pixels.
