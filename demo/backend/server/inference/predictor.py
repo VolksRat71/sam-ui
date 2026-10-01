@@ -2,7 +2,7 @@
 # All rights reserved.
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
-# Modified by sam-ui: clicks are recorded as seeds, and track jobs run through tracks/.
+# Modified by sam-ui: clicks are recorded as seeds, track jobs run through tracks/, and a correction refines the cached track mask (with an anchor click for a lone negative).
 
 import contextlib
 import logging
@@ -38,6 +38,7 @@ from inference.data_types import (
 from pycocotools.mask import decode as decode_masks
 from sam2.build_sam import build_sam2_video_predictor
 from tracks import rle as track_rle
+from tracks.anchor import anchor_point
 from tracks.engine import Sam2Engine, seed_into_state
 from tracks.features import VIDEO_KEY, FeatureCache, default_cache_gb, install as install_feature_cache
 from tracks.streaming import install_sam2_streaming
@@ -208,14 +209,25 @@ class InferenceAPI:
                     )
                     primed = True
 
+            # sam-ui: SAM 2 empties a frame whose clicks are all negative, even
+            # with a mask to refine. So a correction of only negatives gets an
+            # anchor: one positive deep inside the frame's mask, away from the
+            # clicks. SAM sees it; the seed store records only the user's clicks.
+            sam_points, sam_labels = points, labels
+            if 1 not in self.__frame_labels(inference_state, obj_id, frame_idx, labels, clear_old_points):
+                current = self.__current_mask(inference_state, obj_id, frame_idx)
+                anchor = None if current is None else anchor_point(current, points)
+                if anchor is not None:
+                    sam_points, sam_labels = [anchor] + list(points), [1] + list(labels)
+
             # add new prompts and instantly get the output on the same frame
             try:
                 frame_idx, object_ids, masks = self.predictor.add_new_points_or_box(
                     inference_state=inference_state,
                     frame_idx=frame_idx,
                     obj_id=obj_id,
-                    points=points,
-                    labels=labels,
+                    points=sam_points,
+                    labels=sam_labels,
                     clear_old_points=clear_old_points,
                     normalize_coords=False,
                 )
@@ -511,6 +523,31 @@ class InferenceAPI:
                 if frame_idx in d.get(k, {}):
                     return True
         return False
+
+    @staticmethod
+    def __frame_labels(inference_state, obj_id: int, frame_idx: int, labels, clear_old_points: bool) -> List[int]:
+        """The labels SAM 2 will hold for this frame once `labels` are added."""
+        new = [int(l) for l in labels]
+        if clear_old_points:
+            return new
+        obj_idx = inference_state["obj_id_to_idx"].get(obj_id)
+        old = None if obj_idx is None else inference_state["point_inputs_per_obj"].get(obj_idx, {}).get(frame_idx)
+        return ([] if old is None else [int(l) for l in old["point_labels"].flatten().tolist()]) + new
+
+    @staticmethod
+    def __current_mask(inference_state, obj_id: int, frame_idx: int):
+        """The mask SAM 2 would refine on this frame (its previous output, looked
+        up as add_new_points_or_box does), at SAM's low resolution, or None."""
+        obj_idx = inference_state["obj_id_to_idx"].get(obj_id)
+        if obj_idx is None:
+            return None
+        for d in (inference_state["temp_output_dict_per_obj"].get(obj_idx, {}),
+                  inference_state["output_dict_per_obj"].get(obj_idx, {})):
+            for k in ("cond_frame_outputs", "non_cond_frame_outputs"):
+                out = d.get(k, {}).get(frame_idx)
+                if out is not None and out.get("pred_masks") is not None:
+                    return (out["pred_masks"][0, 0] > 0).cpu().numpy()
+        return None
 
     def cancel_propagate_in_video(
         self, request: CancelPropagateInVideoRequest

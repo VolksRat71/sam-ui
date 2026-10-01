@@ -14,6 +14,7 @@ import {
   jobProgress,
   nextObjectId,
   reducer,
+  staleIds,
 } from './objects';
 
 function run(actions: Action[], state: StudioState = initialState): StudioState {
@@ -245,7 +246,7 @@ describe('limits and hints', () => {
     expect(canAddObject(s, 3)).toBe(true);
   });
 
-  it('asks for a positive click when a frame has only negative ones', () => {
+  it('asks for a positive click when a frame has only negative ones and no mask', () => {
     const s = run([
       {type: 'add', id: 0},
       {type: 'setPoints', id: 0, frame: 2, points: [[0.1, 0.1, 0], [0.2, 0.2, 0]]},
@@ -255,6 +256,16 @@ describe('limits and hints', () => {
     expect(needsPositiveClick(byId(s, 0), 3)).toBe(false);
     expect(needsPositiveClick(byId(s, 0), 4)).toBe(false);
     expect(needsPositiveClick(undefined, 2)).toBe(false);
+    // a lone negative on a tracked frame cuts the tracked mask: the frame keeps one, no hint
+    expect(needsPositiveClick(byId(s, 0), 2, true)).toBe(false);
+  });
+
+  it('lists the objects whose shown track is stale', () => {
+    const s = run([
+      {type: 'restore', objects: [server(0, 'tracked'), server(1, 'stale'), server(2, 'untracked')]},
+      {type: 'setPoints', id: 0, frame: 4, points: [[0.1, 0.1, 0]]},
+    ]);
+    expect(staleIds(s)).toEqual([0, 1]);
   });
 });
 

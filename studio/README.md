@@ -94,9 +94,17 @@ python3 -m http.server 7390 --bind 127.0.0.1 --directory /tmp/pages   # http://1
 
 - **Objects.** Click the video to add an object and a positive point. Right
   click adds a negative point, and the Add / Remove toggle swaps the two.
-  Click a point to remove it. *Add object* starts the next object. If every
-  click on a frame is negative, SAM 2 returns an empty mask, and studio shows a
-  hint asking for a positive click. Objects are *Object N* until renamed:
+  Click a point to remove it. *Add object* starts the next object. On a
+  tracked frame a click refines the tracked mask: a lone negative cuts away the
+  region it is on. If every click on a frame is negative and the frame has no
+  mask to refine, SAM 2 returns an empty mask, and studio shows a hint asking
+  for a positive click.
+- **Review flags.** While scrubbing, F flags the current frame of the selected
+  object (the flag button in the transport does the same). Each flag is a
+  yellow marker on the object's lane that seeks there when clicked; clicks on
+  that frame clear it. After a correction the object's track is stale: studio
+  keeps showing it, faded, until the re-track, so the other flagged frames can
+  be corrected against it. Objects are *Object N* until renamed:
   double-click the name (or the pencil) to rename it in place. Names are
   stored with the seeds (`POST /rename_object`) and never make a track stale;
   numbers are never reused after a delete.
@@ -163,7 +171,8 @@ python3 -m http.server 7390 --bind 127.0.0.1 --directory /tmp/pages   # http://1
   point markers are an SVG overlay in video coordinates, so they stay crisp
   and keep their size on screen at any zoom. At 200% and above the video
   shows real pixels.
-- **Keys**: Space plays and pauses, and the arrow keys step one frame.
+- **Keys**: Space plays and pauses, the arrow keys step one frame, and F flags
+  the frame for a correction.
 
 ## Features
 
