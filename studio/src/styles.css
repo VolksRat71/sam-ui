@@ -1498,6 +1498,14 @@ code {
   border-color: #fa871999;
   color: #ffb870;
 }
+/* the desktop app found a newer release (UpdateBanner.tsx) */
+.demo-banner.update-banner {
+  border-color: #6ea8fe66;
+  background: #6ea8fe1a;
+}
+.update-banner a {
+  color: #8ab4ff;
+}
 
 /* an upload's notice (a long clip is trimmed to the backend's limit) */
 .media-notice {

@@ -26,6 +26,7 @@ import ObjectsSection from './ObjectsSection';
 import Preview, {type LabelMode} from './Preview';
 import Sidebar from './Sidebar';
 import Timeline from './Timeline';
+import UpdateBanner from './UpdateBanner';
 
 type Props = {
   video: VideoItem;
@@ -156,6 +157,7 @@ export default function Workspace({video, renderMedia}: Props) {
       </header>
 
       {notice === 'unsupported' ? <UnsupportedNotice /> : <DemoBanner show={session.status === 'ready' && notice === 'demo'} />}
+      <UpdateBanner />
 
       {session.warning != null && (
         <div className="toast" role="status">
