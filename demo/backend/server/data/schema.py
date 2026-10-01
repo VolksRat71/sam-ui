@@ -2,7 +2,7 @@
 # All rights reserved.
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
-# Modified by sam-ui: objectTracks query, clearTrack mutation, startSession returns known objects.
+# Modified by sam-ui: objectTracks query, clearTrack mutation, startSession returns known objects and stays inside DATA_PATH.
 # Modified by sam-ui: setObjectRange mutation (absent ranges).
 # Modified by sam-ui: undoSeeds, redoSeeds, restoreVersion and moveClicks mutations.
 # Modified by sam-ui: setObjectRange by state (present, candidate), setObjectCandidates mutation.
@@ -151,7 +151,7 @@ class Mutation:
 
         request = StartSessionRequest(
             type="start_session",
-            path=f"{DATA_PATH}/{input.path}",
+            path=session_video_path(input.path),
         )
 
         response = inference_api.start_session(request=request)
@@ -364,6 +364,21 @@ class Mutation:
         )
         response = inference_api.cancel_propagate_in_video(request)
         return CancelPropagateInVideo(success=response.success)
+
+
+def session_video_path(rel: str) -> str:
+    """`rel` (as the page sends it, e.g. "gallery/x.mp4") under DATA_PATH, or
+    ValueError. The check is on the path's text, not its resolved target, so a
+    link the backend made itself under DATA_PATH (an in-place link to footage
+    elsewhere) still opens, while an absolute path or a `..` that climbs out of
+    DATA_PATH is refused."""
+    root = os.path.normpath(str(DATA_PATH))
+    if not rel or os.path.isabs(rel) or "\x00" in rel:
+        raise ValueError(f"not a video path under the data folder: {rel!r}")
+    full = os.path.normpath(os.path.join(root, rel))
+    if os.path.commonpath([root, full]) != root or full == root:
+        raise ValueError(f"not a video path under the data folder: {rel!r}")
+    return full
 
 
 def get_file_hash(video_path_or_file) -> str:

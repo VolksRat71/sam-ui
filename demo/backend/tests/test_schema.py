@@ -15,8 +15,10 @@ INFO = {"object_id": 3, "state": "stale", "engine": "sam2", "model": "large", "f
 class FakeAPI:
     def __init__(self):
         self.cleared = []
+        self.started = []
 
     def start_session(self, request):
+        self.started.append(request.path)
         return SimpleNamespace(session_id="s1")
 
     def object_tracks(self, session_id):
@@ -166,3 +168,16 @@ def test_undo_redo_restore_and_move_mutations_reach_the_api():
     d = run('mutation { moveClicks(input: {sessionId: "s1", frameIndex: 4, fromObjectId: 1, toObjectId: 2}) '
             '{ objectId } }', api)
     assert d["moveClicks"] == [{"objectId": 1}, {"objectId": 2}] and api.step == ("move", "s1", 4, 1, 2)
+def test_start_session_stays_inside_the_data_folder():
+    import os
+
+    from app_conf import DATA_PATH
+
+    api = FakeAPI()
+    run('mutation { startSession(input: {path: "gallery/x.mp4"}) { sessionId } }', api)
+    assert api.started == [os.path.join(os.path.normpath(str(DATA_PATH)), "gallery", "x.mp4")]
+    for bad in ["../../etc/passwd", "gallery/../../secret.mp4", "/etc/passwd", ""]:
+        r = schema.execute_sync('mutation($p: String!) { startSession(input: {path: $p}) { sessionId } }',
+                                variable_values={"p": bad}, context_value={"inference_api": api})
+        assert r.errors and "not a video path" in str(r.errors[0]), bad
+    assert len(api.started) == 1  # nothing outside the folder reached the engine
