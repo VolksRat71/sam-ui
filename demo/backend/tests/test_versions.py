@@ -157,6 +157,40 @@ def test_a_change_during_a_job_never_swaps_the_track_under_it(h):
     h.service.jobs.release(job)
 
 
+def test_undoing_an_objects_first_click_keeps_the_object_listed_with_its_redo(h):
+    h.click(1, frame=0)
+    h.service.undo(h.video, 1)
+    h.new_service()  # a reload
+    assert 1 in h.service.seeds.objects(h.video)
+    assert history(h)["can_redo"] is True
+    assert sorted(h.service.redo(h.video, 1)["seeds"]) == [0]
+
+
+def test_a_failed_restore_leaves_the_seeds_and_history_as_they_were(h, monkeypatch):
+    h.click(1, frame=0)
+    h.track()
+    accident(h)
+    h.track()
+    seeds, before = h.service.seeds.seeds(h.video, 1), history(h)
+
+    def boom(*args, **kw):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(h.service.tracks, "adopt", boom)
+    with pytest.raises(OSError):
+        h.service.undo(h.video, 1)
+    assert h.service.seeds.seeds(h.video, 1) == seeds and history(h) == before
+
+
+def test_removing_an_object_mid_job_leaves_no_versions_behind(h):
+    h.click(1, frame=0)
+    it = h.service.track(h.video, str(h.video_path), [1])
+    next(it)
+    h.service.remove_object(h.video, 1)
+    list(it)
+    assert not (h.root / h.video / "1" / "versions").exists()
+
+
 def test_nothing_to_undo_is_an_error_and_changes_nothing(h):
     h.click(1, frame=0)
     h.service.undo(h.video, 1)  # back to no clicks
@@ -369,9 +403,13 @@ def test_undo_and_redo_keep_the_sessions_sam2_state_in_step(world):
     click(a, sid, 1, 0, [[0.5, 0.5]], [1])
     click(a, sid, 1, 3, [[0.2, 0.2]], [1])  # the accident
     assert cond_frames(a, sid, 1) == {0, 3}
+    st = a.session_states[sid]["state"]
+    i = st["obj_id_to_idx"][1]
+    st["output_dict_per_obj"][i]["cond_frame_outputs"][3] = {"consolidated": True}  # as after a preflight
     info = a.undo_seeds(sid, 1)
     assert sorted(info["seeds"]) == [0]
     assert cond_frames(a, sid, 1) == {0}  # SAM 2 forgot the click too
+    assert 3 not in st["output_dict_per_obj"][i]["non_cond_frame_outputs"]  # nothing left to refine
     stub.mask_calls.clear()
     info = a.redo_seeds(sid, 1)
     assert sorted(info["seeds"]) == [0, 3]
@@ -416,6 +454,27 @@ def test_moving_clicks_into_the_targets_absent_range_is_refused(world):
         a.move_clicks(sid, 3, 1, 2)
     video = a.session_states[sid]["video"]
     assert sorted(a.tracks.seeds.seeds(video, 1)) == [3] and sorted(a.tracks.seeds.seeds(video, 2)) == [0]
+
+
+def test_a_move_the_target_refuses_leaves_the_source_untouched(world):
+    make, stub, path = world
+    a = make()
+    sid = start(a, path)
+    click(a, sid, 1, 3, [[0.8, 0.8]], [1])
+    click(a, sid, 2, 0, [[0.2, 0.2]], [1])
+    video = a.session_states[sid]["video"]
+    before = (a.tracks.seeds.seeds(video, 1), a.tracks.versions_info(video, 1))
+    real = stub.add_new_points_or_box
+
+    def boom(*args, **kw):
+        raise RuntimeError("MPS backend out of memory")
+
+    stub.add_new_points_or_box = boom
+    with pytest.raises(RuntimeError):
+        a.move_clicks(sid, 3, 1, 2)
+    stub.add_new_points_or_box = real
+    assert (a.tracks.seeds.seeds(video, 1), a.tracks.versions_info(video, 1)) == before
+    assert 3 in cond_frames(a, sid, 1)
 
 
 def test_moving_clicks_is_refused_while_either_object_is_tracking(world):

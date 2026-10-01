@@ -331,7 +331,11 @@ class TrackService:
             raise NothingToUndo(f"object {obj_id} has nothing to {src}")
         key, cur = self._record(video, obj_id)
         self._remember(video, obj_id, key, cur)
-        self._apply(video, obj_id, files)
+        try:
+            self._apply(video, obj_id, files)
+        except BaseException:
+            self.seeds.put_record(video, obj_id, cur)  # as it was: the history still says so
+            raise
         h[src].pop()
         h[dst].append({"key": key, "at": ver.now()})
         self.versions.set_history(video, obj_id, h)
@@ -588,6 +592,8 @@ class TrackService:
                 logger.exception(f"saving the track of object {o} failed")
                 result.failed[o] = f"{type(err).__name__}: {err}"
                 continue
+            if o not in self.seeds.objects(video):
+                continue  # removed while the job ran: keep no version of it
             try:  # the track is saved; a version that fails to keep only costs an undo
                 self._keep_version(video, o, e.name, p.hash, p.record, meta)
                 self.versions.gc(video, o)

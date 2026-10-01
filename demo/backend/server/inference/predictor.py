@@ -545,10 +545,24 @@ class InferenceAPI:
             old, new = before.get(frame), after.get(frame)
             if old == new:
                 continue
-            if obj_id in inference_state["obj_id_to_idx"]:
-                self.predictor.clear_all_prompts_in_frame(inference_state, frame, obj_id)
+            self.__forget_frame(inference_state, obj_id, frame)
             if new and (new.get("mask") or new.get("points")):
                 seed_into_state(self.predictor, inference_state, obj_id, frame, new)
+
+    def __forget_frame(self, inference_state, obj_id: int, frame: int) -> None:
+        """Drop the object's inputs and every output SAM 2 holds on this frame.
+        clear_all_prompts_in_frame keeps a consolidated output as a
+        non-conditioning one, which a later click would refine (and
+        __has_output would count) instead of priming from the cached track."""
+        idx = inference_state["obj_id_to_idx"].get(obj_id)
+        if idx is None:
+            return
+        self.predictor.clear_all_prompts_in_frame(inference_state, frame, obj_id, need_output=False)
+        for d in (inference_state["output_dict_per_obj"].get(idx, {}),
+                  inference_state["temp_output_dict_per_obj"].get(idx, {})):
+            for k in ("cond_frame_outputs", "non_cond_frame_outputs"):
+                d.get(k, {}).pop(frame, None)
+        inference_state.get("frames_tracked_per_obj", {}).get(idx, {}).pop(frame, None)
 
     def move_clicks(self, session_id: str, frame_index: int, from_id: int, to_id: int) -> List[Dict]:
         """Move one object's clicks on a frame to another object (clicks that
@@ -574,18 +588,11 @@ class InferenceAPI:
                     "unmark that part of its range to move clicks there"
                 )
             target = self.tracks.seeds.seeds(video, to_id).get(frame_index) or {"points": [], "labels": []}
-            if from_id in state["obj_id_to_idx"]:
-                self.predictor.clear_all_prompts_in_frame(state, frame_index, from_id)
+            # the target first: if SAM 2 fails on it, the source still has its clicks
+            self._add_points_locked(session, frame_index, to_id, target["points"] + seed["points"],
+                                    target["labels"] + seed["labels"], True)
+            self.__forget_frame(state, from_id, frame_index)
             self.tracks.clear_frame(video, from_id, frame_index)
-            try:
-                self._add_points_locked(session, frame_index, to_id, target["points"] + seed["points"],
-                                        target["labels"] + seed["labels"], True)
-            except Exception:
-                # the target never took them: give the source its clicks back
-                before = self.tracks.seeds.seeds(video, from_id)
-                info = self.tracks.undo(video, from_id)
-                self.__resync(state, from_id, before, info["seeds"])
-                raise
             return [self.tracks.object_info(video, from_id), self.tracks.object_info(video, to_id)]
 
     def track_context(self, session_id: str) -> TrackContext:

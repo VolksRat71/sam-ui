@@ -217,11 +217,15 @@ class SeedStore:
         return out
 
     def put_record(self, video: str, obj_id: int, files: Dict[str, object]) -> None:
-        """Write a seed record back as it was recorded (absent files removed)."""
+        """Write a seed record back as it was recorded (absent files removed).
+        A record from before the object's first click still writes an empty
+        seeds.json, so the object stays listed, with its history to redo."""
         d = self.root / video / str(int(obj_id))
         d.mkdir(parents=True, exist_ok=True)
         for name in self.RECORD_FILES:
-            if files.get(name) is None:
+            if name == "seeds.json" and files.get(name) is None:
+                _write_json_atomic(d / name, {})
+            elif files.get(name) is None:
                 (d / name).unlink(missing_ok=True)
             else:
                 _write_json_atomic(d / name, files[name])
