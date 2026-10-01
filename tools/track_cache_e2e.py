@@ -437,7 +437,8 @@ def bounded_retrack():
     box, waits = {}, []
 
     def run():
-        box["r"] = post_stream("/track_objects", {"session_id": sid})
+        # object 0 only: the clicks below make object 1, which a job without ids would take too
+        box["r"] = post_stream("/track_objects", {"session_id": sid, "object_ids": [0]})
 
     job = threading.Thread(target=run)
     job.start()
@@ -453,7 +454,7 @@ def bounded_retrack():
     head = HEADERS.get("Objects-Bounded")
     check(head == "0", f"after {what}, the job re-tracks object 0 in a bounded pass ({t_b:.1f} s)")
     check(max(waits) < 2.0, f"{len(waits)} clicks during it answered in at most {max(waits):.2f} s "
-                            f"(median {sorted(waits)[len(waits) // 2]:.2f} s)")
+                            f"(median {sorted(waits)[len(waits) // 2]:.2f} s; in order {[round(w, 2) for w in waits]})")
     bnd = {f: m[0] for f, m in frames}
     check(len(frames) == CN and sorted(bnd) == list(range(CN)), "and streams every frame once")
     prov = json.load(urllib.request.urlopen(urllib.request.Request(

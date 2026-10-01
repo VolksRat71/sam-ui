@@ -43,6 +43,7 @@ them with a fake engine and no model.
 import contextlib
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Callable, Iterator, Optional
 
@@ -54,6 +55,7 @@ from tracks.jobs import Job
 from tracks.service import FrameRle, JobResult, TrackService, UnknownEngine
 
 BOUNDARY = "frame"
+HANDOFF_S = 0.002  # after a step with no frame, time for a waiting click to take the model lock
 logger = logging.getLogger(__name__)
 
 
@@ -115,6 +117,9 @@ def _run_job(ctx: TrackContext, job: Job, full: bool = False) -> Iterator[bytes]
                         except StopIteration:
                             break
                     if item is None:  # a step with no frame: the lock was let go, nothing to send
+                        # threading.Lock is not fair: taken straight back, a waiting click
+                        # could miss every gap of a run of these steps (seconds, measured)
+                        time.sleep(HANDOFF_S)
                         continue
                     frame, masks = item
                     job.frames_done += 1
