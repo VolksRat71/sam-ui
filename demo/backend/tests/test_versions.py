@@ -198,7 +198,7 @@ def test_restoring_a_version_from_the_list_is_itself_undoable(h):
     oldest = history(h)["versions"][-1]
     info = h.service.restore_version(h.video, 1, oldest["key"])
     assert info["state"] == TRACKED and sorted(info["seeds"]) == [0] and masks_bytes(h) == original
-    assert history(h)["versions"][-1]["current"] is True
+    assert history(h)["versions"][0]["current"] is True  # in use again: listed first
     info = h.service.undo(h.video, 1)
     assert sorted(info["seeds"]) == [0, 12, 20] and info["state"] == TRACKED
     with pytest.raises(KeyError):
@@ -265,6 +265,21 @@ def test_only_the_last_versions_are_kept_per_object_and_engine(h, monkeypatch):
     assert len(vs) == 3 and vs[0]["current"] is True
     assert first not in {v["key"] for v in vs}
     assert not (h.root / h.video / "1" / "versions" / first / "fake").exists()
+
+
+def test_a_version_made_current_again_is_evicted_last(h, monkeypatch):
+    monkeypatch.setattr(ver, "KEEP", 3)
+    h.click(1, frame=0)
+    h.track()
+    for f in (5, 10):
+        accident(h, f)
+        h.track()
+    oldest = history(h)["versions"][-1]["key"]
+    h.service.restore_version(h.video, 1, oldest)  # back to the first track: it is in use again
+    assert history(h)["versions"][0]["key"] == oldest
+    accident(h, 20)
+    h.track()
+    assert oldest in {v["key"] for v in history(h)["versions"]}
 
 
 def test_removing_an_object_drops_its_versions_and_history(h):

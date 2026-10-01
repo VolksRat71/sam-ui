@@ -315,6 +315,7 @@ class TrackService:
             if (self.versions.summary(video, obj_id, name, key) or {}).get("model") != model:
                 continue  # made by another model: it would be stale anyway
             self.tracks.adopt(video, obj_id, name, src, extra={"restored": {"at": ver.now(), "from": "versions"}})
+            self.versions.touch(video, obj_id, name, key)
 
     def _step(self, video: str, obj_id: int, src: str, dst: str) -> Dict:
         self._check_free(video, obj_id)
@@ -357,8 +358,8 @@ class TrackService:
         return self.object_info(video, obj_id)
 
     def versions_info(self, video: str, obj_id: int) -> Dict:
-        """What the object can undo and redo, and its kept versions, newest
-        first: when each was tracked, by which engine and model, from how
+        """What the object can undo and redo, and its kept versions, the most
+        recently made or restored first: when each was tracked, by which engine and model, from how
         many clicks, and whether it is the object's current seeds."""
         current = self.seeds.hash(video, obj_id)
         h = self.versions.history(video, obj_id)

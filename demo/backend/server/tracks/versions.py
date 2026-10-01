@@ -21,8 +21,8 @@ Layout, beside the object's seeds and current tracks:
       The object's seed changes, newest last: undo restores the snapshot of
       the last "undo" key and pushes the seeds it replaces onto "redo".
 
-KEEP tracked versions are kept per object and engine, newest first (the one
-the object's current track is never evicted); UNDO_DEPTH seed changes per
+KEEP tracked versions are kept per object and engine, the most recently made
+or made current again first (the object's current track is never evicted); UNDO_DEPTH seed changes per
 object. A snapshot no version and no history entry refers to is dropped.
 Removing an object removes all of it (the object's directory goes).
 """
@@ -107,6 +107,13 @@ class VersionStore:
             shutil.rmtree(final, ignore_errors=True)
         os.replace(tmp, final)
 
+    def touch(self, video: str, obj_id: int, engine: str, key: str) -> None:
+        """The version was made current again: it counts as the newest, so it is evicted last."""
+        p = self._dir(video, obj_id, key) / engine / SUMMARY
+        s = _read_json(p)
+        if isinstance(s, dict):
+            _write_json(p, {**s, "saved": time.time_ns()})
+
     def has(self, video: str, obj_id: int, engine: str, key: str) -> bool:
         d = self._dir(video, obj_id, key) / engine
         return all((d / n).exists() for n in TRACK_FILES)
@@ -118,7 +125,8 @@ class VersionStore:
         return _read_json(self._dir(video, obj_id, key) / engine / SUMMARY)
 
     def entries(self, video: str, obj_id: int, engine: Optional[str] = None) -> List[Dict]:
-        """Every tracked version ({"key", "engine", **summary}), newest first."""
+        """Every tracked version ({"key", "engine", **summary}), the most recently
+        made (or made current again) first."""
         d = self._obj(video, obj_id) / VERSIONS
         if not d.is_dir():
             return []
