@@ -115,6 +115,21 @@ python3 -m http.server 7390 --bind 127.0.0.1 --directory /tmp/pages   # http://1
   the object after the gap" hint on the lane. A click inside an absent range is
   refused, with a note saying so: click the block to select it and *Unmark* it
   (all of it, or a dragged part) first. Escape drops a selection.
+- **Undo.** Cmd-Z undoes the selected object's last click, cleared frame or
+  range edit, and Shift-Cmd-Z redoes it (Ctrl-Z and Ctrl-Y elsewhere; Undo and
+  Redo on the object's row do the same). Neither fires while you type in a
+  field. When a track of the clicks you go back to is kept, it shows at once,
+  tracked, with no re-track; otherwise the object is stale, as after any click.
+  Undo waits while a job tracks the object. *Versions* on the selected object
+  lists its kept tracks with when they were tracked, the engine and the number
+  of clicks; click one to go back to it (that is undoable too). With a backend
+  the list is the backend's; browser-engine tracks come back with undo.
+- **Wrong object?** When the selected object has clicks on the frame on
+  screen, *Move these clicks to* hands them to another object, which segments
+  them as if you had clicked it. Each object can undo its side. An object
+  marked absent on that frame, or being tracked, is not offered.
+- **Which object is selected.** Its mask has a wider outline ringed in white,
+  and the other objects dim while it is selected.
 - **Names.** Objects are *Object N* until renamed:
   double-click the name (or the pencil) to rename it in place. Names are
   stored with the seeds (`POST /rename_object`) and never make a track stale;
@@ -183,7 +198,8 @@ python3 -m http.server 7390 --bind 127.0.0.1 --directory /tmp/pages   # http://1
   and keep their size on screen at any zoom. At 200% and above the video
   shows real pixels.
 - **Keys**: Space plays and pauses, the arrow keys step one frame, F flags
-  the frame for a correction, and Escape drops a lane selection.
+  the frame for a correction, Cmd-Z / Shift-Cmd-Z undo and redo the selected
+  object's clicks, and Escape drops a lane selection.
 
 ## Features
 
@@ -216,7 +232,7 @@ Compared with Meta's demo UI, which studio replaced:
 | Close the session on unload | missing: the backend expires idle sessions (30 min). A visible tab touches its session every 5 minutes to keep it |
 | Stats overlay (debug) | missing |
 
-Studio only: SAM 3 engine, the in-browser SAM 2.1 tiny engine, per-engine badges and disagreement flags, objects restored on reload (with their seed masks), track-state badges, Clear track, absent ranges,
+Studio only: SAM 3 engine, the in-browser SAM 2.1 tiny engine, per-engine badges and disagreement flags, objects restored on reload (with their seed masks), track-state badges, Clear track, absent ranges, undo with kept track versions,
 concurrent jobs, jobs from other tabs shown, zoom and pan, export for
 rotoscoping, and keyboard shortcuts.
 
@@ -243,6 +259,11 @@ a copy in the gitignored `studio/.models/<repo>/` is used instead
   stores and a TrackService for the browser engine, ported from
   `demo/backend/server/tracks`, with their tests) and `localMedia.ts` (the
   videos). `src/media/` is the MediaApi the Media list uses either way.
+- Undo and versions run here too. Both track stores keep the last 10 tracks of
+  each object and bring one back when its clicks return; with no backend they
+  live in OPFS (`tracks/<video>/<obj>/versions/`, a full copy each, since OPFS
+  has no hard links), next to an undo history in `seeds/<video>/<obj>/history.json`.
+  With a backend the browser tracks and their versions stay in this tab.
 
 Where it differs from Python SAM 2:
 
