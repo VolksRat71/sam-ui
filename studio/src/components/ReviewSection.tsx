@@ -54,6 +54,8 @@ export default function ReviewSection({session}: {session: StudioSessionApi}) {
         <button className="button primary" disabled={current == null} onClick={() => current && session.markReviewed(current, !current.reviewed, true)}>{current?.reviewed ? 'Reopen' : 'Looks right (Y)'}</button>
       </div>
     </div>
+    <details className="review-options">
+      <summary>Filters &amp; layer actions <span className="muted">{shown.length} / {spans.length} spans · min {minimum}</span></summary>
     <div className="review-filters">
       <label>Layers<select value={scope} onChange={e => setScope(e.target.value as 'all' | 'selected')}><option value="all">All layers</option><option value="selected">Selected layer</option></select></label>
       <label>Sort<select value={sort} onChange={e => setSort(e.target.value as 'priority' | 'frame')}><option value="priority">Highest score first</option><option value="frame">Frame order</option></select></label>
@@ -61,12 +63,14 @@ export default function ReviewSection({session}: {session: StudioSessionApi}) {
       <label>Minimum score<select value={minimum} onChange={e => setMinimum(Number(e.target.value))}><option value={0}>0 (all)</option><option value={0.5}>0.5</option><option value={2}>2</option><option value={4}>4</option></select></label>
     </div>
     <p className="review-scale">Score: 0–{REVIEW_SCORE_MAX} priority points. Higher means more or stronger review signals, not confidence. A span shows its highest stop score.</p>
-    <p className="review-summary">Showing {shown.length} of {spans.length} spans ({scoped.length} stops). Adjacent stops on the same layer are grouped.</p>
+    <p className="review-summary">{scoped.length} stops. Adjacent stops on the same layer are grouped.</p>
     <p className="review-keys muted">Previous / Next and <kbd>,</kbd> <kbd>.</kbd> use the full queue in priority order, independent of these display filters.</p>
     {state.activeId != null && <button className="button review-accept-all" disabled={pending.length === 0} onClick={() => pending.forEach(e => session.markReviewed(e, true, false))}>
       Looks right: all {pending.length} stops for {nameOf(state.activeId)}
     </button>}
     {changed.length > 0 && <p className="object-hint">{changed.join(', ')} changed. Track again to refresh these review markers.</p>}
+    </details>
+    <p className="review-scale">Priority score: 0–{REVIEW_SCORE_MAX} · higher needs more attention.</p>
     {shown.length === 0 && <p className="empty">{queue.length === 0 ? 'No review signals found. Inspect the matte before exporting.' : 'No spans match these filters. Lower the minimum score or show all layers.'}</p>}
     <ol className="review-list">
       {shown.map(span => {

@@ -162,8 +162,8 @@ input:not([type='checkbox']):not([type='radio']):not([type='range']) { min-heigh
 .group-options > summary::-webkit-details-marker { display: none; }
 .suite-lanes .group-members { padding: 0; }
 .suite-lanes .swimlane { align-self: stretch; }
-.suite-dock [data-section='review'] .review-list { max-height: 160px; overflow: auto; }
-.suite-dock [data-section='review'] .section-body { max-height: 340px; overflow: auto; }
+.suite-dock [data-section='review'] .review-list { max-height: none; overflow: visible; }
+.suite-dock [data-section='review'] .section-body { max-height: min(340px, 34vh); overflow: auto; }
 .suite-dock .section-title { text-transform: none; }
 .topbar-status:empty { display: none; }
 .topbar-actions { margin-inline-start: auto; }
@@ -184,4 +184,40 @@ input:not([type='checkbox']):not([type='radio']):not([type='range']) { min-heigh
   .topbar-actions > .button.subtle { padding-inline: 8px; }
   .layer-summary .badge { font-size: 12px; }
   .group-title .small { display: none; }
+}
+
+/* Review actions stay above the queue; optional detail uses the same scroll area. */
+.review-current { padding-bottom: 6px; margin-bottom: 6px; }
+.review-current .object-actions { margin-top: 4px; gap: 4px; }
+.review-options > summary { cursor: pointer; font-size: var(--type-label); }
+.review-options > summary span { margin-inline-start: 8px; }
+.review-options[open] > summary { margin-bottom: 8px; }
+.review-options .review-accept-all { margin-bottom: 0; }
+.review > .review-scale { margin: 4px 0; }
+.timeline { gap: 0; }
+.timeline-tools { flex: none; }
+@media (min-width: 1024px) {
+  .timeline-tools { display: flex; flex-wrap: wrap; align-items: center; border-bottom: 1px solid var(--line); }
+  .suite-timeline-header { order: 0; border: 0; flex: 1; gap: 6px; }
+  .timeline-tools .transport { border: 0; flex: 1; flex-wrap: wrap; justify-content: flex-end; }
+  .timeline .button, .timeline .icon-button { height: 28px; min-height: 24px; }
+  .timeline .icon-button { width: 28px; min-width: 24px; }
+  .timeline .frame-counter { margin-left: 4px; }
+  .timeline .label-width { margin-left: 8px; }
+  .suite-lanes .filmstrip { height: 28px; }
+  .suite-lanes .scrubber, .suite-ruler .scrub-label { height: 44px; }
+  .scrubber > .swimlane-review { top: 22px; }
+  .suite-lanes .objects-actions { padding-block: 2px; }
+  .suite-lanes .group-header { height: 28px; }
+  .suite-lanes .group-header:has(.group-options[open]) { height: auto; }
+}
+
+/* Keep the first review spans visible at compact desktop heights. */
+.review { gap: 4px; }
+.review-current { margin-bottom: 0; padding-bottom: 4px; }
+.review > .review-scale, .review > .object-hint { margin: 0; }
+.review-options > summary { padding-block: 0; line-height: 24px; }
+@media (min-width: 1024px) and (pointer: fine) {
+  .review-current .button { height: 28px; min-height: 24px; padding-block: 2px; }
+  .review-current > strong { font-size: var(--type-label); }
 }

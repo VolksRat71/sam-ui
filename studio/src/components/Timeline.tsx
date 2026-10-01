@@ -233,6 +233,12 @@ export default function Timeline({session, actions, inspector}: Props) {
 
   return (
     <div className="timeline">
+      <div className="timeline-tools">
+      <div className="suite-timeline-header">
+        <strong>Layers</strong><span className="muted">{state.objects.length}</span>
+        {actions}
+        <label className="label-width">Label width <input type="range" min="200" max="480" step="20" value={labelWidth} onChange={e => setLabelWidth(Number(e.target.value))} /></label>
+      </div>
       <div className="transport">
         <button className="icon-button" onClick={() => seek(frame - 1)} title="Previous frame (Left)">
           <ChevronLeft size={18} />
@@ -346,10 +352,6 @@ export default function Timeline({session, actions, inspector}: Props) {
           </span>
         )}
       </div>
-      <div className="suite-timeline-header">
-        <strong>Layers</strong><span className="muted">{state.objects.length}</span>
-        {actions}
-        <label className="label-width">Label width <input type="range" min="200" max="480" step="20" value={labelWidth} onChange={e => setLabelWidth(Number(e.target.value))} /></label>
       </div>
       <div className="lanes suite-lanes" style={{'--label-width': `${labelWidth}px`} as CSSProperties}>
         <div className="suite-ruler">
