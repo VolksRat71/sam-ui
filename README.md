@@ -189,6 +189,7 @@ SAM_UI_SLOW=1 PYTORCH_ENABLE_MPS_FALLBACK=1 pytest demo/backend/tests -q -k "slo
 cd studio && npm test && npm run lint && npm run build
 npm run smoke                                        # end to end in headless Chrome
 SMOKE=both npm run smoke                             # + the browser-only build (headed Chrome, WebGPU)
+CLIP_SECONDS=300 SERVE=dist-pages npm run memory     # browser build: memory and IoU over a long track
 python tools/memory_bench.py --seconds 10 60 180     # peak memory against clip length
 python tools/track_cache_e2e.py --api http://127.0.0.1:7373   # live backend (use a scratch one)
 ```

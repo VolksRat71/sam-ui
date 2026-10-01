@@ -32,9 +32,9 @@ export const DECODED_FRAME_BYTES = 1.0e9;
  * plateaued at 2.7-3.6 GB for all of Chrome, JS heap under 35 MB. 120 s is
  * the longest length measured end to end; a 5-minute run held the same
  * level (2.8-3.1 GB) for its first 196 frames before it was stopped, so
- * raising this to 300 needs that run finished. Tracking takes about 0.3 s a
- * frame at 720p, so 2 minutes takes about 15. VITE_BROWSER_MAX_SECONDS
- * overrides it.
+ * raising this to 300 needs that run finished: `npm run memory` (see
+ * studio/README.md). Tracking takes about 0.3 s a frame at 720p, so 2
+ * minutes takes about 15. VITE_BROWSER_MAX_SECONDS overrides it.
  */
 export const BROWSER_MAX_SECONDS: number = Number(import.meta.env.VITE_BROWSER_MAX_SECONDS) || 120;
 

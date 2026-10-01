@@ -53,6 +53,27 @@ exports mask videos, Vector JSON and the roto zip, and deletes the video.
 CLIP=e2e/out/clip.mp4 SMOKE=local NO_SERVER_URL=http://127.0.0.1:7390/sam-ui/ npm run smoke
 ```
 
+Memory over a long track, in the browser-only build (headed Chrome, macOS).
+`npm run memory` makes a synthetic clip with ffmpeg (720p, 24 fps, a red
+square over a grid) and opens it. It clicks the square on frame 0 and tracks
+it to the end, then exports the mask video and scores its IoU against the
+square on every 240th frame. It samples the physical footprint of every Chrome
+process it started (macOS `footprint`, split into GPU, renderer and other),
+the VideoToolbox decoders, the JS heap and the system's memory pressure, and
+stops at critical pressure. The build has to accept the clip, so raise its limit:
+
+```sh
+VITE_BROWSER_MAX_SECONDS=900 npm run build:pages
+CLIP_SECONDS=300 SERVE=dist-pages npm run memory   # serves it on :7999/sam-ui/
+```
+
+Rows go to `/private/tmp/sam-ui-memory/memory-clip300-720.csv`, one every 5 s,
+and the summary to the `.json` beside it. The summary holds the frames, the time,
+memory before the track, the plateau (median of the second half), the peak and
+the IoU. `OPEN_ONLY=1` stops once the clip is open (no model, no WebGPU work),
+and `MASK=<mask.mp4>` re-scores an exported mask video. The header of
+`e2e/memory.mjs` lists the other settings.
+
 ### Without a backend (the browser-only build)
 
 Studio also runs with no backend at all, on the browser engine alone, when
