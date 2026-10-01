@@ -1081,7 +1081,7 @@ a {
   position: absolute;
   top: 3px;
   right: 5px;
-  font-size: 10px;
+  font-size: var(--type-label);
   color: var(--gray-300);
 }
 .effect-export {
@@ -1233,7 +1233,7 @@ code {
   display: flex;
   align-items: center;
   min-width: 0;
-  font-size: 11px;
+  font-size: var(--type-label);
   color: var(--gray-300);
   white-space: nowrap;
 }
@@ -1281,7 +1281,7 @@ code {
 .tick {
   position: absolute;
   top: 2px;
-  font-size: 10px;
+  font-size: var(--type-label);
   color: var(--text-muted);
   transform: translateX(-50%);
   font-variant-numeric: tabular-nums;
@@ -1397,7 +1397,7 @@ code {
   padding: 0 6px;
   border-radius: 4px;
   background: #ffffff1a;
-  font-size: 11px;
+  font-size: var(--type-label);
 }
 .engine-badges {
   display: flex;
@@ -1565,7 +1565,7 @@ code {
   border-radius: 4px;
   background: var(--gray-900);
   font-family: inherit;
-  font-size: 10px;
+  font-size: var(--type-label);
   font-weight: 600;
   line-height: 1;
   color: var(--gray-100);
@@ -1583,7 +1583,7 @@ code {
   align-items: center;
   gap: 4px 20px;
   padding-left: 76px;
-  font-size: 11px;
+  font-size: var(--type-label);
 }
 .lane-legend {
   display: flex;
@@ -1696,7 +1696,7 @@ code {
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  font-size: 10px;
+  font-size: var(--type-label);
   font-style: italic;
   color: var(--gray-400);
   white-space: nowrap;
@@ -1852,7 +1852,7 @@ code {
 }
 .engine-option-head .muted {
   margin-left: auto;
-  font-size: 11px;
+  font-size: var(--type-label);
 }
 .engine-radio {
   flex: none;
@@ -2046,7 +2046,7 @@ code {
   cursor: pointer;
 }
 .menu-item .muted {
-  font-size: 11px;
+  font-size: var(--type-label);
 }
 .menu-item:hover:not(:disabled):not(.disabled) {
   background: #ffffff12;
@@ -2226,7 +2226,7 @@ code {
   font-size: 13px;
 }
 .review-keys {
-  font-size: 11px;
+  font-size: var(--type-label);
   line-height: 20px;
 }
 .review-list {
@@ -2288,7 +2288,7 @@ code {
   white-space: nowrap;
 }
 .review-score {
-  font-size: 11px;
+  font-size: var(--type-label);
   font-variant-numeric: tabular-nums;
 }
 .review-why {
@@ -2303,7 +2303,7 @@ code {
   overflow: hidden;
   border-radius: 999px;
   background: var(--gray-700);
-  font-size: 10px;
+  font-size: var(--type-label);
   line-height: 16px;
   color: var(--gray-100);
   text-overflow: ellipsis;

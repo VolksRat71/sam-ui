@@ -105,3 +105,31 @@
 .review-accept-all { width: 100%; height: auto; min-height: 28px; white-space: normal; margin-block: 4px 12px; }
 .review-go { grid-template-columns: 16px minmax(0, 1fr) auto; }
 .review-go .review-why { grid-column: 2 / -1; color: var(--text-muted); }
+/* Dense operational roles: labels never below 12px; ruler numerals alone use 11px. */
+:root { --type-label: 12px; --type-control: 13px; --type-body: 14px; --type-title: 20px; --target: 24px; }
+body { font-size: var(--type-body); line-height: 1.4; }
+button, input, select, textarea { font-family: inherit; }
+button:not([class*='swimlane-']), summary, select { min-height: var(--target); }
+button:not([class*='swimlane-']) { min-width: var(--target); }
+.button, .icon-button, .link-button, select { font-size: var(--type-control); }
+input:not([type='checkbox']):not([type='radio']):not([type='range']) { min-height: var(--target); }
+.layer-summary, .section-title, .section-badge, .badge, .review-score, .review-scale, .review-summary, .review-keys, .engine-tag, .lane-footer, .group-filter, .label-width, .object-meta { font-size: var(--type-label); }
+.layer-summary, .frame-counter, .tick, .review-score, .job-chip, .section-badge, .badge, input[type='number'] { font-variant-numeric: tabular-nums; }
+.tick { font-size: 11px; }
+.review-why { font-size: var(--type-label); line-height: 1.45; white-space: normal; overflow-wrap: anywhere; }
+.review-where { white-space: normal; overflow-wrap: anywhere; }
+.review-scale { max-width: 65ch; line-height: 1.5; color: var(--text-muted); }
+.group-color { width: var(--target); height: var(--target); }
+.swimlane button::after, .scrubber > button::after { content: ''; position: absolute; left: 50%; top: 50%; width: max(100%, var(--target)); height: var(--target); transform: translate(-50%, -50%); }
+.suite-lanes .swimlane-seed::after { transform: translate(-50%, -50%) rotate(-45deg); }
+.topbar-actions > .button.subtle { font-size: var(--type-control); }
+@media (pointer: coarse), (max-width: 1023.98px) {
+  :root { --target: 44px; --lane-height: 44px; }
+  .section-header, .layer-summary { min-height: 44px; height: 44px; }
+  .suite-lanes .swimlane { min-height: 44px; }
+  .layer-summary { gap: 4px; }
+  .button, .icon-button, select, summary { min-height: 44px; }
+  .icon-button { min-width: 44px; }
+  input:not([type='checkbox']):not([type='radio']):not([type='range']), select { font-size: 16px; }
+  .topbar-actions { gap: 4px; }
+}
