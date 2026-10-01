@@ -427,3 +427,50 @@ def test_review_routes(hs):
     got = hs.client.post("/review_queue", json={"session_id": "s", "flags": {"1": [12]}}).json
     assert reviewed_frames(got) == [12] and got["objects"]["1"]["unreviewed"] == 2
     assert hs.client.post("/set_reviewed", json={"session_id": "s", "object_id": 9, "frame": 1}).status_code == 404
+
+
+# -- parity with the studio's twin (studio/src/state/audit.ts) ---------------------------
+
+from pathlib import Path  # noqa: E402
+
+PARITY = Path(__file__).resolve().parents[3] / "studio" / "src" / "state" / "audit.parity.json"
+
+
+def parity_case():
+    """A 40-frame track that does a bit of everything, and what the queue makes of it."""
+    masks = {}
+    for f in range(40):
+        if 14 <= f <= 17:
+            m = np.zeros((H, W), bool)  # vanishes
+        elif 8 <= f <= 10:
+            m = sq(2 + f, 2, 6) | sq(2 + f, 30, 6)  # splits
+        elif f >= 25:
+            m = sq(f, 10, 12)  # jumps back and grows
+        else:
+            m = sq(2 + f, 10)
+        masks[f] = enc(m)
+    inputs = {"absent": [{"start": 33, "end": 35, "state": "absent"}],
+              "candidates": [{"start": 20, "end": 24, "state": "candidate", "source": "text:dog@sam3", "score": 0.7}],
+              "disagreement": {"5": 0.4, "6": 0.9}, "bounded": [[27, 31]], "flags": [2], "seeds": [0]}
+    return masks, inputs
+
+
+def parity_output(masks, inputs):
+    stats = {f: frame_stats(r) for f, r in masks.items()}
+    reasons = signals(stats, 40, absent=inputs["absent"], candidates=inputs["candidates"],
+                      disagreement={int(f): v for f, v in inputs["disagreement"].items()}, bounded=inputs["bounded"],
+                      flags=inputs["flags"], seeds=inputs["seeds"])
+    return {"stats": {str(f): s for f, s in stats.items()},
+            "locations": locations(reasons, 40, inputs["absent"])}
+
+
+def test_the_studio_parity_fixture_is_current():
+    """studio's audit.test.ts checks its own code against this file: if this
+    fails, the backend's queue changed; regenerate it (SAM_UI_WRITE_PARITY=1)
+    and make the studio agree."""
+    import os
+    masks, inputs = parity_case()
+    want = {"masks": {str(f): r for f, r in masks.items()}, "inputs": inputs, "expected": parity_output(masks, inputs)}
+    if os.environ.get("SAM_UI_WRITE_PARITY"):
+        PARITY.write_text(json.dumps(want, indent=1) + "\n")
+    assert json.loads(PARITY.read_text()) == json.loads(json.dumps(want))

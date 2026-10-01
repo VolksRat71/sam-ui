@@ -1,0 +1,962 @@
+{
+ "masks": {
+  "0": {
+   "size": [
+    48,
+    64
+   ],
+   "counts": "Z38X10000000000000f`2"
+  },
+  "1": {
+   "size": [
+    48,
+    64
+   ],
+   "counts": "j48X10000000000000V_2"
+  },
+  "2": {
+   "size": [
+    48,
+    64
+   ],
+   "counts": "Z68X10000000000000f]2"
+  },
+  "3": {
+   "size": [
+    48,
+    64
+   ],
+   "counts": "j78X10000000000000V\\2"
+  },
+  "4": {
+   "size": [
+    48,
+    64
+   ],
+   "counts": "Z98X10000000000000fZ2"
+  },
+  "5": {
+   "size": [
+    48,
+    64
+   ],
+   "counts": "j:8X10000000000000VY2"
+  },
+  "6": {
+   "size": [
+    48,
+    64
+   ],
+   "counts": "Z<8X10000000000000fW2"
+  },
+  "7": {
+   "size": [
+    48,
+    64
+   ],
+   "counts": "j=8X10000000000000VV2"
+  },
+  "8": {
+   "size": [
+    48,
+    64
+   ],
+   "counts": "R?6f00H080H080H080H080H080fW2"
+  },
+  "9": {
+   "size": [
+    48,
+    64
+   ],
+   "counts": "b`06f00H080H080H080H080H080VV2"
+  },
+  "10": {
+   "size": [
+    48,
+    64
+   ],
+   "counts": "Rb06f00H080H080H080H080H080fT2"
+  },
+  "11": {
+   "size": [
+    48,
+    64
+   ],
+   "counts": "jc08X10000000000000VP2"
+  },
+  "12": {
+   "size": [
+    48,
+    64
+   ],
+   "counts": "Ze08X10000000000000fn1"
+  },
+  "13": {
+   "size": [
+    48,
+    64
+   ],
+   "counts": "jf08X10000000000000Vm1"
+  },
+  "14": {
+   "size": [
+    48,
+    64
+   ],
+   "counts": "PP3"
+  },
+  "15": {
+   "size": [
+    48,
+    64
+   ],
+   "counts": "PP3"
+  },
+  "16": {
+   "size": [
+    48,
+    64
+   ],
+   "counts": "PP3"
+  },
+  "17": {
+   "size": [
+    48,
+    64
+   ],
+   "counts": "PP3"
+  },
+  "18": {
+   "size": [
+    48,
+    64
+   ],
+   "counts": "Zn08X10000000000000fe1"
+  },
+  "19": {
+   "size": [
+    48,
+    64
+   ],
+   "counts": "jo08X10000000000000Vd1"
+  },
+  "20": {
+   "size": [
+    48,
+    64
+   ],
+   "counts": "ZQ18X10000000000000fb1"
+  },
+  "21": {
+   "size": [
+    48,
+    64
+   ],
+   "counts": "jR18X10000000000000Va1"
+  },
+  "22": {
+   "size": [
+    48,
+    64
+   ],
+   "counts": "ZT18X10000000000000f_1"
+  },
+  "23": {
+   "size": [
+    48,
+    64
+   ],
+   "counts": "jU18X10000000000000V^1"
+  },
+  "24": {
+   "size": [
+    48,
+    64
+   ],
+   "counts": "ZW18X10000000000000f\\1"
+  },
+  "25": {
+   "size": [
+    48,
+    64
+   ],
+   "counts": "jU1<T1000000000000000000000VX1"
+  },
+  "26": {
+   "size": [
+    48,
+    64
+   ],
+   "counts": "ZW1<T1000000000000000000000fV1"
+  },
+  "27": {
+   "size": [
+    48,
+    64
+   ],
+   "counts": "jX1<T1000000000000000000000VU1"
+  },
+  "28": {
+   "size": [
+    48,
+    64
+   ],
+   "counts": "ZZ1<T1000000000000000000000fS1"
+  },
+  "29": {
+   "size": [
+    48,
+    64
+   ],
+   "counts": "j[1<T1000000000000000000000VR1"
+  },
+  "30": {
+   "size": [
+    48,
+    64
+   ],
+   "counts": "Z]1<T1000000000000000000000fP1"
+  },
+  "31": {
+   "size": [
+    48,
+    64
+   ],
+   "counts": "j^1<T1000000000000000000000Vo0"
+  },
+  "32": {
+   "size": [
+    48,
+    64
+   ],
+   "counts": "Z`1<T1000000000000000000000fm0"
+  },
+  "33": {
+   "size": [
+    48,
+    64
+   ],
+   "counts": "ja1<T1000000000000000000000Vl0"
+  },
+  "34": {
+   "size": [
+    48,
+    64
+   ],
+   "counts": "Zc1<T1000000000000000000000fj0"
+  },
+  "35": {
+   "size": [
+    48,
+    64
+   ],
+   "counts": "jd1<T1000000000000000000000Vi0"
+  },
+  "36": {
+   "size": [
+    48,
+    64
+   ],
+   "counts": "Zf1<T1000000000000000000000fg0"
+  },
+  "37": {
+   "size": [
+    48,
+    64
+   ],
+   "counts": "jg1<T1000000000000000000000Vf0"
+  },
+  "38": {
+   "size": [
+    48,
+    64
+   ],
+   "counts": "Zi1<T1000000000000000000000fd0"
+  },
+  "39": {
+   "size": [
+    48,
+    64
+   ],
+   "counts": "jj1<T1000000000000000000000Vc0"
+  }
+ },
+ "inputs": {
+  "absent": [
+   {
+    "start": 33,
+    "end": 35,
+    "state": "absent"
+   }
+  ],
+  "candidates": [
+   {
+    "start": 20,
+    "end": 24,
+    "state": "candidate",
+    "source": "text:dog@sam3",
+    "score": 0.7
+   }
+  ],
+  "disagreement": {
+   "5": 0.4,
+   "6": 0.9
+  },
+  "bounded": [
+   [
+    27,
+    31
+   ]
+  ],
+  "flags": [
+   2
+  ],
+  "seeds": [
+   0
+  ]
+ },
+ "expected": {
+  "stats": {
+   "0": {
+    "area": 64,
+    "bbox": [
+     2,
+     10,
+     9,
+     17
+    ],
+    "centroid": [
+     5.5,
+     13.5
+    ],
+    "components": 1
+   },
+   "1": {
+    "area": 64,
+    "bbox": [
+     3,
+     10,
+     10,
+     17
+    ],
+    "centroid": [
+     6.5,
+     13.5
+    ],
+    "components": 1
+   },
+   "2": {
+    "area": 64,
+    "bbox": [
+     4,
+     10,
+     11,
+     17
+    ],
+    "centroid": [
+     7.5,
+     13.5
+    ],
+    "components": 1
+   },
+   "3": {
+    "area": 64,
+    "bbox": [
+     5,
+     10,
+     12,
+     17
+    ],
+    "centroid": [
+     8.5,
+     13.5
+    ],
+    "components": 1
+   },
+   "4": {
+    "area": 64,
+    "bbox": [
+     6,
+     10,
+     13,
+     17
+    ],
+    "centroid": [
+     9.5,
+     13.5
+    ],
+    "components": 1
+   },
+   "5": {
+    "area": 64,
+    "bbox": [
+     7,
+     10,
+     14,
+     17
+    ],
+    "centroid": [
+     10.5,
+     13.5
+    ],
+    "components": 1
+   },
+   "6": {
+    "area": 64,
+    "bbox": [
+     8,
+     10,
+     15,
+     17
+    ],
+    "centroid": [
+     11.5,
+     13.5
+    ],
+    "components": 1
+   },
+   "7": {
+    "area": 64,
+    "bbox": [
+     9,
+     10,
+     16,
+     17
+    ],
+    "centroid": [
+     12.5,
+     13.5
+    ],
+    "components": 1
+   },
+   "8": {
+    "area": 72,
+    "bbox": [
+     10,
+     2,
+     15,
+     35
+    ],
+    "centroid": [
+     12.5,
+     18.5
+    ],
+    "components": 2
+   },
+   "9": {
+    "area": 72,
+    "bbox": [
+     11,
+     2,
+     16,
+     35
+    ],
+    "centroid": [
+     13.5,
+     18.5
+    ],
+    "components": 2
+   },
+   "10": {
+    "area": 72,
+    "bbox": [
+     12,
+     2,
+     17,
+     35
+    ],
+    "centroid": [
+     14.5,
+     18.5
+    ],
+    "components": 2
+   },
+   "11": {
+    "area": 64,
+    "bbox": [
+     13,
+     10,
+     20,
+     17
+    ],
+    "centroid": [
+     16.5,
+     13.5
+    ],
+    "components": 1
+   },
+   "12": {
+    "area": 64,
+    "bbox": [
+     14,
+     10,
+     21,
+     17
+    ],
+    "centroid": [
+     17.5,
+     13.5
+    ],
+    "components": 1
+   },
+   "13": {
+    "area": 64,
+    "bbox": [
+     15,
+     10,
+     22,
+     17
+    ],
+    "centroid": [
+     18.5,
+     13.5
+    ],
+    "components": 1
+   },
+   "14": {
+    "area": 0,
+    "bbox": null,
+    "centroid": null,
+    "components": 0
+   },
+   "15": {
+    "area": 0,
+    "bbox": null,
+    "centroid": null,
+    "components": 0
+   },
+   "16": {
+    "area": 0,
+    "bbox": null,
+    "centroid": null,
+    "components": 0
+   },
+   "17": {
+    "area": 0,
+    "bbox": null,
+    "centroid": null,
+    "components": 0
+   },
+   "18": {
+    "area": 64,
+    "bbox": [
+     20,
+     10,
+     27,
+     17
+    ],
+    "centroid": [
+     23.5,
+     13.5
+    ],
+    "components": 1
+   },
+   "19": {
+    "area": 64,
+    "bbox": [
+     21,
+     10,
+     28,
+     17
+    ],
+    "centroid": [
+     24.5,
+     13.5
+    ],
+    "components": 1
+   },
+   "20": {
+    "area": 64,
+    "bbox": [
+     22,
+     10,
+     29,
+     17
+    ],
+    "centroid": [
+     25.5,
+     13.5
+    ],
+    "components": 1
+   },
+   "21": {
+    "area": 64,
+    "bbox": [
+     23,
+     10,
+     30,
+     17
+    ],
+    "centroid": [
+     26.5,
+     13.5
+    ],
+    "components": 1
+   },
+   "22": {
+    "area": 64,
+    "bbox": [
+     24,
+     10,
+     31,
+     17
+    ],
+    "centroid": [
+     27.5,
+     13.5
+    ],
+    "components": 1
+   },
+   "23": {
+    "area": 64,
+    "bbox": [
+     25,
+     10,
+     32,
+     17
+    ],
+    "centroid": [
+     28.5,
+     13.5
+    ],
+    "components": 1
+   },
+   "24": {
+    "area": 64,
+    "bbox": [
+     26,
+     10,
+     33,
+     17
+    ],
+    "centroid": [
+     29.5,
+     13.5
+    ],
+    "components": 1
+   },
+   "25": {
+    "area": 144,
+    "bbox": [
+     25,
+     10,
+     36,
+     21
+    ],
+    "centroid": [
+     30.5,
+     15.5
+    ],
+    "components": 1
+   },
+   "26": {
+    "area": 144,
+    "bbox": [
+     26,
+     10,
+     37,
+     21
+    ],
+    "centroid": [
+     31.5,
+     15.5
+    ],
+    "components": 1
+   },
+   "27": {
+    "area": 144,
+    "bbox": [
+     27,
+     10,
+     38,
+     21
+    ],
+    "centroid": [
+     32.5,
+     15.5
+    ],
+    "components": 1
+   },
+   "28": {
+    "area": 144,
+    "bbox": [
+     28,
+     10,
+     39,
+     21
+    ],
+    "centroid": [
+     33.5,
+     15.5
+    ],
+    "components": 1
+   },
+   "29": {
+    "area": 144,
+    "bbox": [
+     29,
+     10,
+     40,
+     21
+    ],
+    "centroid": [
+     34.5,
+     15.5
+    ],
+    "components": 1
+   },
+   "30": {
+    "area": 144,
+    "bbox": [
+     30,
+     10,
+     41,
+     21
+    ],
+    "centroid": [
+     35.5,
+     15.5
+    ],
+    "components": 1
+   },
+   "31": {
+    "area": 144,
+    "bbox": [
+     31,
+     10,
+     42,
+     21
+    ],
+    "centroid": [
+     36.5,
+     15.5
+    ],
+    "components": 1
+   },
+   "32": {
+    "area": 144,
+    "bbox": [
+     32,
+     10,
+     43,
+     21
+    ],
+    "centroid": [
+     37.5,
+     15.5
+    ],
+    "components": 1
+   },
+   "33": {
+    "area": 144,
+    "bbox": [
+     33,
+     10,
+     44,
+     21
+    ],
+    "centroid": [
+     38.5,
+     15.5
+    ],
+    "components": 1
+   },
+   "34": {
+    "area": 144,
+    "bbox": [
+     34,
+     10,
+     45,
+     21
+    ],
+    "centroid": [
+     39.5,
+     15.5
+    ],
+    "components": 1
+   },
+   "35": {
+    "area": 144,
+    "bbox": [
+     35,
+     10,
+     46,
+     21
+    ],
+    "centroid": [
+     40.5,
+     15.5
+    ],
+    "components": 1
+   },
+   "36": {
+    "area": 144,
+    "bbox": [
+     36,
+     10,
+     47,
+     21
+    ],
+    "centroid": [
+     41.5,
+     15.5
+    ],
+    "components": 1
+   },
+   "37": {
+    "area": 144,
+    "bbox": [
+     37,
+     10,
+     48,
+     21
+    ],
+    "centroid": [
+     42.5,
+     15.5
+    ],
+    "components": 1
+   },
+   "38": {
+    "area": 144,
+    "bbox": [
+     38,
+     10,
+     49,
+     21
+    ],
+    "centroid": [
+     43.5,
+     15.5
+    ],
+    "components": 1
+   },
+   "39": {
+    "area": 144,
+    "bbox": [
+     39,
+     10,
+     50,
+     21
+    ],
+    "centroid": [
+     44.5,
+     15.5
+    ],
+    "components": 1
+   }
+  },
+  "locations": [
+   {
+    "frame": 18,
+    "start": 13,
+    "end": 28,
+    "score": 6.375,
+    "reasons": [
+     {
+      "kind": "reappear",
+      "frame": 18,
+      "strength": 1.0,
+      "detail": "the object comes back after a gap"
+     },
+     {
+      "kind": "candidate",
+      "frame": 20,
+      "strength": 1.0,
+      "detail": "an unconfirmed candidate range from text:dog@sam3, score 0.70 starts here (frames 21-25)"
+     },
+     {
+      "kind": "stop",
+      "frame": 13,
+      "strength": 1.0,
+      "detail": "the track stops after this frame"
+     },
+     {
+      "kind": "retrack",
+      "frame": 27,
+      "strength": 1.0,
+      "detail": "a re-track near a correction starts here (frames 28-32)"
+     },
+     {
+      "kind": "area",
+      "frame": 25,
+      "strength": 0.806,
+      "detail": "the mask grows by 56% in one frame"
+     },
+     {
+      "kind": "jump",
+      "frame": 25,
+      "strength": 0.569,
+      "detail": "the mask moves 0.12 of its size off its course, and its box overlaps the expected one by 44%"
+     }
+    ]
+   },
+   {
+    "frame": 2,
+    "start": 2,
+    "end": 11,
+    "score": 6.352,
+    "reasons": [
+     {
+      "kind": "flag",
+      "frame": 2,
+      "strength": 1.0,
+      "detail": "flagged for a correction"
+     },
+     {
+      "kind": "disagree",
+      "frame": 5,
+      "strength": 0.75,
+      "detail": "the engines disagree (IoU 0.40)"
+     },
+     {
+      "kind": "components",
+      "frame": 8,
+      "strength": 1.0,
+      "detail": "the mask goes from 1 to 2 pieces"
+     },
+     {
+      "kind": "jump",
+      "frame": 8,
+      "strength": 0.852,
+      "detail": "the mask moves 0.15 of its size off its course, and its box overlaps the expected one by 22%"
+     }
+    ]
+   },
+   {
+    "frame": 31,
+    "start": 29,
+    "end": 32,
+    "score": 2.0,
+    "reasons": [
+     {
+      "kind": "retrack",
+      "frame": 31,
+      "strength": 1.0,
+      "detail": "a re-track near a correction stops here (frames 28-32)"
+     },
+     {
+      "kind": "stop",
+      "frame": 32,
+      "strength": 1.0,
+      "detail": "the track stops after this frame"
+     }
+    ]
+   },
+   {
+    "frame": 36,
+    "start": 36,
+    "end": 36,
+    "score": 1.5,
+    "reasons": [
+     {
+      "kind": "reappear",
+      "frame": 36,
+      "strength": 1.0,
+      "detail": "the object comes back after a gap"
+     }
+    ]
+   }
+  ]
+ }
+}
