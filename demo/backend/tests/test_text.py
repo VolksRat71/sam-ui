@@ -200,6 +200,19 @@ def test_the_text_engine_is_the_default_for_a_prompt_and_the_seed_tracks_on_any_
     assert h.state(1) == STALE  # a new text seed changes the hash
 
 
+def test_a_text_prompt_is_an_undo_step_and_undo_gives_back_the_clicks(h):
+    # integration (text prompts x undo, issue #18): a prompt that replaces a
+    # frame's clicks goes on the undo history like any seed change
+    h.click(1, frame=0)
+    clicked = h.service.seeds.seeds(h.video, 1)[0]
+    prompt(h, frame=0)
+    assert h.service.seeds.seeds(h.video, 1)[0]["text"] == "thing"
+    info = h.service.undo(h.video, 1)
+    assert info["seeds"][0] == clicked  # the clicks are back, the text gone
+    info = h.service.redo(h.video, 1)
+    assert info["seeds"][0]["text"] == "thing" and info["seeds"][0]["points"] == []
+
+
 def test_a_prompt_that_matches_nothing_stores_nothing(h):
     h.click(1, frame=0)
     before = h.service.seeds.hash(h.video, 1)
