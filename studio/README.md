@@ -252,8 +252,10 @@ half after its frame-10 correction. Results go to `e2e/out/parity.json`.
 ## Phones and tablets
 
 Below 1024 px wide studio stacks its panes, and the side panel's sections
-become tabs (Media, Objects, Effects; each keeps its state when hidden). At
-1024 px and wider the desktop layout is unchanged.
+become tabs (Media, Objects, Effects; each keeps its state when hidden). An
+upload in flight survives a switch between the layouts (an iPad rotated): App
+holds it, not the Media section. At 1024 px and wider the desktop layout is
+unchanged.
 
 | Layout | When | Panes |
 | --- | --- | --- |
