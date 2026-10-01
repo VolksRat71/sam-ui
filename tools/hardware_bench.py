@@ -9,6 +9,8 @@ Runs (--runs, any of):
   sam3-text   SAM 3 text prompt (#22): first prompt (loads the detector), then warm
   app         the desktop app's worst case: SAM 2.1 large loaded and tracking, then
               SAM 3 loaded beside it, tracking and (on a gallery clip) a text prompt
+  sam3-idle   what SAM 3 holds between uses (gallery clip): after a track job, after
+              a text prompt, once the detector is unloaded, once the engine is
 
 Clips (--clips, any of):
   synth:<seconds>   moving squares on noise, 1280x720, 24 fps (tools/memory_bench.py's)
@@ -193,6 +195,20 @@ def _sam2_engine(cache_gb: float):
     return Sam2Engine(pred, model="large", offload_video_to_cpu=dev == "mps", autocast=lambda: sam2_autocast(dev))
 
 
+def _sam2_session(e, path: Path, cache_gb: float):
+    """A session-like SAM 2 state for the clip, as the app's interactive
+    session holds, which jobs share (tracks.engine.job_state_like). Only such
+    a state uses the feature cache, so without it --feature-cache-gb would
+    measure nothing. None with the cache off: the job decodes on its own."""
+    if cache_gb <= 0:
+        return None
+    from tracks.features import VIDEO_KEY
+
+    state = e.predictor.init_state(str(path), offload_video_to_cpu=e.offload_video_to_cpu)
+    state[VIDEO_KEY] = str(path)
+    return state
+
+
 def run_child(run: str, clip: str, out: Path, cache_gb: float, text: str, save: str) -> dict:
     sys.path.insert(0, str(REPO / "demo/backend/server"))
     import numpy as np
@@ -216,7 +232,23 @@ def run_child(run: str, clip: str, out: Path, cache_gb: float, text: str, save: 
     row["mps_after_load_gb"] = _gb(meter.sample())
     row["footprint_after_load_gb"] = _gb(footprint()[0])
 
-    if run == "sam3-text":
+    if run == "sam3-idle":
+        def settled():
+            time.sleep(2)
+            return _gb(footprint()[0]), _gb(meter.mps())
+
+        seeds = clip_seeds(clip)
+        n = sum(1 for _ in e.track(str(path), seeds, windows={o: [(0, 47)] for o in seeds}))  # 48 frames
+        row["frames"] = n
+        row["after_job_gb"], row["after_job_mps_gb"] = settled()
+        e.segment_text(str(path), 0, text)
+        row["after_prompt_gb"], row["after_prompt_mps_gb"] = settled()
+        e.detector_idle_s = 0.0
+        row["dropped"] = e.release_idle(now=time.monotonic() + 1)
+        row["detector_unloaded_gb"], row["detector_unloaded_mps_gb"] = settled()
+        e.unload()
+        row["engine_unloaded_gb"], row["engine_unloaded_mps_gb"] = settled()
+    elif run == "sam3-text":
         t0 = time.perf_counter()
         first = e.segment_text(str(path), 0, text)
         row["first_prompt_s"] = round(time.perf_counter() - t0, 1)
@@ -233,7 +265,7 @@ def run_child(run: str, clip: str, out: Path, cache_gb: float, text: str, save: 
         from tracks.sam3_engine import Sam3Engine
 
         seeds = clip_seeds(clip)
-        n2 = sum(1 for _ in e.track(str(path), seeds))
+        n2 = sum(1 for _ in e.track(str(path), seeds, video_handle=_sam2_session(e, path, cache_gb)))
         row["footprint_sam2_done_gb"] = _gb(footprint()[1])
         s3 = Sam3Engine()
         n3, t0 = 0, time.perf_counter()
@@ -248,8 +280,9 @@ def run_child(run: str, clip: str, out: Path, cache_gb: float, text: str, save: 
             meter.sample()
     else:
         seeds = clip_seeds(clip)
+        handle = _sam2_session(e, path, cache_gb) if run == "sam2" else None
         n, t0 = 0, time.perf_counter()
-        for f, m in e.track(str(path), seeds):
+        for f, m in e.track(str(path), seeds, video_handle=handle):
             n += 1
             meter.sample()
             if save:
@@ -260,6 +293,9 @@ def run_child(run: str, clip: str, out: Path, cache_gb: float, text: str, save: 
     if torch.backends.mps.is_available():
         torch.mps.synchronize()
     meter.stop()
+    cache = getattr(getattr(e, "predictor", None), "_sam_ui_feature_cache", None)
+    if cache is not None:
+        row["feature_cache_held_gb"] = _gb(cache.nbytes)
     row["mps_peak_gb"] = _gb(max(meter.peak, meter.sample()))
     row["footprint_peak_gb"] = _gb(footprint()[1])
     row["mps_end_gb"] = _gb(meter.mps())
@@ -271,6 +307,8 @@ def run_child(run: str, clip: str, out: Path, cache_gb: float, text: str, save: 
     row["footprint_idle_gb"] = _gb(footprint()[0])
     row.update(vmmap_peak())
     row["env"] = {k: v for k, v in os.environ.items() if k.startswith("SAM_UI_") and k != "SAM_UI_GALLERY"}
+    if cache_gb > 0:
+        row["env"]["feature_cache_gb"] = cache_gb
     if save:
         d = Path(save) / f"{run}_{clip.replace(':', '_')}"
         d.mkdir(parents=True, exist_ok=True)
@@ -350,7 +388,7 @@ def table(rows) -> str:
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--runs", nargs="*", default=["sam2", "sam3", "sam3-text"],
-                    choices=["sam2", "sam3", "sam3-text", "app"])
+                    choices=["sam2", "sam3", "sam3-text", "app", "sam3-idle"])
     ap.add_argument("--clips", nargs="*", default=["synth:10"])
     ap.add_argument("--text", default="dog", help="the phrase for sam3-text (on frame 0 of each clip)")
     ap.add_argument("--feature-cache-gb", type=float, default=0.0,
@@ -375,7 +413,7 @@ def main():
     for clip in a.clips:
         clip_path(clip, out)  # made once, before any run is timed
         for run in a.runs:
-            if run == "sam3-text" and not clip.startswith("gallery:"):
+            if run in ("sam3-text", "sam3-idle") and not clip.startswith("gallery:"):
                 continue  # a phrase needs something to name
             cmd = [sys.executable, __file__, "--_child", run, clip, "--out", str(out), "--text", a.text,
                    "--feature-cache-gb", str(a.feature_cache_gb), "--save-masks", a.save_masks]
