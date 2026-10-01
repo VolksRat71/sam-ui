@@ -39,6 +39,18 @@ POST /review_queue {session_id, object_ids?, engine?, flags?, compare?}: the
 POST /set_reviewed {session_id, object_id, frame, engine?, reviewed?, span?, reasons?}:
   mark a queue location reviewed ("looks right", tracks/review.py), or with
   reviewed false drop its marks. Metadata only. 404 without a track there.
+POST /discover_text {session_id, object_id, text, stride?, engine?}: EXPERIMENTAL
+  temporal text discovery (tracks/discovery.py): sample every stride-th frame
+  (default 12) with the text engine's detector, group hits into appearances,
+  tighten their edges by bisection, and write them as the object's candidate
+  ranges from source "text:<prompt>@<engine>" (a re-run replaces that
+  source's). Never a seed, mask or track. A job (kind "discover", holding no
+  object) that takes the model lock per detector call; /cancel_track and
+  cancelPropagateInVideo cancel it, and nothing is written. Answers
+  {"job_id", "object_id", "text", "engine", "source", "stride", "n_frames",
+  "intervals": [{"start", "end", "score", "hits", "best": {"frame", "score",
+  "box"}}], "calls", "seconds", "object"}, or {"canceled": true, ...}. 400 on
+  no text, a bad stride, or no engine that reads text.
 POST /rename_object {session_id, object_id, name}: name an object (trimmed, at
   most 64 characters; empty clears it). Metadata only: no track goes stale.
   Answers {"object_id", "name"}.
@@ -79,6 +91,7 @@ from flask import Blueprint, Response, jsonify, request
 
 from inference.multipart import MultipartResponseBuilder
 from tracks import rle
+from tracks.discovery import Canceled
 from tracks.export import ExportError, export
 from tracks.jobs import Job
 from tracks.layout import LayoutError
@@ -306,6 +319,41 @@ def make_blueprint(resolve: Callable[[str], TrackContext], service: Optional[Tra
         except (ValueError, KeyError, TypeError) as err:
             return jsonify({"error": str(err)}), 400
         return jsonify(out)
+
+    @bp.route("/discover_text", methods=["POST"])
+    def discover_text() -> Response:
+        data = request.json
+        ctx = resolve(data["session_id"])
+        try:
+            obj = int(data["object_id"])
+            stride = data.get("stride")
+            if stride is not None and (isinstance(stride, bool) or not isinstance(stride, int)):
+                raise ValueError(f"stride must be a whole number of frames, got {stride!r}")
+            engine = ctx.service.text_engine(data.get("engine")).name  # 400 now, before a job
+        except UnknownEngine:
+            raise
+        except (ValueError, KeyError, TypeError) as err:
+            return jsonify({"error": str(err)}), 400
+        job = ctx.service.jobs.start_discovery(ctx.session_id, ctx.video, engine)
+
+        @contextlib.contextmanager
+        def step():
+            with ctx.lock, ctx.autocast():
+                yield
+            job.frames_done += 1  # detector calls, for /track_jobs
+
+        try:
+            out = ctx.service.discover_text(ctx.video, ctx.path, obj, data.get("text"), stride, engine,
+                                            _n_frames(ctx.video_handle), step, lambda: job.canceled, HANDOFF_S)
+        except Canceled:
+            return jsonify({"canceled": True, "job_id": job.id, "object_id": obj, "intervals": []})
+        except UnknownEngine:
+            raise
+        except ValueError as err:
+            return jsonify({"error": str(err)}), 400
+        finally:
+            ctx.service.jobs.release(job)
+        return jsonify({"job_id": job.id, **out})
 
     @bp.route("/rename_object", methods=["POST"])
     def rename_object() -> Response:
