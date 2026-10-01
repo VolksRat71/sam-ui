@@ -1,5 +1,5 @@
 /**
- * @generated SignedSource<<1a555d7d94d08b6d305d477b1cc9c8ec>>
+ * @generated SignedSource<<ad590d1d9a6a2acda6ce6b3364b1791c>>
  * @lightSyntaxTransform
  * @nogrep
  */
@@ -39,6 +39,8 @@ export type StudioSessionRedoMutation$data = {
     readonly objectId: number;
     readonly ranges: ReadonlyArray<{
       readonly end: number;
+      readonly score: number | null | undefined;
+      readonly source: string | null | undefined;
       readonly start: number;
       readonly state: string;
     }>;
@@ -220,7 +222,21 @@ v5 = [
             "name": "end",
             "storageKey": null
           },
-          (v1/*: any*/)
+          (v1/*: any*/),
+          {
+            "alias": null,
+            "args": null,
+            "kind": "ScalarField",
+            "name": "source",
+            "storageKey": null
+          },
+          {
+            "alias": null,
+            "args": null,
+            "kind": "ScalarField",
+            "name": "score",
+            "storageKey": null
+          }
         ],
         "storageKey": null
       },
@@ -340,16 +356,16 @@ return {
     "selections": (v5/*: any*/)
   },
   "params": {
-    "cacheID": "8f1e21dfda27e9dcf1190a119872874d",
+    "cacheID": "1b85855672b1f77fa57a799c9e3d6be9",
     "id": null,
     "metadata": {},
     "name": "StudioSessionRedoMutation",
     "operationKind": "mutation",
-    "text": "mutation StudioSessionRedoMutation(\n  $input: SeedHistoryInput!\n) {\n  redoSeeds(input: $input) {\n    objectId\n    state\n    frames\n    nFrames\n    seeds {\n      frameIndex\n      points\n      labels\n      mask {\n        size\n        counts\n      }\n    }\n    tracks {\n      engine\n      state\n      frames\n      nFrames\n    }\n    ranges {\n      start\n      end\n      state\n    }\n    history {\n      canUndo\n      canRedo\n      versions {\n        key\n        engine\n        model\n        created\n        elapsedS\n        nFrames\n        clicks\n        seedFrames\n        bounded\n        current\n      }\n    }\n  }\n}\n"
+    "text": "mutation StudioSessionRedoMutation(\n  $input: SeedHistoryInput!\n) {\n  redoSeeds(input: $input) {\n    objectId\n    state\n    frames\n    nFrames\n    seeds {\n      frameIndex\n      points\n      labels\n      mask {\n        size\n        counts\n      }\n    }\n    tracks {\n      engine\n      state\n      frames\n      nFrames\n    }\n    ranges {\n      start\n      end\n      state\n      source\n      score\n    }\n    history {\n      canUndo\n      canRedo\n      versions {\n        key\n        engine\n        model\n        created\n        elapsedS\n        nFrames\n        clicks\n        seedFrames\n        bounded\n        current\n      }\n    }\n  }\n}\n"
   }
 };
 })();
 
-(node as any).hash = "c90382f1e4a4016ae5f0a4a58025a744";
+(node as any).hash = "8cc2bdea012fbc8758ce575e1d8a9b0b";
 
 export default node;

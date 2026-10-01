@@ -10,7 +10,9 @@ Layout, beside the object's seeds and current tracks:
   <obj>/versions/<key>/snapshot.json   {"files": {"seeds.json": ..., "ranges.json": ...}}
       The object's seed record as it was on disk (SeedStore.RECORD_FILES),
       stored as is rather than reinterpreted, so restoring it gives back the
-      exact seeds hash `key`, whatever fields a seed frame holds.
+      exact seeds hash `key`, whatever fields a seed frame holds. An object's
+      present and candidate ranges (annotations.json) are not in it: they
+      are not in the hash, so undo neither restores nor drops them.
   <obj>/versions/<key>/<engine>/track.json, masks.jsonl, version.json
       One engine's track of those seeds. track.json and masks.jsonl are hard
       links to the files the track job wrote (a copy where links fail), so

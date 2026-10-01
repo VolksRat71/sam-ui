@@ -1,5 +1,5 @@
 /**
- * @generated SignedSource<<1af509b13d261805c3811781c79eb0f7>>
+ * @generated SignedSource<<3a83220ebb5b2bc7b13c4f33322d23b8>>
  * @lightSyntaxTransform
  * @nogrep
  */
@@ -41,6 +41,8 @@ export type StudioSessionMoveClicksMutation$data = {
     readonly objectId: number;
     readonly ranges: ReadonlyArray<{
       readonly end: number;
+      readonly score: number | null | undefined;
+      readonly source: string | null | undefined;
       readonly start: number;
       readonly state: string;
     }>;
@@ -222,7 +224,21 @@ v5 = [
             "name": "end",
             "storageKey": null
           },
-          (v1/*: any*/)
+          (v1/*: any*/),
+          {
+            "alias": null,
+            "args": null,
+            "kind": "ScalarField",
+            "name": "source",
+            "storageKey": null
+          },
+          {
+            "alias": null,
+            "args": null,
+            "kind": "ScalarField",
+            "name": "score",
+            "storageKey": null
+          }
         ],
         "storageKey": null
       },
@@ -342,16 +358,16 @@ return {
     "selections": (v5/*: any*/)
   },
   "params": {
-    "cacheID": "865e46107da731855b9067aa82958f55",
+    "cacheID": "129e45911f38db12915afc4b342abfd9",
     "id": null,
     "metadata": {},
     "name": "StudioSessionMoveClicksMutation",
     "operationKind": "mutation",
-    "text": "mutation StudioSessionMoveClicksMutation(\n  $input: MoveClicksInput!\n) {\n  moveClicks(input: $input) {\n    objectId\n    state\n    frames\n    nFrames\n    seeds {\n      frameIndex\n      points\n      labels\n      mask {\n        size\n        counts\n      }\n    }\n    tracks {\n      engine\n      state\n      frames\n      nFrames\n    }\n    ranges {\n      start\n      end\n      state\n    }\n    history {\n      canUndo\n      canRedo\n      versions {\n        key\n        engine\n        model\n        created\n        elapsedS\n        nFrames\n        clicks\n        seedFrames\n        bounded\n        current\n      }\n    }\n  }\n}\n"
+    "text": "mutation StudioSessionMoveClicksMutation(\n  $input: MoveClicksInput!\n) {\n  moveClicks(input: $input) {\n    objectId\n    state\n    frames\n    nFrames\n    seeds {\n      frameIndex\n      points\n      labels\n      mask {\n        size\n        counts\n      }\n    }\n    tracks {\n      engine\n      state\n      frames\n      nFrames\n    }\n    ranges {\n      start\n      end\n      state\n      source\n      score\n    }\n    history {\n      canUndo\n      canRedo\n      versions {\n        key\n        engine\n        model\n        created\n        elapsedS\n        nFrames\n        clicks\n        seedFrames\n        bounded\n        current\n      }\n    }\n  }\n}\n"
   }
 };
 })();
 
-(node as any).hash = "997d45501b8ea7917f726ed3f02a879e";
+(node as any).hash = "79ba19434b640a45c7ffbde61208d396";
 
 export default node;

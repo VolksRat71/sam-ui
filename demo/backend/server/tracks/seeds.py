@@ -10,10 +10,16 @@ Points are normalised to 0-1, as the demo's addPoints mutation sends them.
 An optional <obj_id>/object.json holds metadata ({"name": ...}); it is kept
 apart from seeds.json so a rename never changes the seeds hash (tracks stay
 as they were). Objects stored before names existed have none.
-An optional <obj_id>/ranges.json holds the object's frame ranges
-({"ranges": [{"start", "end", "state"}]}, see tracks/ranges.py). Unlike the
-name, ranges change what a track job does, so they join the seeds hash; an
-object without any keeps the hash it had before ranges existed.
+An optional <obj_id>/ranges.json holds the object's absent ranges
+({"ranges": [{"start", "end", "state": "absent"}]}, see tracks/ranges.py).
+Unlike the name, they change what a track job does, so they join the seeds
+hash; an object without any keeps the hash it had before ranges existed.
+An optional <obj_id>/annotations.json holds its present and candidate ranges
+in the same shape (a candidate also has "source" and maybe "score"). They
+never change a track, so they stay out of the seeds hash and out of the seed
+record: marking a candidate or confirming one present makes no track stale
+and is not a seed change to undo. Confirming one absent is: absent ranges
+live in ranges.json.
 
 The files above that make the seeds hash (RECORD_FILES) are the object's seed
 record: tracks/versions.py snapshots them as they are, for undo.
@@ -53,12 +59,14 @@ def _sha(canon) -> str:
 
 
 def seeds_hash(seeds: Seeds, ranges: Optional[Iterable[Dict]] = None) -> str:
-    """sha256 of the seeds (and the object's ranges) as canonical JSON:
+    """sha256 of the seeds (and the object's absent ranges) as canonical JSON:
     independent of dict order, and changed by any point, label, frame or
-    range. Ranges join only when there are some, so objects without any keep
-    the hash they had before ranges existed (and their tracks stay tracked)."""
+    absent range. Ranges join only when there are some, so objects without
+    any keep the hash they had before ranges existed (and their tracks stay
+    tracked). Present and candidate ranges are left out, whatever is passed."""
     canon = _canon(seeds)
-    ranges = rng.normalize(ranges or [])
+    # only absent ranges change a track; present and candidate ones never join
+    ranges = [r for r in rng.normalize(ranges or []) if r["state"] == rng.ABSENT]
     if ranges:  # frame keys are digits, so this key never collides with one
         canon["ranges"] = [[r["start"], r["end"], r["state"]] for r in ranges]
     return _sha(canon)
@@ -103,9 +111,10 @@ class SeedStore:
         d = self.root / video
         if not d.is_dir():
             return []
-        # an object with ranges and no clicks yet is listed too, so its ranges show
+        # an object with ranges (or candidates) and no clicks yet is listed too, so they show
         return sorted(int(p.name) for p in d.iterdir()
-                      if p.name.isdigit() and ((p / "seeds.json").exists() or (p / "ranges.json").exists()))
+                      if p.name.isdigit() and any((p / f).exists() for f in ("seeds.json", "ranges.json",
+                                                                               "annotations.json")))
 
     def _save(self, video: str, obj_id: int, seeds: Seeds) -> None:
         p = self._path(video, obj_id)
@@ -180,30 +189,107 @@ class SeedStore:
     def _ranges_path(self, video: str, obj_id: int) -> Path:
         return self.root / video / str(int(obj_id)) / "ranges.json"
 
-    def ranges(self, video: str, obj_id: int) -> List[Dict]:
-        p = self._ranges_path(video, obj_id)
+    def _annotations_path(self, video: str, obj_id: int) -> Path:
+        return self.root / video / str(int(obj_id)) / "annotations.json"
+
+    @staticmethod
+    def _read_ranges(p: Path) -> List[Dict]:
         if not p.exists():
             return []
         return rng.normalize(json.loads(p.read_text()).get("ranges", []))
 
-    def set_ranges(self, video: str, obj_id: int, ranges: Iterable[Dict]) -> List[Dict]:
-        """Replace the object's ranges (validated and merged). None left: the
-        file goes, so the object is exactly as it was before it had any."""
-        ranges = rng.normalize(ranges)
-        p = self._ranges_path(video, obj_id)
+    @staticmethod
+    def _write_ranges(p: Path, ranges: List[Dict]) -> None:
         if not ranges:
-            p.unlink(missing_ok=True)
-            return []
+            p.unlink(missing_ok=True)  # none left: the object is exactly as before it had any
+            return
         p.parent.mkdir(parents=True, exist_ok=True)
         _write_json_atomic(p, {"ranges": ranges})
+
+    def ranges(self, video: str, obj_id: int) -> List[Dict]:
+        """The object's absent ranges: what tracking reads."""
+        return [r for r in self._read_ranges(self._ranges_path(video, obj_id)) if r["state"] == rng.ABSENT]
+
+    def set_ranges(self, video: str, obj_id: int, ranges: Iterable[Dict]) -> List[Dict]:
+        """Replace the object's absent ranges (validated and merged). None
+        left: the file goes, so the object is exactly as it was before it had any."""
+        ranges = rng.normalize(ranges)
+        if any(r["state"] != rng.ABSENT for r in ranges):
+            raise ValueError("ranges.json holds absent ranges only: present and candidate ones are annotations")
+        self._write_ranges(self._ranges_path(video, obj_id), ranges)
         return ranges
 
-    def paint_range(self, video: str, obj_id: int, start: int, end: int, state: Optional[str]) -> List[Dict]:
-        """Set frames start-end to `state` ("absent"), or clear them (None)."""
-        return self.set_ranges(video, obj_id, rng.paint(self.ranges(video, obj_id), start, end, state))
+    def annotations(self, video: str, obj_id: int) -> List[Dict]:
+        """The object's present and candidate ranges, as stored (layers: a
+        candidate may lie under a present range; view() resolves them)."""
+        return [r for r in self._read_ranges(self._annotations_path(video, obj_id)) if r["state"] != rng.ABSENT]
+
+    def set_annotations(self, video: str, obj_id: int, ranges: Iterable[Dict]) -> List[Dict]:
+        ranges = rng.normalize(ranges)
+        if any(r["state"] == rng.ABSENT for r in ranges):
+            raise ValueError("an absent range changes tracking: it belongs in ranges.json")
+        self._write_ranges(self._annotations_path(video, obj_id), ranges)
+        return ranges
+
+    def timeline(self, video: str, obj_id: int) -> List[Dict]:
+        """Every range the object's timeline shows, one state per frame (tracks/ranges.py view())."""
+        return rng.view(self.ranges(video, obj_id), self.annotations(video, obj_id))
+
+    def paint_range(self, video: str, obj_id: int, start: int, end: int, state: Optional[str],
+                    source: Optional[str] = None, score: Optional[float] = None,
+                    clear: Optional[Iterable[str]] = None) -> List[Dict]:
+        """Set frames start-end to `state`, or clear them (None): every state
+        by default (the frames become unknown), or only the states in `clear`
+        (["candidate"] rejects a candidate). Absent wins over the
+        annotations under it without removing them; present clears absent
+        there; a candidate goes under whatever is confirmed. Answers timeline()."""
+        absent, notes = self.ranges(video, obj_id), self.annotations(video, obj_id)
+        if state is not None and clear is not None:
+            raise ValueError("clear picks the states to clear: it goes with no state")
+        if state is None:
+            clear = set(rng.STATES if clear is None else clear)
+            bad = clear - set(rng.STATES)
+            if bad:
+                raise ValueError(f"range state must be one of {list(rng.STATES)}, got {sorted(bad)!r}")
+            new_absent = rng.paint(absent, start, end, None) if rng.ABSENT in clear else absent
+            new_notes = rng.paint(notes, start, end, None, over=tuple(clear - {rng.ABSENT})) \
+                if clear - {rng.ABSENT} else notes
+        elif state == rng.ABSENT:
+            new_absent, new_notes = rng.paint(absent, start, end, rng.ABSENT, source, score), notes
+        elif state == rng.PRESENT:
+            new_absent = rng.paint(absent, start, end, None)
+            new_notes = rng.paint(notes, start, end, rng.PRESENT, source, score, over=(rng.PRESENT,))
+        else:
+            new_absent = absent
+            new_notes = rng.paint(notes, start, end, state, source, score, over=(rng.CANDIDATE,))
+        # everything is validated above: write only what changed
+        if new_absent != absent:
+            self.set_ranges(video, obj_id, new_absent)
+        if new_notes != notes:
+            self.set_annotations(video, obj_id, new_notes)
+        return self.timeline(video, obj_id)
+
+    def write_candidates(self, video: str, obj_id: int, candidates: Iterable[Dict],
+                         replace: bool = False) -> List[Dict]:
+        """Write many candidate ranges at once (what a discovery job makes),
+        each {"start", "end", "source", "score"?}, in order: a later one wins
+        where two overlap. `replace` drops the object's candidates first.
+        All or nothing: one bad candidate (ValueError) writes none.
+        Confirmed ranges stay and still win. Answers timeline()."""
+        notes = self.annotations(video, obj_id)
+        if replace:
+            notes = [r for r in notes if r["state"] != rng.CANDIDATE]
+        for c in candidates:
+            if c.get("state", rng.CANDIDATE) != rng.CANDIDATE:
+                raise ValueError(f"write_candidates writes candidates only, got a {c.get('state')!r} range")
+            notes = rng.paint(notes, c["start"], c["end"], rng.CANDIDATE, c.get("source"), c.get("score"),
+                              over=(rng.CANDIDATE,))
+        self.set_annotations(video, obj_id, notes)
+        return self.timeline(video, obj_id)
 
     # -- the seed record, for versions and undo (tracks/versions.py) ---------------
-    RECORD_FILES = ("seeds.json", "ranges.json")  # every file the seeds hash reads
+    # every file the seeds hash reads; annotations.json is not one (it never makes a track stale)
+    RECORD_FILES = ("seeds.json", "ranges.json")
 
     def record(self, video: str, obj_id: int) -> Dict[str, object]:
         """The object's seed record as stored: each file's JSON, None where absent."""

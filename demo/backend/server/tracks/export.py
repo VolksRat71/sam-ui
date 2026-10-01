@@ -28,6 +28,10 @@ with default names (object_<n>, palette colours).
 Frames inside an object's absent ranges (tracks/ranges.py) are written as
 empty mattes, even from a stale track made before the range was marked, and
 clicks inside them are left out of anchors.json: the object is not there.
+The manifest records each product's ranges as the timeline shows them, each
+with its state (absent, present, candidate; frames 0-based, as in sam-ui),
+and a candidate's source and score. Present and candidate ranges never change
+a matte: a candidate is a guess, so it never blanks (or fills) a frame.
 
 Frames are numbered from 1 in the working folder and from 0 in sam-ui, so
 sam-ui frame i is file (i + 1). Only tracked objects are exported unless

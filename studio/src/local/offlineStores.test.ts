@@ -209,3 +209,45 @@ describe('absent ranges (test_ranges.py)', () => {
     expect(await svc.select(V, null, VARIANT, new Set())).toEqual([]); // nothing to track
   });
 });
+
+describe('candidate and present ranges (test_candidates.py)', () => {
+  const DOG = 'text:dog@sam3';
+  const c = (start: number, end: number, score?: number) => ({start, end, state: 'candidate', source: DOG, ...(score == null ? {} : {score})});
+
+  it('are annotations in OPFS: never in the seeds key or the undo history', async () => {
+    const kv = new MemoryKv();
+    const svc = new OfflineService(kv);
+    await svc.recordPoints(V, 1, 0, [[0.5, 0.5, 1]], rle);
+    await tracked(svc, 1);
+    const undo = (await svc.history(V, 1)).undo.length;
+    await svc.writeCandidates(V, 1, [{start: 2, end: 6, source: DOG, score: 0.5}]);
+    expect(await svc.setRange(V, 1, 5, 9, 'present')).toEqual([c(2, 4, 0.5), {start: 5, end: 9, state: 'present'}]);
+    expect(await state(svc, 1)).toBe('tracked');
+    expect((await svc.history(V, 1)).undo.length).toBe(undo);
+    expect(await kv.read(`seeds/${V}/1/ranges.json`)).toBeNull();
+    // a new service on the same store reads them back, as a view
+    expect((await new OfflineService(kv).objectInfo(V, 1, VARIANT, new Set())).ranges).toEqual([c(2, 4, 0.5), {start: 5, end: 9, state: 'present'}]);
+  });
+
+  it('confirming a candidate absent is a seed change; undo shows the candidate again', async () => {
+    const svc = new OfflineService(new MemoryKv());
+    await svc.recordPoints(V, 1, 0, [[0.5, 0.5, 1]], rle);
+    await tracked(svc, 1);
+    await svc.writeCandidates(V, 1, [{start: 3, end: 4, source: DOG}]);
+    expect(await svc.setRange(V, 1, 3, 4, 'absent', VARIANT)).toEqual([{start: 3, end: 4, state: 'absent'}]);
+    expect(await state(svc, 1)).toBe('stale');
+    await svc.undo(V, 1, VARIANT);
+    const o = await svc.objectInfo(V, 1, VARIANT, new Set());
+    expect(o.ranges).toEqual([c(3, 4)]);
+    expect(await state(svc, 1)).toBe('tracked');
+  });
+
+  it('rejects one candidate, and a bad batch writes nothing', async () => {
+    const svc = new OfflineService(new MemoryKv());
+    await svc.writeCandidates(V, 2, [{start: 0, end: 1, source: DOG}, {start: 5, end: 6, source: DOG}]);
+    expect(await svc.seeds.objects(V)).toEqual([2]);
+    expect(await svc.setRange(V, 2, 0, 1, null, null, {clear: ['candidate']})).toEqual([c(5, 6)]);
+    await expect(svc.writeCandidates(V, 2, [{start: 8, end: 9, source: ''}], true)).rejects.toThrow(/source/);
+    expect((await svc.objectInfo(V, 2, VARIANT, new Set())).ranges).toEqual([c(5, 6)]);
+  });
+});
