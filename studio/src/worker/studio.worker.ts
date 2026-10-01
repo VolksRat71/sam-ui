@@ -131,6 +131,8 @@ const handlers: Handlers = {
   setEngine: ({engine}) => session.setEngine(engine),
   engines: () => session.engines(),
   disagreement: ({a, b, objectIds}) => session.disagreement(a, b, objectIds),
+  reviewQueue: ({engine, flags, candidates}) => session.reviewQueue(engine, flags, candidates),
+  setReviewed: args => session.setReviewed(args),
   setObjectEffects: async ({effects}) => {
     previewEffects = effects;
     if (!exporting) {

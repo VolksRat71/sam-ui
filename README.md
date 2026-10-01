@@ -122,6 +122,21 @@ Details and progress: [Platform support, #16](https://github.com/VolksRat71/sam-
   dog clip (289 frames at 1280x720) 257 KB for one object tracked from one click,
   483 KB once a stray click grew it, plus about 1 to 3 KB for its seeds. An undo
   there took 13 ms, against 136 s for the track it brought back.
+- **A review queue instead of every frame.** Each track gets a short, ranked list of
+  stops worth a look, computed from the cached masks with no model run: where SAM 2
+  and SAM 3 disagree, where the track starts, stops or the object comes back, where
+  the mask's area or position jumps or it splits into pieces, the seams of a re-track
+  near a correction, where a candidate range starts, and the frames flagged with F.
+  Each stop carries its reasons and a score (weights in `tracks/audit.py`); nearby
+  frames merge into one stop, absent ranges never hold one, and the queue is capped.
+  *Looks right* marks a stop reviewed (`<object>/review.json`, outside the seeds
+  hash); the mark holds only while the masks it covered are unchanged, so a
+  correction's re-track reopens just the stops it remade, and an undo brings the
+  marks back with the track. On the gallery dog clip (289 frames, one click) the
+  SAM 2 track got 3 stops (where the dog leaves and re-enters at frames 77 and 102,
+  and a split mask at 207), built in 0.11 s; with a SAM 3 track as well, the stop at
+  102 also carried their disagreement. `POST /review_queue`, `POST /set_reviewed`;
+  the roto export writes the queue into `data/review.json`.
 - **Keep working while it tracks.** A track job holds the model one frame at a time,
   so clicks come back in about 0.1 s even while a job runs. Jobs can overlap, and
   each has its own cancel.

@@ -22,6 +22,11 @@ it changes (issue #19, tracks/bounded.py): a bounded pass from the corrected
 frame outward, until the new masks rejoin the cached track, merged into the
 cached frames. track.json records which pass made each frame.
 
+The audit queue (draft 7, tracks/audit.py) ranks the frames of each track
+worth a look, from the cached masks, ranges, provenance and the engines'
+disagreement; what a person marks reviewed is kept in tracks/review.py,
+outside the seeds hash, and holds only while the frame's pass and mask do.
+
 Every finished track is also kept as a version of its object (issue #18,
 tracks/versions.py), and every seed change (a click, a cleared frame, a range)
 goes on the object's undo history. Undo and redo restore an earlier seed
@@ -40,15 +45,17 @@ from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
 import numpy as np
 
+from tracks import audit
 from tracks import bounded as bnd
+from tracks import review as rv
 from tracks import rle
 from tracks.bounded import Agreement, Provenance, Stretch, mask_iou
 from tracks.engine import WHOLE, Engine, Windows
 from tracks.jobs import TRACKING, JobRegistry
 from tracks.layout import Layout, LayoutStore
-from tracks.ranges import Window, absent_at, seeded_windows, window_frames
+from tracks.ranges import CANDIDATE, Window, absent_at, seeded_windows, window_frames
 from tracks.seeds import Seeds, SeedStore, seeds_hash, video_key, window_key
-from tracks.store import TRACKED, TrackStore
+from tracks.store import STALE, TRACKED, TrackStore
 from tracks import versions as ver
 from tracks.versions import VersionStore
 
@@ -130,6 +137,7 @@ class TrackService:
         self.tracks = TrackStore(root)
         self.versions = VersionStore(root)
         self.layouts = LayoutStore(root)
+        self.reviews = rv.ReviewStore(root)
         self.jobs = JobRegistry()
         self._engines: Dict[str, Engine] = {}
         self._specs: Dict[str, EngineSpec] = {s.name: s for s in (extra or [])}
@@ -764,3 +772,112 @@ class TrackService:
                                       # signal, not a guarantee, so the review covers them too
                                       "bounded": {x: bnd.spans(self.tracks.meta(video, o, x)) for x in (a, b)}}
         return out
+
+    # -- the audit queue (draft 7) ------------------------------------------------------
+    def _compare_engine(self, name: str, compare: Optional[str]) -> Optional[str]:
+        """The engine a queue on `name` compares with: `compare`, else SAM 3
+        for the default engine and the default for any other."""
+        other = compare or ("sam3" if name == self.default else self.default)
+        return other if other != name and other in self.engine_names() else None
+
+    def review_queue(self, video: str, obj_ids: Optional[List[int]] = None, engine: Optional[str] = None,
+                     flags: Optional[Dict[int, List[int]]] = None, compare: Optional[str] = None) -> Dict:
+        """The audit queue of each object `engine` has a track of (tracked or
+        stale): its locations, best first, each with its reasons, score and
+        whether a valid mark reviewed it, and every object's in one "queue".
+        `flags` ({obj: [frame]}) are the user's review flags, which the studio
+        keeps. Objects with no track are listed under "skipped"."""
+        name = self._engine_model(engine or self.default)[0]
+        other = self._compare_engine(name, compare)
+        ids = self.seeds.objects(video) if obj_ids is None else [int(o) for o in obj_ids]
+        flags = {int(k): [int(f) for f in v] for k, v in (flags or {}).items()}
+        out: Dict[str, Any] = {"engine": name, "compare": other, "weights": dict(audit.WEIGHTS), "objects": {},
+                               "skipped": {}}
+        by_object: Dict[int, List[Dict]] = {}
+        for o in ids:
+            info = self.object_info(video, o, name)
+            if info["state"] not in (TRACKED, STALE):
+                out["skipped"][str(o)] = info["state"]
+                continue
+            meta = self.tracks.meta(video, o, name)
+            masks = dict(self.tracks.masks(video, o, name))
+            n = max(int(meta.get("n_frames") or 0), 1 + max(masks, default=-1))
+            stats = {f: audit.frame_stats(r) for f, r in masks.items()}
+            ious: Dict[int, float] = {}
+            if other is not None:
+                d = self.disagreement(video, [o], name, other)["objects"].get(str(o))
+                ious = {int(f): v for f, v in (d or {}).get("iou", {}).items()}
+            absent = self.seeds.ranges(video, o)
+            reasons = audit.signals(stats, n, absent=absent,
+                                    candidates=[r for r in info["ranges"] if r["state"] == CANDIDATE],
+                                    disagreement=ious, pair=(name, other or ""), bounded=bnd.spans(meta),
+                                    flags=flags.get(o, []),
+                                    seeds=[f for f, v in info["seeds"].items() if v.get("points")])
+            locs = audit.locations(reasons, n, absent)
+            marks = self._valid_marks(video, o, name, meta, masks)
+            for loc in locs:
+                hit = next((m for m in reversed(marks) if rv.reviews(m, loc)), None)
+                loc["reviewed"] = hit is not None
+                loc["reviewed_at"] = hit["at"] if hit else None
+            by_object[o] = locs
+            out["objects"][str(o)] = {"state": info["state"], "n_frames": n, "locations": locs,
+                                      "unreviewed": sum(1 for loc in locs if not loc["reviewed"])}
+        out["queue"] = audit.rank(by_object)
+        return out
+
+    @staticmethod
+    def _review_now(meta: Optional[Dict], by_frame: Dict[int, int], masks: Dict[int, Dict], n: int, frame: int,
+                    span: Tuple[int, int]) -> Optional[Dict]:
+        """What the track holds over a mark's frame and span, in tracks/review.py's
+        terms; None when the frame is outside it. A frame with no stored mask is empty."""
+        if meta is None or not 0 <= frame < n:
+            return None
+        passes = {p["id"]: p for p in bnd.passes(meta)}
+
+        def pass_of(f):
+            p = passes.get(by_frame.get(f))
+            return None if p is None else {"id": p["id"], "created": p.get("created")}
+
+        def fp(f):
+            return rv.fingerprint(masks[f]) if f in masks else rv.EMPTY
+
+        a, b = max(0, span[0]), min(n - 1, span[1])
+        frames = range(a, b + 1)
+        seen = sorted({(p["id"], p["created"]) for p in map(pass_of, frames) if p is not None},
+                      key=lambda x: (x[0], x[1] or ""))
+        return {"pass": pass_of(frame), "passes": [list(p) for p in seen] or None, "mask": fp(frame),
+                "span_mask": rv.digest([fp(f) for f in frames])}
+
+    def _valid_marks(self, video: str, o: int, name: str, meta: Optional[Dict], masks: Dict[int, Dict]) -> List[Dict]:
+        by_frame = bnd.frame_passes(meta)
+        n = max(int((meta or {}).get("n_frames") or 0), 1 + max(masks, default=-1))
+        out = []
+        for m in self.reviews.marks(video, o):
+            span = tuple(m.get("span") or (m["frame"], m["frame"]))
+            if rv.valid(m, name, self._review_now(meta, by_frame, masks, n, m["frame"], span)):
+                out.append(m)
+        return out
+
+    def set_reviewed(self, video: str, obj_id: int, frame: int, engine: Optional[str] = None, reviewed: bool = True,
+                     span: Optional[Tuple[int, int]] = None, reasons: Optional[List[str]] = None) -> Dict:
+        """Mark the queue location at `frame` (covering `span`) reviewed on
+        `engine`'s track ("looks right"), or with reviewed False drop the marks
+        on it. Metadata only: no track goes stale and nothing joins the undo
+        history. KeyError when the engine has no track of the object there."""
+        name = self._engine_model(engine or self.default)[0]
+        frame = int(frame)
+        if not reviewed:
+            a, b = span if span is not None else (frame, frame)
+            self.reviews.unmark(video, obj_id, name, int(a), int(b))
+            return {"object_id": int(obj_id), "frame": frame, "engine": name, "reviewed": False}
+        meta = self.tracks.meta(video, obj_id, name)
+        masks = dict(self.tracks.masks(video, obj_id, name)) if meta is not None else {}
+        n = max(int((meta or {}).get("n_frames") or 0), 1 + max(masks, default=-1))
+        span = (int(span[0]), int(span[1])) if span is not None else (frame, frame)
+        span = (min(span), max(span))
+        now = self._review_now(meta, bnd.frame_passes(meta), masks, n, frame, span)
+        if now is None:
+            raise KeyError(f"object {obj_id} has no {name} track on frame {frame}")
+        m = self.reviews.mark(video, obj_id, frame, name, span=span, seeds_hash=self.seeds.hash(video, obj_id),
+                              now=now, reasons=reasons or [])
+        return {"object_id": int(obj_id), "frame": frame, "engine": name, "reviewed": True, "at": m["at"]}

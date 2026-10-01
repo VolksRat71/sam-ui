@@ -15,6 +15,12 @@
 // too; in the roto folder the mattes stay in data/mattes_tracked/<pid>/ (the
 // pipeline reads them there) and each group gets data/groups/<folder>/, as
 // tracks/export.py writes it. README.txt and the JSON record each object's group.
+//
+// The roto folder's data/review.json carries the audit queue (state/audit.ts)
+// as tracks/export.py writes it: "<pid>:<1-based frame>": ["sam-ui review
+// (score s): why"], marked reviewed where a person said it looks right, and
+// the manifest holds each product's queue as data.
+import {type QueueEntry, fmt2} from './audit';
 import {safeFileName} from './fileNames';
 import {arrange, type Layout} from './layout';
 import {type FrameRange, type Mark, type TimelineRange, absentAt, provenanceLabel, timelineView} from './ranges';
@@ -206,10 +212,16 @@ export function readme(
 
 export type Seeds = ReadonlyMap<number, ReadonlyArray<readonly [number, number, number]>>;
 
+/** One stop's note in data/review.json, word for word as tracks/export.py's _note. */
+export function reviewNote(e: Pick<QueueEntry, 'score' | 'reviewed' | 'reasons'>): string {
+  const done = e.reviewed ? ', reviewed in sam-ui: looks right' : '';
+  return `sam-ui review (score ${fmt2(e.score)}${done}): ${e.reasons.map(r => r.detail).join('; ')}`;
+}
+
 /**
  * The folder's JSON files: products.json, anchors.json (seed clicks in
- * full-res pixels, frames 1-based), shots.json, data/review.json and
- * notes/sam-ui-export.json.
+ * full-res pixels, frames 1-based), shots.json, data/review.json (the audit
+ * queue's stops, `review`) and notes/sam-ui-export.json.
  */
 export function rotoDecisions(
   p: Provenance,
@@ -218,7 +230,9 @@ export function rotoDecisions(
   framesOf: (objectId: number) => number,
   groups: ReadonlyArray<ExportGroup> = [],
   union = false,
+  review: ReadonlyArray<QueueEntry> = [],
 ): Record<string, string> {
+  const stopsOf = (id: number) => review.filter(e => e.objectId === id).sort((a, b) => a.frame - b.frame);
   const products = objects.map(o => ({
     id: o.name,
     shots: [1],
@@ -267,6 +281,12 @@ export function rotoDecisions(
           // 0-based, as tracks/export.py records them
           ranges: rangesOf(o),
           group: o.group ?? null,
+          // as the backend's manifest: 0-based frames
+          review: {
+            n_frames: p.frames,
+            unreviewed: stopsOf(o.objectId).filter(e => !e.reviewed).length,
+            locations: stopsOf(o.objectId).map(({objectId: _id, reviewedAt, ...e}) => ({...e, reviewed_at: reviewedAt})),
+          },
         },
       ]),
     ),
@@ -280,7 +300,9 @@ export function rotoDecisions(
     'products.json': json({products}),
     'anchors.json': json(anchors),
     'shots.json': json({cuts: [1], unsure: []}),
-    'data/review.json': '{}',
+    'data/review.json': json(
+      Object.fromEntries(objects.flatMap(o => stopsOf(o.objectId).map(e => [`${o.name}:${e.frame + 1}`, [reviewNote(e)]]))),
+    ),
     'notes/sam-ui-export.json': json(manifest),
   };
   for (const {folder, ...g} of groupEntries) {

@@ -181,3 +181,42 @@ def test_group_folders_are_unique(h, tmp_path):
     _layout(h, [1, 2], [{**CAST, "members": [1]}, {**CAST, "id": "g2", "members": [2]}])
     code, m = export(h, out_dir=str(tmp_path / "b"))
     assert [g["folder"] for g in m["groups"]] == ["the_cast", "the_cast_2"]
+
+
+# -- the audit queue (draft 7): data/review.json carries it, reviewed or not ------------
+
+@pytest.fixture
+def h60(tmp_path, monkeypatch):
+    monkeypatch.setenv("SAM_UI_EXPORT_ROOT", str(tmp_path))
+    return Harness(tmp_path, engine=FakeEngine(n_frames=60))  # the square wraps at 28 and 56: two jumps
+
+
+def test_the_review_queue_goes_into_review_json(h60, tmp_path):
+    h60.click(1)
+    h60.track()
+    h60.service.set_reviewed(h60.video, 1, 56)
+    out = tmp_path / "build"
+    code, m = export(h60, out_dir=str(out), flags={"1": [12]})
+    assert code == 200
+    review = json.loads((out / "data/review.json").read_text())
+    # keyed as the roto pipeline keys it: "<pid>:<1-based frame>", a list of notes
+    assert sorted(review) == ["object_1:13", "object_1:29", "object_1:57"]
+    assert all(isinstance(v, list) and all(isinstance(n, str) for n in v) for v in review.values())
+    assert review["object_1:13"][0].startswith("sam-ui review") and "flagged" in review["object_1:13"][0]
+    assert "reviewed" not in review["object_1:29"][0] and "reviewed in sam-ui" in review["object_1:57"][0]
+    q = m["products"]["object_1"]["review"]
+    assert [(loc["frame"], loc["reviewed"]) for loc in q["locations"]] == [(12, False), (28, False), (56, True)]
+    assert q["n_frames"] == 60 and q["unreviewed"] == 2
+
+
+def test_a_re_export_keeps_the_pipelines_notes_and_replaces_its_own(h60, tmp_path):
+    h60.click(1)
+    h60.track()
+    out = tmp_path / "build"
+    (out / "data").mkdir(parents=True)
+    (out / "data/review.json").write_text(json.dumps({"object_1:29": ["kept by continuity"], "other:3": ["x"]}))
+    export(h60, out_dir=str(out), flags={"1": [12]})
+    export(h60, out_dir=str(out), force=True)  # the flag is gone: so is its note
+    review = json.loads((out / "data/review.json").read_text())
+    assert review["other:3"] == ["x"] and "object_1:13" not in review
+    assert review["object_1:29"][0] == "kept by continuity" and len(review["object_1:29"]) == 2

@@ -6,10 +6,11 @@
 // events (tracklet summaries, track progress).
 import type {JobOutcome} from '~/api/trackStream';
 import type {LocalModelStatus, LocalOptions} from '~/local/LocalEngine';
+import type {QueueEntry, ReasonKind, ReviewQueue} from '~/state/audit';
 import type {Layout} from '~/state/layout';
 import type {ExportedObject, ExportGroup, ExportKind} from '~/state/maskExport';
 import type {NormPoint, ServerObject} from '~/state/objects';
-import type {RangeState} from '~/state/ranges';
+import type {Mark, RangeState} from '~/state/ranges';
 
 export type SessionInfo = {
   sessionId: string;
@@ -70,6 +71,8 @@ export type ExportRequest = {
   force: boolean;
   /** One union matte per group (issue #21); an older backend ignores it. */
   union?: boolean;
+  /** The review flags, by object id: they join data/review.json's audit queue. */
+  flags?: Record<string, number[]>;
 };
 
 /** POST /export's manifest (tracks/export.py). */
@@ -140,6 +143,17 @@ export type StudioMethods = {
   setEngine: {args: {engine: string}; result: void};
   engines: {args: Record<string, never>; result: EngineInfo[]};
   disagreement: {args: {a: string; b: string; objectIds?: number[]}; result: Disagreement};
+  /**
+   * The audit queue (state/audit.ts) of `engine`'s tracks: the backend's for
+   * its engines, built here for the browser engine. `flags` are the review
+   * flags, and `candidates` each object's candidate ranges (the browser's queue reads them).
+   */
+  reviewQueue: {args: {engine: string; flags: Record<number, number[]>; candidates: Record<number, Mark[]>}; result: ReviewQueue};
+  /** Mark a queue stop reviewed ("looks right"), or unmark the stops over `span`. */
+  setReviewed: {
+    args: {objectId: number; frame: number; engine: string; reviewed: boolean; span: [number, number]; reasons: ReasonKind[]};
+    result: void;
+  };
   /** Every object's own selected-object effect (objects not listed: Overlay). */
   setObjectEffects: {args: {effects: Record<number, {name: string; variant: number}>}; result: void};
   /** How many variants each highlight effect has. */
@@ -169,6 +183,8 @@ export type StudioMethods = {
       groups?: ExportGroup[];
       /** Also one union mask per group. */
       union?: boolean;
+      /** The audit queue's stops, for the roto folder's data/review.json. */
+      review?: QueueEntry[];
     };
     result: ArrayBuffer;
   };

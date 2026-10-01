@@ -11,6 +11,7 @@
 // Objects come in the order given (the layout's: state/maskExport.ts
 // groupExport); a grouped object's files go in its group's folder, with an
 // optional union of the group's masks (opts.union).
+import type {QueueEntry} from '~/state/audit';
 import {BufferTarget, CanvasSource, Mp4OutputFormat, Output, QUALITY_HIGH} from 'mediabunny';
 import type {RLEObject} from '@/jscocotools/mask';
 import {grayPng} from '~/lib/png';
@@ -37,6 +38,8 @@ export type ExportOptions = {
   groups?: ReadonlyArray<ExportGroup>;
   /** Also one union mask per group. Off by default. */
   union?: boolean;
+  /** The audit queue's stops: data/review.json in the roto folder. */
+  review?: ReadonlyArray<QueueEntry>;
 };
 
 export type MaskSource = {
@@ -204,7 +207,7 @@ export async function buildExport(
     await new Promise(r => setTimeout(r, 0));
   }
   if (kind === 'folder') {
-    const files = rotoDecisions(p, objects, id => src.seedsOf(id), () => p.frames, groups, union);
+    const files = rotoDecisions(p, objects, id => src.seedsOf(id), () => p.frames, groups, union, opts.review ?? []);
     for (const [name, data] of Object.entries(files)) {
       entries.push({name, data});
     }
