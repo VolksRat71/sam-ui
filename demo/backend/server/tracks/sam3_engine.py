@@ -176,8 +176,7 @@ class Sam3Engine:
                 import torch
                 from transformers import Sam3TrackerVideoModel, Sam3TrackerVideoProcessor
 
-                dev = self.device or ("mps" if torch.backends.mps.is_available()
-                                      else "cuda" if torch.cuda.is_available() else "cpu")
+                dev = self._device()
                 self.dtype = precision.sam3_dtype()
                 proc = Sam3TrackerVideoProcessor.from_pretrained(str(weights_path()))
                 model = Sam3TrackerVideoModel.from_pretrained(str(weights_path()), dtype=self.dtype).to(dev).eval()
@@ -200,17 +199,29 @@ class Sam3Engine:
 
     # -- idle unloading ------------------------------------------------------------------
 
+    def _device(self) -> str:
+        import torch
+
+        return self.device or ("mps" if torch.backends.mps.is_available()
+                               else "cuda" if torch.cuda.is_available() else "cpu")
+
     @contextlib.contextmanager
     def _using(self, part: str):
-        """Mark the engine busy for one job or prompt; when it ends, hand the
-        allocator's cached blocks back and arm the idle timer."""
+        """Mark the engine busy for one job or prompt, with autocast off; when
+        it ends, hand the allocator's cached blocks back and arm the idle
+        timer. Track jobs and text prompts run inside the routes' autocast,
+        which is SAM 2's (SAM_UI_SAM2_DTYPE, and bf16 on CUDA): SAM 3 runs at
+        its own SAM_UI_SAM3_DTYPE, so it turns that off."""
+        import torch
+
         with self._load_lock:
             self._busy += 1
             if self._timer is not None:
                 self._timer.cancel()
                 self._timer = None
         try:
-            yield
+            with torch.autocast(self._device(), enabled=False):
+                yield
         finally:
             with self._load_lock:
                 self._busy -= 1

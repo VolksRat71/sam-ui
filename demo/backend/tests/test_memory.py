@@ -182,3 +182,31 @@ def test_real_transformers_sam3_caches_are_found():
     import transformers.models.sam3_tracker_video.modeling_sam3_tracker_video  # noqa: F401
 
     assert memory.clear_lru_caches() >= 3  # sine embeddings (x2) and the decoder's coordinates
+
+
+def test_sam3_runs_without_sam2s_autocast(engine, monkeypatch):
+    """The routes run every job and text prompt inside SAM 2's autocast
+    (SAM_UI_SAM2_DTYPE): SAM 3 must not compute under it."""
+    import torch
+
+    with torch.autocast("cpu", dtype=torch.bfloat16):
+        assert torch.is_autocast_enabled("cpu")
+        with engine._using("engine"):
+            assert not torch.is_autocast_enabled("cpu")
+            assert torch.ones(2, 2).matmul(torch.ones(2, 2)).dtype == torch.float32
+        assert torch.is_autocast_enabled("cpu")  # SAM 2's, back after the job
+
+
+@pytest.mark.skipif(not __import__("torch").backends.mps.is_available(), reason="MPS only")
+def test_sam3_on_mps_ignores_sam2_dtype(monkeypatch):
+    import torch
+
+    monkeypatch.setattr(memory, "release_cached", lambda: None)
+    monkeypatch.setenv("SAM_UI_SAM2_DTYPE", "fp16")
+    e = Sam3Engine(device="mps")
+    with precision.sam2_autocast("mps"):
+        assert torch.is_autocast_enabled("mps")
+        with e._using("detector"):
+            assert not torch.is_autocast_enabled("mps")
+    if e._timer is not None:
+        e._timer.cancel()

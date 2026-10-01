@@ -450,3 +450,37 @@ def test_real_sam3_text_detector_at_half_precision_has_from_pretrained_dtypes():
     mine = dict(det.named_buffers())
     for name, b in ref.named_buffers():
         assert mine[name].dtype == b.dtype and torch.equal(mine[name], b), name
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(os.environ.get("SAM_UI_SLOW") != "1", reason="set SAM_UI_SLOW=1 (and have the SAM 3 weights)")
+def test_real_sam3_text_and_track_ignore_sam2s_autocast(monkeypatch):
+    """The routes wrap jobs and prompts in SAM 2's autocast. With
+    SAM_UI_SAM2_DTYPE=fp16, SAM 3 must give exactly its own fp32 masks."""
+    import torch
+    from tracks import precision, sam3_engine
+
+    why = sam3_engine.available() or sam3_engine.text_available()
+    if why:
+        pytest.skip(why)
+    if not torch.backends.mps.is_available():
+        pytest.skip("SAM_UI_SAM2_DTYPE is MPS autocast")
+    clip = GALLERY / "01_dog.mp4"
+    if not clip.exists():
+        pytest.skip(f"no gallery clip at {clip}")
+    monkeypatch.delenv("SAM_UI_SAM3_DTYPE", raising=False)
+    monkeypatch.setenv("SAM_UI_SAM2_DTYPE", "fp16")
+    e = sam3_engine.Sam3Engine()
+    seeds = {1: {0: {"points": [[0.484, 0.611]], "labels": [1]}}}
+
+    def run():
+        hit = e.segment_text(str(clip), 0, "dog")
+        return hit, dict(e.track(str(clip), seeds, windows={1: [(0, 7)]}))
+
+    want_hit, want = run()
+    with precision.sam2_autocast("mps"):
+        got_hit, got = run()
+    assert got_hit.score == want_hit.score and np.array_equal(got_hit.mask, want_hit.mask)
+    assert sorted(got) == sorted(want) == list(range(8))
+    for f in want:
+        assert np.array_equal(got[f][1], want[f][1]), f
