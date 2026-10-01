@@ -7,6 +7,7 @@ import {
   classifyPress,
   isTouchLike,
   labelFor,
+  longPressStartsOn,
   movedBeyondSlop,
   pinchStep,
   type TrackerCallbacks,
@@ -53,6 +54,29 @@ describe('labelFor', () => {
     expect(labelFor('long-press', 1)).toBe(0);
     expect(labelFor('long-press', 0)).toBe(1);
     expect(labelFor('drag', 1)).toBeNull();
+  });
+});
+
+describe('longPressStartsOn', () => {
+  // a stand-in element: closest() finds the first ancestor matching, as the DOM does
+  const el = (...ancestors: string[]) => ({
+    closest: (selector: string) => (ancestors.includes(selector.slice(1)) ? {} : null),
+  });
+
+  it('starts on the video click layer', () => {
+    expect(longPressStartsOn(el('click-layer', 'stage-box', 'stage'))).toBe(true);
+  });
+
+  it('never on the session overlay, a point marker or elsewhere on the stage', () => {
+    expect(longPressStartsOn(el('stage-overlay', 'stage'))).toBe(false);
+    expect(longPressStartsOn(el('point', 'points-layer', 'stage'))).toBe(false);
+    expect(longPressStartsOn(el('stage'))).toBe(false);
+  });
+
+  it('not on something that is not an element', () => {
+    expect(longPressStartsOn(null)).toBe(false);
+    expect(longPressStartsOn({})).toBe(false);
+    expect(longPressStartsOn({closest: 'not a function'})).toBe(false);
   });
 });
 

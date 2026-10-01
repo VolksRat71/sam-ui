@@ -81,6 +81,16 @@ export function pinchStep(before: [Pt, Pt], after: [Pt, Pt]): PinchStep {
   };
 }
 
+/**
+ * Whether a long press may start on this element: only on the video's click
+ * layer. Not on a point marker (a tap there removes the point), and not on
+ * the "Starting session" or failed-session overlay that covers the video.
+ */
+export function longPressStartsOn(target: unknown): boolean {
+  const el = target as {closest?: (selector: string) => unknown} | null;
+  return typeof el?.closest === 'function' && el.closest('.click-layer') != null;
+}
+
 export type TrackerCallbacks = {
   /** whether the view is zoomed in, so a one-finger drag pans it */
   zoomed: () => boolean;

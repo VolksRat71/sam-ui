@@ -13,7 +13,7 @@
 // (lib/gestures.ts).
 import {AddFilled, SubtractFilled, ZoomIn, ZoomOut} from '@carbon/icons-react';
 import {useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type PointerEvent} from 'react';
-import {labelFor} from '~/lib/gestures';
+import {labelFor, longPressStartsOn} from '~/lib/gestures';
 import {objectName} from '~/state/fileNames';
 import {needsPositiveClick} from '~/state/objects';
 import {FIT, panBy, toScreen, zoomAt, type View} from '~/state/view';
@@ -161,7 +161,7 @@ export default function Preview({session, mode, onModeChange}: Props) {
   const layerRef = useRef<HTMLDivElement>(null);
   const touch = useTouchGestures({
     zoomed: () => view.zoom > 1,
-    canLongPress: target => target instanceof Element && target.closest('.point') == null,
+    canLongPress: longPressStartsOn,
     onLongPress: (x, y) => {
       const rect = layerRef.current?.getBoundingClientRect();
       const label = labelFor('long-press', primary);
