@@ -1,6 +1,7 @@
 # sam-ui (Apache-2.0). New file, not from SAM 2.
 import json
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -302,6 +303,115 @@ def test_new_frames_never_write_through_an_old_frame(h, tmp_path, tmp_path_facto
     code, m = export(h, out_dir=str(out), frames=True)
     assert code == 200 and m["frames_on_disk"] == 1 and (outside / "victim").read_text() == "keep"
     assert sorted(p.name for p in (out / "data" / "frames").iterdir()) == ["00001.jpg"]
+
+
+def _frames_case(h, tmp_path, tmp_path_factory):
+    """A tracked object, an old data/frames and clip.mp4, and an outside
+    folder holding someone's JPEGs."""
+    h.click(1)
+    h.track()
+    outside = tmp_path_factory.mktemp("outside")
+    (outside / "00001.jpg").write_bytes(b"their photo")
+    (outside / "holiday.jpg").write_bytes(b"their photo")
+    out = tmp_path / "build"
+    (out / "data" / "frames").mkdir(parents=True)
+    (out / "data" / "frames" / "00009.jpg").write_bytes(b"stale")
+    (out / "data" / "clip.mp4").write_bytes(b"x")  # already there: not copied again
+    return outside, out, _tree(outside)
+
+
+def _fake_ffmpeg(monkeypatch, before_writing=lambda pattern: None):
+    """Writes frame 1 the way ffmpeg -y does, through whatever sits at its name."""
+    import tracks.export as E
+
+    def ffmpeg(cmd, check):
+        before_writing(cmd[-1])
+        with open(cmd[-1] % 1, "w") as f:
+            f.write("frame")
+
+    monkeypatch.setattr(E.subprocess, "run", ffmpeg)
+
+
+def test_frames_swapped_for_a_link_after_their_check_are_not_cleared_through_it(h, tmp_path, tmp_path_factory,
+                                                                                monkeypatch):
+    """Re-review demo 5: data/frames swapped for a link to outside right after
+    its re-check; clearing the old frames deleted every JPEG out there."""
+    import tracks.export as E
+
+    outside, out, before = _frames_case(h, tmp_path, tmp_path_factory)
+    armed, checked, guarded = [False], E._check_targets, E._guard
+
+    def arm(*a, **k):
+        checked(*a, **k)
+        armed[0] = True
+
+    def guard(root, out_, out_dir, p):
+        r = guarded(root, out_, out_dir, p)
+        if armed[0] and p == out / "data" / "frames" and not p.is_symlink():
+            armed[0] = False
+            shutil.rmtree(p)
+            p.symlink_to(outside)
+        return r
+
+    monkeypatch.setattr(E, "_check_targets", arm)
+    monkeypatch.setattr(E, "_guard", guard)
+    _fake_ffmpeg(monkeypatch)
+    export(h, out_dir=str(out), frames=True)
+    assert _tree(outside) == before
+
+
+def test_frames_swapped_for_a_link_while_ffmpeg_runs_are_neither_written_nor_cleared(h, tmp_path, tmp_path_factory,
+                                                                                      monkeypatch):
+    """ffmpeg writes into a fresh hidden folder, which then takes data/frames'
+    place by rename: a link swapped in at data/frames is moved away and
+    unlinked, never followed."""
+    outside, out, before = _frames_case(h, tmp_path, tmp_path_factory)
+
+    def swap(pattern):
+        shutil.rmtree(out / "data" / "frames")
+        (out / "data" / "frames").symlink_to(outside)
+
+    _fake_ffmpeg(monkeypatch, swap)
+    code, m = export(h, out_dir=str(out), frames=True)
+    assert code == 200 and m["frames_on_disk"] == 1 and _tree(outside) == before
+    frames = out / "data" / "frames"
+    assert not frames.is_symlink() and sorted(p.name for p in frames.iterdir()) == ["00001.jpg"]
+    assert sorted(p.name for p in (out / "data").iterdir()) == ["clip.mp4", "frames", "mattes_tracked", "review.json"]
+
+
+def test_a_frame_link_planted_while_ffmpeg_runs_is_not_written_through(h, tmp_path, tmp_path_factory, monkeypatch):
+    """Re-review demo 6: a link at data/frames/00001.jpg, the name ffmpeg is
+    about to write, planted mid-run."""
+    outside, out, before = _frames_case(h, tmp_path, tmp_path_factory)
+    _fake_ffmpeg(monkeypatch, lambda pattern: (out / "data" / "frames" / "00001.jpg").symlink_to(outside / "00001.jpg"))
+    code, m = export(h, out_dir=str(out), frames=True)
+    assert code == 200 and _tree(outside) == before
+    assert (out / "data" / "frames" / "00001.jpg").read_text() == "frame"
+
+
+def test_a_failed_ffmpeg_leaves_the_old_frames_and_no_temp_folder(h, tmp_path, tmp_path_factory, monkeypatch):
+    import subprocess
+
+    outside, out, before = _frames_case(h, tmp_path, tmp_path_factory)
+
+    def fail(pattern):
+        raise subprocess.CalledProcessError(1, "ffmpeg")
+
+    _fake_ffmpeg(monkeypatch, fail)
+    assert export(h, out_dir=str(out), frames=True)[0] == 500  # as before: an ffmpeg failure is not a refusal
+    assert sorted(p.name for p in (out / "data" / "frames").iterdir()) == ["00009.jpg"]
+    assert not [p for p in (out / "data").iterdir() if p.name.startswith(".frames")]
+
+
+@pytest.mark.parametrize("rel", ["data", "notes"])
+def test_a_broken_link_where_a_folder_belongs_is_a_400(h, tmp_path, rel):
+    h.click(1)
+    h.track()
+    out = tmp_path / "build"
+    out.mkdir()
+    (out / rel).symlink_to(out / "missing")  # inside the root, pointing at nothing
+    code, m = export(h, out_dir=str(out), force=True)
+    assert code == 400 and rel in m["error"] and "missing" not in m["error"]
 
 
 @pytest.mark.parametrize("rel", ["data", "data/mattes_tracked/object_1", "notes", "data/frames"])

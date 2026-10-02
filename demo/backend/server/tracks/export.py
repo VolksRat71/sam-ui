@@ -25,17 +25,22 @@ person confirmed, and data/mattes_tracked/<pid> may hold mattes repaired by
 hand, so without force an existing decision file or a non-empty matte folder
 of an exported object is a refusal. With force they are replaced (the matte
 folder is deleted and refilled). sam-ui's own outputs are always rewritten:
-notes/sam-ui-export.json, and with frames the JPEGs in data/frames (clip.mp4
-and data/review.json are written only when missing).
+notes/sam-ui-export.json, and with frames the whole data/frames folder, which
+is replaced only once ffmpeg succeeds (clip.mp4 and data/review.json are
+written only when missing).
 
 Every path export writes or deletes must resolve, links followed, to inside
-the export root, and a matte folder it would delete must not be a link at all.
-All of it is checked before anything is written, so a refusal changes nothing,
-and checked again as each folder is used. Each file is written to a temp name
-beside it and os.replace'd into place, and old frames are unlinked before
-ffmpeg writes new ones, so a link or hard link planted meanwhile is replaced,
-never written through. (What remains is the instant between a folder's
-re-check and its use; closing that needs dir-fd syscalls.)
+the export root, and a matte folder it would delete must not be a link at all
+(nor a broken link where a folder belongs). All of it is checked before
+anything is written, so a refusal changes nothing, and checked again as each
+folder is used. Each file is written to a temp name beside it and os.replace'd
+into place, so a link or hard link planted meanwhile is replaced, never written
+through. ffmpeg fills a fresh mkdtemp folder that then takes data/frames' place
+by rename, so it never writes into, and export never clears, a data/frames that
+could have been swapped for a link. (What remains is the instant between a
+folder's re-check and its use, for data, notes and the matte folders: a link
+swapped in there could redirect that one mkdir, rmtree or write. Closing it
+needs dir-fd syscalls.)
 """
 import contextlib
 import functools
@@ -45,6 +50,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import time
 import uuid
 from pathlib import Path
@@ -119,6 +125,8 @@ def _check_targets(out: Path, out_dir: str, pids: List[str], frames: bool, force
     files = ["data/review.json", "notes/sam-ui-export.json", *DECISIONS] + (["data/clip.mp4"] if frames else [])
     for rel in folders + files:
         p = _guard(root, out, out_dir, out / rel)
+        if rel in folders and p.is_symlink() and not p.exists():
+            raise ExportError(f"{out_dir!r}: {rel} is a broken link")  # mkdir(exist_ok) would raise on it
         if p.exists() and p.is_dir() != (rel in folders):
             raise ExportError(f"{out_dir!r}: {rel} is {'a file, not a folder' if rel in folders else 'a folder'}")
     if frames and (out / "data" / "frames").is_dir():
@@ -246,14 +254,31 @@ def _extract_frames(video_path: str, out: Path, n_frames: int, guard) -> Dict:
         guard(clip.parent)
         with _replacing(clip) as tmp:
             shutil.copy2(video_path, tmp)
-    fdir = guard(out / "data" / "frames")
-    fdir.mkdir(exist_ok=True)
-    for old in fdir.glob("*.jpg"):  # sam-ui's own, rewritten: ffmpeg -y would write through a link
-        if old.is_symlink() or not old.is_dir():
-            old.unlink()
-    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(clip), "-an", "-q:v", "2", str(fdir / "%05d.jpg")],
-                   check=True)
-    got = len(list(fdir.glob("*.jpg")))
+    # ffmpeg -y writes through whatever sits at a frame's name, so it never
+    # writes into data/frames: it fills a fresh folder (mkdtemp: a new name,
+    # 0700), which then takes data/frames' place by rename. Renames move a
+    # link rather than follow it. On a failure the old frames stay as they were.
+    data = guard(out / "data")
+    new = Path(tempfile.mkdtemp(dir=data, prefix=".frames."))
+    try:
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(clip), "-an", "-q:v", "2", str(new / "%05d.jpg")],
+                       check=True)
+        got = len(list(new.glob("*.jpg")))
+        os.chmod(new, 0o755)  # as a plain mkdir would leave it
+        fdir = data / "frames"
+        if fdir.is_symlink() or fdir.exists():
+            old = data / f".frames.old.{uuid.uuid4().hex}"
+            os.rename(fdir, old)
+            try:
+                shutil.rmtree(old)
+            except OSError:
+                if not old.is_symlink():  # rmtree refuses a link: drop the link, never its target
+                    raise
+                old.unlink()
+        os.rename(new, fdir)
+    except BaseException:
+        shutil.rmtree(new, ignore_errors=True)
+        raise
     info: Dict = {"frames_extracted": True, "frames_on_disk": got}
     if n_frames and got != n_frames:
         info["warning"] = f"ffmpeg wrote {got} frames but the tracks cover {n_frames}: check the frame alignment"
