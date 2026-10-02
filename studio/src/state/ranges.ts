@@ -85,7 +85,7 @@ export function paintRange(ranges: ReadonlyArray<FrameRange>, start: number, end
   return normalizeRanges(out);
 }
 
-export function absentAt(ranges: ReadonlyArray<FrameRange> | undefined, frame: number): boolean {
+export function absentAt(ranges: ReadonlyArray<TimelineRange> | undefined, frame: number): boolean {
   return ranges?.some(r => r.state === ABSENT && r.start <= frame && frame <= r.end) ?? false;
 }
 
@@ -111,9 +111,9 @@ export function absentUntilNextSeed(seedFrames: ReadonlyArray<number>, frame: nu
   return [frame, next == null ? nFrames - 1 : next - 1];
 }
 
-/** The absent range holding `frame`, if any. */
-export function rangeAt(ranges: ReadonlyArray<FrameRange> | undefined, frame: number): FrameRange | null {
-  return ranges?.find(r => r.start <= frame && frame <= r.end) ?? null;
+/** The absent range holding `frame`, if any: never a present or candidate one, even from a whole view. */
+export function rangeAt(ranges: ReadonlyArray<TimelineRange> | undefined, frame: number): FrameRange | null {
+  return ranges?.find((r): r is FrameRange => r.state === ABSENT && r.start <= frame && frame <= r.end) ?? null;
 }
 
 /** The frames between absent ranges, in order. */

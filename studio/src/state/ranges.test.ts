@@ -197,6 +197,31 @@ describe('candidate and confirmed ranges', () => {
     expect(provenanceLabel(c(0, 1, DOG))).toBe('text:dog@sam3 · no score');
   });
 
+  // a candidate is not an absent range (Task 11 item 3)
+  it('never reads a candidate or present range as absent', () => {
+    const view = timelineView([r(10, 20)], [c(0, 9, DOG, 0.5), p(21, 25), c(26, 30)]);
+    expect(rangeAt(view, 12)).toEqual(r(10, 20));
+    expect([5, 22, 28].map(f => rangeAt(view, f))).toEqual([null, null, null]);
+    expect([5, 22, 28].map(f => absentAt(view, f))).toEqual([false, false, false]);
+    expect(endAbsenceAt(normalizeRanges(view), 28)).toEqual([r(10, 20)]); // a positive on a candidate: no absence to end
+    expect(absentUntilNextSeed([0, 40], 15, 100)).toEqual([15, 39]); // "Gone for a while?" runs to the next seed, not a candidate's edge
+  });
+
+  it('never merges a candidate with an absent range beside or over it', () => {
+    const wire = [r(0, 4), c(5, 9), r(10, 12), c(11, 14)];
+    expect(normalizeRanges(wire)).toEqual([r(0, 4), r(10, 12)]);
+    expect(normalizeMarks(wire)).toEqual([c(5, 9), c(11, 14)]);
+    expect(timelineView(normalizeRanges(wire), normalizeMarks(wire))).toEqual([r(0, 4), c(5, 9), r(10, 12), c(13, 14)]);
+    expect(rangeWindows(normalizeRanges(wire))).toEqual([{lo: 5, hi: 9}, {lo: 13, hi: null}]); // candidates split nothing
+    expect(seededWindows([7], normalizeRanges([c(0, 30)]))).toEqual([{window: {lo: 0, hi: null}, frames: [7]}]);
+  });
+
+  it('marking absent over a candidate hides it without deleting it', () => {
+    const t = paintTimeline({ranges: [], marks: [c(5, 35, DOG, 0.5)]}, 10, 40, ABSENT);
+    expect(t.marks).toEqual([c(5, 35, DOG, 0.5)]);
+    expect(timelineView(t.ranges, t.marks)).toEqual([c(5, 9, DOG, 0.5), r(10, 40)]);
+  });
+
   it('describes a range in words, frames 1-based, so no state is told by colour alone', () => {
     expect(describeRange(r(0, 4))).toBe('Frames 1–5: absent (not in the shot)');
     expect(describeRange(p(9, 9))).toBe('Frame 10: present (confirmed)');

@@ -948,7 +948,7 @@ export default function useStudioSession(video: VideoItem) {
    * frame before its next click after it (any click, a cleared seed too), or
    * to the clip's end. Goes through setRange, the one path for ranges, so it
    * syncs (and rolls back on failure) like any; overlapping an existing range
-   * merges with it (paintRange / normalizeRanges).
+   * merges with it, and a candidate under it stays, hidden (paintTimeline).
    */
   const markAbsentUntilNextSeed = useCallback(
     (objectId: number, frameIndex: number) => {
