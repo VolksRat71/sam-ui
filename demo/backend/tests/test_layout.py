@@ -154,3 +154,23 @@ def test_layouts_past_the_limits_are_refused(h):
     # at the limits is fine
     ok = put(h, {"order": list(range(lay.MAX_IDS)), "groups": [group(f"g{i}", []) for i in range(lay.MAX_GROUPS)]})
     assert ok.status_code == 200
+
+
+def test_undo_and_redo_of_a_members_corrections_leave_the_layout_alone(h):
+    # #18 x #21 x #23: the layout is outside the seeds history, so stepping a
+    # grouped object's clicks (a cleared, negatives-only seed among them) never moves it
+    h.click(1), h.click(2)
+    h.track()
+    layout = {"order": [2, 1], "groups": [group("g1", [1])]}
+    put(h, layout)
+    h.click(1, frame=2, labels=(0,))  # a "not here" seed, as SAM 3 stores it
+    h.service.undo(h.video, 1)
+    assert get(h) == layout
+    h.service.redo(h.video, 1)
+    assert get(h) == layout
+    # removing the grouped object still forgets its seeds and its tracks
+    assert (h.root / h.video / "1").exists() and 1 in h.service.seeds.objects(h.video)
+    h.service.remove_object(h.video, 1)
+    assert 1 not in h.service.seeds.objects(h.video)
+    assert not (h.root / h.video / "1").exists()
+    assert get(h)["order"] == [2]
