@@ -17,10 +17,15 @@ AGREE_IOU.
     just before its start (Sam2Engine.track_stretch), and keeps that start
     only if its first AGREE_RUN frames agree with the cache. Otherwise the
     change reaches further back: the lead doubles and the pass starts again.
-    It never starts before the window's first seed or the last frame an
-    earlier pass in the window made. Starting at the first seed, it also runs
-    back from it, as a full pass does, until AGREE_RUN frames agree.
-The pass conditions on every seed of the window, as a full pass does. An
+    It never starts before the window's first seed (where the engine's full
+    pass starts: for SAM 2, the first that is not cleared) or the last frame
+    an earlier pass in the window made, unless the corrected frame is a
+    cleared seed before it, which starts its own pass. Starting at the first
+    seed, it also runs back from it, as a full pass does, until AGREE_RUN
+    frames agree.
+The pass conditions on every seed of the window, as a full pass does; SAM 2
+leaves out cleared seeds and blanks their frames, as its full pass does
+(Sam2Engine.track_stretch, engine.strip_cleared). An
 unchanged seed frame it crosses is not a stop of its own: its mask is the
 seed's in both tracks, so it simply counts as an agreeing frame. Each pass
 holds one object, so the MPS trap of objects first seeded on different frames

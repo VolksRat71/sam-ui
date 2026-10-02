@@ -139,7 +139,7 @@ class Sam2Engine:
         blank = strip_cleared(objects)[1]
         for unit in self.plan(objects, windows):
             for frame, masks in self._track_group(video_path, unit, video_handle):
-                yield frame, {o: np.zeros_like(m) if frame in blank.get(o, ()) else m for o, m in masks.items()}
+                yield frame, blanked(frame, masks, blank)
 
     def plan(self, objects: Dict[int, Seeds], windows: Optional[Windows] = None) -> List[Unit]:
         """The passes a job over `objects` makes, in order. Cleared seeds are
@@ -194,20 +194,32 @@ class Sam2Engine:
         One object per state, so the MPS trap of objects first seeded on
         different frames (see track) cannot arise.
 
+        Cleared seeds are stripped as track() strips them (strip_cleared): they
+        never condition the state, and the object's output on their frames is
+        blanked, in both directions, before `stop` sees it. A stretch whose
+        only seeds are cleared yields nothing, as track() does for an object
+        with no other seed. Priming skips their frames too (they are in
+        stretch.seeds): the cache holds the blanked output there, not the
+        mask the model tracked through.
+
         It also yields None, a step with no frame, after each seed and each
         primed frame: a point where the caller may let go of the model lock,
         which it otherwise holds from one yield to the next."""
         o, start = stretch.obj_id, stretch.start
+        kept, blank = strip_cleared({o: stretch.seeds})
+        seeds = kept[o]
+        if not seeds:
+            return
         with self.autocast():
             if video_handle is not None:
                 state = job_state_like(video_handle)
             else:
                 state = self.predictor.init_state(video_path, offload_video_to_cpu=self.offload_video_to_cpu)
             try:
-                for frame in sorted(stretch.seeds):
-                    seed_into_state(self.predictor, state, o, frame, stretch.seeds[frame])
+                for frame in sorted(seeds):
+                    seed_into_state(self.predictor, state, o, frame, seeds[frame])
                     yield None
-                if self.prime and stretch.cached and start not in stretch.seeds:
+                if self.prime and stretch.cached and start not in seeds:
                     for _ in prime_from_cache(self.predictor, state, o, stretch, self.prime):
                         yield None
                 limits = {False: stretch.hi - start, True: start - stretch.lo}
@@ -219,9 +231,10 @@ class Sam2Engine:
                         sam2_prune(self.predictor, state, frame, start, reverse)
                         if reverse and frame == start:
                             continue
-                        m = (masks[list(obj_ids).index(o)] > self.score_thresh)[0].cpu().numpy()
-                        done = stop(frame, reverse, m)
-                        yield frame, {o: m}
+                        out = blanked(frame, {o: (masks[list(obj_ids).index(o)] > self.score_thresh)[0].cpu().numpy()},
+                                      blank)
+                        done = stop(frame, reverse, out[o])
+                        yield frame, out
                         if done:
                             break
             finally:
@@ -237,6 +250,11 @@ def strip_cleared(objects: Dict[int, Seeds]) -> Tuple[Dict[int, Seeds], Dict[int
     output there is blanked. SAM 3 conditions on it safely."""
     blank = {o: {f for f, v in s.items() if cleared(v)} for o, s in objects.items()}
     return {o: {f: v for f, v in s.items() if f not in blank[o]} for o, s in objects.items()}, blank
+
+
+def blanked(frame: int, masks: Dict[int, np.ndarray], blank: Dict[int, set]) -> Dict[int, np.ndarray]:
+    """One frame's masks with each object's cleared frame (strip_cleared) emptied."""
+    return {o: np.zeros_like(m) if frame in blank.get(o, ()) else m for o, m in masks.items()}
 
 
 def groups_by_first_seed(objects: Dict[int, Seeds]) -> List[Dict[int, Seeds]]:

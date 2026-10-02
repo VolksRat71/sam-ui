@@ -453,13 +453,18 @@ class TrackService:
         of its frames is sent, so every frame still goes out once. Each
         engine step that sends nothing yields None (see track's `steps`)."""
         span = window_frames(w, n)
-        first_seed = min(b.seeds)
+        # where a full pass of the window starts: its first seed, or for SAM 2
+        # its first seed that is not cleared (Sam2Engine.plan strips those)
+        plan = getattr(e, "plan", None)
+        units = plan({o: b.seeds}, {o: [w]}) if callable(plan) else []
+        first_seed = min(u.start for u in units) if units else min(b.seeds)
         made = set()
         reached = span[0] - 1  # the last frame an earlier pass in this window made
         for i, c in enumerate(b.changed):
             hi = b.changed[i + 1] - 1 if i + 1 < len(b.changed) else span[-1]
             floor = reached + 1
-            anchor = max(floor, first_seed)  # no pass starts before it (c is a seed, so c >= first_seed)
+            # no pass starts before the first seed, unless c is before it (a cleared seed SAM 2 skips)
+            anchor = max(floor, min(c, first_seed))
             pid = prov.bounded(p.hash, w, c, b.seeds[c])
             lead, attempts = bnd.LEAD, 0
             while True:
@@ -467,7 +472,7 @@ class TrackService:
                 start = max(c - lead, anchor)
                 at_anchor = start == anchor
                 stretch = Stretch(o, b.seeds, start, floor, hi, corrected=c,
-                                  reverse=at_anchor and start == first_seed and start > floor,
+                                  reverse=at_anchor and start <= first_seed and start > floor,
                                   cached=ChainMap(frames, b.old), floor=span[0])
                 stop = Agreement(b.old, start, c, check=0 if at_anchor else bnd.AGREE_RUN)
                 held, ran = [], []
