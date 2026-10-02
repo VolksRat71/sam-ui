@@ -15,6 +15,7 @@ INFO = {"object_id": 3, "state": "stale", "engine": "sam2", "model": "large", "f
 class FakeAPI:
     def __init__(self):
         self.cleared = []
+        self.points = []
 
     def start_session(self, request):
         return SimpleNamespace(session_id="s1")
@@ -25,6 +26,12 @@ class FakeAPI:
     def set_object_range(self, session_id, object_id, start, end, state=None):
         self.ranged = (session_id, object_id, start, end, state)
         return {**INFO, "ranges": [] if state is None else [{"start": start, "end": end, "state": state}]}
+
+    def add_points(self, request):
+        self.points.append(request)
+        if request.labels == [0]:
+            raise ValueError("needs_positive: SAM 2 needs a positive click")
+        return SimpleNamespace(frame_index=request.frame_index, results=[])
 
     def clear_track(self, session_id, object_id, engine=None):
         self.cleared.append((session_id, object_id, engine))
@@ -99,8 +106,9 @@ class VersionsAPI(FakeAPI):
         self.step = ("restore", session_id, object_id, key)
         return INFO
 
-    def move_clicks(self, session_id, frame_index, from_id, to_id):
+    def move_clicks(self, session_id, frame_index, from_id, to_id, engine=None):
         self.step = ("move", session_id, frame_index, from_id, to_id)
+        self.move_engine = engine
         return [{**INFO, "object_id": from_id}, {**INFO, "object_id": to_id}]
 
 
@@ -130,3 +138,29 @@ def test_undo_redo_restore_and_move_mutations_reach_the_api():
     d = run('mutation { moveClicks(input: {sessionId: "s1", frameIndex: 4, fromObjectId: 1, toObjectId: 2}) '
             '{ objectId } }', api)
     assert d["moveClicks"] == [{"objectId": 1}, {"objectId": 2}] and api.step == ("move", "s1", 4, 1, 2)
+
+
+ADD = ('mutation {{ addPoints(input: {{sessionId: "s1", frameIndex: 4, objectId: 3, clearOldPoints: true, '
+       'points: [[0.5, 0.5]], labels: [{label}]{engine}}}) {{ frameIndex }} }}')
+
+
+def test_add_points_carries_the_engine_and_leaves_it_none_when_unset():
+    api = FakeAPI()
+    run(ADD.format(label=1, engine=', engine: "sam3"'), api)
+    run(ADD.format(label=1, engine=""), api)
+    assert [r.engine for r in api.points] == ["sam3", None]
+
+
+def test_a_needs_positive_refusal_reaches_the_client_with_its_prefix():
+    r = schema.execute_sync(ADD.format(label=0, engine=""), context_value={"inference_api": FakeAPI()})
+    assert r.errors and r.errors[0].message.startswith("needs_positive: ")
+
+
+def test_move_clicks_carries_the_engine_and_leaves_it_none_when_unset():
+    api = VersionsAPI()
+    q = ('mutation {{ moveClicks(input: {{sessionId: "s1", frameIndex: 4, fromObjectId: 1, toObjectId: 2{engine}}}) '
+         '{{ objectId }} }}')
+    run(q.format(engine=', engine: "sam3"'), api)
+    assert api.move_engine == "sam3"
+    run(q.format(engine=""), api)
+    assert api.move_engine is None

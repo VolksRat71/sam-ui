@@ -24,6 +24,14 @@ def seed(x=0.5, y=0.5, label=1):
     return {"points": [[x, y]], "labels": [label]}
 
 
+def fix(x=0.3):
+    """A correction seed: a positive with a negative (a lone negative is a cleared seed)."""
+    return {"points": [[0.5, 0.5], [x, x]], "labels": [1, 0]}
+
+
+NOT_HERE = {"points": [[0.5, 0.5]], "labels": [0]}  # cleared: no positive, no mask
+
+
 class _NoStretches(FakeEngine):
     """An engine that cannot run a bounded pass (SAM 3, today)."""
 
@@ -53,8 +61,9 @@ def meta(h, obj=1, engine="fake"):
 
 
 def correct(h, frame, obj=1):
-    """A lone negative click: the correction the fake engine reacts to."""
-    h.click(obj, frame=frame, points=[[0.3, 0.3]], labels=(0,))
+    """A positive with a negative: the correction the fake engine reacts to.
+    (A lone negative is a cleared seed, 'not on this frame', since #26.)"""
+    h.click(obj, frame=frame, points=[[0.5, 0.5], [0.3, 0.3]], labels=(1, 0))
 
 
 # -- the pieces -------------------------------------------------------------------
@@ -102,7 +111,7 @@ def test_changed_frames_are_the_new_or_edited_seeds_and_a_removal_is_none():
 def test_sam2_engine_runs_a_stretch_in_one_fresh_state_within_its_bounds():
     p = _StubPredictor(n=40)
     e = Sam2Engine(p, model="stub")
-    seeds = {2: seed(), 20: seed(0.3, label=0), 35: seed(0.6)}
+    seeds = {2: seed(), 20: fix(), 35: seed(0.6)}
     calls = []
 
     def stop(f, reverse, m):
@@ -160,7 +169,7 @@ def test_a_stretch_starting_mid_window_is_primed_from_the_cache():
     p = _PrimingStub(n=60)
     e = Sam2Engine(p, model="stub")
     cached = {f: rle.encode(np.ones((4, 4), bool)) for f in range(60)}
-    seeds = {0: seed(), 30: seed(label=0), 22: seed()}
+    seeds = {0: seed(), 30: fix(), 22: seed()}
     got = list(e.track_stretch("v.mp4", Stretch(1, seeds, start=25, lo=0, hi=27, corrected=30, cached=cached,
                                                 floor=12), lambda *a: False))
     # the PRIME (16) frames before the start, never before the window (12), never a seed frame (22)
@@ -450,6 +459,214 @@ def test_track_provenance_route(h):
     assert [p["kind"] for p in got["passes"]] == ["full", "bounded"] and len(got["provenance"]) == 3
 
 
+# -- cleared seeds ('not on this frame', #26) in bounded passes ------------------------
+
+class _Recording(_PrimingStub):
+    """The priming stub, also noting where each propagation starts and every
+    predictor method a job calls (`calls`, by name)."""
+
+    def __init__(self, n):
+        super().__init__(n)
+        self.runs, self.calls = [], []
+
+    def init_state(self, path, offload_video_to_cpu=False):
+        self.calls.append("init_state")
+        return super().init_state(path, offload_video_to_cpu)
+
+    def add_new_points_or_box(self, *a, **kw):
+        self.calls.append("add_new_points_or_box")
+        return super().add_new_points_or_box(*a, **kw)
+
+    def add_new_mask(self, *a, **kw):
+        self.calls.append("add_new_mask")
+        return super().add_new_mask(*a, **kw)
+
+    def _run_single_frame_inference(self, *a, **kw):
+        self.calls.append("_run_single_frame_inference")
+        return super()._run_single_frame_inference(*a, **kw)
+
+    def propagate_in_video(self, state, start_frame_idx, max_frame_num_to_track=None, reverse=False):
+        self.calls.append("propagate_in_video")
+        self.runs.append((start_frame_idx, reverse))
+        yield from super().propagate_in_video(state, start_frame_idx, max_frame_num_to_track, reverse)
+
+    def reset_state(self, state):
+        self.calls.append("reset_state")
+        return super().reset_state(state)
+
+
+def frames_of(steps):
+    return {f: m for f, m in (x for x in steps if x is not None)}
+
+
+def test_a_stretch_never_seeds_a_cleared_frame_and_blanks_it_both_ways():
+    """As a full pass (Sam2Engine.track, strip_cleared): SAM 2 is never handed
+    an empty seed, and the frame comes out empty, to the caller and to stop."""
+    p = _StubPredictor(n=40)
+    seen = {}
+
+    def stop(f, reverse, m):
+        seen[f] = m.any()
+        return False
+
+    seeds = {2: seed(), 15: NOT_HERE, 20: fix(), 25: NOT_HERE}
+    got = frames_of(Sam2Engine(p, model="stub").track_stretch(
+        "v.mp4", Stretch(7, seeds, start=20, lo=10, hi=30, reverse=True), stop))
+    assert [a[:2] for a in p.added] == [(7, 2), (7, 20)]  # 15 and 25 never reach the predictor
+    assert sorted(got) == list(range(10, 31))
+    assert not got[25][7].any() and not got[15][7].any()  # ahead of the start, and behind it
+    assert all(got[f][7].all() for f in got if f not in (15, 25))
+    assert seen[25] is np.False_ and seen[15] is np.False_ and seen[24] and seen[16]
+    assert p.reset == 1
+
+
+def test_a_stretch_whose_only_seed_is_cleared_yields_nothing():
+    """As track() does for an object with only a cleared seed: no state, no frames."""
+    p = _StubPredictor(n=40)
+    got = list(Sam2Engine(p, model="stub").track_stretch(
+        "v.mp4", Stretch(7, {20: NOT_HERE}, start=20, lo=10, hi=30, reverse=True), lambda *a: False))
+    assert got == [] and p.added == [] and p.reset == 0
+
+
+@pytest.fixture
+def h3(tmp_path):
+    """The service over the real Sam2Engine on a stub predictor that primes."""
+    e = Sam2Engine(_Recording(n=N), model="stub")
+    e.n_frames = N  # the clip's length, which a live session's video handle gives
+    return Harness(tmp_path, engine=e)
+
+
+def full_retrack(h, obj=1):
+    """The same seeds re-tracked whole (a tracked object asked for again)."""
+    bounded = stored(h, obj, "sam2")
+    h.track([obj])
+    assert [p["kind"] for p in meta(h, obj, "sam2")["passes"]][-1] == "full"
+    return bounded, stored(h, obj, "sam2")
+
+
+def blank_only(h, c, before, frames):
+    """The job after clearing frame c: no model ran, c went out and is stored
+    empty, every other frame is the cache byte for byte, and frame c is
+    recorded as a bounded pass of its own over that one frame."""
+    p = h.engine.predictor
+    assert p.calls == []  # not a single predictor method
+    got = by_frame(frames)
+    after = stored(h, engine="sam2")
+    assert sorted(got) == sorted(after) == sorted(before)
+    assert not got[c].any() and not rle.decode(after[c]).any()
+    assert all(after[f] == before[f] for f in before if f != c)
+    m = meta(h, engine="sam2")
+    last = m["passes"][-1]
+    assert last["kind"] == "bounded" and last["start"] == c and last["frames"] == [c, c] and last["attempts"] == 0
+    assert frame_passes(m)[c] == last["id"] and c in m["cleared_seeds"]
+    return last
+
+
+def test_a_cleared_seed_after_the_first_kept_seed_blanks_only_its_frame(h3):
+    """Under SAM 2 a cleared seed never conditions the model, so a full
+    re-track would change its frame only: the job blanks it and runs nothing."""
+    p = h3.engine.predictor
+    h3.click(1, frame=0)
+    h3.track()
+    before = stored(h3, engine="sam2")
+    h3.click(1, frame=30, labels=(0,))  # 'not on this frame'
+    p.calls.clear()
+    _, frames = h3.track()
+    blank_only(h3, 30, before, frames)
+    assert h3.state(1) == TRACKED
+    bounded, full = full_retrack(h3)
+    assert bounded == full
+
+
+def test_a_cleared_seed_before_the_first_kept_seed_blanks_only_its_frame(h3):
+    """Before the window's first kept seed too: a full pass makes that frame
+    in reverse from the seed, but blanks it, and nothing else depends on it."""
+    p = h3.engine.predictor
+    h3.click(1, frame=10)
+    h3.track()
+    before = stored(h3, engine="sam2")
+    h3.click(1, frame=5, labels=(0,))
+    p.calls.clear()
+    _, frames = h3.track()
+    blank_only(h3, 5, before, frames)
+    bounded, full = full_retrack(h3)
+    assert bounded == full
+
+
+def test_editing_a_cleared_seed_still_blanks_only_its_frame(h3):
+    """The track records which seeds were cleared (cleared_seeds), so moving
+    a cleared seed's click is known not to have touched the conditioning."""
+    p = h3.engine.predictor
+    h3.click(1, frame=0), h3.click(1, frame=30, labels=(0,))
+    h3.track()
+    before = stored(h3, engine="sam2")
+    h3.click(1, frame=30, points=[[0.2, 0.7]], labels=(0,))
+    p.calls.clear()
+    _, frames = h3.track()
+    blank_only(h3, 30, before, frames)
+
+
+def test_a_real_seed_that_becomes_cleared_retracks_its_window_whole(h3):
+    """A positive seed made cleared leaves the conditioning, which moves other
+    frames too: the window re-runs whole, as for a removed seed."""
+    p = h3.engine.predictor
+    h3.click(1, frame=0), h3.click(1, frame=30)
+    h3.track()
+    h3.click(1, frame=30, labels=(0,))
+    p.calls.clear(), p.added.clear()
+    _, frames = h3.track()
+    m = meta(h3, engine="sam2")
+    assert [x["kind"] for x in m["passes"]] == ["full"] and "propagate_in_video" in p.calls
+    assert [f for _, f, *_ in p.added] == [0]  # 30 is not seeded
+    assert not by_frame(frames)[30].any()
+
+
+def test_a_cleared_seed_on_an_engine_that_conditions_on_it_still_runs_a_bounded_pass(h):
+    """Only an engine that skips cleared seeds (SAM 2) takes the blank-only
+    path; others (the fake here, SAM 3) keep their bounded pass."""
+    h.click(1, frame=0)
+    h.track()
+    h.click(1, frame=30, labels=(0,))
+    h.track()
+    assert len(h.engine.stretches) == 1 and h.engine.stretches[0][1] == 10
+
+
+def test_a_cleared_seed_inside_an_absent_window_blanks_only_its_frame(h3):
+    p = h3.engine.predictor
+    h3.click(1, frame=0), h3.click(1, frame=50)
+    h3.service.set_range(h3.video, 1, 40, 45, ABSENT)
+    h3.track()
+    before = stored(h3, engine="sam2")
+    h3.click(1, frame=55, labels=(0,))  # cleared, in the window (46, end) after the gap
+    p.calls.clear()
+    _, frames = h3.track()
+    last = blank_only(h3, 55, before, frames)
+    assert last["window"] == [46, None]
+    got = by_frame(frames)
+    assert not any(got[f].any() for f in range(40, 46))  # the gap stays empty
+    bounded, full = full_retrack(h3)
+    assert all(bounded[f] == full[f] for f in range(46, N)) and bounded == full
+
+
+def test_a_cleared_first_seed_does_not_decide_where_a_bounded_pass_starts(h3):
+    """A full pass starts at the window's first kept seed and runs back from
+    it (Sam2Engine.plan). A bounded pass that reaches that seed does too,
+    rather than starting earlier, primed, toward a cleared frame."""
+    p = h3.engine.predictor
+    h3.click(1, frame=2, labels=(0,))  # cleared, the window's first seed
+    h3.click(1, frame=10)
+    h3.track()
+    assert p.runs == [(10, False), (10, True)]
+    p.runs.clear()
+    h3.click(1, frame=25, points=[[0.5, 0.5], [0.3, 0.3]], labels=(1, 0))
+    _, frames = h3.track()
+    assert p.runs == [(10, False), (10, True)] and p.primed == []  # from the first kept seed, back from it too
+    got = by_frame(frames)
+    assert not got[2].any() and got[3].all()
+    bounded, full = full_retrack(h3)
+    assert bounded == full
+
+
 # -- the real model ---------------------------------------------------------------------
 
 import os  # noqa: E402
@@ -533,8 +750,11 @@ def test_real_sam2_bounded_retrack_matches_a_full_retrack(tmp_path):
     extra = {f: int((old[f] & ~truth[f]).sum()) for f in range(CN)}
     c = max(extra, key=extra.get)
     if extra[c] > 50:  # cut the look-alike away where the track holds most of it
+        # SAM 2 needs a positive on the frame (needs_positive): one on the square, the negative on the look-alike
         ys, xs = np.nonzero(old[c] & ~truth[c])
-        click(a, sid, 1, c, [[(xs.mean() + .5) / CW, (ys.mean() + .5) / CH]], [0])
+        y, x = cross_obj(c)
+        click(a, sid, 1, c, [[(x + CS / 2) / CW, (y + CS / 2) / CH], [(xs.mean() + .5) / CW, (ys.mean() + .5) / CH]],
+              [1, 0])
     else:  # a clean track: refine mid-clip
         c = CN // 2
         y, x = cross_obj(c)
@@ -554,3 +774,25 @@ def test_real_sam2_bounded_retrack_matches_a_full_retrack(tmp_path):
     assert prov["state"] == TRACKED and c in inside and 0 < len(inside) < CN
     assert all((bnd[f] == old[f]).all() for f in range(CN) if f not in inside)  # outside: the cache, untouched
     assert min(v) > MIN_IOU_VS_FULL and np.mean(v) > MEAN_IOU_VS_FULL
+
+    # A mid-clip 'not on this frame' seed, stored as SAM 3 stores a lone negative
+    # (its mask empty). SAM 2 never conditions on it, so the job blanks that frame
+    # and runs no model, and a full re-track must agree on it and its neighbours.
+    g = 3 * CN // 4 if abs(3 * CN // 4 - c) > 10 else CN // 4
+    y, x = cross_obj(g)
+    a.tracks.record_points(video, 1, g, [[(x + CS / 2) / CW, (y + CS / 2) / CH]], [0], True,
+                           mask=rle.encode(np.zeros((CH, CW), bool)))
+    blank, t_g = track()
+    prov_g = a.tracks.provenance(video, 1)
+    full_g, t_fg = track(full=True)
+    near = [f for f in range(g - 5, g + 6) if f != g]
+    w = [mask_iou(blank[f], full_g[f]) for f in near]
+    print(f"cleared seed on frame {g}: blanked in {t_g:.2f} s (passes {prov_g['bounded']}) against "
+          f"{t_fg:.1f} s for a full re-track; frame {g} area {int(full[g].sum())} -> bounded {int(blank[g].sum())}, "
+          f"full {int(full_g[g].sum())}; neighbours {near[0]}-{near[-1]} IoU vs full min {min(w):.4f}")
+    last = prov_g["passes"][-1]
+    assert last["kind"] == "bounded" and last["frames"] == [g, g] and last["attempts"] == 0
+    assert prov_g["bounded"] == [[g, g]] and full[g].any()
+    assert not blank[g].any() and not full_g[g].any()
+    assert all((blank[f] == full[f]).all() for f in range(CN) if f != g)  # the cache, kept
+    assert min(w) > MIN_IOU_VS_FULL

@@ -95,10 +95,12 @@ python3 -m http.server 7390 --bind 127.0.0.1 --directory /tmp/pages   # http://1
 - **Objects.** Click the video to add an object and a positive point. Right
   click adds a negative point, and the Add / Remove toggle swaps the two.
   Click a point to remove it. *Add object* starts the next object. On a
-  tracked frame a click refines the tracked mask: a lone negative cuts away the
-  region it is on. If every click on a frame is negative and the frame has no
-  mask to refine, SAM 2 returns an empty mask, and studio shows a hint asking
-  for a positive click.
+  tracked frame a click refines the tracked mask: a negative, sent with a
+  positive on the part to keep, cuts away the region it is on. If every click
+  on a frame would be negative, SAM 2 needs a positive to keep something:
+  studio sends nothing, keeps the clicks as they were, and nudges you to add a
+  positive to trim or, when SAM 3 is available, to switch to it. On SAM 3 a
+  lone negative empties the frame, and studio asks "Gone for a while?".
 - **Review flags.** While scrubbing, F flags the current frame of the selected
   object (the flag button in the transport does the same). Each flag is a
   yellow marker on the object's lane that seeks there when clicked; clicks on
@@ -239,7 +241,7 @@ Compared with Meta's demo UI, which studio replaced:
 | Highlight and background effects, with variants | done, and changed: each object has its own effect (Meta applies one to every object); the background stays one per video. Both effect groups start collapsed |
 | Download the video with effects | done, and changed: Export video in the top bar, studio's own encoder (mediabunny), no watermark, untouched objects as Original by default |
 | Share section and "try another video" step | missing |
-| First-click onboarding, snackbar tips, tooltips | partial: an empty-state line and the negative-click hint |
+| First-click onboarding, snackbar tips, tooltips | partial: an empty-state line and the negative-click nudge |
 | Settings modal (API endpoints) | missing: set `VITE_API_ENDPOINT` instead |
 | Mobile layout | missing (desktop only) |
 | Loading and error screens | partial: session start, backend unreachable, and toasts for failed calls |
