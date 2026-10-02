@@ -346,13 +346,23 @@ def main():
             'tools/proxy_resolution_bench.py', 'demo/backend/server/data/transcoder.py',
             'demo/backend/server/tracks/engine.py', 'demo/backend/server/tracks/streaming.py',
             'demo/backend/server/tracks/features.py')},
+        # HEAD alone cannot identify a developer's uncommitted model edits.
+        'model_source_sha256': {
+            str(path.relative_to(REPO)): digest(path)
+            for path in sorted((REPO / 'sam2').rglob('*'))
+            if path.is_file() and path.suffix in {'.py', '.yaml', '.yml'}
+        },
     }
     env = {**os.environ, 'PYTORCH_ENABLE_MPS_FALLBACK': '1',
            'DATA_PATH': str(out / 'app-data'), 'SAM_UI_BENCH_LOCK_OWNER': str(os.getpid())}
     with gpu_lock():
-        probe = subprocess.run([sys.executable, str(Path(__file__).resolve()), '--out', str(out),
-                                '--_environment'], env=env, cwd=REPO,
-                               capture_output=True, text=True, check=True)
+        try:
+            probe = subprocess.run([sys.executable, str(Path(__file__).resolve()), '--out', str(out),
+                                    '--_environment'], env=env, cwd=REPO,
+                                   capture_output=True, text=True, check=True)
+        except subprocess.CalledProcessError as exc:
+            diagnostic = (exc.stderr or exc.stdout or str(exc)).strip()
+            raise RuntimeError(f'Runtime probe failed:\n{diagnostic}') from exc
     measurement = {'config': CONFIG, 'checkpoint_sha256': checkpoint_sha,
                    'provenance': provenance, 'environment': json.loads(probe.stdout)}
     record_measurement_identity(out, measurement)

@@ -36,6 +36,10 @@ configuration, code hashes, and git HEAD match. An incompatible manifest is
 rejected before starting any model. Use a fresh output directory after changing
 those inputs or moving to another machine.
 
+Model-source hashes include SAM Python and YAML files, so uncommitted model or
+configuration edits also invalidate a resumed measurement. A failed runtime
+probe surfaces the child's diagnostic output before any model job starts.
+
 ## Method
 
 Three deterministic, native 3840×2160 scenes provide visible binary ground truth:

@@ -140,3 +140,64 @@ def test_cli_checks_runtime_identity_before_starting_any_model(tmp_path, monkeyp
     with pytest.raises(ValueError, match='Measurement identity'):
         bench.main()
     assert not model_calls
+
+
+@pytest.fixture
+def isolated_cli(tmp_path, monkeypatch):
+    """A real CLI/manifest flow with fake children, so no model or lock is used."""
+    from contextlib import nullcontext
+    import json
+    import subprocess
+    import sys
+
+    repo = tmp_path / 'repo'
+    for name in ('tools/proxy_resolution_bench.py', 'demo/backend/server/data/transcoder.py',
+                 'demo/backend/server/tracks/engine.py', 'demo/backend/server/tracks/streaming.py',
+                 'demo/backend/server/tracks/features.py', 'sam2/sam2_video_predictor.py',
+                 'sam2/configs/sam2.1/sam2.1_hiera_l.yaml'):
+        path = repo / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('original source')
+    weights = tmp_path / 'weights'
+    weights.write_bytes(b'placeholder')
+    monkeypatch.setattr(bench, 'REPO', repo)
+    monkeypatch.setattr(sys, 'argv', ['bench', '--out', str(tmp_path), '--weights', str(weights)])
+    monkeypatch.setattr(bench, 'prepare', lambda out: {'digests': {'detail-720p.mp4': 'clip digest'}})
+    monkeypatch.setattr(bench, 'gpu_lock', nullcontext)
+    monkeypatch.setattr(bench.subprocess, 'check_output', lambda *a, **k: 'same head\n')
+    calls = []
+
+    def child(command, **kwargs):
+        if '--_environment' in command:
+            return subprocess.CompletedProcess(command, 0, json.dumps({'device': 'test'}))
+        calls.append(command)
+        raise RuntimeError('model stub')
+
+    monkeypatch.setattr(bench.subprocess, 'run', child)
+    return repo, calls
+
+
+@pytest.mark.parametrize('source', ['sam2/configs/sam2.1/sam2.1_hiera_l.yaml',
+                                   'sam2/sam2_video_predictor.py'])
+def test_cli_rejects_uncommitted_model_changes_before_resuming(isolated_cli, source):
+    repo, model_calls = isolated_cli
+    with pytest.raises(RuntimeError, match='model stub'):
+        bench.main()
+    model_calls.clear()
+    (repo / source).write_text('changed model; same git HEAD')
+    with pytest.raises(ValueError, match='Measurement identity'):
+        bench.main()
+    assert not model_calls
+
+
+def test_cli_surfaces_runtime_probe_stderr(isolated_cli, monkeypatch):
+    import subprocess
+    _, model_calls = isolated_cli
+
+    def fail_probe(command, **kwargs):
+        raise subprocess.CalledProcessError(1, command, stderr='cannot load runtime: sentinel cause')
+
+    monkeypatch.setattr(bench.subprocess, 'run', fail_probe)
+    with pytest.raises(RuntimeError, match='cannot load runtime: sentinel cause'):
+        bench.main()
+    assert not model_calls
