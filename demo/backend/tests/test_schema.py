@@ -16,6 +16,7 @@ class FakeAPI:
     def __init__(self):
         self.cleared = []
         self.started = []
+        self.points = []
 
     def start_session(self, request):
         self.started.append(request.path)
@@ -37,6 +38,12 @@ class FakeAPI:
     def write_object_candidates(self, session_id, object_id, candidates, replace=False):
         self.candidates = (session_id, object_id, candidates, replace)
         return {**INFO, "ranges": [{**c, "state": "candidate"} for c in candidates]}
+
+    def add_points(self, request):
+        self.points.append(request)
+        if request.labels == [0]:
+            raise ValueError("needs_positive: SAM 2 needs a positive click")
+        return SimpleNamespace(frame_index=request.frame_index, results=[])
 
     def clear_track(self, session_id, object_id, engine=None):
         self.cleared.append((session_id, object_id, engine))
@@ -181,3 +188,19 @@ def test_start_session_stays_inside_the_data_folder():
                                 variable_values={"p": bad}, context_value={"inference_api": api})
         assert r.errors and "not a video path" in str(r.errors[0]), bad
     assert len(api.started) == 1  # nothing outside the folder reached the engine
+
+
+ADD = ('mutation {{ addPoints(input: {{sessionId: "s1", frameIndex: 4, objectId: 3, clearOldPoints: true, '
+       'points: [[0.5, 0.5]], labels: [{label}]{engine}}}) {{ frameIndex }} }}')
+
+
+def test_add_points_carries_the_engine_and_leaves_it_none_when_unset():
+    api = FakeAPI()
+    run(ADD.format(label=1, engine=', engine: "sam3"'), api)
+    run(ADD.format(label=1, engine=""), api)
+    assert [r.engine for r in api.points] == ["sam3", None]
+
+
+def test_a_needs_positive_refusal_reaches_the_client_with_its_prefix():
+    r = schema.execute_sync(ADD.format(label=0, engine=""), context_value={"inference_api": FakeAPI()})
+    assert r.errors and r.errors[0].message.startswith("needs_positive: ")

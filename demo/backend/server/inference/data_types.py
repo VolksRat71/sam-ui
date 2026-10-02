@@ -69,6 +69,7 @@ class AddPointsRequest(BaseRequest):
     object_id: int
     labels: List[int]
     points: List[List[float]]
+    engine: Optional[str] = None  # sam-ui: the engine the click is for; None is SAM 2
 
 
 @dataclass_json

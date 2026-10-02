@@ -5,7 +5,9 @@
 // (sam2/modeling/sam2_base.py), in the order our Python engine drives it
 // (demo/backend/server/tracks/engine.py):
 //
-//   1. every seed frame, frame-major across objects, is an initial
+//   1. every seed frame but a cleared one (isClearedSeed: no positive and no
+//      approved mask, tracked through with its output blanked, as the
+//      backend's Sam2Engine does), frame-major across objects, is an initial
 //      conditioning frame: the decoder runs on the frame's features without
 //      memory (feats2_no_mem) with the frame's clicks, and the memory encoder
 //      encodes its mask binarised (binarize_mask_from_pts_for_mem_enc);
@@ -35,7 +37,7 @@
 import type {RLEObject} from '@/jscocotools/mask';
 import type {NormPoint} from '~/state/objects';
 import type {Sam2Constants} from './config';
-import {fillHoles, logitsToRle, maskInput, upsampleLogits} from './masks';
+import {fillHoles, logitsToRle, maskInput, maskToRle, rleArea, upsampleLogits} from './masks';
 import {assembleMemory, type HeldMemory, planMemory} from './memoryBank';
 
 export interface Releasable {
@@ -96,6 +98,34 @@ type ObjectState = {
   cond: Map<number, Held & {rle: RLEObject}>;
   nonCond: Map<number, Held>;
 };
+
+/**
+ * A seed SAM 2 must never condition on, as the backend's seeds.cleared()
+ * decides: no positive click and no approved mask, or an empty one (a frame
+ * emptied on SAM 3). A legacy seed trimmed by the removed hidden anchor (no
+ * positive, a mask) still conditions.
+ */
+export function isClearedSeed(seed: TrackSeed): boolean {
+  return !seed.points.some(p => p[2] === 1) && (seed.mask == null || rleArea(seed.mask) === 0);
+}
+
+/**
+ * An object's seeds as the tracker uses them: the conditioning ones, and the
+ * cleared frames, tracked through like any other frame with their output
+ * blanked (the backend's strip_cleared).
+ */
+export function splitSeeds(seeds: readonly TrackSeed[]): {cond: TrackSeed[]; blank: Set<number>} {
+  const cond: TrackSeed[] = [];
+  const blank = new Set<number>();
+  for (const seed of seeds) {
+    if (isClearedSeed(seed)) {
+      blank.add(seed.frame);
+    } else {
+      cond.push(seed);
+    }
+  }
+  return {cond, blank};
+}
 
 /** Seed points (0-1) as the decoder's input, in pixels of the model input. */
 export function promptOf(points: readonly NormPoint[], size: number): {points: Float32Array; labels: Int32Array} {
@@ -266,14 +296,18 @@ export class Sam2Tracker {
     const hi = Math.min(this._opts.numFrames - 1, window?.hi ?? Infinity);
     const states: ObjectState[] = [];
     const seeds: Array<{state: ObjectState; seed: TrackSeed}> = [];
+    const blanks = new Map<number, Set<number>>();
     for (const o of objects) {
       const withClicks = o.seeds.filter(s => s.points.length > 0 && s.frame >= lo && s.frame <= hi);
-      if (withClicks.length === 0) {
+      // cleared seeds never condition: an object with nothing else is not tracked
+      const {cond, blank} = splitSeeds(withClicks);
+      if (cond.length === 0) {
         continue;
       }
       const state: ObjectState = {id: o.id, cond: new Map(), nonCond: new Map()};
       states.push(state);
-      withClicks.forEach(seed => seeds.push({state, seed}));
+      blanks.set(o.id, blank);
+      cond.forEach(seed => seeds.push({state, seed}));
     }
     if (states.length === 0) {
       return;
@@ -289,6 +323,8 @@ export class Sam2Tracker {
         features.release();
       }
     }
+    let empty: RLEObject | null = null;
+    const blanked = () => (empty ??= maskToRle(new Uint8Array(this._opts.width * this._opts.height), this._opts.width, this._opts.height));
     const start = Math.min(...seeds.map(s => s.seed.frame));
     const passes: Array<{reverse: boolean; frames: number[]}> = [
       {reverse: false, frames: range(start, hi)},
@@ -303,7 +339,8 @@ export class Sam2Tracker {
         try {
           for (const state of states) {
             const seed = state.cond.get(frame);
-            masks.set(state.id, seed != null ? seed.rle : await this._step(state, frame, pass.reverse, features));
+            const rle = seed != null ? seed.rle : await this._step(state, frame, pass.reverse, features);
+            masks.set(state.id, blanks.get(state.id)?.has(frame) ? blanked() : rle);
             this._prune(state, frame, pass.reverse, start);
           }
         } finally {

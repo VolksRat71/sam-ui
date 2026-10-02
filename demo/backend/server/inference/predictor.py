@@ -2,7 +2,7 @@
 # All rights reserved.
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
-# Modified by sam-ui: clicks are recorded as seeds, track jobs run through tracks/, a correction refines the cached track mask (with an anchor click for a lone negative), and a click inside an absent range is refused; undo, redo and versions of an object's seeds, and moving a frame's clicks to another object. A text prompt's seed mask (SAM 3, /text_prompt) joins the session like a replayed seed.
+# Modified by sam-ui: clicks are recorded as seeds, track jobs run through tracks/, a correction refines the cached track mask, and a click inside an absent range is refused; undo, redo and versions of an object's seeds, and moving a frame's clicks to another object. A text prompt's seed mask (SAM 3, /text_prompt) joins the session like a replayed seed.
 
 import logging
 import os
@@ -37,11 +37,11 @@ from inference.data_types import (
 from pycocotools.mask import decode as decode_masks
 from sam2.build_sam import build_sam2_video_predictor
 from tracks import rle as track_rle
-from tracks.anchor import anchor_point
 from tracks.engine import Sam2Engine, seed_into_state
 from tracks.features import VIDEO_KEY, FeatureCache, default_cache_gb, install as install_feature_cache
 from tracks.streaming import install_sam2_streaming
 from tracks.routes import TrackContext
+from tracks.seeds import cleared
 from tracks import sam3_engine
 from tracks.precision import sam2_autocast
 from tracks.service import EngineSpec, ObjectBusy, TrackService
@@ -49,6 +49,13 @@ from tracks.text import has_prompt
 
 
 logger = logging.getLogger(__name__)
+
+# sam-ui: the refusal a click gets when SAM 2 would be handed a frame with no
+# positive; its message starts with "needs_positive: " for the studio to match.
+NEEDS_POSITIVE = "needs_positive"
+# the engines that take a frame of only negatives as "not here"; every other
+# engine (none named, a typo, one this server doesn't know) is held to SAM 2's rule
+TAKES_NOT_HERE = ("sam3",)
 
 
 class InferenceAPI:
@@ -162,11 +169,12 @@ class InferenceAPI:
             # sam-ui: replay the stored seeds (their approved masks), so a reload
             # keeps its objects and a click on a seed frame refines its mask.
             # Frame-major: each frame's backbone features serve every object.
+            # A cleared ('not on this frame') seed is skipped: SAM 2 never conditions on one.
             video = self.tracks.video_key(request.path)
             inference_state[VIDEO_KEY] = video  # opts the session (and its jobs) into the feature cache
             seeds = {o: self.tracks.seeds.seeds(video, o) for o in self.tracks.seeds.objects(video)}
             for frame_idx, obj_id in sorted(
-                (f, o) for o, s in seeds.items() for f, v in s.items() if has_prompt(v)
+                (f, o) for o, s in seeds.items() for f, v in s.items() if has_prompt(v) and not cleared(v)
             ):
                 seed_into_state(self.predictor, inference_state, obj_id, frame_idx, seeds[obj_id][frame_idx])
             self.session_states[session_id] = {
@@ -189,7 +197,7 @@ class InferenceAPI:
             session = self.__get_session(request.session_id)
             frame_idx, object_ids, masks_binary = self._add_points_locked(
                 session, request.frame_index, request.object_id, request.points, request.labels,
-                request.clear_old_points)
+                request.clear_old_points, request.engine)
             rle_mask_list = self.__get_rle_mask_list(
                 object_ids=object_ids, masks=masks_binary
             )
@@ -199,10 +207,25 @@ class InferenceAPI:
                 results=rle_mask_list,
             )
 
-    def _add_points_locked(self, session, frame_idx, obj_id, points, labels, clear_old_points):
+    def _add_points_locked(self, session, frame_idx, obj_id, points, labels, clear_old_points, engine=None):
         """sam-ui: add_points' work, with the inference lock held: SAM 2's
-        answer on the frame, recorded as the object's seed there."""
+        answer on the frame, recorded as the object's seed there. `engine` is
+        the one the studio tracks with; none is held to SAM 2's rule."""
         inference_state = session["state"]
+
+        # sam-ui: SAM 2 was trained on a positive first, then corrections; given
+        # only negatives it empties the frame, and an empty frame saved as a seed
+        # erases the object on the frames around it (measured). So on SAM 2 a frame
+        # whose clicks have no positive is refused; SAM 3 takes it as "not here".
+        # An unknown engine is treated as SAM 2, so a typo can't poison a seed.
+        if clear_old_points:
+            user_labels = [int(l) for l in labels]
+        else:
+            old = self.tracks.seeds.seeds(session["video"], obj_id).get(frame_idx) or {}
+            user_labels = [int(l) for l in old.get("labels", [])] + [int(l) for l in labels]
+        if user_labels and 1 not in user_labels and engine not in TAKES_NOT_HERE:
+            raise ValueError(f"{NEEDS_POSITIVE}: SAM 2 needs a positive click to keep part of object {obj_id} "
+                             f"on frame {frame_idx}")
 
         # sam-ui: the object is marked absent here, so there is nothing to
         # click on; the studio says so before it sends. Refusing also keeps
@@ -228,25 +251,14 @@ class InferenceAPI:
                 )
                 primed = True
 
-        # sam-ui: SAM 2 empties a frame whose clicks are all negative, even
-        # with a mask to refine. So a correction of only negatives gets an
-        # anchor: one positive deep inside the frame's mask, away from the
-        # clicks. SAM sees it; the seed store records only the user's clicks.
-        sam_points, sam_labels = points, labels
-        if 1 not in self.__frame_labels(inference_state, obj_id, frame_idx, labels, clear_old_points):
-            current = self.__current_mask(inference_state, obj_id, frame_idx)
-            anchor = None if current is None else anchor_point(current, points)
-            if anchor is not None:
-                sam_points, sam_labels = [anchor] + list(points), [1] + list(labels)
-
         # add new prompts and instantly get the output on the same frame
         try:
             frame_idx, object_ids, masks = self.predictor.add_new_points_or_box(
                 inference_state=inference_state,
                 frame_idx=frame_idx,
                 obj_id=obj_id,
-                points=sam_points,
-                labels=sam_labels,
+                points=points,
+                labels=labels,
                 clear_old_points=clear_old_points,
                 normalize_coords=False,
             )
@@ -640,31 +652,6 @@ class InferenceAPI:
                 if frame_idx in d.get(k, {}):
                     return True
         return False
-
-    @staticmethod
-    def __frame_labels(inference_state, obj_id: int, frame_idx: int, labels, clear_old_points: bool) -> List[int]:
-        """The labels SAM 2 will hold for this frame once `labels` are added."""
-        new = [int(l) for l in labels]
-        if clear_old_points:
-            return new
-        obj_idx = inference_state["obj_id_to_idx"].get(obj_id)
-        old = None if obj_idx is None else inference_state["point_inputs_per_obj"].get(obj_idx, {}).get(frame_idx)
-        return ([] if old is None else [int(l) for l in old["point_labels"].flatten().tolist()]) + new
-
-    @staticmethod
-    def __current_mask(inference_state, obj_id: int, frame_idx: int):
-        """The mask SAM 2 would refine on this frame (its previous output, looked
-        up as add_new_points_or_box does), at SAM's low resolution, or None."""
-        obj_idx = inference_state["obj_id_to_idx"].get(obj_id)
-        if obj_idx is None:
-            return None
-        for d in (inference_state["temp_output_dict_per_obj"].get(obj_idx, {}),
-                  inference_state["output_dict_per_obj"].get(obj_idx, {})):
-            for k in ("cond_frame_outputs", "non_cond_frame_outputs"):
-                out = d.get(k, {}).get(frame_idx)
-                if out is not None and out.get("pred_masks") is not None:
-                    return (out["pred_masks"][0, 0] > 0).cpu().numpy()
-        return None
 
     def cancel_propagate_in_video(
         self, request: CancelPropagateInVideoRequest

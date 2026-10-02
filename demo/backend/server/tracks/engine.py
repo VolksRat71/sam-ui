@@ -26,7 +26,7 @@ import numpy as np
 from tracks import rle
 from tracks.bounded import PRIME, StopFn, Stretch
 from tracks.ranges import Window, in_window
-from tracks.seeds import Seeds
+from tracks.seeds import Seeds, cleared
 from tracks.streaming import sam2_prune
 from tracks.text import has_prompt
 
@@ -133,13 +133,20 @@ class Sam2Engine:
         per group, each time with that group's objects. The backbone features
         are cached per video, so the extra passes do not re-encode frames.
         Each window of an object is a unit of its own, grouped the same way
-        within the window."""
+        within the window. Cleared seeds are stripped before planning (see
+        strip_cleared), so they neither open nor condition a unit, and each
+        object's output is blanked on its cleared frames in every unit, in
+        both directions."""
+        blank = strip_cleared(objects)[1]
         for unit in self.plan(objects, windows):
-            yield from self._track_group(video_path, unit, video_handle)
+            for frame, masks in self._track_group(video_path, unit, video_handle):
+                yield frame, blanked(frame, masks, blank)
 
     def plan(self, objects: Dict[int, Seeds], windows: Optional[Windows] = None) -> List[Unit]:
-        """The passes a job over `objects` makes, in order."""
-        return plan_units(objects, windows, by_first_seed=True)
+        """The passes a job over `objects` makes, in order. Cleared seeds are
+        left out, as track() leaves them out, so a window whose only seed is
+        cleared makes no pass and an object's first seed is its first kept one."""
+        return plan_units(strip_cleared(objects)[0], windows, by_first_seed=True)
 
     def passes(self, objects: Dict[int, Seeds], windows: Optional[Windows] = None) -> int:
         """How many times a job over `objects` runs (one per unit)."""
@@ -220,6 +227,22 @@ class Sam2Engine:
                             break
             finally:
                 self.predictor.reset_state(state)
+
+
+def strip_cleared(objects: Dict[int, Seeds]) -> Tuple[Dict[int, Seeds], Dict[int, set]]:
+    """The objects without their cleared seeds, and each object's cleared frames.
+
+    sam-ui: a 'not on this frame' seed is output, not input. Given as a
+    conditioning frame, SAM 2 drops the object on the frames around it
+    (measured: IoU 0 on frames 9-19), so SAM 2 tracks through it and its
+    output there is blanked. SAM 3 conditions on it safely."""
+    blank = {o: {f for f, v in s.items() if cleared(v)} for o, s in objects.items()}
+    return {o: {f: v for f, v in s.items() if f not in blank[o]} for o, s in objects.items()}, blank
+
+
+def blanked(frame: int, masks: Dict[int, np.ndarray], blank: Dict[int, set]) -> Dict[int, np.ndarray]:
+    """One frame's masks with each object's cleared frame (strip_cleared) emptied."""
+    return {o: np.zeros_like(m) if frame in blank.get(o, ()) else m for o, m in masks.items()}
 
 
 def groups_by_first_seed(objects: Dict[int, Seeds]) -> List[Dict[int, Seeds]]:

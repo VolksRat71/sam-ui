@@ -43,8 +43,7 @@ import {
   type LayoutAction,
   type ObjectGroup,
 } from '~/state/layout';
-import {clearTarget, groupDirtyIds, isTracking, needsPositiveClick, seedFrames, type StudioObject} from '~/state/objects';
-import {maskedAt} from '~/state/segments';
+import {clearTarget, groupDirtyIds, isTracking, seedFrames, type StudioObject} from '~/state/objects';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
 
 type Props = {session: StudioSessionApi};
@@ -337,7 +336,7 @@ function ObjectRow({
   dragged: Dragged | null;
   setDragged: (d: Dragged | null) => void;
 }) {
-  const {state, tracklets, frame, busy} = session;
+  const {state, tracklets, busy} = session;
   const [drop, setDrop] = useState<'before' | 'after' | null>(null);
   const badgeEngines = session.engines.filter(e => e.href == null);
   const t = tracklets.get(o.id);
@@ -434,9 +433,6 @@ function ObjectRow({
           </div>
         )}
         {active && <TextPrompt o={o} session={session} />}
-        {active && needsPositiveClick(o, frame, maskedAt(t?.segments, frame)) && (
-          <div className="object-hint">Add a positive click to keep part of the object</div>
-        )}
         {o.error != null && <div className="object-error">Track failed: {o.error}</div>}
         {active && <HistoryControls o={o} session={session} />}
         <div className="object-actions" onClick={e => e.stopPropagation()}>

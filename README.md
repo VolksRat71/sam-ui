@@ -132,10 +132,9 @@ Details and progress: [Platform support, #16](https://github.com/VolksRat71/sam-
   job holds it). Track runs only what isn't current.
 - **Corrections that stick.** Click on any frame to fix a mask; the next Track uses
   your corrected mask on that frame. A correction refines the tracked mask, even
-  after an earlier correction has made the track stale: a lone negative click cuts
-  away only the region it is on, and a lone positive click adds one. (Plain SAM 2
-  empties a frame whose clicks are all negative; the backend adds an anchor click
-  inside the tracked mask.)
+  after an earlier correction has made the track stale: a negative click, sent with
+  a positive on the part to keep, cuts away only the region it is on, and a lone
+  positive click adds one. SAM 2 needs a positive on the frame.
 - **Re-track only what a correction changes.** On SAM 2, a correction re-tracks a
   stretch around the corrected frame and keeps the cached track beyond it: the pass
   starts a little before the frame, from the cached masks there, and stops once ten
