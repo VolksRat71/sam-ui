@@ -29,7 +29,7 @@ import {API_ENDPOINT, OBJECT_LIMIT} from '~/config';
 import type {LocalModelStatus, LocalOptions} from '~/local/LocalEngine';
 import {browserModelName, parseQuality} from '~/local/sam2/config';
 import {BROWSER_ENGINE, engineLabel, pickerEngines} from '~/state/engines';
-import {isNeedsPositive, planClicks, type Nudge} from '~/state/corrections';
+import {isNeedsPositive, planClicks, refusedAsAbsent, type Nudge} from '~/state/corrections';
 import {cleanObjectName, objectName, uniqueFileNames} from '~/state/fileNames';
 import type {ExportedObject, ExportKind} from '~/state/maskExport';
 import {
@@ -402,17 +402,21 @@ export default function useStudioSession(video: VideoItem) {
     [bridge, serial, sync, showNudge],
   );
 
-  /** Send a frame's new clicks, or nudge and keep the old ones (state/corrections.ts). */
+  /** Send a frame's new clicks, or refuse or nudge and keep the old ones (state/corrections.ts). */
   const correct = useCallback(
-    (objectId: number, current: NormPoint[], next: NormPoint[], refuse?: () => boolean) => {
+    (objectId: number, current: NormPoint[], next: NormPoint[]) => {
       const engine = stateRef.current.engine;
+      const target = stateRef.current.objects.find(o => o.id === objectId);
+      // inside an absent range, clicks with no positive are refused before any
+      // nudge: its "add a positive" would end the absence, not trim. A positive
+      // goes through and ends the absence at this frame; sync() shows the range.
+      if (refusedAsAbsent(next, absentAt(target?.ranges, frame))) {
+        setWarning(absentWarning(target, frame));
+        return;
+      }
       const plan = planClicks(current, next, engine);
       if (plan.kind === 'nudge') {
         showNudge(objectId, frame, next, engine);
-        return;
-      }
-      // a caller's own refusal (a click inside an absent range) comes after the nudge
-      if (refuse?.() === true) {
         return;
       }
       setNudge(null);
@@ -455,14 +459,7 @@ export default function useStudioSession(video: VideoItem) {
       }
       const target = s.objects.find(o => o.id === id);
       const current = target?.points[frame] ?? [];
-      correct(id, current, [...current, [x, y, label]], () => {
-        if (!absentAt(target?.ranges, frame)) {
-          return false;
-        }
-        // refused, not a way to shrink the range: unmarking is its own, explicit step
-        setWarning(absentWarning(target, frame));
-        return true;
-      });
+      correct(id, current, [...current, [x, y, label]]);
     },
     [bridge, busy, playing, frame, correct, claimId],
   );

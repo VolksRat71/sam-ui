@@ -49,7 +49,8 @@ import {buildExport} from './maskExports';
 import type {TrackObject} from '~/local/sam2/tracker';
 import {BROWSER_ENGINE, engineLabel} from '~/state/engines';
 import {maskSegments} from '~/state/segments';
-import {type FrameRange, absentAt, normalizeRanges, planUnits} from '~/state/ranges';
+import {refusedAsAbsent} from '~/state/corrections';
+import {type FrameRange, absentAt, endAbsenceAt, normalizeRanges, planUnits} from '~/state/ranges';
 import {colorFor, DEFAULT_ENGINE, type NormPoint, type ServerObject} from '~/state/objects';
 import type MaskOverlayEffect from './MaskOverlayEffect';
 import {paintAlpha} from './maskPixels';
@@ -458,8 +459,11 @@ export default class StudioSession {
   // -- clicks ----------------------------------------------------------------
 
   async setPoints(objectId: number, frameIndex: number, points: NormPoint[], engine?: string): Promise<void> {
-    if (points.length > 0 && absentAt(this._ranges.get(objectId), frameIndex)) {
-      // the backend refuses these too; the UI says so before it sends
+    // on an absent frame, clicks with no positive are refused (the backend
+    // refuses them too; the UI says so before it sends); a positive ends the
+    // absence at this frame, once the click has gone through
+    const absent = absentAt(this._ranges.get(objectId), frameIndex);
+    if (refusedAsAbsent(points, absent)) {
       throw new Error(`frame ${frameIndex + 1} is marked absent for this object: unmark it to click here`);
     }
     const t = this._tracklet(objectId);
@@ -473,6 +477,9 @@ export default class StudioSession {
         list = [];
       } else {
         const {rle} = await this._local.click(frameIndex, points);
+        if (absent) {
+          await this._offline.endAbsenceAt(video, objectId, frameIndex);
+        }
         await this._offline.recordPoints(video, objectId, frameIndex, points, rle);
         list = [{objectId, rleMask: rle}];
       }
@@ -504,6 +511,10 @@ export default class StudioSession {
       } else if (mine != null) {
         list = [{objectId, rleMask: mine.rle}];
       }
+    }
+    if (absent && points.length > 0) {
+      // as the backend did: the range no longer hides this frame's new mask
+      this._ranges.set(objectId, endAbsenceAt(this._ranges.get(objectId), frameIndex));
     }
     this._setSeedPoints(t, frameIndex, points);
     // addPoints answers with every object on this frame; only the clicked

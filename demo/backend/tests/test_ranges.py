@@ -299,6 +299,8 @@ def test_set_range_marks_unmarks_and_refuses_a_bad_span(h):
 
 from test_inference_api import click, start, world  # noqa: E402,F401  (world is a fixture)
 
+start_ = start  # _absent_world takes `start` as a frame
+
 
 def test_a_click_inside_an_absent_range_is_refused_and_records_nothing(world):
     api_of, stub, path = world
@@ -321,6 +323,107 @@ def test_a_click_inside_an_absent_range_is_refused_and_records_nothing(world):
     info = api.set_object_range(sid, 1, 3, 3, None)
     assert info["ranges"] == [{"start": 2, "end": 2, "state": ABSENT}, {"start": 4, "end": 4, "state": ABSENT}]
     click(api, sid, 1, 3, [[0.5, 0.5]], [1])  # unmarked: clickable again
+
+
+def test_end_absence_at_trims_the_range_to_the_frame_before_and_never_writes_an_empty_one(h):
+    h.click(1, frame=1)
+    mark(h, 1, 10, 40), mark(h, 1, 50, 60)
+    h.service.end_absence_at(h.video, 1, 25)
+    assert h.service.seeds.ranges(h.video, 1) == [{"start": 10, "end": 24, "state": ABSENT},
+                                                  {"start": 50, "end": 60, "state": ABSENT}]
+    h.service.end_absence_at(h.video, 1, 50)  # at the range's first frame: the range goes, no [50, 49]
+    assert h.service.seeds.ranges(h.video, 1) == [{"start": 10, "end": 24, "state": ABSENT}]
+    h.service.end_absence_at(h.video, 1, 24)
+    assert h.service.seeds.ranges(h.video, 1) == [{"start": 10, "end": 23, "state": ABSENT}]
+    h.service.end_absence_at(h.video, 1, 5)  # not absent there: nothing changes
+    assert h.service.seeds.ranges(h.video, 1) == [{"start": 10, "end": 23, "state": ABSENT}]
+
+
+def test_ending_an_absence_makes_the_track_stale(h):
+    h.click(1, frame=1), h.click(1, frame=8)
+    mark(h, 1, 4, 6)
+    h.track()
+    assert h.state(1) == TRACKED
+    h.service.end_absence_at(h.video, 1, 5)
+    assert h.state(1) == STALE
+
+
+def _absent_world(world, start=10, end=40):
+    api_of, stub, path = world
+    api = api_of()
+    sid = start_(api, path)
+    click(api, sid, 1, 0, [[0.5, 0.5]], [1])
+    api.set_object_range(sid, 1, start, end, ABSENT)
+    return api, stub, sid, api.session_states[sid]["video"]
+
+
+def test_a_positive_inside_an_absent_range_ends_the_absence_at_that_frame(world):
+    api, stub, sid, video = _absent_world(world)
+    calls = len(stub.point_calls)
+    out = click(api, sid, 1, 25, [[0.5, 0.5]], [1])  # the default engine, the main path
+    assert out[1].any() and len(stub.point_calls) == calls + 1
+    info = api.object_tracks(sid)[0]
+    assert info["ranges"] == [{"start": 10, "end": 24, "state": ABSENT}]
+    assert info["seeds"][25]["labels"] == [1] and info["seeds"][25]["mask"]
+    # both changes are on disk, where a re-track (and an undo) reads them
+    assert api.tracks.seeds.ranges(video, 1) == [{"start": 10, "end": 24, "state": ABSENT}]
+    assert sorted(api.tracks.seeds.seeds(video, 1)) == [0, 25]
+
+
+def test_a_positive_on_the_first_frame_of_a_range_removes_it(world):
+    api, _, sid, video = _absent_world(world)
+    click(api, sid, 1, 10, [[0.5, 0.5]], [1], engine="sam2")  # has a positive: past SAM 2's guard
+    assert api.tracks.seeds.ranges(video, 1) == []
+    assert sorted(api.tracks.seeds.seeds(video, 1)) == [0, 10]
+
+
+def test_a_trim_with_a_positive_inside_a_range_ends_it_on_sam2(world):
+    api, _, sid, video = _absent_world(world)
+    click(api, sid, 1, 25, [[0.5, 0.5], [0.9, 0.9]], [1, 0], engine="sam2")
+    assert api.tracks.seeds.ranges(video, 1) == [{"start": 10, "end": 24, "state": ABSENT}]
+    assert api.tracks.seeds.seeds(video, 1)[25]["labels"] == [1, 0]
+
+
+def test_a_negative_only_click_inside_a_range_is_still_refused_on_either_engine(world):
+    api, stub, sid, video = _absent_world(world)
+    calls = (len(stub.point_calls), len(stub.mask_calls))
+    with pytest.raises(ValueError, match=r"^needs_positive: "):  # the default engine: SAM 2's guard first
+        click(api, sid, 1, 25, [[0.5, 0.5]], [0])
+    with pytest.raises(ValueError, match="is inside a range where object 1 is marked absent; "
+                                         "unmark that part of the range to click here"):
+        click(api, sid, 1, 25, [[0.5, 0.5]], [0], engine="sam3")
+    assert (len(stub.point_calls), len(stub.mask_calls)) == calls
+    assert api.tracks.seeds.ranges(video, 1) == [{"start": 10, "end": 40, "state": ABSENT}]
+    assert sorted(api.tracks.seeds.seeds(video, 1)) == [0]
+
+
+def test_a_positive_that_ends_an_absence_starts_from_the_click_not_the_old_track(world):
+    # tracked before the range was marked, the cache still holds a mask on frame 3:
+    # the one the user said was not the object. The click must not refine it.
+    from test_inference_api import tracked
+    api_of, stub, path = world
+    a, sid, ctx = tracked(api_of, path)
+    assert a.tracks.tracks.mask_at(ctx.video, 1, "fake", 3) is not None
+    a.set_object_range(sid, 1, 2, 4, ABSENT)
+    stub.mask_calls.clear()
+    click(a, sid, 1, 3, [[0.9, 0.9]], [1])
+    assert stub.mask_calls == []
+    assert a.tracks.seeds.ranges(ctx.video, 1) == [{"start": 2, "end": 2, "state": ABSENT}]
+
+
+def test_a_positive_that_fails_inside_a_range_leaves_the_range_whole(world):
+    api, stub, sid, video = _absent_world(world)
+    real = stub.add_new_points_or_box
+
+    def boom(*args, **kw):
+        raise RuntimeError("MPS backend out of memory")
+
+    stub.add_new_points_or_box = boom
+    with pytest.raises(RuntimeError):
+        click(api, sid, 1, 25, [[0.5, 0.5]], [1])
+    stub.add_new_points_or_box = real
+    assert api.tracks.seeds.ranges(video, 1) == [{"start": 10, "end": 40, "state": ABSENT}]
+    assert sorted(api.tracks.seeds.seeds(video, 1)) == [0]
 
 
 # -- the real model ---------------------------------------------------------------------

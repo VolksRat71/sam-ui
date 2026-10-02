@@ -37,6 +37,17 @@ export function planClicks<P extends Click>(
   return {kind: 'send', points: next, gone: next.length > 0 && !next.some(p => p[2] === 1)};
 }
 
+/**
+ * True when clicks on a frame inside an absent range are refused: none is a
+ * positive, so nothing says the object is back. A positive goes through and
+ * ends the absence at that frame (the backend trims the range); an emptied
+ * frame goes through too. Asked before planClicks: on an absent frame the SAM 2
+ * nudge's "add a positive" would end the absence, not trim.
+ */
+export function refusedAsAbsent(next: ReadonlyArray<Click>, absent: boolean): boolean {
+  return absent && next.length > 0 && !next.some(p => p[2] === 1);
+}
+
 /** True for the backend's `needs_positive:` refusal, bare or wrapped by Relay. */
 export function isNeedsPositive(error: unknown): boolean {
   const text = error instanceof Error ? error.message : typeof error === 'string' ? error : '';

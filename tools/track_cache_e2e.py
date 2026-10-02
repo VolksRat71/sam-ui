@@ -33,8 +33,9 @@ well under a frame's worth of the job, and the job must still finish.
 Absent: a red square leaves the shot on frame 12 and comes back elsewhere on
 frame 20, while a look-alike stands in for it. Clicked once on each side and
 marked absent 12-19 (setObjectRange), the job must stream the gap empty,
-track both sides, refuse a click inside the gap, and re-track only the far
-side after a far-side click. /export must write empty mattes for the gap.
+track both sides, refuse a negative click inside the gap, and re-track only
+the far side after a far-side click. /export must write empty mattes for the
+gap. A positive inside the gap then ends the absence at its frame.
 """
 import argparse
 import json
@@ -329,12 +330,15 @@ def absent():
     near = min(iou(fr[f], gap_truth(f)) for f in range(GAP[0]))
     far = min(iou(fr[f], gap_truth(f)) for f in range(GAP[1] + 1, 30))
     check(near > 0.9 and far > 0.9, f"both sides track the square (min IoU near {near:.3f}, far {far:.3f})")
+    # a negative-only click inside the gap is refused; engine sam3 takes lone
+    # negatives, so it meets the absent check rather than SAM 2's needs_positive
     req = urllib.request.Request(f"{API}/graphql", json.dumps({
         "query": 'mutation($i: AddPointsInput!) { addPoints(input: $i) { frameIndex } }',
         "variables": {"i": {"sessionId": sid, "frameIndex": 15, "objectId": 0, "clearOldPoints": True,
-                            "labels": [1], "points": [[0.5, 0.5]]}}}).encode(), {"Content-Type": "application/json"})
+                            "labels": [0], "points": [[0.5, 0.5]], "engine": "sam3"}}}).encode(),
+        {"Content-Type": "application/json"})
     errors = json.load(urllib.request.urlopen(req)).get("errors") or []
-    check(any("marked absent" in e.get("message", "") for e in errors), "a click inside the gap is refused")
+    check(any("marked absent" in e.get("message", "") for e in errors), "a negative click inside the gap is refused")
     add(27)
     _, frames, t = post_stream("/track_objects", {"session_id": sid})
     fr = {f: m[0] for f, m in frames}
@@ -352,6 +356,16 @@ def absent():
     finally:
         import shutil
         shutil.rmtree(out, ignore_errors=True)
+    # a positive inside the gap says the square is back: the absence ends there
+    # (Nate, 2026-10-02), so 12-19 becomes 12-14 and the click is a seed
+    gql('mutation($i: AddPointsInput!) { addPoints(input: $i) { frameIndex } }',
+        {"i": {"sessionId": sid, "frameIndex": 15, "objectId": 0, "clearOldPoints": True,
+               "labels": [1], "points": [[0.5, 0.5]]}})
+    obj = next(o for o in gql('query($s: String!) { objectTracks(sessionId: $s) '
+                              '{ objectId state ranges { start end state } } }', {"s": sid})["objectTracks"]
+               if o["objectId"] == 0)
+    check(obj["ranges"] == [{"start": GAP[0], "end": 14, "state": "absent"}] and obj["state"] == "stale",
+          f"a positive inside the gap ends the absence there ({obj['ranges']}, {obj['state']})")
 
 
 def responsive():

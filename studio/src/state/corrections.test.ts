@@ -1,6 +1,6 @@
 // sam-ui (Apache-2.0). New file, not from SAM 2.
 import {describe, expect, it} from 'vitest';
-import {isNeedsPositive, needsPositive, planClicks} from './corrections';
+import {isNeedsPositive, needsPositive, planClicks, refusedAsAbsent} from './corrections';
 
 describe('needsPositive', () => {
   it('is true for negatives only on SAM 2 and the browser engine', () => {
@@ -60,5 +60,25 @@ describe('isNeedsPositive', () => {
     expect(isNeedsPositive('session expired')).toBe(false);
     expect(isNeedsPositive('this needs_positive_thing is unrelated')).toBe(false);
     expect(isNeedsPositive(null)).toBe(false);
+  });
+});
+
+describe('refusedAsAbsent', () => {
+  const pos: [number, number, 0 | 1] = [0.1, 0.1, 1];
+  const neg: [number, number, 0 | 1] = [0.5, 0.5, 0];
+
+  it('refuses clicks with no positive on an absent frame, before any nudge', () => {
+    expect(refusedAsAbsent([neg], true)).toBe(true);
+    expect(refusedAsAbsent([neg, neg], true)).toBe(true);
+    // planClicks would nudge "add a positive" here on SAM 2, which would end the absence, not trim
+    expect(planClicks([], [neg], 'sam2').kind).toBe('nudge');
+  });
+  it('lets a positive through: it ends the absence at that frame', () => {
+    expect(refusedAsAbsent([pos], true)).toBe(false);
+    expect(refusedAsAbsent([neg, pos], true)).toBe(false);
+  });
+  it('lets an emptied frame through, and refuses nothing off a range', () => {
+    expect(refusedAsAbsent([], true)).toBe(false);
+    expect(refusedAsAbsent([neg], false)).toBe(false);
   });
 });

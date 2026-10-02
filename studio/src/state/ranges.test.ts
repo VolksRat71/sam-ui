@@ -3,6 +3,7 @@ import {describe, expect, it} from 'vitest';
 import {
   ABSENT,
   absentAt,
+  endAbsenceAt,
   normalizeRanges,
   paintRange,
   planUnits,
@@ -77,5 +78,15 @@ describe('absent ranges', () => {
       [{lo: 0, hi: null}, [[2, [4]]]],
       [{lo: 21, hi: null}, [[1, [25]]]],
     ]);
+  });
+
+  it('ends an absence at a frame: [s, e] becomes [s, f-1], and at s the range goes', () => {
+    const two = [r(10, 40), r(50, 60)];
+    expect(endAbsenceAt(two, 25)).toEqual([r(10, 24), r(50, 60)]);
+    expect(endAbsenceAt(two, 40)).toEqual([r(10, 39), r(50, 60)]);
+    expect(endAbsenceAt(two, 50)).toEqual([r(10, 40)]); // never [50, 49]
+    expect(endAbsenceAt(two, 45)).toEqual(two); // not absent there: unchanged
+    expect(endAbsenceAt(undefined, 3)).toEqual([]);
+    expect(two).toEqual([r(10, 40), r(50, 60)]); // the input is left alone
   });
 });

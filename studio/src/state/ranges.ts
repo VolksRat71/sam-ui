@@ -64,6 +64,17 @@ export function absentAt(ranges: ReadonlyArray<FrameRange> | undefined, frame: n
   return ranges?.some(r => r.state === ABSENT && r.start <= frame && frame <= r.end) ?? false;
 }
 
+/**
+ * The object is back at `frame` (a positive click there): the absent range
+ * holding it becomes [start, frame - 1], or goes when frame is its start.
+ * The backend's TrackService.end_absence_at, mirrored so the worker shows
+ * the click's mask before the next sync.
+ */
+export function endAbsenceAt(ranges: ReadonlyArray<FrameRange> | undefined, frame: number): FrameRange[] {
+  const r = normalizeRanges(ranges).find(x => x.state === ABSENT && x.start <= frame && frame <= x.end);
+  return r == null ? normalizeRanges(ranges) : paintRange(ranges ?? [], frame, r.end, null);
+}
+
 /** The absent range holding `frame`, if any. */
 export function rangeAt(ranges: ReadonlyArray<FrameRange> | undefined, frame: number): FrameRange | null {
   return ranges?.find(r => r.start <= frame && frame <= r.end) ?? null;
