@@ -1,5 +1,5 @@
 /**
- * @generated SignedSource<<3a83220ebb5b2bc7b13c4f33322d23b8>>
+ * @generated SignedSource<<b897f6bbf880babd5f6e194505af6765>>
  * @lightSyntaxTransform
  * @nogrep
  */
@@ -10,6 +10,7 @@
 
 import { ConcreteRequest, Mutation } from 'relay-runtime';
 export type MoveClicksInput = {
+  engine?: string | null | undefined;
   frameIndex: number;
   fromObjectId: number;
   sessionId: string;

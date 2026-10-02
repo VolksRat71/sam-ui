@@ -10,7 +10,7 @@ import time
 import uuid
 from pathlib import Path
 from threading import Lock
-from typing import Any, Dict, Generator, List
+from typing import Any, Dict, Generator, List, Optional
 
 import numpy as np
 import torch
@@ -273,8 +273,8 @@ class InferenceAPI:
             raise
 
         masks_binary = (masks > self.score_thresh)[:, 0].cpu().numpy()
-        if absent:  # a seed change, like the click: the track goes stale
-            self.tracks.end_absence_at(session["video"], obj_id, frame_idx)
+        # a positive inside an absent range ends it here, in the same seed
+        # change as the click: one undo step puts both back (issue #18)
         self.tracks.record_points(
             session["video"],
             obj_id,
@@ -283,6 +283,7 @@ class InferenceAPI:
             labels,
             clear_old_points,
             mask=track_rle.encode(masks_binary[list(object_ids).index(obj_id)]),
+            end_absence=absent,
         )
         return frame_idx, object_ids, masks_binary
 
@@ -576,7 +577,8 @@ class InferenceAPI:
             if old == new:
                 continue
             self.__forget_frame(inference_state, obj_id, frame)
-            if new and (new.get("mask") or new.get("points")):
+            # a cleared ('not on this frame') seed is skipped, as start_session does
+            if new and (new.get("mask") or new.get("points")) and not cleared(new):
                 seed_into_state(self.predictor, inference_state, obj_id, frame, new)
 
     def __forget_frame(self, inference_state, obj_id: int, frame: int) -> None:
@@ -594,12 +596,15 @@ class InferenceAPI:
                 d.get(k, {}).pop(frame, None)
         inference_state.get("frames_tracked_per_obj", {}).get(idx, {}).pop(frame, None)
 
-    def move_clicks(self, session_id: str, frame_index: int, from_id: int, to_id: int) -> List[Dict]:
+    def move_clicks(self, session_id: str, frame_index: int, from_id: int, to_id: int,
+                    engine: Optional[str] = None) -> List[Dict]:
         """Move one object's clicks on a frame to another object (clicks that
         landed on the wrong one). The source loses the frame; the target gets
         the clicks after its own on that frame, segmented as a click there
         would be. Each object's change is one undo step of its own. Refused
-        into the target's absent range, and while a job holds either object."""
+        into the target's absent range, and while a job holds either object.
+        `engine` is the one the studio shows: the target's clicks are held to
+        its rule, as a click would be (none, or any but SAM 3, is SAM 2's)."""
         with self.autocast_context(), self.inference_lock:
             if from_id == to_id:
                 raise ValueError("cannot move clicks to the object itself")
@@ -620,7 +625,7 @@ class InferenceAPI:
             target = self.tracks.seeds.seeds(video, to_id).get(frame_index) or {"points": [], "labels": []}
             # the target first: if SAM 2 fails on it, the source still has its clicks
             self._add_points_locked(session, frame_index, to_id, target["points"] + seed["points"],
-                                    target["labels"] + seed["labels"], True)
+                                    target["labels"] + seed["labels"], True, engine)
             self.__forget_frame(state, from_id, frame_index)
             self.tracks.clear_frame(video, from_id, frame_index)
             return [self.tracks.object_info(video, from_id), self.tracks.object_info(video, to_id)]

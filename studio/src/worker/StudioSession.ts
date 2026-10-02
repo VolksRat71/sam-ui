@@ -1119,7 +1119,7 @@ export default class StudioSession {
    * on the wrong one): one undo step for each. Needs the backend, whose SAM 2
    * segments them for the target; with no backend the browser engine does.
    */
-  async moveClicks(frameIndex: number, fromId: number, toId: number): Promise<ServerObject[]> {
+  async moveClicks(frameIndex: number, fromId: number, toId: number, engine?: string): Promise<ServerObject[]> {
     if (absentAt(this._ranges.get(toId), frameIndex)) {
       throw new Error(`frame ${frameIndex + 1} is marked absent for that object: unmark it to move clicks there`);
     }
@@ -1144,7 +1144,7 @@ export default class StudioSession {
       ];
     } else {
       const res = await mutate<StudioSessionMoveClicksMutation>(this.env, MOVE_CLICKS, {
-        input: {sessionId: this.sessionId, frameIndex, fromObjectId: fromId, toObjectId: toId},
+        input: {sessionId: this.sessionId, frameIndex, fromObjectId: fromId, toObjectId: toId, engine: engine ?? null},
       });
       out = [];
       for (const o of plain(res.moveClicks) as ServerObject[]) {

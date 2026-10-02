@@ -291,6 +291,7 @@ class MoveClicksInput:
     frame_index: int
     from_object_id: int
     to_object_id: int
+    engine: Optional[str] = None  # as on AddPointsInput: the engine the studio shows; null counts as SAM 2
 
 
 @strawberry.type

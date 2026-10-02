@@ -144,8 +144,9 @@ class VersionsAPI(FakeAPI):
         self.step = ("restore", session_id, object_id, key)
         return INFO
 
-    def move_clicks(self, session_id, frame_index, from_id, to_id):
+    def move_clicks(self, session_id, frame_index, from_id, to_id, engine=None):
         self.step = ("move", session_id, frame_index, from_id, to_id)
+        self.move_engine = engine
         return [{**INFO, "object_id": from_id}, {**INFO, "object_id": to_id}]
 
 
@@ -204,3 +205,13 @@ def test_add_points_carries_the_engine_and_leaves_it_none_when_unset():
 def test_a_needs_positive_refusal_reaches_the_client_with_its_prefix():
     r = schema.execute_sync(ADD.format(label=0, engine=""), context_value={"inference_api": FakeAPI()})
     assert r.errors and r.errors[0].message.startswith("needs_positive: ")
+
+
+def test_move_clicks_carries_the_engine_and_leaves_it_none_when_unset():
+    api = VersionsAPI()
+    q = ('mutation {{ moveClicks(input: {{sessionId: "s1", frameIndex: 4, fromObjectId: 1, toObjectId: 2{engine}}}) '
+         '{{ objectId }} }}')
+    run(q.format(engine=', engine: "sam3"'), api)
+    assert api.move_engine == "sam3"
+    run(q.format(engine=""), api)
+    assert api.move_engine is None
