@@ -734,10 +734,8 @@ export default class StudioSession {
         list = [];
       } else {
         const {rle} = await this._local.click(frameIndex, points);
-        if (absent) {
-          await this._offline.endAbsenceAt(video, objectId, frameIndex);
-        }
-        await this._offline.recordPoints(video, objectId, frameIndex, points, rle, this._variant);
+        // a positive inside an absent range ends it, in the same undo step as the click
+        await this._offline.recordPoints(video, objectId, frameIndex, points, rle, this._variant, absent);
         list = [{objectId, rleMask: rle}];
       }
     } else if (points.length === 0) {
