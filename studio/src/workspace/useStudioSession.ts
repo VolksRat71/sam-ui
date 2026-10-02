@@ -29,7 +29,7 @@ import {API_ENDPOINT, OBJECT_LIMIT} from '~/config';
 import type {LocalModelStatus, LocalOptions} from '~/local/LocalEngine';
 import {browserModelName, parseQuality} from '~/local/sam2/config';
 import {BROWSER_ENGINE, engineLabel, pickerEngines, textPrompts} from '~/state/engines';
-import {goneSteps, isNeedsPositive, planClicks, refusedAsAbsent, type Hint, type Nudge} from '~/state/corrections';
+import {goneSteps, isNeedsPositive, planClicks, planRemoval, refusedAsAbsent, type Hint, type Nudge} from '~/state/corrections';
 import {cleanObjectName, objectName, uniqueFileNames} from '~/state/fileNames';
 import {type ExportedObject, type ExportKind, groupExport} from '~/state/maskExport';
 import {
@@ -496,17 +496,17 @@ export default function useStudioSession(video: VideoItem) {
 
   /**
    * Seed the current frame of an object from a phrase, on the engine on
-   * screen (only SAM 3 reads text: textSupport says so). Its best match
-   * replaces the frame's clicks. Resolves with what was found, or null when
-   * the call failed (the warning says why).
+   * screen (only SAM 3 reads text: textSupport says so), or on `engine`;
+   * null asks the backend for the first engine that reads text. Its best
+   * match replaces the frame's clicks. Resolves with what was found, or null
+   * when the call failed (the warning says why).
    */
   const textPrompt = useCallback(
-    (objectId: number, text: string): Promise<TextPromptResult | null> => {
+    (objectId: number, text: string, engine: string | null = stateRef.current.engine): Promise<TextPromptResult | null> => {
       if (bridge == null) {
         return Promise.resolve(null);
       }
       const at = frame;
-      const engine = stateRef.current.engine;
       let result: TextPromptResult | null = null;
       return serial(async () => {
         result = await bridge.call('textPrompt', {objectId, frameIndex: at, text, engine});
@@ -567,11 +567,11 @@ export default function useStudioSession(video: VideoItem) {
       }
       const current = o.points[frame] ?? [];
       const rest = current.filter((_, i) => i !== index);
-      const text = o.texts[frame];
-      if (rest.length === 0 && text != null) {
-        // undoing the last refinement of a text frame goes back to the text's
-        // mask; sending no clicks would clear the frame, text and all
-        void textPrompt(o.id, text);
+      const plan = planRemoval(rest, o.texts[frame]);
+      if (plan.kind === 'restoreText') {
+        // the last refinement of a text frame goes: back to the text's mask,
+        // on the first engine that reads text, whatever is on screen
+        void textPrompt(o.id, plan.text, plan.engine);
         return;
       }
       // deleting the last positive while negatives remain nudges too

@@ -886,10 +886,11 @@ export default class StudioSession {
    * POST /text_prompt: seed this frame of an object from a phrase. The
    * backend's text engine (SAM 3) takes the phrase's best instance there as
    * the frame's approved mask, replacing the frame's clicks; a phrase that
-   * matches nothing changes nothing. Needs a backend (the browser engine
+   * matches nothing changes nothing. `engine` null: the backend's first
+   * engine that reads text. Needs a backend (the browser engine
    * takes clicks only).
    */
-  async textPrompt(objectId: number, frameIndex: number, text: string, engine: string): Promise<TextPromptResult> {
+  async textPrompt(objectId: number, frameIndex: number, text: string, engine: string | null): Promise<TextPromptResult> {
     if (this._offline != null) {
       throw new Error('text prompts need SAM 3 in the desktop app');
     }
@@ -919,7 +920,7 @@ export default class StudioSession {
       objectId,
       frameIndex,
       text: body.text ?? text,
-      engine: body.engine ?? engine,
+      engine: body.engine ?? engine ?? '',
       matched: body.matched === true && body.mask != null,
       score: body.score ?? 0,
       instances: body.instances ?? 0,

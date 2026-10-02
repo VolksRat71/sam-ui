@@ -312,6 +312,132 @@ def test_an_export_gives_a_text_frame_no_empty_anchor(h, tmp_path, monkeypatch):
     assert anchors == {"object_1": {"points": {"3": [[8, 12, 1]]}}}  # no [] for a text frame, no entry for 2
 
 
+# -- text seeds and the correction rules (#26) ----------------------------------------
+
+def test_a_text_seed_is_never_cleared_and_conditions_sam2():
+    """cleared() needs clicks: a text seed has none, only its positive mask. So
+    SAM 2 conditions on it (as a mask), it opens a window, and a not-here seed
+    beside it is still stripped and blanked."""
+    from test_engine import _CLEARED, _StubPredictor
+    from tracks.engine import Sam2Engine, strip_cleared
+    from tracks.seeds import cleared
+
+    text_seed = {"points": [], "labels": [], "text": "dog", "mask": rle.encode(np.ones((2, 2), bool))}
+    assert not cleared(text_seed)
+    objects = {1: {0: text_seed, 2: _CLEARED}}
+    kept, blank = strip_cleared(objects)
+    assert kept == {1: {0: text_seed}} and blank == {1: {2}}
+    assert [sorted(mine) for _, mine in seeded_windows({0: text_seed}, [])] == [[0]]
+    p = _StubPredictor(n=4)
+    frames = dict(Sam2Engine(p, model="stub").track("v.mp4", objects))
+    assert p.added == [(1, 0, "mask", 4)]  # the text mask conditions; the cleared frame never reaches SAM 2
+    assert frames[0][1].all() and not frames[2][1].any()
+
+
+def test_a_text_prompt_is_not_held_to_the_clicks_needs_positive_rule(tmp_path):
+    """A text prompt is not add_points: on a session whose clicks run on SAM 2,
+    it seeds a frame the user had emptied on SAM 3 (negatives only, a cleared
+    seed), and the frame then is a text seed, which is not cleared and which a
+    restart replays."""
+    from flask import Flask
+    from test_inference_api import H, W, StubPredictor, click, start
+    from inference.predictor import InferenceAPI
+    from tracks.routes import make_blueprint
+    from tracks.seeds import cleared
+
+    big = np.zeros((H, W), bool)
+    big[2:6, 2:6] = True
+
+    class Detector(TextFake):
+        def segment_text(self, video_path, frame, text):
+            return TextMatch(mask=big, score=0.9, instances=1, box=[2, 2, 5, 5])
+
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"frames")
+    stub = StubPredictor()
+
+    def make():
+        a = InferenceAPI(predictor=stub, tracks_root=str(tmp_path / "tracks"))
+        a.tracks.engine = FakeEngine(n_frames=6, shape=(H, W))
+        a.tracks._specs = {"fake3": EngineSpec("fake3", "fake3-1", Detector, text=lambda: None)}
+        return a
+
+    a = make()
+    sid = start(a, str(video))
+    click(a, sid, 1, 2, [[0.5, 0.5]], [0], engine="sam3")
+    vid = a.session_states[sid]["video"]
+    assert cleared(a.tracks.seeds.seeds(vid, 1)[2])
+    app = Flask(__name__)
+    app.register_blueprint(make_blueprint(a.track_context, a.tracks))
+    r = app.test_client().post("/text_prompt", json={"session_id": sid, "object_id": 1, "frame_index": 2, "text": "box"})
+    assert r.status_code == 200 and r.json["matched"]
+    seed = a.tracks.seeds.seeds(vid, 1)[2]
+    assert seed["points"] == [] and seed["text"] == "box" and not cleared(seed)
+    stub.mask_calls.clear()
+    start(make(), str(video))  # a restart conditions on it
+    assert stub.mask_calls == [(2, 1)]
+
+
+
+def _text_frame(tmp_path):
+    """A real InferenceAPI (a stub SAM 2) whose object 1 has a text seed on frame 2."""
+    from flask import Flask
+    from test_inference_api import H, W, StubPredictor, start
+    from inference.predictor import InferenceAPI
+    from tracks.routes import make_blueprint
+
+    big = np.zeros((H, W), bool)
+    big[2:6, 2:6] = True
+
+    class Detector(TextFake):
+        def segment_text(self, video_path, frame, text):
+            return TextMatch(mask=big, score=0.9, instances=1, box=[2, 2, 5, 5])
+
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"frames")
+    a = InferenceAPI(predictor=StubPredictor(), tracks_root=str(tmp_path / "tracks"))
+    a.tracks.engine = FakeEngine(n_frames=6, shape=(H, W))
+    a.tracks._specs = {"fake3": EngineSpec("fake3", "fake3-1", Detector, text=lambda: None)}
+    sid = start(a, str(video))
+    app = Flask(__name__)
+    app.register_blueprint(make_blueprint(a.track_context, a.tracks))
+    r = app.test_client().post("/text_prompt", json={"session_id": sid, "object_id": 1, "frame_index": 2, "text": "box"})
+    assert r.status_code == 200 and r.json["matched"]
+    return a, sid, lambda: a.tracks.seeds.seeds(a.session_states[sid]["video"], 1)[2]
+
+
+@pytest.mark.parametrize("engine", [None, "sam2", "browser-sam2"])
+def test_a_lone_negative_on_a_text_frame_is_refused_off_sam3(tmp_path, engine):
+    """The ruling: SAM 2 empties a frame given only negatives, even with a mask
+    fed in through add_new_mask, which is how a text mask enters (spec fact 1).
+    So off SAM 3 a text frame is held to needs_positive like any frame, and the
+    refused click leaves its text seed as it was."""
+    from test_inference_api import click
+
+    a, sid, seed = _text_frame(tmp_path)
+    before = seed()
+    with pytest.raises(ValueError, match="^needs_positive:"):
+        click(a, sid, 1, 2, [[0.1, 0.1]], [0], engine=engine)
+    assert seed() == before and before["text"] == "box" and before["points"] == []
+
+
+def test_a_positive_and_a_negative_trim_a_text_frame_off_sam3(tmp_path):
+    from test_inference_api import click
+
+    a, sid, seed = _text_frame(tmp_path)
+    click(a, sid, 1, 2, [[0.3, 0.3], [0.1, 0.1]], [1, 0], engine="sam2")
+    s = seed()
+    assert s["text"] == "box" and s["labels"] == [1, 0]
+
+
+def test_a_lone_negative_on_a_text_frame_goes_through_on_sam3(tmp_path):
+    from test_inference_api import click
+
+    a, sid, seed = _text_frame(tmp_path)
+    click(a, sid, 1, 2, [[0.1, 0.1]], [0], engine="sam3")
+    s = seed()
+    assert s["text"] == "box" and s["labels"] == [0]
+
 def test_graphql_seeds_carry_their_text():
     from test_schema import INFO, FakeAPI, run
 
