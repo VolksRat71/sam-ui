@@ -132,3 +132,48 @@ def test_metadata_write_failure_no_ready_asset(tmp_path, monkeypatch):
         retain(source, root)
     assert not list(root.glob('*/asset.json'))
     assert not list(root.glob('.stage-*'))
+
+
+@pytest.mark.parametrize('during', ['open', 'decode'])
+def test_pyav_io_failure_cannot_publish_asset(tmp_path, monkeypatch, during):
+    from data.assets import timing
+    import av
+    source = make_clip(tmp_path / 'in.mp4'); root = tmp_path / 'assets'
+    real_open = timing.av.open
+    class BrokenDecode:
+        def __init__(self, path): self.container = real_open(path)
+        def __enter__(self): return self
+        def __exit__(self, *args): self.container.close()
+        @property
+        def streams(self): return self.container.streams
+        def decode(self, stream):
+            yield next(self.container.decode(stream))
+            av.error.err_check(-5)
+    def broken_open(path):
+        if during == 'open': av.error.err_check(-5)
+        return BrokenDecode(path)
+    monkeypatch.setattr(timing.av, 'open', broken_open)
+    with pytest.raises(ValueError, match='original_retention_failed'):
+        retain(source, root)
+    assert not list(root.glob('*/asset.json'))
+    assert not list(root.glob('.stage-*'))
+
+
+def test_new_directory_entries_synced_before_success(tmp_path, monkeypatch):
+    from data.assets import retention
+    source = make_clip(tmp_path / 'in.mp4'); root = tmp_path / 'new' / 'assets'
+    events = []
+    real_sync = retention._fsync_directory
+    def sync(path):
+        real_sync(path)
+        events.append(path)
+    monkeypatch.setattr(retention, '_fsync_directory', sync)
+    retain(source, root)
+    # Losing any parent entry after a crash would make retained records disappear.
+    assert tmp_path in events
+    assert root.parent in events
+    assert root / 'working-copies' in events
+    assert events.index(tmp_path) < events.index(root.parent)
+    assert events.index(root.parent) < events.index(root)
+    assert events.index(root) < events.index(root / 'working-copies')
+    assert events.index(root / 'working-copies') < events.index(root / 'working-copies' / ('a' * 64))

@@ -105,3 +105,13 @@ def test_invalid_index_and_denominator():
     invalid = rows([1]); invalid[0]['pts']['den'] = 0
     with pytest.raises(ValueError, match='missing_or_invalid_pts'):
         api().validate_rows(invalid)
+
+
+@pytest.mark.parametrize('error_number', [2, 5, 13])
+def test_storage_errors_propagate(tmp_path, monkeypatch, error_number):
+    t = api()
+    def fail(path):
+        t.av.error.err_check(-error_number)
+    monkeypatch.setattr(t.av, 'open', fail)
+    with pytest.raises(OSError):
+        t.inspect_source(tmp_path / 'input')

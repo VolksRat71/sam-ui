@@ -15,9 +15,14 @@ def _directory(path: Path) -> None:
     # Managed descendants may never redirect writes through symlinks.
     if any(part.is_symlink() for part in (path, *path.parents)):
         raise ValueError('symlink_directory')
-    path.mkdir(parents=True, exist_ok=True)
+    if not path.parent.exists():
+        _directory(path.parent)
+    path.mkdir(exist_ok=True)
     if not path.is_dir() or path.is_symlink():
         raise ValueError('invalid_directory')
+    # A synced child does not make its own entry in the parent durable.
+    # Sync even on reuse: another uploader may have just created it.
+    _fsync_directory(path.parent)
 
 
 def _fsync_directory(path: Path) -> None:

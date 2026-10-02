@@ -97,6 +97,10 @@ def inspect_source(path: Path, *, stream_index: int | None = None) -> Inspection
                 result['diagnostic_code'] = 'no_decoded_frames'
             if result['diagnostic_code'] is None:
                 result['timing_status'] = 'valid'
+    except OSError:
+        # PyAV storage errors also inherit FFmpegError; never freeze these
+        # transient failures into an immutable unsupported-media manifest.
+        raise
     except av.FFmpegError:
         result['diagnostic_code'] = 'decode_failed'
     return result
