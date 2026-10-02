@@ -494,6 +494,105 @@ def test_moving_clicks_is_refused_while_either_object_is_tracking(world):
         a.move_clicks(sid, 3, 1, 1)
 
 
+
+# -- corrections (#23, #26) under undo ------------------------------------------------------
+
+def undo_depth(a, sid, obj):
+    return len(a.tracks.versions.history(a.session_states[sid]["video"], obj)["undo"])
+
+
+def test_a_refused_click_adds_no_undo_step(world):
+    """A lone negative on SAM 2 (needs_positive) and a negative inside an
+    absent range are refused before anything is recorded: nothing to undo."""
+    make, _, path = world
+    a = make()
+    sid = start(a, path)
+    click(a, sid, 1, 0, [[0.5, 0.5]], [1])
+    a.set_object_range(sid, 1, 4, 5, ABSENT)
+    depth = undo_depth(a, sid, 1)
+    with pytest.raises(ValueError, match="^needs_positive: "):
+        click(a, sid, 1, 2, [[0.5, 0.5]], [0])
+    with pytest.raises(ValueError, match="absent"):
+        click(a, sid, 1, 4, [[0.5, 0.5]], [0], engine="sam3")
+    assert undo_depth(a, sid, 1) == depth
+    assert sorted(a.undo_seeds(sid, 1)["seeds"]) == [0]  # the undo is the range's, not a refused click's
+    assert a.object_tracks(sid)[0]["ranges"] == []
+
+
+def test_a_positive_that_ends_an_absence_is_one_undo_step_with_its_range(world):
+    make, _, path = world
+    a = make()
+    sid = start(a, path)
+    click(a, sid, 1, 0, [[0.5, 0.5]], [1])
+    a.set_object_range(sid, 1, 2, 5, ABSENT)
+    depth = undo_depth(a, sid, 1)
+    click(a, sid, 1, 4, [[0.5, 0.5]], [1])  # the object is back on frame 4
+    info = a.object_tracks(sid)[0]
+    assert info["ranges"] == [{"start": 2, "end": 3, "state": ABSENT}] and sorted(info["seeds"]) == [0, 4]
+    assert undo_depth(a, sid, 1) == depth + 1
+    info = a.undo_seeds(sid, 1)
+    assert sorted(info["seeds"]) == [0] and info["ranges"] == [{"start": 2, "end": 5, "state": ABSENT}]
+    info = a.redo_seeds(sid, 1)
+    assert sorted(info["seeds"]) == [0, 4] and info["ranges"] == [{"start": 2, "end": 3, "state": ABSENT}]
+
+
+def test_undo_and_redo_never_condition_the_session_on_a_cleared_seed(world):
+    """As start_session: a restored 'not on this frame' seed (a SAM 3 lone
+    negative, its mask empty) stays out of the session's SAM 2 state."""
+    make, stub, path = world
+    a = make()
+    sid = start(a, path)
+    click(a, sid, 1, 0, [[0.5, 0.5]], [1])
+    click(a, sid, 1, 3, [[0.5, 0.5]], [0], engine="sam3")
+    a.undo_seeds(sid, 1)
+    stub.mask_calls.clear()
+    stub.point_calls.clear()
+    info = a.redo_seeds(sid, 1)
+    assert sorted(info["seeds"]) == [0, 3]
+    assert stub.mask_calls == [] and stub.point_calls == []
+    assert cond_frames(a, sid, 1) == {0}
+
+
+def test_moving_a_cleared_seed_without_an_engine_is_refused_like_sam2(world):
+    """move_clicks names no engine, so the target is held to SAM 2's rule: a
+    frame of only negatives is refused, and the source keeps its clicks."""
+    make, _, path = world
+    a = make()
+    sid = start(a, path)
+    click(a, sid, 1, 3, [[0.5, 0.5]], [0], engine="sam3")
+    click(a, sid, 2, 0, [[0.2, 0.2]], [1])
+    video = a.session_states[sid]["video"]
+    before = (a.tracks.seeds.seeds(video, 1), a.tracks.versions_info(video, 1), a.tracks.versions_info(video, 2))
+    with pytest.raises(ValueError, match="^needs_positive: "):
+        a.move_clicks(sid, 3, 1, 2)
+    assert (a.tracks.seeds.seeds(video, 1), a.tracks.versions_info(video, 1),
+            a.tracks.versions_info(video, 2)) == before
+
+
+def test_a_kept_track_from_before_cleared_seeds_were_skipped_is_not_made_current(h):
+    """The seeds hash does not say whether a SAM 2 track skipped a cleared
+    seed or conditioned on it (the old way, which loses the object around
+    it). A kept track that does not list its cleared seeds stays out: the
+    undo leaves the object stale, for a re-track."""
+    h.engine.skips_cleared = True  # as SAM 2
+    h.click(1, frame=0)
+    accident(h)  # a lone negative with no mask: a cleared seed
+    h.track()
+    key = h.service.seeds.hash(h.video, 1)
+    kept = h.root / h.video / "1" / "versions" / key / "fake" / "track.json"
+    meta = json.loads(kept.read_text())
+    assert meta["cleared_seeds"] == [12]
+    old = {k: v for k, v in meta.items() if k != "cleared_seeds"}  # as an older sam-ui wrote it
+    kept.unlink()
+    kept.write_text(json.dumps(old))
+    h.click(1, frame=20)
+    h.track()
+    info = h.service.undo(h.video, 1)
+    assert sorted(info["seeds"]) == [0, 12] and info["state"] == STALE
+    info = h.service.redo(h.video, 1)  # its own track lists the cleared seed: back at once
+    assert sorted(info["seeds"]) == [0, 12, 20] and info["state"] == TRACKED
+
+
 # -- the real model ---------------------------------------------------------------------
 
 from pathlib import Path  # noqa: E402

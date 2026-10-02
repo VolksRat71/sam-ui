@@ -28,6 +28,7 @@ object is stale, as after any seed change. They are refused while a job holds
 the object (ObjectBusy): the job would save over the restored track.
 """
 import contextlib
+import json
 import logging
 import os
 import time
@@ -186,8 +187,13 @@ class TrackService:
 
     # -- seeds, as the user clicks ------------------------------------------
     def record_points(self, video: str, obj_id: int, frame: int, points, labels, clear_old_points: bool,
-                      mask: Optional[Dict] = None):
+                      mask: Optional[Dict] = None, end_absence: bool = False):
+        """Store a frame's clicks. With `end_absence` (a positive inside an
+        absent range), the range also ends at `frame`, in the same seed
+        change: one undo puts back the clicks and the range together."""
         with self._seed_change(video, obj_id):
+            if end_absence:
+                self._end_absence(video, obj_id, frame)
             self.seeds.add_points(video, obj_id, frame, points, labels, clear_old_points, mask)
 
     def clear_frame(self, video: str, obj_id: int, frame: int):
@@ -214,6 +220,10 @@ class TrackService:
         [s, e] becomes [s, frame-1]; at frame == s the range goes (paint
         never writes [s, s-1]). A seed change like set_range, so the track
         goes stale. No range there: nothing changes."""
+        with self._seed_change(video, obj_id):
+            self._end_absence(video, obj_id, frame)
+
+    def _end_absence(self, video: str, obj_id: int, frame: int) -> None:
         for r in self.seeds.ranges(video, obj_id):
             if r["state"] == ABSENT and r["start"] <= frame <= r["end"]:
                 self.seeds.paint_range(video, obj_id, frame, r["end"], None)
@@ -326,8 +336,27 @@ class TrackService:
                 continue  # already the current track
             if (self.versions.summary(video, obj_id, name, key) or {}).get("model") != model:
                 continue  # made by another model: it would be stale anyway
+            if self._conditioned_on_cleared(name, src, self.seeds.seeds(video, obj_id)):
+                continue  # from before this engine skipped cleared seeds: re-track it instead
             self.tracks.adopt(video, obj_id, name, src, extra={"restored": {"at": ver.now(), "from": "versions"}})
             self.versions.touch(video, obj_id, name, key)
+
+    def _conditioned_on_cleared(self, name: str, src, seeds: Seeds) -> bool:
+        """True when a kept track on an engine that skips cleared seeds may
+        have been conditioned on one of them: a SAM 2 track made before it
+        skipped them (its track.json lists no cleared_seeds, or not all of
+        them). The seeds hash is the same either way, so the hash alone would
+        make that track current again (#23 + #18)."""
+        if not getattr(self._engines.get(name), "skips_cleared", False):
+            return False
+        now = {int(f) for f, v in seeds.items() if cleared(v)}
+        if not now:
+            return False
+        try:
+            meta = json.loads((src / "track.json").read_text())
+        except (OSError, ValueError):
+            return True
+        return not now <= {int(f) for f in meta.get("cleared_seeds") or []}
 
     def _step(self, video: str, obj_id: int, src: str, dst: str) -> Dict:
         self._check_free(video, obj_id)

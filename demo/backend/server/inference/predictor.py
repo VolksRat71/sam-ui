@@ -272,8 +272,8 @@ class InferenceAPI:
             raise
 
         masks_binary = (masks > self.score_thresh)[:, 0].cpu().numpy()
-        if absent:  # a seed change, like the click: the track goes stale
-            self.tracks.end_absence_at(session["video"], obj_id, frame_idx)
+        # a positive inside an absent range ends it here, in the same seed
+        # change as the click: one undo step puts both back (issue #18)
         self.tracks.record_points(
             session["video"],
             obj_id,
@@ -282,6 +282,7 @@ class InferenceAPI:
             labels,
             clear_old_points,
             mask=track_rle.encode(masks_binary[list(object_ids).index(obj_id)]),
+            end_absence=absent,
         )
         return frame_idx, object_ids, masks_binary
 
@@ -565,7 +566,8 @@ class InferenceAPI:
             if old == new:
                 continue
             self.__forget_frame(inference_state, obj_id, frame)
-            if new and (new.get("mask") or new.get("points")):
+            # a cleared ('not on this frame') seed is skipped, as start_session does
+            if new and (new.get("mask") or new.get("points")) and not cleared(new):
                 seed_into_state(self.predictor, inference_state, obj_id, frame, new)
 
     def __forget_frame(self, inference_state, obj_id: int, frame: int) -> None:
