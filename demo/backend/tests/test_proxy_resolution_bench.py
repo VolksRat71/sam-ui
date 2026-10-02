@@ -67,3 +67,76 @@ def test_frame_validation_rejects_missing_or_duplicate_outputs():
         bench.validate_frames([0, 1], 3)
     with pytest.raises(ValueError, match='exactly once'):
         bench.validate_frames([0, 1, 1], 3)
+
+
+def test_prepared_fixtures_reject_a_changed_generator(tmp_path, monkeypatch):
+    import json
+    identity = bench.fixture_identity()
+    (tmp_path / 'fixtures.json').write_text(json.dumps({**identity, 'digests': {}}))
+    original = bench.scene
+
+    def changed_scene(*args, **kwargs):
+        rgb, truth = original(*args, **kwargs)
+        return rgb, ~truth
+
+    monkeypatch.setattr(bench, 'scene', changed_scene)
+    with pytest.raises(ValueError, match='Fixture identity'):
+        bench.prepare(tmp_path)
+
+
+def test_prepared_fixtures_reject_changed_transcoder(tmp_path, monkeypatch):
+    import json
+    identity = bench.fixture_identity()
+    (tmp_path / 'fixtures.json').write_text(json.dumps({**identity, 'digests': {}}))
+    actual_digest = bench.digest
+    monkeypatch.setattr(bench, 'digest', lambda path: 'changed' if path.name == 'transcoder.py' else actual_digest(path))
+    with pytest.raises(ValueError, match='Fixture identity'):
+        bench.prepare(tmp_path)
+
+
+@pytest.mark.parametrize('change', [
+    {'device': 'cuda'}, {'hardware': 'another GPU'},
+    {'packages': {'torch': 'new release'}}, {'machine': 'another host'},
+])
+def test_measurement_resume_rejects_environment_changes(tmp_path, change):
+    import json
+    original = {'environment': {'device': 'mps', 'hardware': 'M4 Max',
+                               'packages': {'torch': '2.14.0'}, 'machine': 'host A'}}
+    bench.record_measurement_identity(tmp_path, original)
+    bench.record_measurement_identity(tmp_path, original)  # unchanged is resumable
+    new = {'environment': {**original['environment'], **change}}
+    with pytest.raises(ValueError, match='Measurement identity'):
+        bench.record_measurement_identity(tmp_path, new)
+    assert json.loads((tmp_path / 'measurement.json').read_text()) == original
+
+
+def test_cli_checks_runtime_identity_before_starting_any_model(tmp_path, monkeypatch):
+    from contextlib import nullcontext
+    import json
+    import subprocess
+    import sys
+
+    weights = tmp_path / 'test-weights'
+    weights.write_bytes(b'synthetic test placeholder')
+    monkeypatch.setattr(sys, 'argv', ['bench', '--out', str(tmp_path), '--weights', str(weights)])
+    monkeypatch.setattr(bench, 'prepare', lambda out: {'digests': {'detail-720p.mp4': 'clip digest'}})
+    monkeypatch.setattr(bench, 'gpu_lock', nullcontext)
+    monkeypatch.setattr(bench.subprocess, 'check_output', lambda *a, **k: 'same head\n')
+    runtime = {'packages': {'torch': 'original'}}
+    model_calls = []
+
+    def child(command, **kwargs):
+        if '--_environment' in command:
+            return subprocess.CompletedProcess(command, 0, json.dumps(runtime))
+        model_calls.append(command)
+        raise RuntimeError('model stub')
+
+    monkeypatch.setattr(bench.subprocess, 'run', child)
+    with pytest.raises(RuntimeError, match='model stub'):
+        bench.main()
+    assert len(model_calls) == 1
+    model_calls.clear()
+    runtime['packages']['torch'] = 'upgraded'
+    with pytest.raises(ValueError, match='Measurement identity'):
+        bench.main()
+    assert not model_calls

@@ -16,18 +16,25 @@ python tools/proxy_resolution_bench.py --out /tmp/sam-ui-proxy-bench
 ```
 
 `--weights PATH` selects the existing checkpoint; no weights are downloaded.
-`--repeats` defaults to 3. The second command starts 27 sequential fresh model
-processes. Each process runs a first and a warm track. The parent acquires
+`--repeats` defaults to 3. The second command probes the runtime in one short
+child (no model loaded), then starts 27 sequential fresh model processes.
+Each model process runs a first and a warm track. The parent acquires
 `~/Movies/sam2-poc-data/.gpu-lock` with `mkdir` before starting each child and
-releases its own directory only after the child exits. An existing lock causes
+releases its own directory only after the child exits; the runtime probe uses
+the same lock. An existing lock causes
 waiting; the tool never removes another owner's lock. No ports or servers are
 used. A force-killed parent may leave its lock behind for manual recovery after
 confirming that its child has stopped.
 
 Output contains synthetic clips, checksums, per-run logs/JSON, and cumulative
-`results.json`. Keep it outside the repository. Completed runs are reused only
-when their input, checkpoint, configuration, code hashes, and git HEAD match.
-Use a fresh output directory after changing the harness or repository revision.
+`results.json`. Keep it outside the repository. The fixture manifest checks
+scene/preparation code, transcoder code, fixture names/sizes, configuration, and
+clip checksums. `measurement.json` also records hardware/device, a hashed host
+name, OS/Python, package versions, FFmpeg version, and Torch thread counts.
+Completed runs are reused only when that environment, input, checkpoint,
+configuration, code hashes, and git HEAD match. An incompatible manifest is
+rejected before starting any model. Use a fresh output directory after changing
+those inputs or moving to another machine.
 
 ## Method
 
@@ -120,3 +127,9 @@ Raw results, synthetic inputs, logs and checksums are retained in Nate's
 Downloads folder as `sam-ui-proxy-benchmark-2026-10-02`. `results.json` SHA-256:
 `dd77cf7cf1979b91f3cc806a46631a01009fea8a8f1bf801ab8fc3f40ec35855`.
 Each row records checkpoint/input hashes and the exact measured source hashes.
+
+The archived dataset was measured with harness commit `7201f00`; its exact
+script is included as `measured-harness.py`. Final review subsequently added
+stricter fixture and runtime resume validation, without changing scenes,
+inference, scoring, or timing. Use the current harness with a new output
+directory; it deliberately rejects manifests from the earlier version.

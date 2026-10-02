@@ -14,6 +14,7 @@ for a new full measurement. See proxy_resolution_bench.md for interpretation.
 import argparse
 from contextlib import contextmanager
 import hashlib
+import inspect
 import json
 import os
 from pathlib import Path
@@ -107,16 +108,65 @@ def digest(path):
     return h.hexdigest()
 
 
+def fixture_identity():
+    return {'config': CONFIG, 'fixtures': list(FIXTURES),
+            'sizes': {k: list(v) for k, v in SIZES.items()},
+            'scene_sha256': hashlib.sha256(inspect.getsource(scene).encode()).hexdigest(),
+            'preparation_sha256': hashlib.sha256(inspect.getsource(prepare).encode()).hexdigest(),
+            'transcoder_sha256': digest(REPO / 'demo/backend/server/data/transcoder.py')}
+
+
+def record_measurement_identity(out, identity):
+    path = out / 'measurement.json'
+    if path.exists():
+        if json.loads(path.read_text()) != identity:
+            raise ValueError('Measurement identity changed; choose a new --out directory')
+    else:
+        path.write_text(json.dumps(identity, indent=2) + '\n')
+
+
+def select_device(torch):
+    return 'mps' if torch.backends.mps.is_available() else ('cuda' if torch.cuda.is_available() else 'cpu')
+
+
+def environment_fingerprint():
+    """Probe in a separate child under the lock; never load a model here."""
+    from importlib.metadata import PackageNotFoundError, version
+    import torch
+
+    device = select_device(torch)
+    packages = {}
+    for name in ('torch', 'torchvision', 'numpy', 'Pillow', 'av', 'decord'):
+        try:
+            packages[name] = version(name)
+        except PackageNotFoundError:
+            packages[name] = None
+    hardware = {'processor': platform.processor(), 'architecture': platform.machine()}
+    if sys.platform == 'darwin':
+        hardware['mac'] = subprocess.check_output(
+            ['/usr/sbin/sysctl', '-n', 'machdep.cpu.brand_string', 'hw.memsize'], text=True).splitlines()
+    if device == 'cuda':
+        gpu = torch.cuda.get_device_properties(0)
+        hardware['gpu'] = {'name': gpu.name, 'memory': gpu.total_memory,
+                           'capability': [gpu.major, gpu.minor]}
+    return {'device': device, 'hardware': hardware, 'packages': packages,
+            'machine': hashlib.sha256(platform.node().encode()).hexdigest(),
+            'platform': platform.platform(), 'python': platform.python_version(),
+            'torch_threads': [torch.get_num_threads(), torch.get_num_interop_threads()],
+            'ffmpeg': subprocess.check_output(['ffmpeg', '-version'], text=True).splitlines()[0]}
+
+
 def prepare(out):
     import av
     sys.path.insert(0, str(REPO / 'demo/backend/server'))
     os.environ.setdefault('DATA_PATH', str(out / 'app-data'))
     from data.transcoder import get_video_metadata, normalize_video
     manifest = out / 'fixtures.json'
+    identity = fixture_identity()
     if manifest.exists():
         saved = json.loads(manifest.read_text())
-        if saved['config'] != CONFIG:
-            raise ValueError('Fixture configuration changed; choose a new --out directory')
+        if any(saved.get(k) != v for k, v in identity.items()):
+            raise ValueError('Fixture identity changed; choose a new --out directory')
         for name, sha in saved['digests'].items():
             if digest(out / name) != sha:
                 raise ValueError(f'Fixture changed: {name}; choose a new --out directory')
@@ -145,7 +195,7 @@ def prepare(out):
                 raise ValueError(f'Invalid proxy: {proxy}: {meta}')
             digests[proxy.name] = digest(proxy)
         print(f'Prepared {fixture}: native 4K plus three proxies', flush=True)
-    saved = {'config': CONFIG, 'digests': digests}
+    saved = {**identity, 'digests': digests}
     manifest.write_text(json.dumps(saved, indent=2) + '\n')
     return saved
 
@@ -164,7 +214,7 @@ def run_one(clip, fixture, weights):
 
     torch.manual_seed(1)
     np.random.seed(1)
-    device = 'mps' if torch.backends.mps.is_available() else ('cuda' if torch.cuda.is_available() else 'cpu')
+    device = select_device(torch)
 
     def sync():
         if device == 'mps':
@@ -266,12 +316,16 @@ def main():
     parser.add_argument('--weights', type=Path, default=WEIGHTS)
     parser.add_argument('--repeats', type=int, default=3)
     parser.add_argument('--prepare-only', action='store_true')
+    parser.add_argument('--_environment', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--_child', nargs=3, metavar=('CLIP', 'FIXTURE', 'RESULT'), help=argparse.SUPPRESS)
     args = parser.parse_args()
-    if args._child:
+    if args._child or args._environment:
         # Private child protocol: refuse a direct model call without a held lock.
         if os.environ.get('SAM_UI_BENCH_LOCK_OWNER') != str(os.getppid()) or not LOCK.is_dir():
             raise RuntimeError('Run the parent command, which owns the GPU lock')
+        if args._environment:
+            print(json.dumps(environment_fingerprint()))
+            return
         clip, fixture, result = args._child
         row = run_one(Path(clip), fixture, args.weights)
         Path(result).write_text(json.dumps(row, indent=2) + '\n')
@@ -293,6 +347,15 @@ def main():
             'demo/backend/server/tracks/engine.py', 'demo/backend/server/tracks/streaming.py',
             'demo/backend/server/tracks/features.py')},
     }
+    env = {**os.environ, 'PYTORCH_ENABLE_MPS_FALLBACK': '1',
+           'DATA_PATH': str(out / 'app-data'), 'SAM_UI_BENCH_LOCK_OWNER': str(os.getpid())}
+    with gpu_lock():
+        probe = subprocess.run([sys.executable, str(Path(__file__).resolve()), '--out', str(out),
+                                '--_environment'], env=env, cwd=REPO,
+                               capture_output=True, text=True, check=True)
+    measurement = {'config': CONFIG, 'checkpoint_sha256': checkpoint_sha,
+                   'provenance': provenance, 'environment': json.loads(probe.stdout)}
+    record_measurement_identity(out, measurement)
     rows = []
     # Rotate order between repetitions to reduce systematic thermal/order bias.
     labels = list(SIZES)
@@ -301,17 +364,14 @@ def main():
             for label in labels[repeat % 3:] + labels[:repeat % 3]:
                 clip = out / f'{fixture}-{label}.mp4'
                 result = out / f'{fixture}-{label}-{repeat + 1}.json'
-                identity = {'config': CONFIG, 'fixture': fixture, 'resolution': label,
-                            'repeat': repeat + 1, 'clip_sha256': manifest['digests'][clip.name],
-                            'checkpoint_sha256': checkpoint_sha, 'provenance': provenance}
+                identity = {**measurement, 'fixture': fixture, 'resolution': label,
+                            'repeat': repeat + 1, 'clip_sha256': manifest['digests'][clip.name]}
                 if result.exists():
                     row = json.loads(result.read_text())
                     if any(row.get(k) != v for k, v in identity.items()):
                         raise ValueError(f'Result identity mismatch: {result}')
                 else:
                     temporary = result.with_suffix('.partial')
-                    env = {**os.environ, 'PYTORCH_ENABLE_MPS_FALLBACK': '1',
-                           'DATA_PATH': str(out / 'app-data'), 'SAM_UI_BENCH_LOCK_OWNER': str(os.getpid())}
                     print(f'Running {fixture} {label}, repeat {repeat + 1}/{args.repeats}', flush=True)
                     with gpu_lock(), result.with_suffix('.log').open('w') as log:
                         subprocess.run([sys.executable, str(Path(__file__).resolve()), '--out', str(out),
