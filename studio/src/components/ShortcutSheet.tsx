@@ -3,6 +3,8 @@ import {useEffect, useRef} from 'react';
 
 const shortcuts = [
   ['Space', 'Play or pause'],
+  ['Shift / Ctrl / Cmd + wheel', 'Zoom the viewer at the pointer'],
+  ['Wheel · Alt-drag · Middle-drag', 'Pan the zoomed viewer'],
   ['Left / Right', 'Previous or next frame'],
   ['O / Shift O', 'Next or previous layer'],
   ['Up / Down · Home / End', 'Select layers while the layer list has focus'],

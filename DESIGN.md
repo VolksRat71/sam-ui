@@ -12,7 +12,6 @@ colors:
   text: "#f1f1f3"
   text-muted: "#aaaab0"
   lane-ink: "#b8b8c0"
-  lane-ink-alternate: "#727e8c"
   selection: "#2d8ceb55"
   field-bg: "#000000"
   white: "#ffffff"
@@ -139,7 +138,7 @@ This is a source-derived record of the current workspace, not a finish verdict. 
 
 ## Colors
 
-The palette is a low-glare neutral surround, with colour reserved for interaction and inspection; normative values are in the frontmatter.
+The palette is a low-glare neutral surround, with colour reserved for layer identity, interaction, and inspection; normative values are in the frontmatter.
 
 ### Primary
 
@@ -155,10 +154,10 @@ The palette is a low-glare neutral surround, with colour reserved for interactio
 - **Workspace ground** (`bg`) surrounds **panel grey** (`panel`). **Raised grey** (`panel-raised`) distinguishes grouped controls and status areas.
 - **Seam grey** (`line`) separates docked regions and layer rows.
 - **Primary text** (`text`) and **secondary text** (`text-muted`) distinguish instructions from supporting metadata.
-- **Layer ink** (`lane-ink`) alternates with **cool layer ink** (`lane-ink-alternate`) on neighbouring rows. These are muted lane identifiers, not a multicolour object palette.
+- **Layer ink** follows the layer’s mask color in the swatch, frame lane, and Overlay preview. The `lane-ink` token is a neutral fallback. Group swatches use their saved group color. Layer info lets users choose a mask color or reset it; overrides are saved per clip in this browser.
 - **Field black** (`field-bg`) and **white** (`white`) remain in fields and selected/focused control treatments.
 
-**The Semantic Accent Rule.** Use blue for interaction and active work; use amber for review marks and the work area. Keep ordinary layers and panel chrome neutral.
+**The Semantic Accent Rule.** Use blue for interaction and active work; use amber for review marks and the work area. Keep panel chrome neutral; use matching mask colors to identify layers.
 
 ## Typography
 
@@ -228,7 +227,7 @@ Viewer, dock, and timeline are flat containers on panel grey with square corners
 
 ### Layer rows and frame lanes
 
-Each row combines a narrow swatch, ellipsized layer name, state badge, and aligned temporal lane. Selection adds a light blue wash. The lane has a blue playhead, muted span ink, and diamond keyframes. The selected layer's editable detail lives in Layer info.
+Each row combines a narrow swatch, ellipsized layer name, state badge, and aligned temporal lane. Selection adds a light blue wash. The lane has a blue playhead, mask-colored span ink, and diamond keyframes. Grouped labels are indented beneath their group while all frame lanes retain the same origin. The selected layer's editable detail and Mask color control live in Layer info. Color changes redraw the preview without changing masks, clicks, ranges, or tracking jobs.
 
 ### Review stops
 
@@ -250,9 +249,15 @@ A full-width status strip sits in the viewer chrome before the effect stage. Cha
 
 ### Don't:
 
-- Don't reintroduce rainbow accents, gradient action borders, or rounded cards around the workspace panes.
+- Don't use layer colors as decorative chrome, gradient action borders, or rounded cards around the workspace panes.
 - Don't make colour the only signal for a matte state or an inspection mark.
 - Don't use internal stale or seed terminology as the main user-facing state label.
 - Don't promote legacy history colours or unfinished state designs into new system rules.
 
 Not canonized or repaired in this document: legacy hard-coded engine-history colours and older source comments that describe the pre-suite layout. These are drift, not authority for new visual rules. Raster provenance is maintained in the existing icon files; this document does not replace those embedded origins or alter asset pixels.
+
+### Follow-up interaction review — 2026-10-02
+
+Shift, Ctrl, or Cmd plus wheel zooms at the pointer; unmodified wheel pans. Shift events remapped to the horizontal axis also zoom. The engine chooser floats outside clipped panes, fits the viewport, focuses the selected engine, and returns focus to its trigger on Escape.
+
+Nate’s follow-up feedback explicitly restores mask-color correspondence and grouped-label indentation. This supersedes the earlier neutral-lane guidance; the 2026-10-01 comp-guidance waiver remains in force. See `.impeccable/review/2026-10-02-audit.md` for verification and limits.

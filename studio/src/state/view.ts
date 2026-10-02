@@ -61,3 +61,10 @@ export function toScreen(
     y: boxHeight / 2 + view.y + (ny - 0.5) * boxHeight * view.zoom,
   };
 }
+
+/** Shift-wheel may arrive on deltaX; Ctrl/Cmd and trackpad pinch retain deltaY. */
+export function zoomWheelDelta(e: Pick<WheelEvent, 'shiftKey' | 'ctrlKey' | 'metaKey' | 'deltaX' | 'deltaY' | 'deltaMode'>, pageHeight: number): number | null {
+  if (!e.shiftKey && !e.ctrlKey && !e.metaKey) return null;
+  const delta = e.deltaY || (e.shiftKey ? e.deltaX : 0);
+  return delta * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? pageHeight : 1);
+}

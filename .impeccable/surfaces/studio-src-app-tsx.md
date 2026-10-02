@@ -39,3 +39,7 @@ Nate approved `.impeccable/mocks/composition-b.png` for the dense timeline, comb
 ## Explicit scope decision — 2026-10-01
 
 Nate, relayed by Claude: "Waive: comps were guidance." Generated A/B/C comps are composition guidance for this live-prototype finish, not fidelity targets. Nate explicitly authorizes downgrading their authority and waives measured comp-reproduction gates for this build. Existing behavior, protected data, server and branch guardrails remain in force. The finish verdict and build state record this decision; no pixel-fidelity pass is claimed.
+
+## Follow-up scope decision — 2026-10-02
+
+Nate requested that timeline layers match their mask colors, grouped labels be indented, and users be able to choose mask colors. This supersedes the neutral-lane interpretation and the “footage is the only saturated thing” sentence for layer identity. Chrome stays neutral; interaction blue and inspection amber keep their roles. Per-layer mask colors now carry identity across the preview, swatches, and temporal lanes. User overrides are local to this browser and clip. Automatic color reassignment is not required: preserve existing mask correspondence. The 2026-10-01 comp-guidance waiver remains unchanged.

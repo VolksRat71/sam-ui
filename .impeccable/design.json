@@ -144,20 +144,6 @@
           "oklch(95.0% 0.0112 286.14)"
         ]
       },
-      "lane-ink-alternate": {
-        "role": "neutral",
-        "displayName": "Lane Ink Alternate",
-        "tonalRamp": [
-          "oklch(15.0% 0.0258 252.30)",
-          "oklch(26.43% 0.0258 252.30)",
-          "oklch(37.86% 0.0258 252.30)",
-          "oklch(49.29% 0.0258 252.30)",
-          "oklch(60.71% 0.0258 252.30)",
-          "oklch(72.14% 0.0258 252.30)",
-          "oklch(83.57% 0.0258 252.30)",
-          "oklch(95.0% 0.0258 252.30)"
-        ]
-      },
       "selection": {
         "role": "primary",
         "displayName": "Selection",
@@ -370,7 +356,7 @@
     "rules": [
       {
         "name": "The Semantic Accent Rule",
-        "body": "Use blue for interaction and active work; use amber for review marks and the work area. Keep ordinary layers and panel chrome neutral.",
+        "body": "Use blue for interaction and active work; use amber for review marks and the work area. Keep panel chrome neutral; use matching mask colors to identify layers.",
         "section": "colors"
       },
       {
@@ -392,7 +378,7 @@
       "Do preserve Meta credits and asset provenance without adopting Meta branding as the studio identity."
     ],
     "donts": [
-      "Don't reintroduce rainbow accents, gradient action borders, or rounded cards around the workspace panes.",
+      "Don't use layer colors as decorative chrome, gradient action borders, or rounded cards around the workspace panes.",
       "Don't make colour the only signal for a matte state or an inspection mark.",
       "Don't use internal stale or seed terminology as the main user-facing state label.",
       "Don't promote legacy history colours or unfinished state designs into new system rules."

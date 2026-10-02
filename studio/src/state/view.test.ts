@@ -1,6 +1,6 @@
 // sam-ui (Apache-2.0). New file, not from SAM 2.
 import {describe, expect, it} from 'vitest';
-import {FIT, MAX_ZOOM, panBy, toScreen, zoomAt} from './view';
+import {FIT, MAX_ZOOM, panBy, toScreen, zoomAt, zoomWheelDelta} from './view';
 
 describe('zoomAt', () => {
   it('keeps the point under the cursor still', () => {
@@ -41,4 +41,13 @@ describe('toScreen', () => {
     expect(p.x).toBeCloseTo(420);
     expect(p.y).toBeCloseTo(140);
   });
+});
+
+it('zooms with Shift on either wheel axis, keeps Ctrl/Meta, and leaves plain scroll for pan', () => {
+  const e = {shiftKey: false, ctrlKey: false, metaKey: false, deltaX: 0, deltaY: -100, deltaMode: 0};
+  expect(zoomWheelDelta(e, 400)).toBeNull();
+  expect(zoomWheelDelta({...e, shiftKey: true}, 400)).toBe(-100);
+  expect(zoomWheelDelta({...e, shiftKey: true, deltaY: 0, deltaX: -100}, 400)).toBe(-100);
+  expect(zoomWheelDelta({...e, ctrlKey: true}, 400)).toBe(-100);
+  expect(zoomWheelDelta({...e, metaKey: true, deltaY: -2, deltaMode: 1}, 400)).toBe(-32);
 });

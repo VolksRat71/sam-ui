@@ -46,7 +46,6 @@
 .layer-controls { display: flex; min-width: 0; padding: 4px; border-inline-end: 1px solid var(--line); }
 .suite-lanes .swimlane { min-height: var(--lane-height); height: 100%; overflow: hidden; }
 .suite-lanes .object-row.active { background: #2d8ceb1c; }
-.suite-lanes .object-row:nth-child(even) { --lane-ink: #727e8c; }
 .suite-lanes .thumb { width: 20px; height: 20px; flex: none; background: var(--lane-ink) !important; border-radius: 0; }
 .suite-lanes .thumb-image { display: none; }
 .suite-lanes .swimlane-line, .suite-lanes .swimlane-segment, .suite-lanes .swimlane-seed { background: var(--lane-ink) !important; }
@@ -146,7 +145,6 @@ input:not([type='checkbox']):not([type='radio']):not([type='range']) { min-heigh
 .chip, .job-chip, .badge, .engine-chip, .review-reason { border-radius: 2px; }
 .icon-negative { fill: var(--text-muted); }
 .icon-positive { fill: var(--primary); }
-.chip .swatch, .review-go .swatch { background: var(--text-muted) !important; }
 .object-hint, .stage-hint, .range-hint { color: var(--text-muted); }
 .button.danger { color: var(--text); border-color: var(--line); background: var(--panel-raised); }
 .preview-toolbar, .topbar { background: var(--panel); }
@@ -220,4 +218,17 @@ input:not([type='checkbox']):not([type='radio']):not([type='range']) { min-heigh
 @media (min-width: 1024px) and (pointer: fine) {
   .review-current .button { height: 28px; min-height: 24px; padding-block: 2px; }
   .review-current > strong { font-size: var(--type-label); }
+}
+
+/* Floating engine menu escapes pane clipping and stays within viewport bounds. */
+.engine-menu.floating { position: fixed; right: auto; bottom: auto; margin: 0; max-width: none; overflow-y: auto; z-index: 100; border-radius: var(--radius); }
+/* Indent labels only: every temporal lane retains the same frame origin. */
+.group-members .layer-summary { padding-inline-start: 56px; }
+.group-members .layer-detail-summary { padding-inline-start: 72px; }
+.layer-color-control { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-block: 8px; }
+.layer-color-control label { display: inline-flex; align-items: center; gap: 8px; font-size: var(--type-label); }
+.layer-color-control input[type='color'] { width: var(--target); height: var(--target); min-height: var(--target); padding: 2px; cursor: pointer; }
+@media (max-width: 1023.98px) {
+  .group-members .layer-summary { padding-inline-start: 28px; }
+  .group-members .layer-detail-summary { padding-inline-start: 40px; }
 }

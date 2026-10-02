@@ -175,6 +175,8 @@ export type StudioMethods = {
   };
   /** Every object's own selected-object effect (objects not listed: Overlay). */
   setObjectEffects: {args: {effects: Record<number, {name: string; variant: number}>}; result: void};
+  /** Browser-local display colors only; no annotation or tracking writes. */
+  setObjectColors: {args: {colors: Record<number, string>}; result: void};
   /** How many variants each highlight effect has. */
   effectVariants: {args: {names: string[]}; result: Record<string, number>};
   /** Render the video with these per-object effects as an MP4 (no editing aids). */

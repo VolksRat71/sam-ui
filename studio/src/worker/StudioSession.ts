@@ -60,6 +60,7 @@ import type {TrackObject} from '~/local/sam2/tracker';
 import {BROWSER_ENGINE, engineLabel} from '~/state/engines';
 import {maskSegments} from '~/state/segments';
 import {type FrameRange, type Mark, type PaintOptions, type RangeState, absentAt, normalizeRanges, planUnits, rangesKey} from '~/state/ranges';
+import {parseObjectColors, recolorTracklets, type ObjectColors} from '~/state/objectColors';
 import {colorFor, DEFAULT_ENGINE, type NormPoint, type ServerObject} from '~/state/objects';
 import type MaskOverlayEffect from './MaskOverlayEffect';
 import {paintAlpha} from './maskPixels';
@@ -668,6 +669,7 @@ export default class StudioSession {
   private _env: IEnvironment | null = null;
   private _sessionId: string | null = null;
   private _tracklets = new Map<number, Tracklet>();
+  private _objectColors: ObjectColors = {};
   /** Per object, the mask each seed frame's last click produced. */
   private _seedMasks = new Map<number, Map<number, Mask>>();
   private _seedPoints = new Map<number, Map<number, NormPoint[]>>();
@@ -1918,12 +1920,19 @@ export default class StudioSession {
     this._render(true);
   }
 
+  /** Change rendering ink without editing any clicks, ranges, masks or jobs. */
+  setObjectColors(colors: ObjectColors): void {
+    this._objectColors = parseObjectColors(colors);
+    recolorTracklets(this._tracklets.values(), this._objectColors);
+    this._render(true);
+  }
+
   // -- tracklets ---------------------------------------------------------------
 
   private _tracklet(id: number): Tracklet {
     let t = this._tracklets.get(id);
     if (t == null) {
-      t = {id, color: colorFor(id), thumbnail: null, points: [], masks: [], isInitialized: true};
+      t = {id, color: this._objectColors[id] ?? colorFor(id), thumbnail: null, points: [], masks: [], isInitialized: true};
       this._tracklets.set(id, t);
     }
     return t;

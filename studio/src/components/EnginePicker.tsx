@@ -12,7 +12,9 @@
 // are listed in it, disabled, and their tooltips link to the desktop app,
 // so the top bar holds one control whatever the build.
 import {ChevronDown} from '@carbon/icons-react';
-import {useEffect, useRef, useState} from 'react';
+import {useEffect, useLayoutEffect, useRef, useState} from 'react';
+import {createPortal} from 'react-dom';
+import {placePopover} from '~/lib/popover';
 import {modelAvailability} from '~/local/models';
 import {type Quality, VARIANTS} from '~/local/sam2/config';
 import {BROWSER_ENGINE, engineLabel} from '~/state/engines';
@@ -56,6 +58,27 @@ export default function EnginePicker({session}: Props) {
   const [open, setOpen] = useState(false);
   const [availability, setAvailability] = useState<Availability>({512: null, 1024: null});
   const root = useRef<HTMLDivElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+  const [placement, setPlacement] = useState({left: 8, top: 8, width: 320, maxHeight: 400});
+  useLayoutEffect(() => {
+    if (!open || root.current == null || menu.current == null) return;
+    const position = () => {
+      if (root.current == null || menu.current == null) return;
+      const next = placePopover(root.current.getBoundingClientRect(), 320, menu.current.scrollHeight + 2, {width: window.innerWidth, height: window.innerHeight});
+      setPlacement(p => p.left === next.left && p.top === next.top && p.width === next.width && p.maxHeight === next.maxHeight ? p : next);
+    };
+    position();
+    menu.current.querySelector<HTMLButtonElement>('[aria-checked="true"]')?.focus({preventScroll: true});
+    const observer = new ResizeObserver(position);
+    observer.observe(menu.current);
+    window.addEventListener('resize', position);
+    window.addEventListener('scroll', position, true);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', position);
+      window.removeEventListener('scroll', position, true);
+    };
+  }, [open]);
 
   // the popover closes on a click outside it, or Escape
   useEffect(() => {
@@ -63,11 +86,13 @@ export default function EnginePicker({session}: Props) {
       return;
     }
     const onDown = (e: MouseEvent) => {
-      if (root.current != null && !root.current.contains(e.target as Node)) {
+      if (root.current != null && !root.current.contains(e.target as Node) && !menu.current?.contains(e.target as Node)) {
         setOpen(false);
       }
     };
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { setOpen(false); root.current?.querySelector('button')?.focus(); }
+    };
     window.addEventListener('mousedown', onDown);
     window.addEventListener('keydown', onKey);
     return () => {
@@ -187,8 +212,8 @@ export default function EnginePicker({session}: Props) {
   return (
     <div className="engine-picker" ref={root}>
       {button}
-      {open && (
-        <div className="engine-menu" role="dialog" aria-label="Engine">
+      {open && createPortal(
+        <div ref={menu} className="engine-menu floating" style={placement} role="dialog" aria-label="Engine">
           <div role="radiogroup" aria-label="Track with">
             {engines.map(e =>
               e.available ? (
@@ -214,7 +239,7 @@ export default function EnginePicker({session}: Props) {
               ),
             )}
           </div>
-        </div>
+        </div>, document.body
       )}
     </div>
   );

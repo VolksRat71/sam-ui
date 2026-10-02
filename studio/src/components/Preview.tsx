@@ -3,7 +3,7 @@
 // The video preview: the worker-drawn canvas, fitted to its pane, with the
 // click layer and the active object's points on top. Clicks follow Meta's
 // demo: left click adds a point of the selected kind, right click the other
-// kind, clicking a point removes it. The view zooms (pinch, or Ctrl/Cmd +
+// kind, clicking a point removes it. The view zooms (pinch, Shift + wheel, or Ctrl/Cmd +
 // wheel, or the buttons) and pans (wheel, middle drag, or Alt + drag). Only
 // the video and its masks are pixels, scaled by the zoom; the point markers
 // are an SVG overlay outside the zoomed box, placed in video coordinates, so
@@ -18,7 +18,7 @@ import {labelFor, longPressStartsOn} from '~/lib/gestures';
 import {objectName} from '~/state/fileNames';
 import {needsPositiveClick} from '~/state/objects';
 import {maskedAt} from '~/state/segments';
-import {FIT, panBy, toScreen, zoomAt, type View} from '~/state/view';
+import {FIT, panBy, toScreen, zoomAt, zoomWheelDelta, type View} from '~/state/view';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
 import useTouchGestures from '~/workspace/useTouchGestures';
 
@@ -105,11 +105,12 @@ export default function Preview({session, mode, onModeChange}: Props) {
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
       const {width, height} = boxRef.current;
-      if (e.ctrlKey || e.metaKey) {
+      const delta = zoomWheelDelta(e, height);
+      if (delta != null) {
         const rect = el.getBoundingClientRect();
         const px = e.clientX - (rect.left + rect.width / 2);
         const py = e.clientY - (rect.top + rect.height / 2);
-        setView(v => zoomAt(v, Math.exp(-e.deltaY * 0.01), px, py, width, height));
+        setView(v => zoomAt(v, Math.exp(-delta * 0.01), px, py, width, height));
       } else {
         setView(v => panBy(v, -e.deltaX, -e.deltaY, width, height));
       }
@@ -230,7 +231,7 @@ export default function Preview({session, mode, onModeChange}: Props) {
           <button className="zoom-level" onClick={() => setView(FIT)} title="Fit (reset zoom)">
             {Math.round(view.zoom * 100)}%
           </button>
-          <button className="icon-button" onClick={() => zoomBy(1.5)} title="Zoom in (or pinch, Ctrl/Cmd + wheel)">
+          <button className="icon-button" onClick={() => zoomBy(1.5)} title="Zoom in (Shift/Ctrl/Cmd + wheel or pinch)">
             <ZoomIn size={18} />
           </button>
         </div>

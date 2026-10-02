@@ -128,6 +128,7 @@ const handlers: Handlers = {
   startOver: () => session.startOver(),
   export: request => session.exportFolder(request),
   setActiveObject: ({objectId}) => session.setActiveObject(objectId),
+  setObjectColors: ({colors}) => session.setObjectColors(colors),
   setStaleObjects: ({objectIds}) => session.setStaleObjects(objectIds),
   setEngine: ({engine}) => session.setEngine(engine),
   engines: () => session.engines(),

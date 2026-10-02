@@ -29,7 +29,7 @@ import {
 import {trackPresentation} from './trackPresentation';
 import {createPortal} from 'react-dom';
 import {highlightEffects, moreEffects} from '@/common/components/effects/EffectsUtils';
-import {useEffect, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode} from 'react';
+import {useEffect, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent, type ReactNode} from 'react';
 import {OBJECT_LIMIT} from '~/config';
 import {BROWSER_ENGINE, engineLabel, textPromptNote} from '~/state/engines';
 import {NAME_MAX, objectName} from '~/state/fileNames';
@@ -355,7 +355,7 @@ function ObjectRow({
     <li
       role="presentation"
       className={`object-row${active ? ' active' : ''}${drop != null ? ` drop-${drop}` : ''}${dragged?.kind === 'object' && dragged.id === o.id ? ' dragging' : ''}`}
-      style={group != null ? {boxShadow: `inset 3px 0 0 ${group.color}`} : undefined}
+      style={{'--lane-ink': o.color} as CSSProperties}
       draggable
       onDragStart={e => {
         e.dataTransfer.setData(DRAG_TYPE, JSON.stringify({kind: 'object', id: o.id}));
@@ -416,6 +416,11 @@ function ObjectRow({
         {active && <div className="layer-detail-summary">{describe(o)}</div>}
         {active && inspector != null && createPortal(<div className="object-body layer-details" onClick={e => e.stopPropagation()}>
           <div className="object-title"><ObjectName o={o} onRename={n => session.renameObject(o.id, n)} /></div>
+          <div className="layer-color-control">
+            <label>Mask color <input type="color" aria-label={`Mask color for ${name}`} value={o.color} onChange={e => session.setObjectColor(o.id, e.target.value)} /></label>
+            <button className="button subtle compact" disabled={session.objectColors[o.id] == null} onClick={() => session.setObjectColor(o.id, null)}>Reset color</button>
+            <span className="muted small">Saved for this clip in this browser.</span>
+          </div>
         <div className="object-meta">{describe(o)}</div>
         {session.disagreement.get(o.id) != null && (
           <div
@@ -641,7 +646,7 @@ function GroupBlock({
             }}>
             {group.collapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
           </button>
-          <span className="layer-swatch" aria-hidden="true" />
+          <span className="layer-swatch" style={{background: group.color}} aria-hidden="true" />
           <GroupName group={group} onRename={name => session.updateGroup(group.id, {name})} />
           <span className="muted small">{count}</span>
           <button
