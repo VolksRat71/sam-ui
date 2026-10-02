@@ -96,7 +96,7 @@
     48,
     64
    ],
-   "counts": "jf08X10000000000000Vm1"
+   "counts": "jf0:V100000000000000000Vj1"
   },
   "14": {
    "size": [
@@ -313,7 +313,20 @@
    2
   ],
   "seeds": [
-   0
+   0,
+   12,
+   14,
+   20,
+   21
+  ],
+  "cleared": [
+   12,
+   14,
+   20
+  ],
+  "confirmed": [
+   0,
+   21
   ]
  },
  "expected": {
@@ -501,16 +514,16 @@
     "components": 1
    },
    "13": {
-    "area": 64,
+    "area": 100,
     "bbox": [
      15,
      10,
-     22,
-     17
+     24,
+     19
     ],
     "centroid": [
-     18.5,
-     13.5
+     19.5,
+     14.5
     ],
     "components": 1
    },
@@ -849,50 +862,6 @@
   },
   "locations": [
    {
-    "frame": 18,
-    "start": 13,
-    "end": 28,
-    "score": 6.375,
-    "reasons": [
-     {
-      "kind": "reappear",
-      "frame": 18,
-      "strength": 1.0,
-      "detail": "the object comes back after a gap"
-     },
-     {
-      "kind": "candidate",
-      "frame": 20,
-      "strength": 1.0,
-      "detail": "an unconfirmed candidate range from text:dog@sam3, score 0.70 starts here (frames 21-25)"
-     },
-     {
-      "kind": "stop",
-      "frame": 13,
-      "strength": 1.0,
-      "detail": "the track stops after this frame"
-     },
-     {
-      "kind": "retrack",
-      "frame": 27,
-      "strength": 1.0,
-      "detail": "a re-track near a correction starts here (frames 28-32)"
-     },
-     {
-      "kind": "area",
-      "frame": 25,
-      "strength": 0.806,
-      "detail": "the mask grows by 56% in one frame"
-     },
-     {
-      "kind": "jump",
-      "frame": 25,
-      "strength": 0.569,
-      "detail": "the mask moves 0.12 of its size off its course, and its box overlaps the expected one by 44%"
-     }
-    ]
-   },
-   {
     "frame": 2,
     "start": 2,
     "end": 11,
@@ -925,6 +894,44 @@
     ]
    },
    {
+    "frame": 18,
+    "start": 13,
+    "end": 28,
+    "score": 5.375,
+    "reasons": [
+     {
+      "kind": "reappear",
+      "frame": 18,
+      "strength": 1.0,
+      "detail": "the object comes back after a gap"
+     },
+     {
+      "kind": "candidate",
+      "frame": 22,
+      "strength": 1.0,
+      "detail": "an unconfirmed candidate range from text:dog@sam3, score 0.70 resumes here (frames 21-25; 2 frames confirmed present or marked not here before it)"
+     },
+     {
+      "kind": "retrack",
+      "frame": 27,
+      "strength": 1.0,
+      "detail": "a re-track near a correction starts here (frames 28-32)"
+     },
+     {
+      "kind": "area",
+      "frame": 25,
+      "strength": 0.806,
+      "detail": "the mask grows by 56% in one frame"
+     },
+     {
+      "kind": "jump",
+      "frame": 25,
+      "strength": 0.569,
+      "detail": "the mask moves 0.12 of its size off its course, and its box overlaps the expected one by 44%"
+     }
+    ]
+   },
+   {
     "frame": 36,
     "start": 36,
     "end": 38,
@@ -953,20 +960,14 @@
    {
     "frame": 31,
     "start": 29,
-    "end": 32,
-    "score": 2.0,
+    "end": 31,
+    "score": 1.0,
     "reasons": [
      {
       "kind": "retrack",
       "frame": 31,
       "strength": 1.0,
       "detail": "a re-track near a correction stops here (frames 28-32)"
-     },
-     {
-      "kind": "stop",
-      "frame": 32,
-      "strength": 1.0,
-      "detail": "the track stops after this frame"
      }
     ]
    }

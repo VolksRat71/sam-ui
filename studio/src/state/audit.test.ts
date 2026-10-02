@@ -209,7 +209,8 @@ describe('signals', () => {
     for (let f = 10; f < 15; f++) m[f] = sq(40, 30);
     const got = signals(statsOf(m), 30, {absent: [{start: 10, end: 14, state: 'absent'}]});
     expect([...got.keys()].some(f => f >= 10 && f <= 14)).toBe(false);
-    expect(kinds(got, 9)).toEqual(['stop']);
+    // stopping into the range is what the user marked, no disappearance; coming back still counts
+    expect(kinds(got, 9)).toEqual([]);
     expect(kinds(got, 15)).toEqual(['reappear']);
   });
 
@@ -329,6 +330,8 @@ describe('parity with the backend (tracks/audit.py wrote audit.parity.json)', ()
       bounded: i.bounded as Array<[number, number]>,
       flags: i.flags,
       seeds: i.seeds,
+      cleared: i.cleared,
+      confirmed: i.confirmed,
     });
     expect(locations(reasons, 40, i.absent)).toEqual(parity.expected.locations);
   });
@@ -405,5 +408,131 @@ describe('review fixes', () => {
     expect(markValid(mark, 'browser-sam2', reviewNow(masks, 12, [10, 13], 20))).toBe(false);
     expect(reviews(mark, {frame: 13})).toBe(true);
     expect(reviews(mark, {frame: 14})).toBe(false);
+  });
+});
+
+describe('with the correction semantics: a cleared frame is no disappearance, a candidate no absence', () => {
+  it('passes over a cleared frame SAM 2 blanked: no stop before it, no reappearance after', () => {
+    const m = moving();
+    m[12] = null; // SAM 2 blanks a cleared seed's frame, by design
+    expect(kinds(signals(statsOf(m), 30), 11)).toEqual(['stop']); // an empty frame with no seed is one
+    expect([...signals(statsOf(m), 30, {seeds: [0, 12], cleared: [12]})]).toEqual([]);
+  });
+
+  it('is no stop when SAM 3 keeps a cleared look-alike out for a while, and a comeback still counts', () => {
+    const m = moving();
+    for (let f = 12; f < 20; f++) m[f] = null;
+    const got = signals(statsOf(m), 30, {seeds: [0, 12], cleared: [12]});
+    expect([...got.keys()]).toEqual([20]);
+    expect(kinds(got, 20)).toEqual(['reappear']);
+  });
+
+  it('compares the frames either side of a cleared frame, whatever it holds', () => {
+    const m = moving();
+    m[12] = sq(40, 30); // a stray mask on the cleared frame (a track from before the skip): not evidence
+    expect([...signals(statsOf(m), 30, {seeds: [12], cleared: [12]})]).toEqual([]);
+    m[13] = sq(2 + 13, 10, 12);
+    const got = signals(statsOf(m), 30, {seeds: [12], cleared: [12]});
+    expect(got.get(13)!.find(r => r.kind === 'area')!.detail).toBe('the mask grows by 56% across 1 cleared frame');
+    expect(got.has(12)).toBe(false);
+  });
+
+  it('keeps a cleared frame inside an absent range a gap', () => {
+    const m = moving();
+    m[12] = null;
+    for (let f = 13; f < 30; f++) m[f] = sq(2 + f + 20, 20);
+    const got = signals(statsOf(m), 30, {absent: [{start: 12, end: 12, state: 'absent'}], seeds: [12], cleared: [12]});
+    expect([...got.keys()]).toEqual([13]);
+    expect(kinds(got, 13)).toEqual(['reappear']);
+  });
+
+  it('takes a candidate as a review item, never as absent', () => {
+    const masks = new Map<number, RLEObject>();
+    for (let f = 0; f < 30; f++) masks.set(f, enc(sq(2 + f, 10)));
+    const candidates = [{start: 10, end: 20, state: 'candidate', source: 'text:dog@sam3', score: 0.6}] as NonNullable<Parameters<typeof signals>[2]>['candidates'];
+    const q = buildQueue([{id: 1, state: 'tracked', masks, marks: [], ranges: [], candidates: candidates!, seeds: [0], flags: []}], 30, 'browser-sam2');
+    expect(q.queue.map(e => [e.frame, e.reasons.map(r => r.kind)])).toEqual([[10, ['candidate']]]);
+  });
+});
+
+describe('the stop before a gap that runs into a range or a cleared frame (case b)', () => {
+  it('is still a stop when empty frames run into an absent range', () => {
+    const m = moving();
+    for (let f = 7; f < 15; f++) m[f] = null; // the track stops after 6, 7-9 are empty, 10-14 marked absent
+    expect(kinds(signals(statsOf(m), 30, {absent: [{start: 10, end: 14, state: 'absent'}]}), 6)).toEqual(['stop']);
+  });
+
+  it('is still a stop when empty frames run into a cleared frame', () => {
+    const m = moving();
+    for (let f = 10; f < 13; f++) m[f] = null; // the track stops after 9, 10-11 are empty, 12 is cleared
+    expect(kinds(signals(statsOf(m), 30, {seeds: [0, 12], cleared: [12]}), 9)).toEqual(['stop']);
+  });
+});
+
+describe('a positive inside a candidate confirms that frame present (Nate, 2026-10-02)', () => {
+  const cand = [{start: 10, end: 14, state: 'candidate', source: 'text:dog@sam3'}] as NonNullable<Parameters<typeof signals>[2]>['candidates'];
+
+  it('takes that frame out of the queue, and the frame next to it stays', () => {
+    const got = signals(statsOf(moving()), 30, {candidates: cand, seeds: [10], confirmed: [10]});
+    expect(got.has(10)).toBe(false);
+    expect(kinds(got, 11)).toEqual(['candidate']);
+    expect(got.get(11)![0].detail).toBe('an unconfirmed candidate range from text:dog@sam3 resumes here (frames 11-15; 1 frame confirmed present before it)');
+  });
+
+  it('confirms only its own frame, wherever it is inside', () => {
+    const got = signals(statsOf(moving()), 30, {candidates: cand, seeds: [12], confirmed: [12]});
+    expect([...got.keys()]).toEqual([10]);
+    expect(got.get(10)![0].detail).toContain('starts here (frames 11-15)');
+    const both = signals(statsOf(moving()), 30, {candidates: cand, seeds: [10, 11], confirmed: [10, 11]});
+    expect([...both.keys()]).toEqual([12]);
+    expect(both.get(12)![0].detail).toContain('2 frames confirmed present');
+    const every = [10, 11, 12, 13, 14];
+    expect(signals(statsOf(moving()), 30, {candidates: cand, seeds: every, confirmed: every}).size).toBe(0);
+  });
+
+  it('confirms nothing on a cleared seed, but the item still skips that frame (option B, below)', () => {
+    const got = signals(statsOf(moving()), 30, {candidates: cand, seeds: [0, 10], cleared: [10]});
+    expect(got.get(11)![0].detail).not.toContain('confirmed present');
+  });
+
+  it('confirms on a text seed (no clicks, a mask)', () => {
+    const got = signals(statsOf(moving()), 30, {candidates: cand, seeds: [], confirmed: [10]});
+    expect(got.has(10)).toBe(false);
+    expect(kinds(got, 11)).toEqual(['candidate']);
+  });
+});
+
+describe('a cleared seed inside a candidate: the item skips that frame too (Nate, option B, 2026-10-02)', () => {
+  const cand = [{start: 10, end: 14, state: 'candidate', source: 'text:dog@sam3'}] as NonNullable<Parameters<typeof signals>[2]>['candidates'];
+  const isCandidate = (got: ReturnType<typeof signals>, f: number) => (got.get(f) ?? []).some(r => r.kind === 'candidate');
+
+  it("moves the item off a cleared seed on the candidate's start, to the next frame", () => {
+    const got = signals(statsOf(moving()), 30, {candidates: cand, seeds: [0, 10], cleared: [10]});
+    expect(got.has(10)).toBe(false);
+    expect(kinds(got, 11)).toEqual(['candidate']);
+    expect(got.get(11)![0].detail).toBe('an unconfirmed candidate range from text:dog@sam3 resumes here (frames 11-15; 1 frame marked not here before it)');
+  });
+
+  it('skips a mix of confirmed and cleared frames at the start to the first frame that is neither', () => {
+    const got = signals(statsOf(moving()), 30, {candidates: cand, seeds: [10, 11, 12], cleared: [11], confirmed: [10, 12]});
+    expect([...got.keys()]).toEqual([13]);
+    expect(kinds(got, 13)).toEqual(['candidate']);
+    expect(got.get(13)![0].detail).toBe(
+      'an unconfirmed candidate range from text:dog@sam3 resumes here (frames 11-15; 3 frames confirmed present or marked not here before it)',
+    );
+  });
+
+  it('has no item when every frame of the candidate is confirmed or cleared', () => {
+    const every = [10, 11, 12, 13, 14];
+    expect(signals(statsOf(moving()), 30, {candidates: cand, seeds: every, cleared: [11, 13], confirmed: [10, 12, 14]}).size).toBe(0);
+    const onlyCleared = signals(statsOf(moving()), 30, {candidates: cand, seeds: every, cleared: every});
+    expect([...onlyCleared.keys()].some(f => isCandidate(onlyCleared, f))).toBe(false);
+  });
+
+  it('leaves the item on an unchecked start when the cleared seed is further inside', () => {
+    const got = signals(statsOf(moving()), 30, {candidates: cand, seeds: [0, 12], cleared: [12]});
+    expect(kinds(got, 10)).toEqual(['candidate']);
+    expect(got.get(10)![0].detail).toContain('starts here (frames 11-15)');
+    expect([...got.keys()].filter(f => isCandidate(got, f))).toEqual([10]);
   });
 });

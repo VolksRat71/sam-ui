@@ -60,6 +60,18 @@ def cleared(seed: Dict) -> bool:
     return m is None or rle.area(m) == 0
 
 
+def confirmed(seed: Dict) -> bool:
+    """True for a seed that asserts the object on its frame ("confirmed
+    present"): one whose clicks include a positive, or a text seed (no
+    clicks, a non-empty mask). A cleared seed never is, nor is a legacy
+    anchor-trimmed one (no positive). The audit queue takes such a frame
+    inside a candidate range as confirmed (tracks/audit.py signals)."""
+    if seed.get("points"):
+        return 1 in [int(l) for l in seed.get("labels", [])]
+    m = seed.get("mask")
+    return m is not None and rle.area(m) > 0
+
+
 def _canon(seeds: Seeds) -> Dict:
     canon = {}
     for f, v in seeds.items():

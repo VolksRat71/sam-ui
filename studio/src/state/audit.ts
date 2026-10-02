@@ -10,8 +10,10 @@
 //
 // Each frame's area, box, centroid and number of pieces are read from the RLE
 // runs; signals turn them into reasons (a jump, a change of area or of pieces,
-// a start, stop or reappearance, an engine disagreement, a candidate's start,
-// a bounded re-track's seams, a review flag); locations() scores frames by the
+// a start, stop or reappearance, an engine disagreement, a candidate's first
+// frame neither confirmed present (a positive or text seed) nor marked not
+// here (a cleared seed), a bounded
+// re-track's seams, a review flag); locations() scores frames by the
 // WEIGHTS and merges neighbours by non-maximum suppression into a capped queue.
 //
 // A "looks right" mark is kept per object, outside the seeds key, and holds
@@ -216,6 +218,10 @@ export type SignalInputs = {
   bounded?: ReadonlyArray<readonly [number, number]>;
   flags?: ReadonlyArray<number>;
   seeds?: ReadonlyArray<number>;
+  /** Seed frames that are cleared ("not on this frame": no positive, no mask or an empty one): passed over, and inside a candidate skipped by its item. */
+  cleared?: ReadonlyArray<number>;
+  /** Seed frames that confirm the object present (a positive, or a text seed): inside a candidate, out of the queue. */
+  confirmed?: ReadonlyArray<number>;
 };
 
 /** The frames worth a look, each with its reasons (tracks/audit.py signals). */
@@ -226,35 +232,62 @@ export function signals(stats: ReadonlyMap<number, FrameStats>, nFrames: number,
   const gone = (f: number) => absentAt(absent, f);
   const there = (f: number) => f >= 0 && f < nFrames && (stats.get(f)?.area ?? 0) > 0 && !gone(f);
 
+  // a cleared seed is no disappearance: its frame is passed over (one in an absent range stays a gap)
+  const blank = new Set(inputs.cleared ?? []);
+  const passedOver = (f: number) => blank.has(f) && !gone(f);
+  const before = (f: number): number | null => {
+    let g = f - 1;
+    while (g >= 0 && passedOver(g)) {
+      g--;
+    }
+    return g >= 0 ? g : null;
+  };
+  const after = (f: number): number | null => {
+    let g = f + 1;
+    while (g < nFrames && passedOver(g)) {
+      g++;
+    }
+    return g < nFrames ? g : null;
+  };
+
   let seen = false;
   let moves: Array<[number, number]> = [];
   for (let f = 0; f < nFrames; f++) {
+    if (passedOver(f)) {
+      continue;
+    }
     if (!there(f)) {
       moves = [];
       continue;
     }
     const st = stats.get(f)!;
-    if (!there(f - 1) && f > 0) {
+    const p = before(f);
+    const q = after(f);
+    if (p != null && !there(p)) {
       add(seen ? reason('reappear', f, 1, 'the object comes back after a gap') : reason('start', f, 1, 'the track starts here'));
     }
-    if (!there(f + 1) && f < nFrames - 1) {
+    // stopping into a cleared frame or an absent range is what the user said
+    if (q != null && !there(q) && !(passedOver(f + 1) || gone(f + 1))) {
       add(reason('stop', f, 1, 'the track stops after this frame'));
     }
     seen = true;
-    if (!there(f - 1)) {
+    if (p == null || !there(p)) {
       continue;
     }
-    const pv = stats.get(f - 1)!;
+    const pv = stats.get(p)!;
+    const gap = f - p;
     const rel = Math.abs(st.area - pv.area) / Math.max(st.area, pv.area);
     if (rel >= AREA_JUMP) {
-      add(reason('area', f, ramp(rel, AREA_JUMP, AREA_FULL), `the mask ${st.area > pv.area ? 'grows' : 'shrinks'} by ${pct(rel)}% in one frame`));
+      const span = gap === 1 ? 'in one frame' : `across ${gap - 1} cleared frame${gap > 2 ? 's' : ''}`;
+      add(reason('area', f, ramp(rel, AREA_JUMP, AREA_FULL), `the mask ${st.area > pv.area ? 'grows' : 'shrinks'} by ${pct(rel)}% ${span}`));
     }
     if (st.components !== pv.components) {
       add(reason('components', f, 1, `the mask goes from ${pv.components} to ${st.components} pieces`));
     }
     const recent = moves.slice(-JUMP_HISTORY);
-    const vx = recent.length > 0 ? median(recent.map(m => m[0])) : 0;
-    const vy = recent.length > 0 ? median(recent.map(m => m[1])) : 0;
+    // the predicted move, over the cleared frames too
+    const vx = (recent.length > 0 ? median(recent.map(m => m[0])) : 0) * gap;
+    const vy = (recent.length > 0 ? median(recent.map(m => m[1])) : 0) * gap;
     const [cx0, cy0] = pv.centroid!;
     const [cx1, cy1] = st.centroid!;
     const b = pv.bbox!;
@@ -271,7 +304,7 @@ export function signals(stats: ReadonlyMap<number, FrameStats>, nFrames: number,
         ),
       );
     }
-    moves.push([cx1 - cx0, cy1 - cy0]);
+    moves.push([(cx1 - cx0) / gap, (cy1 - cy0) / gap]);
   }
 
   const threshold = inputs.threshold ?? DISAGREE_IOU;
@@ -295,15 +328,41 @@ export function signals(stats: ReadonlyMap<number, FrameStats>, nFrames: number,
     }
   }
 
-  for (const c of inputs.candidates ?? []) {
-    if (c.state === CANDIDATE && c.start >= 0 && c.start < nFrames && !gone(c.start)) {
-      const score = c.score != null ? `, score ${fmt2(c.score)}` : '';
-      add(reason('candidate', c.start, 1, `an unconfirmed candidate range from ${c.source}${score} starts here (frames ${c.start + 1}-${c.end + 1})`));
-    }
+  for (const f of new Set([...(inputs.seeds ?? []), ...blank])) {
+    out.delete(f); // the user drew that mask: only their own flag still counts
   }
 
-  for (const f of new Set(inputs.seeds ?? [])) {
-    out.delete(f); // the user drew that mask: only their own flag still counts
+  // a positive or text seed confirms its own frame present, a cleared seed marks it not here: either way
+  // the user checked it, so a candidate's item sits on its first frame that is neither (added after the
+  // seed frames; a cleared seed does not resolve the candidate, it only moves the item on)
+  const sure = new Set(inputs.confirmed ?? []);
+  const checked = (g: number) => sure.has(g) || blank.has(g);
+  for (const c of inputs.candidates ?? []) {
+    if (c.state !== CANDIDATE) {
+      continue;
+    }
+    let f: number | null = null;
+    for (let g = c.start; g <= c.end; g++) {
+      if (!checked(g)) {
+        f = g;
+        break;
+      }
+    }
+    if (f != null && f >= 0 && f < nFrames && !gone(f)) {
+      const score = c.score != null ? `, score ${fmt2(c.score)}` : '';
+      const k = f - c.start;
+      const skipped = Array.from({length: k}, (_, i) => c.start + i);
+      const how = skipped.every(g => sure.has(g))
+        ? 'confirmed present'
+        : skipped.every(g => blank.has(g))
+          ? 'marked not here'
+          : 'confirmed present or marked not here';
+      const where =
+        k === 0
+          ? `starts here (frames ${c.start + 1}-${c.end + 1})`
+          : `resumes here (frames ${c.start + 1}-${c.end + 1}; ${k} frame${k > 1 ? 's' : ''} ${how} before it)`;
+      add(reason('candidate', f, 1, `an unconfirmed candidate range from ${c.source}${score} ${where}`));
+    }
   }
   for (const f of [...new Set(inputs.flags ?? [])].sort((x, y) => x - y)) {
     if (f >= 0 && f < nFrames && !gone(f)) {
@@ -531,6 +590,10 @@ export type QueueObject = {
   ranges: ReadonlyArray<{start: number; end: number; state: string}>;
   candidates: ReadonlyArray<TimelineRange>;
   seeds: ReadonlyArray<number>;
+  /** Seed frames that are cleared ("not on this frame"), passed over (signals). */
+  cleared?: ReadonlyArray<number>;
+  /** Seed frames that confirm the object present (a positive, or a text seed): confirmed inside a candidate (signals). */
+  confirmed?: ReadonlyArray<number>;
   flags: ReadonlyArray<number>;
 };
 
@@ -565,7 +628,14 @@ export function buildQueue(objects: ReadonlyArray<QueueObject>, nFrames: number,
     for (const [f, m] of o.masks) {
       stats.set(f, frameStats(m));
     }
-    const reasons = signals(stats, nFrames, {absent: o.ranges, candidates: o.candidates, seeds: o.seeds, flags: o.flags});
+    const reasons = signals(stats, nFrames, {
+      absent: o.ranges,
+      candidates: o.candidates,
+      seeds: o.seeds,
+      cleared: o.cleared,
+      confirmed: o.confirmed,
+      flags: o.flags,
+    });
     const valid = o.marks.filter(m => markValid(m, engine, reviewNow(o.masks, m.frame, m.span ?? [m.frame, m.frame], nFrames)));
     const locs = locations(reasons, nFrames, o.ranges).map(l => {
       const hit = [...valid].reverse().find(m => reviews(m, l));
