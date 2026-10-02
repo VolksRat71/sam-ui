@@ -19,13 +19,18 @@ AGREE_IOU.
     change reaches further back: the lead doubles and the pass starts again.
     It never starts before the window's first seed (where the engine's full
     pass starts: for SAM 2, the first that is not cleared) or the last frame
-    an earlier pass in the window made, unless the corrected frame is a
-    cleared seed before it, which starts its own pass. Starting at the first
-    seed, it also runs back from it, as a full pass does, until AGREE_RUN
-    frames agree.
+    an earlier pass in the window made. Starting at the first seed, it also
+    runs back from it, as a full pass does, until AGREE_RUN frames agree.
 The pass conditions on every seed of the window, as a full pass does; SAM 2
 leaves out cleared seeds and blanks their frames, as its full pass does
-(Sam2Engine.track_stretch, engine.strip_cleared). An
+(Sam2Engine.track_stretch, engine.strip_cleared).
+
+A cleared seed added or edited on an engine that skips cleared seeds (SAM 2,
+Engine.skips_cleared) needs no pass at all: it never conditions the model,
+so a full re-track changes its frame only. That frame is blanked, every other
+cached frame is kept, and the result is recorded as a bounded pass over the
+one frame with "attempts": 0. A real seed that became cleared is a seed
+removed from conditioning: its window re-runs whole. An
 unchanged seed frame it crosses is not a stop of its own: its mask is the
 seed's in both tracks, so it simply counts as an agreeing frame. Each pass
 holds one object, so the MPS trap of objects first seeded on different frames
@@ -44,7 +49,8 @@ frame, and the disagreement review lists the stretches bounded passes made.
 
 When a window re-runs whole instead: the track predates seed keys (it was
 made before bounded passes existed), a seed of the window was removed (the
-pass would have nowhere to start), the window's bounds changed (a range was
+pass would have nowhere to start) or, on SAM 2, a real seed became cleared
+(or the track does not say whether it was cleared), the window's bounds changed (a range was
 edited), the object was tracked and is asked for again ("re-track all"), the
 job asks for a full re-track, or the engine has no track_stretch (SAM 3 today).
 
@@ -59,6 +65,8 @@ Provenance, in track.json:
   "provenance": [[first, last, pass id], ...], runs over the track's frames.
   "seed_keys": {"<frame>": key}, what the track was made from, so the next
       job can tell which seeds changed.
+  "cleared_seeds": [frame, ...], which of those seeds were cleared, so the
+      next job can tell a cleared seed edited from a real one cleared.
 A track without them (an older sam-ui wrote it) reads as one full pass.
 """
 import hashlib
@@ -71,7 +79,7 @@ import numpy as np
 
 from tracks import rle
 from tracks.ranges import Window, in_window
-from tracks.seeds import Seeds, _canon
+from tracks.seeds import Seeds, _canon, cleared
 
 AGREE_IOU = 0.98  # a new mask this close to the cached one agrees with it
 AGREE_RUN = 10  # agreeing frames in a row that end a direction
@@ -260,7 +268,8 @@ class Provenance:
     def extra(self, seeds: Seeds) -> Dict:
         used = set(self.by_frame.values())
         return {"passes": [p for i, p in sorted(self.passes.items()) if i in used],
-                "provenance": runs(self.by_frame), "seed_keys": seed_keys(seeds)}
+                "provenance": runs(self.by_frame), "seed_keys": seed_keys(seeds),
+                "cleared_seeds": sorted(int(f) for f, v in seeds.items() if cleared(v))}
 
 
 def spans(meta: Optional[Dict]) -> List[List[int]]:

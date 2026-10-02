@@ -37,6 +37,13 @@ WHOLE: Window = (0, None)
 class Engine(Protocol):
     name: str
     model: str
+    # True when a cleared seed never conditions the engine, so it is output
+    # only: its frame is blanked (strip_cleared) and nothing else moves.
+    skips_cleared: bool
+
+    def plan(self, objects: Dict[int, Seeds], windows: Optional[Windows] = None) -> List["Unit"]:
+        """The passes a job over `objects` makes, in order (see plan_units)."""
+        ...
 
     def track(self, video_path: str, objects: Dict[int, Seeds], video_handle: Optional[Any] = None,
               windows: Optional[Windows] = None) -> Iterator[FrameMasks]:
@@ -112,6 +119,7 @@ class Sam2Engine:
     """
 
     name = "sam2"
+    skips_cleared = True
 
     def __init__(self, predictor, model: str, offload_video_to_cpu: bool = False,
                  autocast: Callable[[], contextlib.AbstractContextManager] = contextlib.nullcontext,
@@ -325,6 +333,7 @@ class FakeEngine:
     `influence`, in full and bounded passes alike."""
 
     name = "fake"
+    skips_cleared = False
 
     def __init__(self, n_frames: int = 5, shape=(24, 32), model: str = "fake-1", influence: int = 0):
         self.n_frames = n_frames
