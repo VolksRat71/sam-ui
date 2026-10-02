@@ -226,7 +226,7 @@ class Mutation:
         return [
             ObjectTrack.from_info(o)
             for o in inference_api.move_clicks(
-                input.session_id, input.frame_index, input.from_object_id, input.to_object_id
+                input.session_id, input.frame_index, input.from_object_id, input.to_object_id, input.engine
             )
         ]
 

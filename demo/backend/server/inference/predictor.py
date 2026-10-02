@@ -11,7 +11,7 @@ import time
 import uuid
 from pathlib import Path
 from threading import Lock
-from typing import Any, Dict, Generator, List
+from typing import Any, Dict, Generator, List, Optional
 
 import numpy as np
 import torch
@@ -585,12 +585,15 @@ class InferenceAPI:
                 d.get(k, {}).pop(frame, None)
         inference_state.get("frames_tracked_per_obj", {}).get(idx, {}).pop(frame, None)
 
-    def move_clicks(self, session_id: str, frame_index: int, from_id: int, to_id: int) -> List[Dict]:
+    def move_clicks(self, session_id: str, frame_index: int, from_id: int, to_id: int,
+                    engine: Optional[str] = None) -> List[Dict]:
         """Move one object's clicks on a frame to another object (clicks that
         landed on the wrong one). The source loses the frame; the target gets
         the clicks after its own on that frame, segmented as a click there
         would be. Each object's change is one undo step of its own. Refused
-        into the target's absent range, and while a job holds either object."""
+        into the target's absent range, and while a job holds either object.
+        `engine` is the one the studio shows: the target's clicks are held to
+        its rule, as a click would be (none, or any but SAM 3, is SAM 2's)."""
         with self.autocast_context(), self.inference_lock:
             if from_id == to_id:
                 raise ValueError("cannot move clicks to the object itself")
@@ -611,7 +614,7 @@ class InferenceAPI:
             target = self.tracks.seeds.seeds(video, to_id).get(frame_index) or {"points": [], "labels": []}
             # the target first: if SAM 2 fails on it, the source still has its clicks
             self._add_points_locked(session, frame_index, to_id, target["points"] + seed["points"],
-                                    target["labels"] + seed["labels"], True)
+                                    target["labels"] + seed["labels"], True, engine)
             self.__forget_frame(state, from_id, frame_index)
             self.tracks.clear_frame(video, from_id, frame_index)
             return [self.tracks.object_info(video, from_id), self.tracks.object_info(video, to_id)]

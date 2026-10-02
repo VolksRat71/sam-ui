@@ -115,6 +115,7 @@ input MoveClicksInput {
   frameIndex: Int!
   fromObjectId: Int!
   toObjectId: Int!
+  engine: String
 }
 
 type TrackVersion {

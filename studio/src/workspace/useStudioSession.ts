@@ -716,7 +716,8 @@ export default function useStudioSession(video: VideoItem) {
         return;
       }
       serial(async () => {
-        const res = await bridge.call('moveClicks', {frameIndex: frame, fromId, toId});
+        // the engine on screen, as setPoints sends: SAM 3 takes a frame of negatives alone
+        const res = await bridge.call('moveClicks', {frameIndex: frame, fromId, toId, engine: stateRef.current.engine});
         for (const o of res) {
           dispatch({type: 'objectChanged', object: o});
         }

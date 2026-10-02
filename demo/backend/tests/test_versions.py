@@ -553,9 +553,11 @@ def test_undo_and_redo_never_condition_the_session_on_a_cleared_seed(world):
     assert cond_frames(a, sid, 1) == {0}
 
 
-def test_moving_a_cleared_seed_without_an_engine_is_refused_like_sam2(world):
-    """move_clicks names no engine, so the target is held to SAM 2's rule: a
-    frame of only negatives is refused, and the source keeps its clicks."""
+@pytest.mark.parametrize("engine", [None, "sam2", "sam-3"])
+def test_moving_a_cleared_seed_is_refused_on_sam2_or_with_no_engine(world, engine):
+    """The target is held to the rule of the engine on screen: with none, SAM
+    2 or one the server does not know, a frame of only negatives is refused,
+    and neither object changes or gets an undo step."""
     make, _, path = world
     a = make()
     sid = start(a, path)
@@ -564,9 +566,32 @@ def test_moving_a_cleared_seed_without_an_engine_is_refused_like_sam2(world):
     video = a.session_states[sid]["video"]
     before = (a.tracks.seeds.seeds(video, 1), a.tracks.versions_info(video, 1), a.tracks.versions_info(video, 2))
     with pytest.raises(ValueError, match="^needs_positive: "):
-        a.move_clicks(sid, 3, 1, 2)
+        a.move_clicks(sid, 3, 1, 2, engine)
     assert (a.tracks.seeds.seeds(video, 1), a.tracks.versions_info(video, 1),
             a.tracks.versions_info(video, 2)) == before
+
+
+def test_moving_a_cleared_seed_on_sam3_is_one_undo_step_per_object(world):
+    """On SAM 3 a frame of negatives alone is 'not here', so it moves like any
+    clicks: the target gets them, as a cleared seed, and each object's change
+    is one undo step that its undo reverses."""
+    from tracks.seeds import cleared
+
+    make, _, path = world
+    a = make()
+    sid = start(a, path)
+    click(a, sid, 1, 0, [[0.5, 0.5]], [1])
+    click(a, sid, 1, 3, [[0.5, 0.5]], [0], engine="sam3")  # meant for object 2
+    click(a, sid, 2, 0, [[0.2, 0.2]], [1])
+    video = a.session_states[sid]["video"]
+    depth = (undo_depth(a, sid, 1), undo_depth(a, sid, 2))
+    out = {o["object_id"]: o for o in a.move_clicks(sid, 3, 1, 2, "sam3")}
+    assert sorted(out[1]["seeds"]) == [0] and sorted(out[2]["seeds"]) == [0, 3]
+    assert out[2]["seeds"][3]["labels"] == [0] and cleared(a.tracks.seeds.seeds(video, 2)[3])
+    assert (undo_depth(a, sid, 1), undo_depth(a, sid, 2)) == (depth[0] + 1, depth[1] + 1)
+    assert sorted(a.undo_seeds(sid, 2)["seeds"]) == [0]  # object 2 lets go of them
+    assert sorted(a.undo_seeds(sid, 1)["seeds"]) == [0, 3]  # object 1 has them back
+    assert a.tracks.seeds.seeds(video, 1)[3]["labels"] == [0]
 
 
 def test_a_kept_track_from_before_cleared_seeds_were_skipped_is_not_made_current(h):
