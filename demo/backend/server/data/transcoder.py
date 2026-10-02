@@ -3,6 +3,7 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 # Modified by sam-ui: read the display rotation on PyAV 18, which dropped Stream.side_data.
+# Fit upload proxies within both configured bounds without upscaling.
 
 import ast
 import math
@@ -151,22 +152,16 @@ def normalize_video(
     assert w is not None, "width not available"
     assert h is not None, "height not available"
 
-    # rescale to max_w:max_h if needed & preserve aspect ratio
-    r = w / h
-    if r < 1:
-        h = min(720, h)
-        w = h * r
-    else:
-        w = min(1280, w)
-        h = w / r
+    if min(w, h, max_w, max_h) < 2:
+        raise ValueError("video dimensions and encode bounds must be at least 2")
 
-    # h264 cannot encode w/ odd dimensions
-    w = int(w)
-    h = int(h)
-    if w % 2 != 0:
-        w += 1
-    if h % 2 != 0:
-        h += 1
+    scale = min(1, max_w / w, max_h / h)
+    # yuv420p needs even dimensions. Round down to stay within both caps
+    # and avoid enlarging odd-sized sources.
+    w = int(w * scale) // 2 * 2
+    h = int(h * scale) // 2 * 2
+    if min(w, h) < 2:
+        raise ValueError("scaled video dimensions must be at least 2")
 
     ffmpeg = shutil.which("ffmpeg")
     cmd = [
