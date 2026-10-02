@@ -109,8 +109,8 @@ const handlers: Handlers = {
   init: ({endpoint, offline}) => session.init(endpoint, offline),
   startSession: ({path, key}) => session.startSession(path, key),
   closeSession: () => session.closeSession(),
-  setPoints: ({objectId, frameIndex, points}) =>
-    session.setPoints(objectId, frameIndex, points),
+  setPoints: ({objectId, frameIndex, points, engine}) =>
+    session.setPoints(objectId, frameIndex, points, engine),
   removeObject: ({objectId}) => session.removeObject(objectId),
   clearTrack: ({objectId, engine}) => session.clearTrack(objectId, engine),
   setRange: ({objectId, start, end, state, source, score, clear}) => session.setRange(objectId, start, end, state, {source, score, clear}),
@@ -119,7 +119,7 @@ const handlers: Handlers = {
   undo: ({objectId}) => session.undo(objectId),
   redo: ({objectId}) => session.redo(objectId),
   restoreVersion: ({objectId, key, engine}) => session.restoreVersion(objectId, key, engine),
-  moveClicks: ({frameIndex, fromId, toId}) => session.moveClicks(frameIndex, fromId, toId),
+  moveClicks: ({frameIndex, fromId, toId, engine}) => session.moveClicks(frameIndex, fromId, toId, engine),
   track: ({objectIds, key, engine}) => session.track(objectIds, key, engine),
   cancelTrack: ({jobId}) => session.cancelTrack(jobId),
   trackJobs: () => session.trackJobs(),

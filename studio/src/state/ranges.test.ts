@@ -5,7 +5,9 @@ import {
   CANDIDATE,
   PRESENT,
   absentAt,
+  absentUntilNextSeed,
   describeRange,
+  endAbsenceAt,
   nextRange,
   normalizeMarks,
   normalizeRanges,
@@ -89,6 +91,33 @@ describe('absent ranges', () => {
       [{lo: 21, hi: null}, [[1, [25]]]],
     ]);
   });
+
+  it('ends an absence at a frame: [s, e] becomes [s, f-1], and at s the range goes', () => {
+    const two = [r(10, 40), r(50, 60)];
+    expect(endAbsenceAt(two, 25)).toEqual([r(10, 24), r(50, 60)]);
+    expect(endAbsenceAt(two, 40)).toEqual([r(10, 39), r(50, 60)]);
+    expect(endAbsenceAt(two, 50)).toEqual([r(10, 40)]); // never [50, 49]
+    expect(endAbsenceAt(two, 45)).toEqual(two); // not absent there: unchanged
+    expect(endAbsenceAt(undefined, 3)).toEqual([]);
+    expect(two).toEqual([r(10, 40), r(50, 60)]); // the input is left alone
+  });
+});
+
+describe('absentUntilNextSeed', () => {
+  it('runs from the frame to the one before the next seed after it, else to the clip end', () => {
+    expect(absentUntilNextSeed([0, 50], 20, 100)).toEqual([20, 49]);
+    expect(absentUntilNextSeed([0], 20, 100)).toEqual([20, 99]);
+    expect(absentUntilNextSeed([0, 20, 50], 20, 100)).toEqual([20, 49]); // a seed on the frame itself is not "next"
+  });
+
+  it('handles the last frame, unsorted seeds and duplicates', () => {
+    expect(absentUntilNextSeed([0], 99, 100)).toEqual([99, 99]);
+    expect(absentUntilNextSeed([0, 99], 99, 100)).toEqual([99, 99]);
+    expect(absentUntilNextSeed([70, 0, 50, 30], 20, 100)).toEqual([20, 29]);
+    expect(absentUntilNextSeed([50, 50, 0, 50], 20, 100)).toEqual([20, 49]);
+    expect(absentUntilNextSeed([], 20, 100)).toEqual([20, 99]);
+    expect(absentUntilNextSeed([21], 20, 100)).toEqual([20, 20]); // the very next frame: just this one
+  });
 });
 
 describe('candidate and confirmed ranges', () => {
@@ -166,6 +195,31 @@ describe('candidate and confirmed ranges', () => {
     expect(nextRange(view, 31, 1, CANDIDATE)).toBeNull();
     expect(provenanceLabel(c(0, 1, DOG, 0.875))).toBe('text:dog@sam3 · score 0.88');
     expect(provenanceLabel(c(0, 1, DOG))).toBe('text:dog@sam3 · no score');
+  });
+
+  // a candidate is not an absent range (Task 11 item 3)
+  it('never reads a candidate or present range as absent', () => {
+    const view = timelineView([r(10, 20)], [c(0, 9, DOG, 0.5), p(21, 25), c(26, 30)]);
+    expect(rangeAt(view, 12)).toEqual(r(10, 20));
+    expect([5, 22, 28].map(f => rangeAt(view, f))).toEqual([null, null, null]);
+    expect([5, 22, 28].map(f => absentAt(view, f))).toEqual([false, false, false]);
+    expect(endAbsenceAt(normalizeRanges(view), 28)).toEqual([r(10, 20)]); // a positive on a candidate: no absence to end
+    expect(absentUntilNextSeed([0, 40], 15, 100)).toEqual([15, 39]); // "Gone for a while?" runs to the next seed, not a candidate's edge
+  });
+
+  it('never merges a candidate with an absent range beside or over it', () => {
+    const wire = [r(0, 4), c(5, 9), r(10, 12), c(11, 14)];
+    expect(normalizeRanges(wire)).toEqual([r(0, 4), r(10, 12)]);
+    expect(normalizeMarks(wire)).toEqual([c(5, 9), c(11, 14)]);
+    expect(timelineView(normalizeRanges(wire), normalizeMarks(wire))).toEqual([r(0, 4), c(5, 9), r(10, 12), c(13, 14)]);
+    expect(rangeWindows(normalizeRanges(wire))).toEqual([{lo: 5, hi: 9}, {lo: 13, hi: null}]); // candidates split nothing
+    expect(seededWindows([7], normalizeRanges([c(0, 30)]))).toEqual([{window: {lo: 0, hi: null}, frames: [7]}]);
+  });
+
+  it('marking absent over a candidate hides it without deleting it', () => {
+    const t = paintTimeline({ranges: [], marks: [c(5, 35, DOG, 0.5)]}, 10, 40, ABSENT);
+    expect(t.marks).toEqual([c(5, 35, DOG, 0.5)]);
+    expect(timelineView(t.ranges, t.marks)).toEqual([c(5, 9, DOG, 0.5), r(10, 40)]);
   });
 
   it('describes a range in words, frames 1-based, so no state is told by colour alone', () => {

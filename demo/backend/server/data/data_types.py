@@ -288,6 +288,7 @@ class MoveClicksInput:
     frame_index: int
     from_object_id: int
     to_object_id: int
+    engine: Optional[str] = None  # as on AddPointsInput: the engine the studio shows; null counts as SAM 2
 
 
 @strawberry.type
@@ -324,6 +325,7 @@ class AddPointsInput:
     object_id: int
     labels: List[int]
     points: List[List[float]]
+    engine: Optional[str] = None  # the engine the studio shows; null is the session's (SAM 2)
 
 
 @strawberry.input
