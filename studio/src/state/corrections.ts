@@ -6,6 +6,8 @@
 // keep nothing: the click is refused and studio nudges for a positive. SAM 3
 // takes negatives alone as "not on this frame", and studio asks whether the
 // object is gone for a while.
+import {absentUntilNextSeed} from './ranges';
+
 const TAKES_NOT_HERE = new Set(['sam3']);
 
 /** The backend's refusal of a frame with no positive (add_points on SAM 2). */
@@ -48,6 +50,22 @@ export function planClicks<P extends Click>(
  */
 export function refusedAsAbsent(next: ReadonlyArray<Click>, absent: boolean): boolean {
   return absent && next.length > 0 && !next.some(p => p[2] === 1);
+}
+
+export type GoneStep = {kind: 'clearFrame'; frame: number} | {kind: 'absent'; start: number; end: number};
+
+/**
+ * What "Gone for a while?" does at `frame`, in order. From the SAM 2 nudge,
+ * the frame may still hold the clicks the nudge kept, a positive among them
+ * (the last positive deleted from [pos, neg]): they are cleared first, since
+ * the user says the object is not there, and a positive left inside the
+ * range would end it at its own start. From the SAM 3 hint the frame holds
+ * negatives only, which stay. Then: absent until the next seed.
+ */
+export function goneSteps(from: 'nudge' | 'hint', seedFrames: ReadonlyArray<number>, frame: number, nFrames: number): GoneStep[] {
+  const [start, end] = absentUntilNextSeed(seedFrames, frame, nFrames);
+  const absent: GoneStep = {kind: 'absent', start, end};
+  return from === 'nudge' && seedFrames.includes(frame) ? [{kind: 'clearFrame', frame}, absent] : [absent];
 }
 
 /** True for the backend's `needs_positive:` refusal, bare or wrapped by Relay. */

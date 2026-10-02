@@ -29,7 +29,7 @@ import {API_ENDPOINT, OBJECT_LIMIT} from '~/config';
 import type {LocalModelStatus, LocalOptions} from '~/local/LocalEngine';
 import {browserModelName, parseQuality} from '~/local/sam2/config';
 import {BROWSER_ENGINE, engineLabel, pickerEngines} from '~/state/engines';
-import {isNeedsPositive, planClicks, refusedAsAbsent, type Hint, type Nudge} from '~/state/corrections';
+import {goneSteps, isNeedsPositive, planClicks, refusedAsAbsent, type Hint, type Nudge} from '~/state/corrections';
 import {cleanObjectName, objectName, uniqueFileNames} from '~/state/fileNames';
 import type {ExportedObject, ExportKind} from '~/state/maskExport';
 import {
@@ -718,15 +718,28 @@ export default function useStudioSession(video: VideoItem) {
     setPoints(nudge.objectId, nudge.frame, points, 'sam3');
   }, [nudge, sam3Available, setEngine, setPoints]);
 
-  /** The SAM 2 nudge's and the SAM 3 hint's "Gone for a while?", for the object and frame they are about. */
+  /**
+   * The SAM 2 nudge's and the SAM 3 hint's "Gone for a while?", for the
+   * object and frame they are about (state/corrections.ts goneSteps). From the
+   * nudge, the frame's kept clicks are cleared first, through setPoints like
+   * any cleared frame; both queue on `serial`, so the clear lands first.
+   */
   const markGone = useCallback(() => {
     const target = nudge ?? hint;
     setNudge(null);
     setHint(null);
-    if (target != null) {
-      markAbsentUntilNextSeed(target.objectId, target.frame);
+    const o = target == null ? undefined : stateRef.current.objects.find(x => x.id === target.objectId);
+    if (target == null || o == null || meta.numFrames <= 0) {
+      return;
     }
-  }, [nudge, hint, markAbsentUntilNextSeed]);
+    for (const step of goneSteps(nudge != null ? 'nudge' : 'hint', seedFrames(o), target.frame, meta.numFrames)) {
+      if (step.kind === 'clearFrame') {
+        setPoints(o.id, step.frame, [], nudge?.engine);
+      } else {
+        setRange(o.id, step.start, step.end, ABSENT);
+      }
+    }
+  }, [nudge, hint, meta.numFrames, setPoints, setRange]);
 
   /** The browser engine's model size and hole fill; its tracks made otherwise go stale. */
   const setLocalOptions = useCallback(
