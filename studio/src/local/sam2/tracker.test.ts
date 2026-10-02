@@ -107,6 +107,13 @@ describe('cleared seeds', () => {
     expect(isClearedSeed({frame: 1, points: [[0.5, 0.5, 0]], mask: kept})).toBe(false);
   });
 
+  it('a text seed (no clicks, its positive mask) is not cleared and conditions', () => {
+    expect(isClearedSeed({frame: 3, points: [], mask: kept})).toBe(false);
+    const {cond, blank} = splitSeeds([{frame: 3, points: [], mask: kept}]);
+    expect(cond.map(s => s.frame)).toEqual([3]);
+    expect([...blank]).toEqual([]);
+  });
+
   it('splits an object\'s seeds into conditioning frames and frames to blank', () => {
     const {cond, blank} = splitSeeds([
       {frame: 0, points: [[0.5, 0.5, 1]]},
