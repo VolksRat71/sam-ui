@@ -453,3 +453,18 @@ describe('with the correction semantics: a cleared frame is no disappearance, a 
     expect(q.queue.map(e => [e.frame, e.reasons.map(r => r.kind)])).toEqual([[10, ['candidate']]]);
   });
 });
+
+
+describe('the stop before a gap that runs into a range or a cleared frame (case b)', () => {
+  it('is still a stop when empty frames run into an absent range', () => {
+    const m = moving();
+    for (let f = 7; f < 15; f++) m[f] = null; // the track stops after 6, 7-9 are empty, 10-14 marked absent
+    expect(kinds(signals(statsOf(m), 30, {absent: [{start: 10, end: 14, state: 'absent'}]}), 6)).toEqual(['stop']);
+  });
+
+  it('is still a stop when empty frames run into a cleared frame', () => {
+    const m = moving();
+    for (let f = 10; f < 13; f++) m[f] = null; // the track stops after 9, 10-11 are empty, 12 is cleared
+    expect(kinds(signals(statsOf(m), 30, {seeds: [0, 12], cleared: [12]}), 9)).toEqual(['stop']);
+  });
+});

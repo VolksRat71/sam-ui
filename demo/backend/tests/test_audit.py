@@ -646,3 +646,22 @@ def test_a_candidate_is_a_review_item_never_an_absence_and_the_queue_never_resol
     timeline = hs.service.object_info(hs.video, 1)["ranges"]
     assert [(r["start"], r["end"], r["state"]) for r in timeline] == [(10, 20, CANDIDATE)]  # still unconfirmed
     assert hs.service.object_info(hs.video, 1)["state"] == TRACKED
+
+
+# -- the stop before a gap that runs into a range or a cleared frame (case b) -----------
+
+def test_a_stop_followed_by_empty_frames_then_an_absent_range_is_still_a_stop():
+    masks = moving()
+    for f in range(7, 15):
+        masks[f] = np.zeros((H, W), bool)  # the track stops after 6, 7-9 are empty, 10-14 marked absent
+    got = signals(stats_of(masks), 30, absent=[{"start": 10, "end": 14, "state": "absent"}])
+    assert kinds(got, 6) == ["stop"]  # the track lost it before the range the user marked
+
+
+def test_a_stop_followed_by_empty_frames_then_a_cleared_frame_is_still_a_stop():
+    masks = moving()
+    for f in range(10, 13):
+        masks[f] = np.zeros((H, W), bool)  # the track stops after 9, 10-11 are empty, 12 is cleared
+    got = signals(stats_of(masks), 30, seeds=[0, 12], cleared=[12])
+    assert kinds(got, 9) == ["stop"]
+
