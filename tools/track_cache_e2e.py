@@ -21,12 +21,12 @@ that first.
 Phase 1: track A and B; add C and Track again (only C may run); clear B.
 Phase 2: a new session must bring back A and C tracked and B untracked.
 Correction: a two-tone bar tracked as one object, and its red half as a
-second. On a frame only the job tracked, a lone negative click on the orange
-half must cut just that half, and so must one on a second frame once the
-first correction has made the track stale; the re-track must carry it to
-later frames. A lone positive on the orange half must grow the red-only track
-to the whole bar. (Plain SAM 2 empties a frame whose clicks are all negative;
-the backend adds an anchor click inside the cached mask, tracks/anchor.py.)
+second. On a frame only the job tracked, a positive on the red half with a
+negative on the orange half must cut just the orange half, and so must the
+same pair on a second frame once the first correction has made the track
+stale; the re-track must carry it to later frames. A lone positive on the
+orange half must grow the red-only track to the whole bar. (SAM 2 needs a
+positive on the frame: a lone negative is refused, see needs_positive.)
 Responsive: while a track job runs, a click on another object must answer in
 well under a frame's worth of the job, and the job must still finish.
 """
@@ -232,6 +232,7 @@ def correction():
         xg = 30 + 5 * g
         return int(m[100:150, xg:xg + 50].sum()), int(m[100:150, xg + 50:xg + 100].sum())
 
+    red_half = lambda g: [(30 + 5 * g + 25) / W, 125 / H]
     orange = lambda g: [(30 + 5 * g + 75) / W, 125 / H]
     add(0, 0, [[55 / W, 125 / H], [105 / W, 125 / H]], [1, 1])  # object 0: both halves
     add(1, 0, [[55 / W, 125 / H], [105 / W, 125 / H]], [1, 0])  # object 1: red only
@@ -241,9 +242,10 @@ def correction():
     check(halves(fr[12][1], 12)[1] < 100, "and the red half alone as object 1")
     for g in (10, 15):  # a tracked frame, then one after the first correction made the track stale
         red0, orange0 = halves(fr[g][0], g)
-        red, org = halves(add(0, g, [orange(g)], [0]), g)
+        red, org = halves(add(0, g, [red_half(g), orange(g)], [1, 0]), g)
         check(red > 0.9 * red0 and org < 100,
-              f"a lone negative on frame {g} cuts only the orange half (red {red0} -> {red}, orange {orange0} -> {org})")
+              f"a positive on red and a negative on orange on frame {g} cut only the orange half "
+              f"(red {red0} -> {red}, orange {orange0} -> {org})")
     red0, orange0 = halves(fr[12][1], 12)
     red, org = halves(add(1, 12, [orange(12)], [1]), 12)
     check(red > 0.9 * red0 and org > 2000,

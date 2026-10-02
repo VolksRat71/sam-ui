@@ -95,10 +95,10 @@ python3 -m http.server 7390 --bind 127.0.0.1 --directory /tmp/pages   # http://1
 - **Objects.** Click the video to add an object and a positive point. Right
   click adds a negative point, and the Add / Remove toggle swaps the two.
   Click a point to remove it. *Add object* starts the next object. On a
-  tracked frame a click refines the tracked mask: a lone negative cuts away the
-  region it is on. If every click on a frame is negative and the frame has no
-  mask to refine, SAM 2 returns an empty mask, and studio shows a hint asking
-  for a positive click.
+  tracked frame a click refines the tracked mask: a negative, sent with a
+  positive on the part to keep, cuts away the region it is on. If every click
+  on a frame is negative, SAM 2 returns an empty mask, and studio shows a hint
+  asking for a positive click.
 - **Review flags.** While scrubbing, F flags the current frame of the selected
   object (the flag button in the transport does the same). Each flag is a
   yellow marker on the object's lane that seeks there when clicked; clicks on

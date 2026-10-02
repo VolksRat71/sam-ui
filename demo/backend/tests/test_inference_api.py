@@ -2,7 +2,7 @@
 """InferenceAPI with a stub SAM 2 predictor (no model): seeds recorded from
 clicks, replay on a new session, corrections refining a tracked frame, and
 track jobs sharing the session's decoded video. One slow test (SAM_UI_SLOW=1)
-checks lone correction clicks on the real model."""
+checks corrections on the real model."""
 import os
 from collections import OrderedDict
 from pathlib import Path
@@ -174,10 +174,9 @@ def test_a_correction_on_a_tracked_frame_refines_the_cached_mask(world):
     list(ctx.service.track(ctx.video, ctx.path, [1], video_handle=ctx.video_handle))
     cached = rle.decode(a.tracks.tracks.mask_at(ctx.video, 1, "fake", 4))
     assert cached.any()
-    # one negative click on frame 4, which only the job tracked: it must cut the cached mask, not start empty
-    ys, xs = cached.nonzero()
-    x, y = (xs[0] + 0.5) / W, (ys[0] + 0.5) / H
-    out = click(a, sid, 1, 4, [[x, y]], [0])
+    # a positive inside and a negative on frame 4, which only the job tracked: it must cut the cached
+    # mask, not start empty
+    out = click(a, sid, 1, 4, [mid(cached), corner(cached)], [1, 0])
     assert out[1].any() and (out[1] <= cached).all() and out[1].sum() < cached.sum()
     assert a.object_tracks(sid)[0]["state"] != TRACKED  # the correction made it stale
 
@@ -224,15 +223,22 @@ def corner(m):
     return [(xs[0] + 0.5) / W, (ys[0] + 0.5) / H]
 
 
+def mid(m):
+    """A click on the mask's centre pixel: the positive a trim sends alongside its negative."""
+    ys, xs = m.nonzero()
+    return [(xs.mean() + 0.5) / W, (ys.mean() + 0.5) / H]
+
+
 def test_a_correction_on_a_stale_track_still_starts_from_the_cached_mask(world):
     make, stub, path = world
     a, sid, ctx = tracked(make, path)
-    click(a, sid, 1, 4, [corner(rle.decode(a.tracks.tracks.mask_at(ctx.video, 1, "fake", 4)))], [0])
+    first = rle.decode(a.tracks.tracks.mask_at(ctx.video, 1, "fake", 4))
+    click(a, sid, 1, 4, [mid(first), corner(first)], [1, 0])
     assert a.object_tracks(sid)[0]["state"] != TRACKED  # the first correction made the track stale
     # the next flagged frame is corrected against the same (now stale) track, not from nothing
     cached = rle.decode(a.tracks.tracks.mask_at(ctx.video, 1, "fake", 2))
     stub.mask_calls.clear()
-    out = click(a, sid, 1, 2, [corner(cached)], [0])
+    out = click(a, sid, 1, 2, [mid(cached), corner(cached)], [1, 0])
     assert stub.mask_calls == [(2, 1)]
     assert out[1].any() and (out[1] <= cached).all() and out[1].sum() < cached.sum()
 
@@ -244,29 +250,6 @@ def test_a_lone_positive_on_a_stale_track_grows_the_cached_mask(world):
     cached = rle.decode(a.tracks.tracks.mask_at(ctx.video, 1, "fake", 3))
     out = click(a, sid, 1, 3, [[0.9, 0.9]], [1])
     assert (out[1] >= cached).all() and out[1].sum() > cached.sum()
-
-
-def test_a_second_negative_on_a_corrected_frame_keeps_refining(world):
-    make, _, path = world
-    a, sid, ctx = tracked(make, path)
-    cached = rle.decode(a.tracks.tracks.mask_at(ctx.video, 1, "fake", 4))
-    first = click(a, sid, 1, 4, [corner(cached)], [0])[1]
-    ys, xs = first.nonzero()
-    last = [(xs[-1] + 0.5) / W, (ys[-1] + 0.5) / H]
-    # the client sends the frame's whole point list each time, replacing the old one
-    second = click(a, sid, 1, 4, [corner(cached), last], [0, 0])[1]
-    assert second.any() and (second <= first).all() and second.sum() < first.sum()
-
-
-def test_the_anchor_point_is_not_recorded_as_a_seed(world):
-    make, stub, path = world
-    a, sid, ctx = tracked(make, path)
-    p = corner(rle.decode(a.tracks.tracks.mask_at(ctx.video, 1, "fake", 4)))
-    click(a, sid, 1, 4, [p], [0])
-    _, _, sent, labels = stub.point_calls[-1]
-    assert labels == [1, 0] and sent[1] == p  # SAM saw an anchor, then the click
-    seed = a.object_tracks(sid)[0]["seeds"][4]
-    assert seed["points"] == [p] and seed["labels"] == [0]  # the store keeps only the user's click
 
 
 def test_an_empty_cached_frame_is_not_used_to_prime_a_click(world):
@@ -365,7 +348,7 @@ def _twotone(path, n=20, h=240, w=320):
 @pytest.mark.slow
 @pytest.mark.skipif(not CKPT.exists() or os.environ.get("SAM_UI_SLOW") != "1",
                     reason="set SAM_UI_SLOW=1 with the large checkpoint in checkpoints/")
-def test_real_sam2_lone_clicks_cut_and_grow_the_tracked_mask(tmp_path):
+def test_real_sam2_corrections_cut_and_grow_the_tracked_mask(tmp_path):
     from sam2.build_sam import build_sam2_video_predictor
 
     h, w = 240, 320
@@ -392,10 +375,10 @@ def test_real_sam2_lone_clicks_cut_and_grow_the_tracked_mask(tmp_path):
         click(a, sid, 1, 0, [[55 / w, y], [105 / w, y]], [1, 0])  # object 1: the red half only
         red = track(1)
         results = []
-        # a lone negative on the orange half cuts just that half, on a tracked frame and then on
-        # a second frame once the first correction has made the track stale
+        # a positive on the red half and a negative on the orange half cut just the orange half, on
+        # a tracked frame and then on a second frame once the first correction has made the track stale
         for f in (10, 15):
-            out = click(a, sid, 0, f, [[(30 + 5 * f + 75) / w, y]], [0])[0]
+            out = click(a, sid, 0, f, [[(30 + 5 * f + 25) / w, y], [(30 + 5 * f + 75) / w, y]], [1, 0])[0]
             (r0, o0), (r1, o1) = halves(bar[f], f), halves(out, f)
             keep = np.zeros_like(out)
             keep[:, :30 + 5 * f + 50] = True  # outside the clicked (orange) half
