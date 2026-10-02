@@ -166,7 +166,8 @@ def test_absent_frames_raise_nothing_and_nothing_is_compared_across_them():
         masks[f] = sq(40, 30)  # a stale track from before the range: anything at all
     got = signals(stats_of(masks), 30, absent=[{"start": 10, "end": 14, "state": "absent"}])
     assert not any(10 <= f <= 14 for f in got)
-    assert kinds(got, 9) == ["stop"] and kinds(got, 15) == ["reappear"]
+    # stopping into the range is what the user marked, no disappearance; coming back still counts
+    assert kinds(got, 9) == [] and kinds(got, 15) == ["reappear"]
 
 
 def test_engine_disagreement_is_a_signal_and_stronger_the_lower_the_iou():
@@ -259,7 +260,9 @@ import json  # noqa: E402
 from test_api import Harness  # noqa: E402
 from test_bounded import INFLUENCE, N, _Named, correct  # noqa: E402
 from tracks.engine import FakeEngine  # noqa: E402
-from tracks.ranges import ABSENT  # noqa: E402
+from tracks.engine import blanked, strip_cleared  # noqa: E402
+from tracks.ranges import ABSENT, CANDIDATE  # noqa: E402
+from tracks.seeds import cleared  # noqa: E402
 from tracks.service import EngineSpec  # noqa: E402
 from tracks.store import STALE, TRACKED  # noqa: E402
 
@@ -317,7 +320,8 @@ def test_flags_and_absent_ranges_shape_the_queue(hs):
     hs.service.set_range(hs.video, 1, 50, 59, ABSENT)
     hs.track()
     q = queue(hs, flags={1: [12]})
-    assert frames_of(q) == [12, 28, 49]  # the flag, the wrap, and the stop before the gap; 56 is absent now
+    # the flag and the wrap; 56 is absent now, and stopping into the range at 49 is no disappearance
+    assert frames_of(q) == [12, 28]
     assert {r["kind"] for r in q["objects"]["1"]["locations"][0]["reasons"]} == {"flag"}
 
 
@@ -442,6 +446,8 @@ def parity_case():
     for f in range(40):
         if 14 <= f <= 17:
             m = np.zeros((H, W), bool)  # vanishes
+        elif f == 13:
+            m = sq(2 + f, 10, 10)  # grows across the cleared frame 12
         elif 8 <= f <= 10:
             m = sq(2 + f, 2, 6) | sq(2 + f, 30, 6)  # splits
         elif f >= 38:
@@ -454,7 +460,8 @@ def parity_case():
         masks[f] = enc(m)
     inputs = {"absent": [{"start": 33, "end": 35, "state": "absent"}],
               "candidates": [{"start": 20, "end": 24, "state": "candidate", "source": "text:dog@sam3", "score": 0.7}],
-              "disagreement": {"5": 0.4, "6": 0.9, "36": 0.125}, "bounded": [[27, 31]], "flags": [2], "seeds": [0]}
+              "disagreement": {"5": 0.4, "6": 0.9, "36": 0.125}, "bounded": [[27, 31]], "flags": [2], "seeds": [0, 12, 14],
+              "cleared": [12, 14]}  # 12 holds a mask from before the skip; 14 starts the vanishing
     return masks, inputs
 
 
@@ -462,7 +469,7 @@ def parity_output(masks, inputs):
     stats = {f: frame_stats(r) for f, r in masks.items()}
     reasons = signals(stats, 40, absent=inputs["absent"], candidates=inputs["candidates"],
                       disagreement={int(f): v for f, v in inputs["disagreement"].items()}, bounded=inputs["bounded"],
-                      flags=inputs["flags"], seeds=inputs["seeds"])
+                      flags=inputs["flags"], seeds=inputs["seeds"], cleared=inputs["cleared"])
     return {"stats": {str(f): s for f, s in stats.items()},
             "locations": locations(reasons, 40, inputs["absent"])}
 
@@ -519,3 +526,123 @@ def test_marking_a_frame_past_the_track_is_refused_but_any_frame_of_it_can_be_ma
     with pytest.raises(KeyError):
         hs.service.set_reviewed(hs.video, 1, N + 5)
     assert hs.service.set_reviewed(hs.video, 1, N - 1)["reviewed"] is True
+
+
+# -- with the correction semantics: a cleared frame is no disappearance, a candidate no absence --
+
+def test_a_cleared_frame_sam2_blanked_is_no_stop_and_no_reappearance():
+    masks = moving()
+    masks[12] = np.zeros((H, W), bool)  # SAM 2 blanks a cleared seed's frame, by design
+    assert kinds(signals(stats_of(masks), 30), 11) == ["stop"]  # an empty frame with no seed is one
+    got = signals(stats_of(masks), 30, seeds=[0, 12], cleared=[12])
+    assert got == {}  # no stop at 11, no reappearance at 13, nothing compared wrongly across 12
+
+
+def test_a_cleared_frame_sam3_emptying_forward_is_no_stop_but_a_comeback_still_counts():
+    masks = moving()
+    for f in range(12, 20):
+        masks[f] = np.zeros((H, W), bool)  # SAM 3 keeps the cleared look-alike out for a while
+    got = signals(stats_of(masks), 30, seeds=[0, 12], cleared=[12])
+    assert kinds(got, 11) == [] and set(got) == {20}
+    assert kinds(got, 20) == ["reappear"]  # coming back with no click is worth a look (it may be another thing)
+    # one empty frame on SAM 3 (the object really there): the same as SAM 2's blank
+    masks = moving()
+    masks[12] = np.zeros((H, W), bool)
+    assert signals(stats_of(masks), 30, seeds=[12], cleared=[12]) == {}
+
+
+def test_the_frames_either_side_of_a_cleared_frame_are_compared_with_each_other():
+    masks = moving()
+    masks[12] = sq(40, 30)  # a stray mask on the cleared frame (a track from before the skip): not evidence
+    assert signals(stats_of(masks), 30, seeds=[12], cleared=[12]) == {}  # a steady move across it
+    masks[13] = sq(2 + 13, 10, 12)  # and a change across it is still found, on the far side
+    got = signals(stats_of(masks), 30, seeds=[12], cleared=[12])
+    assert "area" in kinds(got, 13)
+    assert next(r for r in got[13] if r["kind"] == "area")["detail"] == \
+        "the mask grows by 56% across 1 cleared frame"
+    assert 12 not in got
+
+
+def test_a_cleared_frame_inside_an_absent_range_stays_a_gap():
+    masks = moving()
+    masks[12] = np.zeros((H, W), bool)
+    for f in range(13, 30):
+        masks[f] = sq(2 + f + 20, 20)  # far away after it: across a gap, that is no jump
+    got = signals(stats_of(masks), 30, absent=[{"start": 12, "end": 12, "state": "absent"}], seeds=[12], cleared=[12])
+    assert set(got) == {13} and kinds(got, 13) == ["reappear"]
+
+
+class _Sam2Like(FakeEngine):
+    """SAM 2's way with a cleared seed: never conditioned on, its frame blanked."""
+    name = "sam2"
+    skips_cleared = True
+
+    def track(self, video_path, objects, video_handle=None, windows=None):
+        blank = strip_cleared(objects)[1]
+        for frame, masks in super().track(video_path, objects, video_handle, windows):
+            yield frame, blanked(frame, masks, blank)
+
+
+class _Sam3Like(FakeEngine):
+    """SAM 3's way on footage the object has left: a cleared seed empties its
+    frame and the frames after it, up to the object's next seed."""
+    name = "sam3"
+    skips_cleared = False
+
+    def _mask(self, obj_id, frame, seeds):
+        last = max((f for f in seeds if f <= frame), default=None)
+        if last is not None and cleared(seeds[last]):
+            return np.zeros(self.shape, bool)
+        return super()._mask(obj_id, frame, seeds)
+
+
+@pytest.fixture(params=[_Sam2Like, _Sam3Like], ids=["sam2", "sam3"])
+def engine_hs(tmp_path, request):
+    return Harness(tmp_path, engine=request.param(n_frames=N))
+
+
+def lone_negative(hs, frame, obj=1):
+    """"Not on this frame": recorded as SAM 3 records it (on SAM 2 the click is refused, but the seed is shared)."""
+    hs.click(obj, frame=frame, points=[[0.3, 0.3]], labels=(0,))
+
+
+def test_a_cleared_seed_is_no_disappearance_in_the_queue(engine_hs):
+    hs = engine_hs
+    hs.click(1, frame=0)
+    lone_negative(hs, 12)
+    hs.click(1, frame=20)  # where the object is clicked back
+    hs.track()
+    masks = dict(hs.service.tracks.masks(hs.video, 1, hs.engine.name))
+    assert rle.area(masks[12]) == 0 and rle.area(masks[11]) > 0  # the cleared frame is empty on both
+    q = queue(hs)
+    assert frames_of(q) == list(WRAPS)  # only the wraps: nothing at 11, 13 or the comeback at 20 (a seed)
+    for loc in q["objects"]["1"]["locations"]:
+        assert not {"stop", "reappear", "start"} & {r["kind"] for r in loc["reasons"]}
+
+
+def test_an_absent_range_is_no_disappearance_in_the_queue(engine_hs):
+    hs = engine_hs
+    hs.click(1, frame=0)
+    hs.service.set_range(hs.video, 1, 40, 45, ABSENT)
+    hs.click(1, frame=46)
+    hs.track()
+    q = queue(hs)
+    assert frames_of(q) == [28, 56]  # no stop at 39; frames 40-45 raise nothing
+    reasons = [r for loc in q["objects"]["1"]["locations"] for r in loc["reasons"]]
+    assert not any(39 <= r["frame"] <= 46 for r in reasons)
+
+
+def test_a_candidate_is_a_review_item_never_an_absence_and_the_queue_never_resolves_it(hs):
+    tracked(hs)
+    hs.service.set_range(hs.video, 1, 10, 20, CANDIDATE, source="text:dog@sam3", score=0.6)
+    q = queue(hs)
+    assert frames_of(q) == [10, 28, 56]
+    loc = q["objects"]["1"]["locations"][0]
+    assert loc["frame"] == 10 and [r["kind"] for r in loc["reasons"]] == ["candidate"]
+    assert hs.service.seeds.ranges(hs.video, 1) == []  # it is not absent: nothing is blanked or split
+    masks = dict(hs.service.tracks.masks(hs.video, 1, "fake"))
+    assert all(rle.area(masks[f]) > 0 for f in range(10, 21))
+    hs.service.set_reviewed(hs.video, 1, 10, span=(loc["start"], loc["end"]), reasons=["candidate"])
+    timeline = hs.service.object_info(hs.video, 1)["ranges"]
+    assert [(r["start"], r["end"], r["state"]) for r in timeline] == [(10, 20, CANDIDATE)]  # still unconfirmed
+    assert hs.service.object_info(hs.video, 1)["state"] == TRACKED

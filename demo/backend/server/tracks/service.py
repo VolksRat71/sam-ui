@@ -882,7 +882,9 @@ class TrackService:
                                     candidates=[r for r in info["ranges"] if r["state"] == CANDIDATE],
                                     disagreement=ious, pair=(name, other or ""), bounded=bnd.spans(meta),
                                     flags=flags.get(o, []),
-                                    seeds=[f for f, v in info["seeds"].items() if v.get("points")])
+                                    seeds=[f for f, v in info["seeds"].items() if v.get("points")],
+                                    # "not on this frame": never a disappearance
+                                    cleared=[f for f, v in info["seeds"].items() if cleared(v)])
             locs = audit.locations(reasons, n, absent)
             marks = self._valid_marks(video, o, name, meta, masks)
             for loc in locs:

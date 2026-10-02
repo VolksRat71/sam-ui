@@ -39,3 +39,47 @@ describe('StudioSession moveClicks', () => {
     expect(sent[0].variables.input.engine).toBeNull();
   });
 });
+
+describe('StudioSession review queue in the browser', () => {
+  /** A 30-frame browser track of a moving square, blank on frame 12, with these clicks on 0 and 12. */
+  async function queueWith(seed12: Array<[number, number, 0 | 1]>) {
+    const {DataArray, encode} = await import('@/jscocotools/mask');
+    const {seedsKey} = await import('~/local/localTracks');
+    const {BROWSER_ENGINE} = await import('~/state/engines');
+    const h = 48;
+    const w = 64;
+    const enc = (x: number | null) => {
+      const data = new Uint8Array(h * w);
+      if (x != null) {
+        for (let xx = x; xx < x + 8; xx++) for (let y = 10; y < 18; y++) data[xx * h + y] = 1;
+      }
+      return encode(new DataArray(data, [h, w, 1]))[0];
+    };
+    const masks = new Map(Array.from({length: 30}, (_, f) => [f, enc(f === 12 ? null : 2 + f)] as const));
+    const seeds = new Map<number, Array<[number, number, 0 | 1]>>([
+      [0, [[0.5, 0.5, 1]]],
+      [12, seed12],
+    ]);
+    const s = new StudioSession({_decodedVideo: {numFrames: 30}} as never, {} as never, () => {});
+    const open = s as unknown as Record<string, unknown>;
+    open._storeKey = 'clip';
+    open._tracklets = new Map([[1, {id: 1}]]);
+    open._seedPoints = new Map([[1, seeds]]);
+    open._seedMasks = new Map([[1, new Map()]]); // no approved mask on frame 12
+    open._ranges = new Map();
+    open._local = {heldIds: () => new Set(), variant: 'tiny', store: {get: async () => ({masks, seedsKey: seedsKey(seeds, []), variant: 'tiny', nFrames: 30})}};
+    return s.reviewQueue(BROWSER_ENGINE, {}, {});
+  }
+
+  it('passes over a cleared seed (negatives only, no mask): no stop or reappearance around it', async () => {
+    const q = await queueWith([[0.3, 0.3, 0]]);
+    expect(q.objects[1].state).toBe('tracked');
+    expect(q.queue).toEqual([]);
+  });
+
+  it('still finds the gap around a seed with a positive', async () => {
+    const q = await queueWith([[0.3, 0.3, 1]]);
+    expect(q.queue.map(e => [e.frame, e.start, e.end])).toEqual([[13, 11, 13]]);
+    expect(q.queue[0].reasons.map(r => r.kind).sort()).toEqual(['reappear', 'stop']);
+  });
+});

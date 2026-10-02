@@ -209,7 +209,8 @@ describe('signals', () => {
     for (let f = 10; f < 15; f++) m[f] = sq(40, 30);
     const got = signals(statsOf(m), 30, {absent: [{start: 10, end: 14, state: 'absent'}]});
     expect([...got.keys()].some(f => f >= 10 && f <= 14)).toBe(false);
-    expect(kinds(got, 9)).toEqual(['stop']);
+    // stopping into the range is what the user marked, no disappearance; coming back still counts
+    expect(kinds(got, 9)).toEqual([]);
     expect(kinds(got, 15)).toEqual(['reappear']);
   });
 
@@ -329,6 +330,7 @@ describe('parity with the backend (tracks/audit.py wrote audit.parity.json)', ()
       bounded: i.bounded as Array<[number, number]>,
       flags: i.flags,
       seeds: i.seeds,
+      cleared: i.cleared,
     });
     expect(locations(reasons, 40, i.absent)).toEqual(parity.expected.locations);
   });
@@ -405,5 +407,49 @@ describe('review fixes', () => {
     expect(markValid(mark, 'browser-sam2', reviewNow(masks, 12, [10, 13], 20))).toBe(false);
     expect(reviews(mark, {frame: 13})).toBe(true);
     expect(reviews(mark, {frame: 14})).toBe(false);
+  });
+});
+
+describe('with the correction semantics: a cleared frame is no disappearance, a candidate no absence', () => {
+  it('passes over a cleared frame SAM 2 blanked: no stop before it, no reappearance after', () => {
+    const m = moving();
+    m[12] = null; // SAM 2 blanks a cleared seed's frame, by design
+    expect(kinds(signals(statsOf(m), 30), 11)).toEqual(['stop']); // an empty frame with no seed is one
+    expect([...signals(statsOf(m), 30, {seeds: [0, 12], cleared: [12]})]).toEqual([]);
+  });
+
+  it('is no stop when SAM 3 keeps a cleared look-alike out for a while, and a comeback still counts', () => {
+    const m = moving();
+    for (let f = 12; f < 20; f++) m[f] = null;
+    const got = signals(statsOf(m), 30, {seeds: [0, 12], cleared: [12]});
+    expect([...got.keys()]).toEqual([20]);
+    expect(kinds(got, 20)).toEqual(['reappear']);
+  });
+
+  it('compares the frames either side of a cleared frame, whatever it holds', () => {
+    const m = moving();
+    m[12] = sq(40, 30); // a stray mask on the cleared frame (a track from before the skip): not evidence
+    expect([...signals(statsOf(m), 30, {seeds: [12], cleared: [12]})]).toEqual([]);
+    m[13] = sq(2 + 13, 10, 12);
+    const got = signals(statsOf(m), 30, {seeds: [12], cleared: [12]});
+    expect(got.get(13)!.find(r => r.kind === 'area')!.detail).toBe('the mask grows by 56% across 1 cleared frame');
+    expect(got.has(12)).toBe(false);
+  });
+
+  it('keeps a cleared frame inside an absent range a gap', () => {
+    const m = moving();
+    m[12] = null;
+    for (let f = 13; f < 30; f++) m[f] = sq(2 + f + 20, 20);
+    const got = signals(statsOf(m), 30, {absent: [{start: 12, end: 12, state: 'absent'}], seeds: [12], cleared: [12]});
+    expect([...got.keys()]).toEqual([13]);
+    expect(kinds(got, 13)).toEqual(['reappear']);
+  });
+
+  it('takes a candidate as a review item, never as absent', () => {
+    const masks = new Map<number, RLEObject>();
+    for (let f = 0; f < 30; f++) masks.set(f, enc(sq(2 + f, 10)));
+    const candidates = [{start: 10, end: 20, state: 'candidate', source: 'text:dog@sam3', score: 0.6}] as NonNullable<Parameters<typeof signals>[2]>['candidates'];
+    const q = buildQueue([{id: 1, state: 'tracked', masks, marks: [], ranges: [], candidates: candidates!, seeds: [0], flags: []}], 30, 'browser-sam2');
+    expect(q.queue.map(e => [e.frame, e.reasons.map(r => r.kind)])).toEqual([[10, ['candidate']]]);
   });
 });
