@@ -1,5 +1,6 @@
 # sam-ui (Apache-2.0). New file, not from SAM 2.
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -189,6 +190,149 @@ def test_existing_mattes_are_not_replaced_without_force(h, tmp_path):
     assert export(h, out_dir=str(out), force=True)[0] == 200
     assert not stale.exists() and (out / "data" / "mattes_tracked" / "object_1" / "00001.png").exists()
     assert json.loads((out / "notes" / "sam-ui-export.json").read_text())["products"]
+
+
+def _race(monkeypatch, plant):
+    """Run plant() right after the pre-flight check passes: a link planted
+    while the export runs."""
+    import tracks.export as E
+
+    checked = E._check_targets
+
+    def racing(*a, **k):
+        checked(*a, **k)
+        plant()
+
+    monkeypatch.setattr(E, "_check_targets", racing)
+
+
+def test_a_link_planted_after_the_check_is_refused_before_anything_is_deleted(h, tmp_path, tmp_path_factory,
+                                                                             monkeypatch):
+    h.click(1)
+    h.track()
+    outside = tmp_path_factory.mktemp("outside")
+    (outside / "mattes_tracked" / "object_1").mkdir(parents=True)
+    (outside / "mattes_tracked" / "object_1" / "00001.png").write_bytes(b"theirs")
+    before = _tree(outside)
+    out = tmp_path / "build"
+    _race(monkeypatch, lambda: (out.mkdir(exist_ok=True), (out / "data").symlink_to(outside)))
+    code, m = export(h, out_dir=str(out), force=True)
+    assert code == 400 and "outside the export root" in m["error"] and _tree(outside) == before
+
+
+def test_a_matte_folder_linked_after_the_check_is_not_rmtreed(h, tmp_path, tmp_path_factory, monkeypatch):
+    h.click(1)
+    h.track()
+    outside = tmp_path_factory.mktemp("outside")
+    (outside / "00001.png").write_bytes(b"theirs")
+    out = tmp_path / "build"
+
+    def plant():
+        (out / "data" / "mattes_tracked").mkdir(parents=True)
+        (out / "data" / "mattes_tracked" / "object_1").symlink_to(outside)
+
+    _race(monkeypatch, plant)
+    code, m = export(h, out_dir=str(out), force=True)
+    assert code == 400 and "data/mattes_tracked/object_1" in m["error"]
+    assert (outside / "00001.png").read_bytes() == b"theirs"
+
+
+def test_a_file_linked_after_the_check_is_replaced_not_written_through(h, tmp_path, tmp_path_factory, monkeypatch):
+    h.click(1)
+    h.track()
+    outside = tmp_path_factory.mktemp("outside")
+    (outside / "victim").write_text("keep")
+    out = tmp_path / "build"
+    _race(monkeypatch, lambda: (out.mkdir(exist_ok=True), (out / "products.json").symlink_to(outside / "victim")))
+    assert export(h, out_dir=str(out), force=True)[0] == 200
+    assert (outside / "victim").read_text() == "keep"
+    assert not (out / "products.json").is_symlink() and json.loads((out / "products.json").read_text())["products"]
+
+
+def test_a_hard_link_is_replaced_not_written_through(h, tmp_path, tmp_path_factory):
+    """A hard link resolves inside the root, so only replacing the file (a temp
+    file, then os.replace) keeps the other name's contents."""
+    h.click(1)
+    h.track()
+    outside = tmp_path_factory.mktemp("outside")
+    (outside / "victim").write_text("keep")
+    out = tmp_path / "build"
+    (out / "notes").mkdir(parents=True)
+    os.link(outside / "victim", out / "notes" / "sam-ui-export.json")
+    assert export(h, out_dir=str(out))[0] == 200
+    assert (outside / "victim").read_text() == "keep"
+    assert json.loads((out / "notes" / "sam-ui-export.json").read_text())["products"]
+
+
+def test_a_link_inside_the_root_cannot_slip_past_force(h, tmp_path):
+    """notes/sam-ui-export.json is always rewritten; a link there to a
+    confirmed file must not carry that rewrite onto the confirmed file."""
+    h.click(1)
+    h.track()
+    out = tmp_path / "build"
+    out.mkdir()
+    (out / "keep.json").write_text("CONFIRMED BY A PERSON")
+    (out / "notes").mkdir()
+    (out / "notes" / "sam-ui-export.json").symlink_to(out / "keep.json")
+    assert export(h, out_dir=str(out))[0] == 200
+    assert (out / "keep.json").read_text() == "CONFIRMED BY A PERSON"
+    assert not (out / "notes" / "sam-ui-export.json").is_symlink()
+
+
+def test_new_frames_never_write_through_an_old_frame(h, tmp_path, tmp_path_factory, monkeypatch):
+    """ffmpeg -y writes through a link left at a frame's name; the old frames
+    are unlinked first (they are sam-ui's own and always rewritten)."""
+    import tracks.export as E
+
+    h.click(1)
+    h.track()
+    outside = tmp_path_factory.mktemp("outside")
+    (outside / "victim").write_text("keep")
+    out = tmp_path / "build"
+    (out / "data" / "frames").mkdir(parents=True)
+    (out / "data" / "clip.mp4").write_bytes(b"x")  # already there: not copied again
+    (out / "data" / "frames" / "00009.jpg").write_bytes(b"stale")
+    _race(monkeypatch, lambda: (out / "data" / "frames" / "00001.jpg").symlink_to(outside / "victim"))
+
+    def ffmpeg(cmd, check):  # writes 00001.jpg as ffmpeg -y does: through whatever is there
+        with open(cmd[-1] % 1, "w") as f:
+            f.write("frame")
+
+    monkeypatch.setattr(E.subprocess, "run", ffmpeg)
+    code, m = export(h, out_dir=str(out), frames=True)
+    assert code == 200 and m["frames_on_disk"] == 1 and (outside / "victim").read_text() == "keep"
+    assert sorted(p.name for p in (out / "data" / "frames").iterdir()) == ["00001.jpg"]
+
+
+@pytest.mark.parametrize("rel", ["data", "data/mattes_tracked/object_1", "notes", "data/frames"])
+def test_a_file_where_a_folder_belongs_is_a_400(h, tmp_path, rel):
+    h.click(1)
+    h.track()
+    out = tmp_path / "build"
+    (out / rel).parent.mkdir(parents=True, exist_ok=True)
+    (out / rel).write_text("a file")
+    code, m = export(h, out_dir=str(out), force=True, frames=True)
+    assert code == 400 and rel in m["error"]
+
+
+def test_a_folder_where_a_file_belongs_is_a_400(h, tmp_path):
+    h.click(1)
+    h.track()
+    out = tmp_path / "build"
+    (out / "products.json").mkdir(parents=True)
+    code, m = export(h, out_dir=str(out), force=True)
+    assert code == 400 and "products.json" in m["error"]
+
+
+def test_the_force_refusal_names_studios_checkbox(h, tmp_path):
+    h.click(1)
+    h.track()
+    out = tmp_path / "build"
+    out.mkdir()
+    (out / "products.json").write_text("{}")
+    code, m = export(h, out_dir=str(out))
+    assert code == 400 and "Replace existing" in m["error"]
+    assert str(tmp_path) not in m["error"].replace(repr(str(out)), "")
 
 
 @pytest.mark.parametrize("bad", [5, ["a"], None])
