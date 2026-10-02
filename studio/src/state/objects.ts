@@ -95,6 +95,11 @@ export type Job = {
    */
   total: number | null;
   canceling: boolean;
+  /**
+   * The ids the backend re-tracks only around their corrections (a bounded
+   * re-track, backend tracks/bounded.py; the Objects-Bounded header).
+   */
+  bounded: number[];
 };
 
 export type StudioState = {
@@ -117,7 +122,7 @@ export type Action =
   /** The object's absent ranges changed (marked or unmarked). */
   | {type: 'setRanges'; id: number; ranges: FrameRange[]}
   | {type: 'trackStarted'; key: number; ids: number[]; engine?: string}
-  | {type: 'trackAttached'; key: number; jobId: string | null; selected: number[]}
+  | {type: 'trackAttached'; key: number; jobId: string | null; selected: number[]; bounded?: number[]}
   | {type: 'trackProgress'; key: number}
   | {type: 'trackTotal'; key: number; total: number}
   | {type: 'trackCanceling'; key: number}
@@ -450,6 +455,7 @@ export function reducer(state: StudioState, action: Action): StudioState {
         frames: 0,
         total: null,
         canceling: false,
+        bounded: [],
       };
       const next = withJobs({...state, notice: null}, [...state.jobs, job]);
       return {
@@ -465,7 +471,12 @@ export function reducer(state: StudioState, action: Action): StudioState {
         state,
         state.jobs.map(j =>
           j.key === action.key
-            ? {...j, jobId: action.jobId, ids: j.ids.filter(id => selected.has(id))}
+            ? {
+                ...j,
+                jobId: action.jobId,
+                ids: j.ids.filter(id => selected.has(id)),
+                bounded: (action.bounded ?? []).filter(id => selected.has(id)),
+              }
             : j,
         ),
       );

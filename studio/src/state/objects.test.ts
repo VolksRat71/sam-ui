@@ -153,8 +153,19 @@ describe('track selection', () => {
       {type: 'trackStarted', key: 7, ids: [0, 1]},
       {type: 'trackAttached', key: 7, jobId: 'abc', selected: [1]},
     ]);
-    expect(s.jobs).toEqual([{key: 7, jobId: 'abc', engine: 'sam2', ids: [1], frames: 0, total: null, canceling: false}]);
+    expect(s.jobs).toEqual([
+      {key: 7, jobId: 'abc', engine: 'sam2', ids: [1], frames: 0, total: null, canceling: false, bounded: []},
+    ]);
     expect(dirtyIds(s)).toEqual([0]);
+  });
+
+  it('a job keeps which of its objects the backend re-tracks around their corrections', () => {
+    const s = run([
+      {type: 'restore', objects: [server(0, 'stale'), server(1, 'untracked'), server(2, 'stale')]},
+      {type: 'trackStarted', key: 4, ids: [0, 1, 2]},
+      {type: 'trackAttached', key: 4, jobId: 'j', selected: [0, 1], bounded: [0, 2]},
+    ]);
+    expect(s.jobs[0]).toMatchObject({ids: [0, 1], bounded: [0]}); // 2 was not claimed
   });
 });
 
@@ -182,7 +193,9 @@ describe('state transitions', () => {
       {type: 'trackProgress', key: 3},
       {type: 'trackProgress', key: 3},
     ]);
-    expect(s.jobs).toEqual([{key: 3, jobId: null, engine: 'sam2', ids: [0, 1], frames: 2, total: null, canceling: false}]);
+    expect(s.jobs).toEqual([
+      {key: 3, jobId: null, engine: 'sam2', ids: [0, 1], frames: 2, total: null, canceling: false, bounded: []},
+    ]);
     expect(byId(s, 0).running).toBe(true);
     expect(byId(s, 2).running).toBe(false);
     const done = reducer(s, {type: 'trackFinished', key: 3, tracked: [0], failed: {1: 'OSError'}});

@@ -203,7 +203,13 @@ export default function useStudioSession(video: VideoItem) {
           setTracklets(new Map(event.tracklets.map(t => [t.id, t])));
           break;
         case 'jobStarted':
-          dispatch({type: 'trackAttached', key: event.key, jobId: event.jobId, selected: event.selected});
+          dispatch({
+            type: 'trackAttached',
+            key: event.key,
+            jobId: event.jobId,
+            selected: event.selected,
+            bounded: event.bounded,
+          });
           if (event.jobId != null && !event.jobId.startsWith('local-')) {
             // the backend knows the job's full length (frames x passes)
             const {key, jobId} = event;

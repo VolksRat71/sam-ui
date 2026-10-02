@@ -10,6 +10,11 @@ session: each track job builds its own state and drops it afterwards.
 between its absent ranges (tracks/ranges.py). Each window is tracked on its
 own, in a fresh state seeded only from the seeds inside it, so no memory
 crosses a gap, and the engine runs on no frame outside them.
+
+`track_stretch` (issue #19, tracks/bounded.py), where an engine has it, runs
+one bounded pass: one object, over a stretch around a corrected frame, until
+the caller says the new masks have rejoined the cached track. SAM 3 has none yet,
+so its corrections re-track the window whole.
 """
 import contextlib
 from collections import OrderedDict
@@ -19,6 +24,7 @@ from typing import Any, Callable, Dict, Iterator, List, Optional, Protocol, Tupl
 import numpy as np
 
 from tracks import rle
+from tracks.bounded import PRIME, StopFn, Stretch
 from tracks.ranges import Window, in_window
 from tracks.seeds import Seeds, cleared
 from tracks.streaming import sam2_prune
@@ -31,6 +37,13 @@ WHOLE: Window = (0, None)
 class Engine(Protocol):
     name: str
     model: str
+    # True when a cleared seed never conditions the engine, so it is output
+    # only: its frame is blanked (strip_cleared) and nothing else moves.
+    skips_cleared: bool
+
+    def plan(self, objects: Dict[int, Seeds], windows: Optional[Windows] = None) -> List["Unit"]:
+        """The passes a job over `objects` makes, in order (see plan_units)."""
+        ...
 
     def track(self, video_path: str, objects: Dict[int, Seeds], video_handle: Optional[Any] = None,
               windows: Optional[Windows] = None) -> Iterator[FrameMasks]:
@@ -106,15 +119,17 @@ class Sam2Engine:
     """
 
     name = "sam2"
+    skips_cleared = True
 
     def __init__(self, predictor, model: str, offload_video_to_cpu: bool = False,
                  autocast: Callable[[], contextlib.AbstractContextManager] = contextlib.nullcontext,
-                 score_thresh: float = 0.0):
+                 score_thresh: float = 0.0, prime: int = PRIME):
         self.predictor = predictor
         self.model = model
         self.offload_video_to_cpu = offload_video_to_cpu
         self.autocast = autocast
         self.score_thresh = score_thresh
+        self.prime = prime  # cached frames a bounded pass starting mid-window is primed with
 
     def track(self, video_path: str, objects: Dict[int, Seeds], video_handle: Optional[Dict] = None,
               windows: Optional[Windows] = None) -> Iterator[FrameMasks]:
@@ -132,7 +147,7 @@ class Sam2Engine:
         blank = strip_cleared(objects)[1]
         for unit in self.plan(objects, windows):
             for frame, masks in self._track_group(video_path, unit, video_handle):
-                yield frame, {o: np.zeros_like(m) if frame in blank.get(o, ()) else m for o, m in masks.items()}
+                yield frame, blanked(frame, masks, blank)
 
     def plan(self, objects: Dict[int, Seeds], windows: Optional[Windows] = None) -> List[Unit]:
         """The passes a job over `objects` makes, in order. Cleared seeds are
@@ -171,6 +186,69 @@ class Sam2Engine:
                 self.predictor.reset_state(state)
 
 
+    def track_stretch(self, video_path: str, stretch: Stretch, stop: StopFn,
+                      video_handle: Optional[Dict] = None) -> Iterator[FrameMasks]:
+        """One bounded pass (tracks/bounded.py): a fresh state holding only
+        stretch.obj_id, conditioned on every seed of its window as a full pass
+        is, propagated forward from stretch.start to stretch.hi and then, with
+        stretch.reverse, back to stretch.lo. `stop(frame, reverse, mask)` is
+        asked after each frame and True ends that direction (the frame is
+        still yielded).
+
+        A start that is not a seed frame is primed: the cached masks of the
+        `prime` frames before it become the memory a full pass would have on
+        reaching it (prime_from_cache). Without that the pass would start from
+        the seeds alone, which no frame of a full pass ever does mid-window.
+        One object per state, so the MPS trap of objects first seeded on
+        different frames (see track) cannot arise.
+
+        Cleared seeds are stripped as track() strips them (strip_cleared): they
+        never condition the state, and the object's output on their frames is
+        blanked, in both directions, before `stop` sees it. A stretch whose
+        only seeds are cleared yields nothing, as track() does for an object
+        with no other seed. Priming skips their frames too (they are in
+        stretch.seeds): the cache holds the blanked output there, not the
+        mask the model tracked through.
+
+        It also yields None, a step with no frame, after each seed and each
+        primed frame: a point where the caller may let go of the model lock,
+        which it otherwise holds from one yield to the next."""
+        o, start = stretch.obj_id, stretch.start
+        kept, blank = strip_cleared({o: stretch.seeds})
+        seeds = kept[o]
+        if not seeds:
+            return
+        with self.autocast():
+            if video_handle is not None:
+                state = job_state_like(video_handle)
+            else:
+                state = self.predictor.init_state(video_path, offload_video_to_cpu=self.offload_video_to_cpu)
+            try:
+                for frame in sorted(seeds):
+                    seed_into_state(self.predictor, state, o, frame, seeds[frame])
+                    yield None
+                if self.prime and stretch.cached and start not in seeds:
+                    for _ in prime_from_cache(self.predictor, state, o, stretch, self.prime):
+                        yield None
+                limits = {False: stretch.hi - start, True: start - stretch.lo}
+                for reverse in ((False, True) if stretch.reverse else (False,)):
+                    if reverse and limits[True] <= 0:
+                        continue  # forward always runs: it yields the start frame
+                    for frame, obj_ids, masks in self.predictor.propagate_in_video(
+                            state, start_frame_idx=start, reverse=reverse, max_frame_num_to_track=limits[reverse]):
+                        sam2_prune(self.predictor, state, frame, start, reverse)
+                        if reverse and frame == start:
+                            continue
+                        out = blanked(frame, {o: (masks[list(obj_ids).index(o)] > self.score_thresh)[0].cpu().numpy()},
+                                      blank)
+                        done = stop(frame, reverse, out[o])
+                        yield frame, out
+                        if done:
+                            break
+            finally:
+                self.predictor.reset_state(state)
+
+
 def strip_cleared(objects: Dict[int, Seeds]) -> Tuple[Dict[int, Seeds], Dict[int, set]]:
     """The objects without their cleared seeds, and each object's cleared frames.
 
@@ -182,6 +260,11 @@ def strip_cleared(objects: Dict[int, Seeds]) -> Tuple[Dict[int, Seeds], Dict[int
     return {o: {f: v for f, v in s.items() if f not in blank[o]} for o, s in objects.items()}, blank
 
 
+def blanked(frame: int, masks: Dict[int, np.ndarray], blank: Dict[int, set]) -> Dict[int, np.ndarray]:
+    """One frame's masks with each object's cleared frame (strip_cleared) emptied."""
+    return {o: np.zeros_like(m) if frame in blank.get(o, ()) else m for o, m in masks.items()}
+
+
 def groups_by_first_seed(objects: Dict[int, Seeds]) -> List[Dict[int, Seeds]]:
     """Objects grouped by the frame of their first seed with points, earliest
     group first (objects without one are dropped)."""
@@ -191,6 +274,39 @@ def groups_by_first_seed(objects: Dict[int, Seeds]) -> List[Dict[int, Seeds]]:
         if seeded:
             by.setdefault(min(seeded), {})[o] = s
     return [by[f] for f in sorted(by)]
+
+
+def prime_from_cache(predictor, state, obj_id: int, stretch: Stretch, n: int) -> Iterator[int]:
+    """Give a bounded pass the memory a full pass would have on reaching
+    stretch.start: the cached masks of the `n` frames before it (never before
+    stretch.floor, never a seed frame) become non-conditioning outputs, made
+    by SAM 2 from each mask as a mask prompt (the frame's object pointer
+    included) and encoded by its memory encoder, as add_new_mask's frames
+    are. Yields each frame once it is primed.
+
+    Under torch.inference_mode, as upstream runs every caller of
+    _run_single_frame_inference: a job is not inside one (autocast is a no-op
+    off CUDA), and outside it the CPU refuses the cached backbone features
+    (inference tensors) and MPS keeps an autograd graph per primed frame."""
+    import torch
+
+    obj_idx = predictor._obj_id_to_idx(state, obj_id)
+    out_dict = state["output_dict_per_obj"][obj_idx]
+    for f in range(max(stretch.floor, stretch.start - n), stretch.start):
+        if f in stretch.seeds or f not in stretch.cached:
+            continue
+        with torch.inference_mode():  # per frame: never held across the yield
+            m = torch.from_numpy(rle.decode(stretch.cached[f]))[None, None].float().to(state["device"])
+            size = predictor.image_size
+            if tuple(m.shape[-2:]) != (size, size):  # as add_new_mask resizes it
+                m = torch.nn.functional.interpolate(m, size=(size, size), align_corners=False, mode="bilinear",
+                                                    antialias=True)
+                m = (m >= 0.5).float()
+            out, _ = predictor._run_single_frame_inference(
+                inference_state=state, output_dict=out_dict, frame_idx=f, batch_size=1, is_init_cond_frame=False,
+                point_inputs=None, mask_inputs=m, reverse=False, run_mem_encoder=True)
+            out_dict["non_cond_frame_outputs"][f] = out
+        yield f
 
 
 def seed_into_state(predictor, state, obj_id: int, frame: int, seed: Dict) -> None:
@@ -209,23 +325,37 @@ def seed_into_state(predictor, state, obj_id: int, frame: int, seed: Dict) -> No
 class FakeEngine:
     """A deterministic engine for tests: object k's mask on frame i is a square
     at (4k, i). Records which objects each job was asked for, the windows it
-    was given, and each unit it ran: (lo, hi, {obj: its seed frames})."""
+    was given, each unit it ran: (lo, hi, {obj: its seed frames}), and each
+    bounded pass: (obj, start, lo, hi, [frames, in the order made]).
+
+    With `influence`, a seed frame whose clicks include a negative (a
+    correction) moves the square down a row on the frames closer to it than
+    `influence`, in full and bounded passes alike."""
 
     name = "fake"
+    skips_cleared = False
 
-    def __init__(self, n_frames: int = 5, shape=(24, 32), model: str = "fake-1"):
+    def __init__(self, n_frames: int = 5, shape=(24, 32), model: str = "fake-1", influence: int = 0):
         self.n_frames = n_frames
         self.shape = shape
         self.model = model
+        self.influence = influence
         self.calls: List[List[int]] = []
         self.windows: List[Optional[Windows]] = []
         self.units: List[Tuple] = []
+        self.stretches: List[Tuple] = []
 
     @staticmethod
     def mask(obj_id: int, frame: int, shape=(24, 32)) -> np.ndarray:
         m = np.zeros(shape, bool)
         y, x = (4 * obj_id) % (shape[0] - 4), frame % (shape[1] - 4)
         m[y:y + 4, x:x + 4] = True
+        return m
+
+    def _mask(self, obj_id: int, frame: int, seeds: Dict) -> np.ndarray:
+        m = self.mask(obj_id, frame, self.shape)
+        if any(0 in v.get("labels", []) and abs(f - frame) < self.influence for f, v in seeds.items()):
+            m = np.roll(m, 1, axis=0)
         return m
 
     def plan(self, objects: Dict[int, Seeds], windows: Optional[Windows] = None) -> List[Unit]:
@@ -237,9 +367,25 @@ class FakeEngine:
         self.windows.append(windows)
         if windows is None:  # as before windows: every object, every frame, seeded or not
             for i in range(self.n_frames):
-                yield i, {o: self.mask(o, i, self.shape) for o in objects}
+                yield i, {o: self._mask(o, i, objects[o]) for o in objects}
             return
         for u in self.plan(objects, windows):
             self.units.append((u.lo, u.hi, {o: sorted(s) for o, s in u.objects.items()}))
             for i in range(u.lo, u.lo + u.n_frames(self.n_frames)):
-                yield i, {o: self.mask(o, i, self.shape) for o in u.objects}
+                yield i, {o: self._mask(o, i, u.objects[o]) for o in u.objects}
+
+    def track_stretch(self, video_path: str, stretch: Stretch, stop: StopFn,
+                      video_handle: Optional[Any] = None) -> Iterator[FrameMasks]:
+        o, ran = stretch.obj_id, []
+        self.stretches.append((o, stretch.start, stretch.lo, stretch.hi, ran))
+        halves = [(range(stretch.start, stretch.hi + 1), False)]
+        if stretch.reverse:
+            halves.append((range(stretch.start - 1, stretch.lo - 1, -1), True))
+        for frames, reverse in halves:
+            for i in frames:
+                m = self._mask(o, i, stretch.seeds)
+                ran.append(i)
+                done = stop(i, reverse, m)
+                yield i, {o: m}
+                if done:
+                    break
