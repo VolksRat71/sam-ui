@@ -42,6 +42,7 @@ from tracks.engine import Sam2Engine, seed_into_state
 from tracks.features import VIDEO_KEY, FeatureCache, default_cache_gb, install as install_feature_cache
 from tracks.streaming import install_sam2_streaming
 from tracks.routes import TrackContext
+from tracks.seeds import cleared
 from tracks import sam3_engine
 from tracks.service import EngineSpec, TrackService
 
@@ -167,11 +168,12 @@ class InferenceAPI:
             # sam-ui: replay the stored seeds (their approved masks), so a reload
             # keeps its objects and a click on a seed frame refines its mask.
             # Frame-major: each frame's backbone features serve every object.
+            # A cleared ('not on this frame') seed is skipped: SAM 2 never conditions on one.
             video = self.tracks.video_key(request.path)
             inference_state[VIDEO_KEY] = video  # opts the session (and its jobs) into the feature cache
             seeds = {o: self.tracks.seeds.seeds(video, o) for o in self.tracks.seeds.objects(video)}
             for frame_idx, obj_id in sorted(
-                (f, o) for o, s in seeds.items() for f, v in s.items() if v["points"]
+                (f, o) for o, s in seeds.items() for f, v in s.items() if v["points"] and not cleared(v)
             ):
                 seed_into_state(self.predictor, inference_state, obj_id, frame_idx, seeds[obj_id][frame_idx])
             self.session_states[session_id] = {

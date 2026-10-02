@@ -165,6 +165,24 @@ def test_a_new_session_replays_approved_masks_frame_major(world):
     assert stub.mask_calls == [(0, 1), (3, 1), (3, 2)]  # (frame, object) order, as masks
 
 
+
+def test_a_new_session_never_conditions_on_a_cleared_seed(world):
+    """A 'not on this frame' seed (a SAM 3 lone negative, its mask empty) stays
+    out of the interactive SAM 2 session; the object's other seeds still load."""
+    from tracks.seeds import cleared
+
+    make, stub, path = world
+    a = make()
+    sid = start(a, path)
+    click(a, sid, 1, 0, [[0.5, 0.5]], [1])
+    click(a, sid, 1, 3, [[0.5, 0.5]], [0], engine="sam3")
+    assert cleared(a.tracks.seeds.seeds(a.session_states[sid]["video"], 1)[3])
+    stub.mask_calls.clear()
+    stub.point_calls.clear()
+    start(make(), path)  # a restart
+    assert stub.mask_calls == [(0, 1)]
+    assert stub.point_calls == []
+
 def test_a_correction_on_a_tracked_frame_refines_the_cached_mask(world):
     make, _, path = world
     a = make()

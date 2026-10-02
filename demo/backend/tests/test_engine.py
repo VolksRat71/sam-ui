@@ -136,6 +136,21 @@ def test_a_cleared_seed_does_not_decide_the_pass_an_object_runs_in():
     assert not dict(out[4:])[0][2].any()  # object 2's cleared frame 0 is blank
 
 
+
+def test_a_cleared_frame_blanks_only_its_own_object():
+    p = _StubPredictor(n=4)
+    frames = dict(Sam2Engine(p, model="stub").track("v.mp4", {1: {0: _POS, 2: _CLEARED}, 2: {0: _POS}}))
+    assert not frames[2][1].any() and frames[2][2].all()
+
+
+def test_a_legacy_anchor_trimmed_seed_still_reaches_the_predictor():
+    """No positive but a non-empty approved mask: a real seed, not a cleared one."""
+    p = _StubPredictor(n=4)
+    trimmed = {"points": [[0.5, 0.5]], "labels": [0], "mask": rle.encode(_ONES)}
+    frames = dict(Sam2Engine(p, model="stub").track("v.mp4", {1: {0: _POS, 2: trimmed}}))
+    assert (1, 2, "mask", 4) in p.added
+    assert frames[2][1].all()
+
 def _synthetic_video(path):
     """Two squares moving across a noisy background: no footage involved."""
     import av
