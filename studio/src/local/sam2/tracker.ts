@@ -110,6 +110,20 @@ export function isClearedSeed(seed: TrackSeed): boolean {
 }
 
 /**
+ * A seed that asserts the object on its frame ("confirmed present"): its
+ * clicks include a positive, or it is a text seed (no clicks, a non-empty
+ * mask). A cleared seed never is, nor is an anchor-trimmed one. The audit
+ * queue takes such a frame inside a candidate as confirmed (state/audit.ts
+ * signals; the backend's tracks/seeds.py confirmed()).
+ */
+export function isConfirmedSeed(seed: TrackSeed): boolean {
+  if (seed.points.length > 0) {
+    return seed.points.some(p => p[2] === 1);
+  }
+  return seed.mask != null && rleArea(seed.mask) > 0;
+}
+
+/**
  * An object's seeds as the tracker uses them: the conditioning ones, and the
  * cleared frames, tracked through like any other frame with their output
  * blanked (the backend's strip_cleared).

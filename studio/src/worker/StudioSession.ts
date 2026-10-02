@@ -56,7 +56,7 @@ import type {Layout} from '~/state/layout';
 import {layoutFromResponse} from '~/state/layoutSync';
 import type {ExportedObject, ExportGroup, ExportKind} from '~/state/maskExport';
 import {buildExport} from './maskExports';
-import {isClearedSeed, type TrackObject} from '~/local/sam2/tracker';
+import {isClearedSeed, isConfirmedSeed, type TrackObject} from '~/local/sam2/tracker';
 import {BROWSER_ENGINE, engineLabel} from '~/state/engines';
 import {maskSegments} from '~/state/segments';
 import {refusedAsAbsent} from '~/state/corrections';
@@ -1804,9 +1804,10 @@ export default class StudioSession {
       const seeds = this._seedPoints.get(id) ?? new Map<number, NormPoint[]>();
       const approved = this._seedMasks.get(id);
       // "not on this frame" seeds, as the tracker decides them: never a disappearance
-      const cleared = [...seeds]
-        .filter(([frame, points]) => isClearedSeed({frame, points, mask: (approved?.get(frame)?.data as RLEObject | undefined) ?? null}))
-        .map(([frame]) => frame);
+      const seedOf = (frame: number, points: NormPoint[]) => ({frame, points, mask: (approved?.get(frame)?.data as RLEObject | undefined) ?? null});
+      const cleared = [...seeds].filter(([frame, points]) => isClearedSeed(seedOf(frame, points))).map(([frame]) => frame);
+      // a positive or text seed inside a candidate: that frame is confirmed present
+      const confirmed = [...seeds].filter(([frame, points]) => isConfirmedSeed(seedOf(frame, points))).map(([frame]) => frame);
       const {state} = localTrackEntry(track, {seedsKey: seedsKey(seeds, ranges), variant: this._local.variant, running: held.has(id)});
       objects.push({
         id,
@@ -1817,6 +1818,7 @@ export default class StudioSession {
         candidates: candidates[id] ?? [],
         seeds: [...seeds.keys()],
         cleared,
+        confirmed,
         flags: flags[id] ?? [],
       });
     }

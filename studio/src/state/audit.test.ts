@@ -331,6 +331,7 @@ describe('parity with the backend (tracks/audit.py wrote audit.parity.json)', ()
       flags: i.flags,
       seeds: i.seeds,
       cleared: i.cleared,
+      confirmed: i.confirmed,
     });
     expect(locations(reasons, 40, i.absent)).toEqual(parity.expected.locations);
   });
@@ -454,7 +455,6 @@ describe('with the correction semantics: a cleared frame is no disappearance, a 
   });
 });
 
-
 describe('the stop before a gap that runs into a range or a cleared frame (case b)', () => {
   it('is still a stop when empty frames run into an absent range', () => {
     const m = moving();
@@ -466,5 +466,39 @@ describe('the stop before a gap that runs into a range or a cleared frame (case 
     const m = moving();
     for (let f = 10; f < 13; f++) m[f] = null; // the track stops after 9, 10-11 are empty, 12 is cleared
     expect(kinds(signals(statsOf(m), 30, {seeds: [0, 12], cleared: [12]}), 9)).toEqual(['stop']);
+  });
+});
+
+describe('a positive inside a candidate confirms that frame present (Nate, 2026-10-02)', () => {
+  const cand = [{start: 10, end: 14, state: 'candidate', source: 'text:dog@sam3'}] as NonNullable<Parameters<typeof signals>[2]>['candidates'];
+
+  it('takes that frame out of the queue, and the frame next to it stays', () => {
+    const got = signals(statsOf(moving()), 30, {candidates: cand, seeds: [10], confirmed: [10]});
+    expect(got.has(10)).toBe(false);
+    expect(kinds(got, 11)).toEqual(['candidate']);
+    expect(got.get(11)![0].detail).toBe('an unconfirmed candidate range from text:dog@sam3 resumes here (frames 11-15; 1 frame confirmed present before it)');
+  });
+
+  it('confirms only its own frame, wherever it is inside', () => {
+    const got = signals(statsOf(moving()), 30, {candidates: cand, seeds: [12], confirmed: [12]});
+    expect([...got.keys()]).toEqual([10]);
+    expect(got.get(10)![0].detail).toContain('starts here (frames 11-15)');
+    const both = signals(statsOf(moving()), 30, {candidates: cand, seeds: [10, 11], confirmed: [10, 11]});
+    expect([...both.keys()]).toEqual([12]);
+    expect(both.get(12)![0].detail).toContain('2 frames confirmed present');
+    const every = [10, 11, 12, 13, 14];
+    expect(signals(statsOf(moving()), 30, {candidates: cand, seeds: every, confirmed: every}).size).toBe(0);
+  });
+
+  it('does not confirm on a cleared seed', () => {
+    const got = signals(statsOf(moving()), 30, {candidates: cand, seeds: [0, 10], cleared: [10]});
+    expect(kinds(got, 10)).toEqual(['candidate']);
+    expect(got.get(10)![0].detail).toContain('starts here');
+  });
+
+  it('confirms on a text seed (no clicks, a mask)', () => {
+    const got = signals(statsOf(moving()), 30, {candidates: cand, seeds: [], confirmed: [10]});
+    expect(got.has(10)).toBe(false);
+    expect(kinds(got, 11)).toEqual(['candidate']);
   });
 });

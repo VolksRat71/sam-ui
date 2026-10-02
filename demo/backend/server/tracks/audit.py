@@ -26,9 +26,17 @@ code for the browser engine, and the two must agree.
      components the number of pieces changes;
      retrack    a bounded re-track (#19) starts or stops here (its seams),
                 or, weaker (RETRACK_INSIDE), made this frame;
-     candidate  an unconfirmed candidate range (draft 5) starts here.
+     candidate  an unconfirmed candidate range (draft 5) starts here, or
+                resumes here after frames confirmed present.
    Frames inside an absent range raise nothing, and nothing is compared
    across one. On a seed frame only a flag counts: the user drew that mask.
+   A seed that asserts the object (a positive click, or a text seed:
+   tracks/seeds.py confirmed()) confirms its frame present, so inside a
+   candidate that frame is out of the queue and the candidate's review item
+   sits on its first frame still unconfirmed. Only the clicked frame is
+   confirmed, and nothing is stored: the queue derives it from the seeds.
+   A cleared seed confirms nothing, so a candidate stays a review item on
+   one (the one reason a seed frame keeps that it did not raise itself).
    A cleared seed ("not on this frame": negatives only, an empty mask) is
    no disappearance: its frame is passed over, so the frames either side
    of it are compared with each other (SAM 2 blanks that frame by design),
@@ -222,14 +230,15 @@ def signals(stats: Dict[int, Stats], n_frames: int, *, absent: Iterable[Dict] = 
             disagreement: Optional[Dict[int, float]] = None, threshold: float = DISAGREE_IOU,
             pair: Tuple[str, str] = ("the engines", ""), bounded: Iterable[Sequence[int]] = (),
             flags: Iterable[int] = (), seeds: Iterable[int] = (),
-            cleared: Iterable[int] = ()) -> Dict[int, List[Reason]]:
+            cleared: Iterable[int] = (), confirmed: Iterable[int] = ()) -> Dict[int, List[Reason]]:
     """{frame: [reason]} for the frames worth a look (see the module doc).
     `stats` is frame_stats() per frame; `absent` the object's absent ranges;
     `candidates` its candidate ranges as the timeline shows them;
     `disagreement` {frame: IoU} against another engine (`pair` names the
     two); `bounded` the [first, last] stretches bounded passes made; `flags`
     the user's flagged frames; `seeds` its frames with clicks; `cleared`
-    those whose seed is cleared (tracks/seeds.py cleared())."""
+    those whose seed is cleared (tracks/seeds.py cleared()); `confirmed`
+    those whose seed confirms the object present (tracks/seeds.py confirmed())."""
     absent = [r for r in rng.normalize(absent) if r["state"] == rng.ABSENT]
     out: Dict[int, List[Reason]] = defaultdict(list)
 
@@ -319,16 +328,23 @@ def signals(stats: Dict[int, Stats], n_frames: int, *, absent: Iterable[Dict] = 
             else:
                 out[f].append(_reason("retrack", f, RETRACK_INSIDE, "made by a re-track near a correction"))
 
-    for c in candidates:
-        if c.get("state") == rng.CANDIDATE and 0 <= c["start"] < n_frames and not gone(c["start"]):
-            score = f", score {fmt2(c['score'])}" if c.get("score") is not None else ""
-            out[c["start"]].append(_reason("candidate", c["start"], 1.0,
-                                           f"an unconfirmed candidate range from {c.get('source')}{score} starts here "
-                                           f"(frames {c['start'] + 1}-{c['end'] + 1})"))
-
     seed_frames = set(int(f) for f in seeds) | blank
     for f in seed_frames:  # the user drew that mask: only their own flag still counts
         out.pop(f, None)
+
+    sure = set(int(f) for f in confirmed)
+    for c in candidates:  # added after the seed frames: only a confirming seed takes a frame out
+        if c.get("state") != rng.CANDIDATE:
+            continue
+        f = next((g for g in range(c["start"], c["end"] + 1) if g not in sure), None)  # first unconfirmed
+        if f is not None and 0 <= f < n_frames and not gone(f):
+            score = f", score {fmt2(c['score'])}" if c.get("score") is not None else ""
+            k = f - c["start"]
+            where = (f"starts here (frames {c['start'] + 1}-{c['end'] + 1})" if k == 0 else
+                     f"resumes here (frames {c['start'] + 1}-{c['end'] + 1}; {k} frame{'s' if k > 1 else ''} "
+                     f"confirmed present before it)")
+            out[f].append(_reason("candidate", f, 1.0, f"an unconfirmed candidate range from {c.get('source')}{score} "
+                                                       f"{where}"))
     for f in sorted(set(int(f) for f in flags)):
         if 0 <= f < n_frames and not gone(f):  # a flag left inside a range marked absent since
             out[f].append(_reason("flag", f, 1.0, "flagged for a correction"))

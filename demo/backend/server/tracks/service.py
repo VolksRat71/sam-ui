@@ -55,7 +55,7 @@ from tracks.engine import WHOLE, Engine, Windows
 from tracks.jobs import TRACKING, JobRegistry
 from tracks.layout import Layout, LayoutStore
 from tracks.ranges import ABSENT, CANDIDATE, Window, absent_at, seeded_windows, window_frames
-from tracks.seeds import Seeds, SeedStore, cleared, seeds_hash, video_key, window_key
+from tracks.seeds import Seeds, SeedStore, cleared, confirmed, seeds_hash, video_key, window_key
 from tracks.store import STALE, TRACKED, TrackStore
 from tracks import versions as ver
 from tracks.versions import VersionStore
@@ -884,7 +884,9 @@ class TrackService:
                                     flags=flags.get(o, []),
                                     seeds=[f for f, v in info["seeds"].items() if v.get("points")],
                                     # "not on this frame": never a disappearance
-                                    cleared=[f for f, v in info["seeds"].items() if cleared(v)])
+                                    cleared=[f for f, v in info["seeds"].items() if cleared(v)],
+                                    # a positive or text seed inside a candidate: that frame is confirmed present
+                                    confirmed=[f for f, v in info["seeds"].items() if confirmed(v)])
             locs = audit.locations(reasons, n, absent)
             marks = self._valid_marks(video, o, name, meta, masks)
             for loc in locs:

@@ -83,3 +83,52 @@ describe('StudioSession review queue in the browser', () => {
     expect(q.queue[0].reasons.map(r => r.kind).sort()).toEqual(['reappear', 'stop']);
   });
 });
+
+describe('StudioSession review queue: a positive inside a candidate confirms that frame present', () => {
+  /** A 30-frame browser track of a steady square, a candidate over 10-20, and these clicks (and approved mask) on 10. */
+  async function candidateQueue(seed10: Array<[number, number, 0 | 1]>, approved10: 'none' | 'empty' | 'mask' = 'none') {
+    const {DataArray, encode} = await import('@/jscocotools/mask');
+    const {seedsKey} = await import('~/local/localTracks');
+    const {BROWSER_ENGINE} = await import('~/state/engines');
+    const h = 48;
+    const w = 64;
+    const enc = (x: number | null) => {
+      const data = new Uint8Array(h * w);
+      if (x != null) {
+        for (let xx = x; xx < x + 8; xx++) for (let y = 10; y < 18; y++) data[xx * h + y] = 1;
+      }
+      return encode(new DataArray(data, [h, w, 1]))[0];
+    };
+    const masks = new Map(Array.from({length: 30}, (_, f) => [f, enc(2 + f)] as const));
+    const seeds = new Map<number, Array<[number, number, 0 | 1]>>([
+      [0, [[0.5, 0.5, 1]]],
+      [10, seed10],
+    ]);
+    const approved = approved10 === 'none' ? new Map() : new Map([[10, {data: enc(approved10 === 'mask' ? 12 : null)}]]);
+    const s = new StudioSession({_decodedVideo: {numFrames: 30}} as never, {} as never, () => {});
+    const open = s as unknown as Record<string, unknown>;
+    open._storeKey = 'clip';
+    open._tracklets = new Map([[1, {id: 1}]]);
+    open._seedPoints = new Map([[1, seeds]]);
+    open._seedMasks = new Map([[1, approved]]);
+    open._ranges = new Map();
+    open._local = {heldIds: () => new Set(), variant: 'tiny', store: {get: async () => ({masks, seedsKey: seedsKey(seeds, []), variant: 'tiny', nFrames: 30})}};
+    const candidates = {1: [{start: 10, end: 20, state: 'candidate', source: 'text:dog@sam3', score: 0.6}]};
+    const q = await s.reviewQueue(BROWSER_ENGINE, {}, candidates as never);
+    return q.queue.flatMap(e => e.reasons.filter(r => r.kind === 'candidate').map(r => r.frame));
+  }
+
+  it('takes the clicked frame out, and the frame next to it stays a candidate', async () => {
+    expect(await candidateQueue([[0.3, 0.3, 1]])).toEqual([11]);
+    expect(await candidateQueue([[0.3, 0.3, 1], [0.6, 0.6, 0]], 'mask')).toEqual([11]);
+  });
+
+  it('does not confirm on a cleared seed (negatives only, no mask or an empty one)', async () => {
+    expect(await candidateQueue([[0.3, 0.3, 0]])).toEqual([10]);
+    expect(await candidateQueue([[0.3, 0.3, 0]], 'empty')).toEqual([10]);
+  });
+
+  it('confirms on a text seed (no clicks, a mask)', async () => {
+    expect(await candidateQueue([], 'mask')).toEqual([11]);
+  });
+});

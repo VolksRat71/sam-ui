@@ -10,8 +10,9 @@
 //
 // Each frame's area, box, centroid and number of pieces are read from the RLE
 // runs; signals turn them into reasons (a jump, a change of area or of pieces,
-// a start, stop or reappearance, an engine disagreement, a candidate's start,
-// a bounded re-track's seams, a review flag); locations() scores frames by the
+// a start, stop or reappearance, an engine disagreement, a candidate's first
+// frame not confirmed present by a positive or text seed, a bounded
+// re-track's seams, a review flag); locations() scores frames by the
 // WEIGHTS and merges neighbours by non-maximum suppression into a capped queue.
 //
 // A "looks right" mark is kept per object, outside the seeds key, and holds
@@ -218,6 +219,8 @@ export type SignalInputs = {
   seeds?: ReadonlyArray<number>;
   /** Seed frames that are cleared ("not on this frame": no positive, no mask or an empty one). */
   cleared?: ReadonlyArray<number>;
+  /** Seed frames that confirm the object present (a positive, or a text seed): inside a candidate, out of the queue. */
+  confirmed?: ReadonlyArray<number>;
 };
 
 /** The frames worth a look, each with its reasons (tracks/audit.py signals). */
@@ -324,15 +327,33 @@ export function signals(stats: ReadonlyMap<number, FrameStats>, nFrames: number,
     }
   }
 
-  for (const c of inputs.candidates ?? []) {
-    if (c.state === CANDIDATE && c.start >= 0 && c.start < nFrames && !gone(c.start)) {
-      const score = c.score != null ? `, score ${fmt2(c.score)}` : '';
-      add(reason('candidate', c.start, 1, `an unconfirmed candidate range from ${c.source}${score} starts here (frames ${c.start + 1}-${c.end + 1})`));
-    }
-  }
-
   for (const f of new Set([...(inputs.seeds ?? []), ...blank])) {
     out.delete(f); // the user drew that mask: only their own flag still counts
+  }
+
+  // a positive or text seed confirms its own frame present: a candidate's item sits on its first frame
+  // still unconfirmed (added after the seed frames, so a cleared seed confirms nothing)
+  const sure = new Set(inputs.confirmed ?? []);
+  for (const c of inputs.candidates ?? []) {
+    if (c.state !== CANDIDATE) {
+      continue;
+    }
+    let f: number | null = null;
+    for (let g = c.start; g <= c.end; g++) {
+      if (!sure.has(g)) {
+        f = g;
+        break;
+      }
+    }
+    if (f != null && f >= 0 && f < nFrames && !gone(f)) {
+      const score = c.score != null ? `, score ${fmt2(c.score)}` : '';
+      const k = f - c.start;
+      const where =
+        k === 0
+          ? `starts here (frames ${c.start + 1}-${c.end + 1})`
+          : `resumes here (frames ${c.start + 1}-${c.end + 1}; ${k} frame${k > 1 ? 's' : ''} confirmed present before it)`;
+      add(reason('candidate', f, 1, `an unconfirmed candidate range from ${c.source}${score} ${where}`));
+    }
   }
   for (const f of [...new Set(inputs.flags ?? [])].sort((x, y) => x - y)) {
     if (f >= 0 && f < nFrames && !gone(f)) {
@@ -562,6 +583,8 @@ export type QueueObject = {
   seeds: ReadonlyArray<number>;
   /** Seed frames that are cleared ("not on this frame"), passed over (signals). */
   cleared?: ReadonlyArray<number>;
+  /** Seed frames that confirm the object present (a positive, or a text seed): confirmed inside a candidate (signals). */
+  confirmed?: ReadonlyArray<number>;
   flags: ReadonlyArray<number>;
 };
 
@@ -596,7 +619,14 @@ export function buildQueue(objects: ReadonlyArray<QueueObject>, nFrames: number,
     for (const [f, m] of o.masks) {
       stats.set(f, frameStats(m));
     }
-    const reasons = signals(stats, nFrames, {absent: o.ranges, candidates: o.candidates, seeds: o.seeds, cleared: o.cleared, flags: o.flags});
+    const reasons = signals(stats, nFrames, {
+      absent: o.ranges,
+      candidates: o.candidates,
+      seeds: o.seeds,
+      cleared: o.cleared,
+      confirmed: o.confirmed,
+      flags: o.flags,
+    });
     const valid = o.marks.filter(m => markValid(m, engine, reviewNow(o.masks, m.frame, m.span ?? [m.frame, m.frame], nFrames)));
     const locs = locations(reasons, nFrames, o.ranges).map(l => {
       const hit = [...valid].reverse().find(m => reviews(m, l));

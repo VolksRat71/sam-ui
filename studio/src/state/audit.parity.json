@@ -315,11 +315,16 @@
   "seeds": [
    0,
    12,
-   14
+   14,
+   20
   ],
   "cleared": [
    12,
    14
+  ],
+  "confirmed": [
+   0,
+   20
   ]
  },
  "expected": {
@@ -900,9 +905,9 @@
      },
      {
       "kind": "candidate",
-      "frame": 20,
+      "frame": 21,
       "strength": 1.0,
-      "detail": "an unconfirmed candidate range from text:dog@sam3, score 0.70 starts here (frames 21-25)"
+      "detail": "an unconfirmed candidate range from text:dog@sam3, score 0.70 resumes here (frames 21-25; 1 frame confirmed present before it)"
      },
      {
       "kind": "retrack",

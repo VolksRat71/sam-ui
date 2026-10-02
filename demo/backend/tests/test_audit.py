@@ -460,8 +460,9 @@ def parity_case():
         masks[f] = enc(m)
     inputs = {"absent": [{"start": 33, "end": 35, "state": "absent"}],
               "candidates": [{"start": 20, "end": 24, "state": "candidate", "source": "text:dog@sam3", "score": 0.7}],
-              "disagreement": {"5": 0.4, "6": 0.9, "36": 0.125}, "bounded": [[27, 31]], "flags": [2], "seeds": [0, 12, 14],
-              "cleared": [12, 14]}  # 12 holds a mask from before the skip; 14 starts the vanishing
+              "disagreement": {"5": 0.4, "6": 0.9, "36": 0.125}, "bounded": [[27, 31]], "flags": [2], "seeds": [0, 12, 14, 20],
+              "cleared": [12, 14],  # 12 holds a mask from before the skip; 14 starts the vanishing
+              "confirmed": [0, 20]}  # a positive on the candidate's first frame: it resumes at 21
     return masks, inputs
 
 
@@ -469,7 +470,8 @@ def parity_output(masks, inputs):
     stats = {f: frame_stats(r) for f, r in masks.items()}
     reasons = signals(stats, 40, absent=inputs["absent"], candidates=inputs["candidates"],
                       disagreement={int(f): v for f, v in inputs["disagreement"].items()}, bounded=inputs["bounded"],
-                      flags=inputs["flags"], seeds=inputs["seeds"], cleared=inputs["cleared"])
+                      flags=inputs["flags"], seeds=inputs["seeds"], cleared=inputs["cleared"],
+                      confirmed=inputs["confirmed"])
     return {"stats": {str(f): s for f, s in stats.items()},
             "locations": locations(reasons, 40, inputs["absent"])}
 
@@ -665,3 +667,77 @@ def test_a_stop_followed_by_empty_frames_then_a_cleared_frame_is_still_a_stop():
     got = signals(stats_of(masks), 30, seeds=[0, 12], cleared=[12])
     assert kinds(got, 9) == ["stop"]
 
+
+# -- a positive inside a candidate confirms that frame present (Nate, 2026-10-02) --------
+
+from tracks.seeds import confirmed  # noqa: E402
+
+CAND = {"start": 10, "end": 14, "state": "candidate", "source": "text:dog@sam3"}
+
+
+def test_a_seed_confirms_present_with_a_positive_or_a_text_mask_never_when_cleared():
+    ones, zeros = enc(np.ones((H, W), bool)), empty()
+    assert confirmed({"points": [[0.5, 0.5]], "labels": [1]})
+    assert confirmed({"points": [[0.5, 0.5], [0.2, 0.2]], "labels": [0, 1], "mask": zeros})
+    assert confirmed({"points": [], "labels": [], "mask": ones})  # a text seed asserts the object
+    assert not confirmed({"points": [[0.5, 0.5]], "labels": [0], "mask": zeros})  # cleared
+    assert not confirmed({"points": [[0.5, 0.5]], "labels": [0]})  # cleared, no mask
+    assert not confirmed({"points": [[0.5, 0.5]], "labels": [0], "mask": ones})  # anchor-trimmed: no positive
+    assert not confirmed({"points": [], "labels": [], "mask": zeros})
+    assert not confirmed({"points": [], "labels": []})
+
+
+def test_a_positive_inside_a_candidate_takes_that_frame_out_and_the_next_frame_stays():
+    got = signals(stats_of(moving()), 30, candidates=[CAND], seeds=[10], confirmed=[10])
+    assert 10 not in got  # confirmed present: out of the queue
+    assert kinds(got, 11) == ["candidate"]  # the frame next to it is still an unconfirmed candidate
+    assert got[11][0]["detail"] == ("an unconfirmed candidate range from text:dog@sam3 resumes here "
+                                    "(frames 11-15; 1 frame confirmed present before it)")
+
+
+def test_a_positive_anywhere_inside_a_candidate_confirms_only_its_own_frame():
+    got = signals(stats_of(moving()), 30, candidates=[CAND], seeds=[12], confirmed=[12])
+    assert set(got) == {10} and kinds(got, 10) == ["candidate"]  # the rest is still for review
+    assert "starts here (frames 11-15)" in got[10][0]["detail"]
+    both = signals(stats_of(moving()), 30, candidates=[CAND], seeds=[10, 11], confirmed=[10, 11])
+    assert set(both) == {12} and "2 frames confirmed present" in both[12][0]["detail"]
+    every = list(range(10, 15))
+    assert signals(stats_of(moving()), 30, candidates=[CAND], seeds=every, confirmed=every) == {}
+
+
+def test_a_cleared_seed_inside_a_candidate_does_not_confirm_it():
+    got = signals(stats_of(moving()), 30, candidates=[CAND], seeds=[0, 10], cleared=[10])
+    assert kinds(got, 10) == ["candidate"]  # "not on this frame" is no confirmation: the candidate stays
+    assert "starts here" in got[10][0]["detail"]
+
+
+def test_a_text_seed_inside_a_candidate_confirms_that_frame():
+    seeds = {10: {"points": [], "labels": [], "mask": enc(sq(12, 10))}}
+    got = signals(stats_of(moving()), 30, candidates=[CAND], seeds=[],
+                  confirmed=[f for f, v in seeds.items() if confirmed(v)])
+    assert 10 not in got and kinds(got, 11) == ["candidate"]
+
+
+def candidate_frames(q, obj=1):
+    return [r["frame"] for loc in q["objects"][str(obj)]["locations"] for r in loc["reasons"]
+            if r["kind"] == "candidate"]
+
+
+def test_a_positive_inside_a_candidate_confirms_that_frame_in_the_queue(hs):
+    tracked(hs)
+    hs.service.set_range(hs.video, 1, 10, 20, CANDIDATE, source="text:dog@sam3", score=0.6)
+    assert candidate_frames(queue(hs)) == [10]
+    hs.click(1, frame=10)  # a positive on the candidate's first frame
+    assert candidate_frames(queue(hs)) == [11]  # that frame is confirmed, the one next to it stays
+    hs.click(1, frame=15)  # and one further in: confirmed too, the item stays where it was
+    assert candidate_frames(queue(hs)) == [11]
+    timeline = hs.service.object_info(hs.video, 1)["ranges"]
+    assert [(r["start"], r["end"], r["state"]) for r in timeline] == [(10, 20, CANDIDATE)]  # derived, never painted
+
+
+def test_a_cleared_seed_inside_a_candidate_does_not_confirm_it_in_the_queue(hs):
+    tracked(hs)
+    hs.service.set_range(hs.video, 1, 10, 20, CANDIDATE, source="text:dog@sam3", score=0.6)
+    lone_negative(hs, 10)
+    assert cleared(hs.service.seeds.seeds(hs.video, 1)[10])
+    assert candidate_frames(queue(hs)) == [10]
