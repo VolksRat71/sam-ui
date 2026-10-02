@@ -7,13 +7,23 @@
 //   - vectors: one Vector JSON per object (state/contours.ts);
 //   - folder:  the rotoscoping working folder (tracks/export.py's layout),
 //              for when the backend cannot write it (browser tracks).
+// Frames inside an object's absent ranges are empty in all three.
 import {BufferTarget, CanvasSource, Mp4OutputFormat, Output, QUALITY_HIGH} from 'mediabunny';
 import type {RLEObject} from '@/jscocotools/mask';
 import {grayPng} from '~/lib/png';
 import {zip, type ZipEntry} from '~/lib/zip';
 import {rleToMask} from '~/local/sam2/masks';
 import {vectorJson} from '~/state/contours';
-import {type ExportedObject, type ExportKind, matteName, type Provenance, readme, rotoDecisions, type Seeds} from '~/state/maskExport';
+import {
+  type ExportedObject,
+  type ExportKind,
+  matteName,
+  type Provenance,
+  readme,
+  rotoDecisions,
+  type Seeds,
+  withoutAbsent,
+} from '~/state/maskExport';
 
 export type MaskSource = {
   /** Object `id`'s mask on frame i, or null where its track has none. */
@@ -73,6 +83,16 @@ async function maskVideo(p: Provenance, id: number, src: MaskSource, onFrame: ()
   return new Uint8Array(buffer);
 }
 
+/**
+ * `src` with every absent frame empty. The original maskAt is read once, up
+ * front: a closure over `src` itself would call the wrapper again once `src`
+ * is rebound, recursing until the stack overflows.
+ */
+export function sourceWithoutAbsent(src: MaskSource, objects: ReadonlyArray<ExportedObject>): MaskSource {
+  const inner = src.maskAt.bind(src);
+  return {...src, maskAt: withoutAbsent(inner, objects)};
+}
+
 /** Build one export as a zip. `onProgress` gets 0-1. */
 export async function buildExport(
   kind: ExportKind,
@@ -81,6 +101,8 @@ export async function buildExport(
   src: MaskSource,
   onProgress: (done: number) => void,
 ): Promise<Uint8Array> {
+  // absent frames are empty in every kind of export
+  src = sourceWithoutAbsent(src, objects);
   const entries: ZipEntry[] = [{name: 'README.txt', data: readme(kind, p, objects)}];
   const total = Math.max(1, objects.length * p.frames);
   let done = 0;

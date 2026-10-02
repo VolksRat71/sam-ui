@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # Modified by sam-ui: ObjectTrack, EngineTrack, SeedFrame, objectTracks, clearTrack, StartSession.objects,
-# deleteVideo (closeIdleSessions, sessionsClosed).
+# deleteVideo (closeIdleSessions, sessionsClosed), ObjectRange, setObjectRange.
 
 input AddPointsInput {
   sessionId: String!
@@ -67,6 +67,8 @@ type Mutation {
   ): CancelPropagateInVideo!
   # sam-ui: drop one object's cached track; its seeds stay
   clearTrack(input: ClearTrackInput!): ObjectTrack!
+  # sam-ui: mark frames of an object absent, or clear them (state null)
+  setObjectRange(input: SetObjectRangeInput!): ObjectTrack!
   # sam-ui: delete an uploaded video (never a gallery one)
   deleteVideo(input: DeleteVideoInput!): DeleteVideo!
 }
@@ -94,6 +96,24 @@ input ClearTrackInput {
   objectId: Int!
   # one engine's track; every engine's when null
   engine: String
+}
+
+# sam-ui: set frames start-end (inclusive) of an object to a range state
+input SetObjectRangeInput {
+  sessionId: String!
+  objectId: Int!
+  start: Int!
+  end: Int!
+  # "absent"; null clears whatever range covers the frames
+  state: String
+}
+
+# sam-ui: a span of an object's frames, inclusive. "absent" is the only state:
+# the object is not in the shot, so the frames are empty and never tracked.
+type ObjectRange {
+  start: Int!
+  end: Int!
+  state: String!
 }
 
 type EngineTrack {
@@ -124,6 +144,8 @@ type ObjectTrack {
   seeds: [SeedFrame!]!
   # every engine's track (the top-level fields are the default engine's)
   tracks: [EngineTrack!]!
+  # absent ranges, sorted
+  ranges: [ObjectRange!]!
 }
 
 input PingInput {

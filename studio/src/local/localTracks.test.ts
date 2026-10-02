@@ -33,6 +33,15 @@ describe('seedsKey', () => {
     expect(seedsKey(a)).not.toBe(seedsKey(new Map([[4, [[0.5, 0.5, 1] as NormPoint]]])));
   });
 
+  it('keeps its old value without ranges, and changes with them', () => {
+    const a = new Map<number, NormPoint[]>([[4, [[0.5, 0.5, 1]]]]);
+    expect(seedsKey(a)).toBe('[[4,[[0.5,0.5,1]]]]'); // the key browser tracks were stored under
+    expect(seedsKey(a, [])).toBe(seedsKey(a));
+    const marked = seedsKey(a, [{start: 6, end: 9, state: 'absent'}]);
+    expect(marked).not.toBe(seedsKey(a));
+    expect(marked).not.toBe(seedsKey(a, [{start: 6, end: 10, state: 'absent'}]));
+  });
+
   it('changes when a negatives-only frame is added, so the track goes stale', () => {
     // the tracker never conditions on such a frame, but blanks it: a new track is due
     const before = new Map<number, NormPoint[]>([[0, [[0.5, 0.5, 1]]]]);

@@ -3,6 +3,7 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 # Modified by sam-ui: types for per-object tracks (ObjectTrack, SeedFrame, clearTrack).
+# Modified by sam-ui: frame ranges on an object (ObjectRange, setObjectRange).
 
 from dataclasses import dataclass
 from typing import Iterable, List, Optional
@@ -84,6 +85,17 @@ class SeedFrame:
 
 
 @strawberry.type
+class ObjectRange:
+    """sam-ui: a span of an object's frames, inclusive, in a range state.
+    "absent" is the only state: the object is not in the shot there, so those
+    frames are empty and never tracked (tracks/ranges.py)."""
+
+    start: int
+    end: int
+    state: str
+
+
+@strawberry.type
 class EngineTrack:
     """sam-ui: one engine's cached track of an object."""
 
@@ -107,6 +119,7 @@ class ObjectTrack:
     n_frames: int
     seeds: List[SeedFrame]
     tracks: List[EngineTrack]
+    ranges: List[ObjectRange]
 
     @staticmethod
     def from_info(info: dict) -> "ObjectTrack":
@@ -138,6 +151,7 @@ class ObjectTrack:
                 )
                 for t in info.get("tracks", [])
             ],
+            ranges=[ObjectRange(start=r["start"], end=r["end"], state=r["state"]) for r in info.get("ranges", [])],
         )
 
 
@@ -162,6 +176,18 @@ class ClearTrackInput:
     session_id: str
     object_id: int
     engine: Optional[str] = None  # one engine's track; every engine's when null
+
+
+@strawberry.input
+class SetObjectRangeInput:
+    """sam-ui: set frames start-end (inclusive) of an object to `state`
+    ("absent"), or clear whatever range covers them (state null)."""
+
+    session_id: str
+    object_id: int
+    start: int
+    end: int
+    state: Optional[str] = None
 
 
 @strawberry.type

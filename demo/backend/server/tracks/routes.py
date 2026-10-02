@@ -95,7 +95,7 @@ def _run_job(ctx: TrackContext, job: Job) -> Iterator[bytes]:
     try:
         with ctx.autocast():
             it = service.track(ctx.video, ctx.path, job.objects, video_handle=ctx.video_handle, result=result,
-                               engine=job.engine)
+                               engine=job.engine, n_frames=_n_frames(ctx.video_handle))
             try:
                 while True:
                     if job.canceled:
@@ -160,7 +160,7 @@ def make_blueprint(resolve: Callable[[str], TrackContext], service: Optional[Tra
         with ctx.lock:  # a consistent read of the seeds and tracks
             ids = ctx.service.select(ctx.video, data.get("object_ids"), engine)
             n = _n_frames(ctx.video_handle)
-            n = n * ctx.service.passes(ctx.video, ids, engine) if n else n  # one count per frame per pass
+            n = ctx.service.job_frames(ctx.video, ids, n, engine) if n else n  # every frame part the job sends
         job = ctx.service.jobs.claim(ctx.session_id, ctx.video, ids, n, engine)
         r = _response(_run_job(ctx, job), job.objects, job)
         r.call_on_close(lambda: ctx.service.jobs.release(job))  # also if the stream never started

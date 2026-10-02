@@ -44,9 +44,13 @@ class _StubPredictor:
         if obj_id not in inference_state["obj_ids"]:
             inference_state["obj_ids"].append(obj_id)
 
-    def propagate_in_video(self, state, start_frame_idx, reverse=False):
+    def propagate_in_video(self, state, start_frame_idx, max_frame_num_to_track=None, reverse=False):
         import torch
-        frames = range(start_frame_idx, -1, -1) if reverse else range(start_frame_idx, self.n)
+        m = self.n if max_frame_num_to_track is None else max_frame_num_to_track  # SAM 2's bounds
+        if reverse:
+            frames = range(start_frame_idx, max(start_frame_idx - m, 0) - 1, -1) if start_frame_idx > 0 else []
+        else:
+            frames = range(start_frame_idx, min(start_frame_idx + m, self.n - 1) + 1)
         for f in frames:
             yield f, list(state["obj_ids"]), torch.ones(len(state["obj_ids"]), 1, 2, 2)
 
@@ -150,6 +154,38 @@ def test_a_legacy_anchor_trimmed_seed_still_reaches_the_predictor():
     frames = dict(Sam2Engine(p, model="stub").track("v.mp4", {1: {0: _POS, 2: trimmed}}))
     assert (1, 2, "mask", 4) in p.added
     assert frames[2][1].all()
+
+
+def test_inside_a_window_a_cleared_seed_is_stripped_and_blanked_in_both_directions():
+    """Absent ranges split the track into units; each unit strips its cleared
+    seeds and blanks their frames, forward and back from the unit's start."""
+    p = _StubPredictor(n=12)
+    e = Sam2Engine(p, model="stub")
+    seeds = {1: {1: _POS, 4: _CLEARED, 5: _POS, 7: _CLEARED, 10: _CLEARED}}
+    windows = {1: [(0, 1), (3, 8)]}  # 2 and 9-11 absent
+    assert e.passes(seeds, windows) == 2 and [u.start for u in e.plan(seeds, windows)] == [1, 5]
+    frames = {}
+    for f, m in e.track("v.mp4", seeds, windows=windows):
+        assert f not in frames
+        frames[f] = m[1]
+    assert [a[:2] for a in p.added] == [(1, 1), (1, 5)]  # no cleared frame reaches the predictor
+    assert sorted(frames) == [0, 1, 3, 4, 5, 6, 7, 8]
+    assert not frames[4].any() and not frames[7].any()  # behind the start (4) and ahead of it (7)
+    assert all(frames[f].all() for f in (0, 1, 3, 5, 6, 8))
+    assert p.reset == e.passes(seeds, windows)
+
+
+def test_a_window_whose_only_seed_is_cleared_makes_no_pass():
+    p = _StubPredictor(n=12)
+    e = Sam2Engine(p, model="stub")
+    seeds = {1: {2: _CLEARED, 9: _POS}, 2: {1: _POS}}
+    windows = {1: [(0, 4), (8, None)], 2: [(0, 4)]}
+    assert [(u.lo, sorted(u.objects)) for u in e.plan(seeds, windows)] == [(0, [2]), (8, [1])]
+    out = list(e.track("v.mp4", seeds, windows=windows))
+    assert all(1 not in m for f, m in out if f <= 4)  # object 1 has nothing in (0, 4)
+    assert sorted(f for f, m in out if 1 in m) == [8, 9, 10, 11]
+    assert p.reset == e.passes(seeds, windows) == 2
+    assert list(e.track("v.mp4", {1: {2: _CLEARED}}, windows={1: [(0, 4)]})) == []
 
 def _synthetic_video(path):
     """Two squares moving across a noisy background: no footage involved."""

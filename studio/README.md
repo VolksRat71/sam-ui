@@ -106,7 +106,16 @@ python3 -m http.server 7390 --bind 127.0.0.1 --directory /tmp/pages   # http://1
   yellow marker on the object's lane that seeks there when clicked; clicks on
   that frame clear it. After a correction the object's track is stale: studio
   keeps showing it, faded, until the re-track, so the other flagged frames can
-  be corrected against it. Objects are *Object N* until renamed:
+  be corrected against it.
+- **Absent ranges.** Drag across an object's lane to select frames, then
+  *Mark absent* in the transport when the object is not in the shot there. The
+  range shows as a hatched block on the lane; its frames are empty in the
+  preview and in every export, and tracking skips them. Each side of the gap is
+  tracked from its own clicks, and a side with none stays empty, with a "click
+  the object after the gap" hint on the lane. A click inside an absent range is
+  refused, with a note saying so: click the block to select it and *Unmark* it
+  (all of it, or a dragged part) first. Escape drops a selection.
+- **Names.** Objects are *Object N* until renamed:
   double-click the name (or the pencil) to rename it in place. Names are
   stored with the seeds (`POST /rename_object`) and never make a track stale;
   numbers are never reused after a delete.
@@ -173,8 +182,8 @@ python3 -m http.server 7390 --bind 127.0.0.1 --directory /tmp/pages   # http://1
   point markers are an SVG overlay in video coordinates, so they stay crisp
   and keep their size on screen at any zoom. At 200% and above the video
   shows real pixels.
-- **Keys**: Space plays and pauses, the arrow keys step one frame, and F flags
-  the frame for a correction.
+- **Keys**: Space plays and pauses, the arrow keys step one frame, F flags
+  the frame for a correction, and Escape drops a lane selection.
 
 ## Features
 
@@ -207,7 +216,7 @@ Compared with Meta's demo UI, which studio replaced:
 | Close the session on unload | missing: the backend expires idle sessions (30 min). A visible tab touches its session every 5 minutes to keep it |
 | Stats overlay (debug) | missing |
 
-Studio only: SAM 3 engine, the in-browser SAM 2.1 tiny engine, per-engine badges and disagreement flags, objects restored on reload (with their seed masks), track-state badges, Clear track,
+Studio only: SAM 3 engine, the in-browser SAM 2.1 tiny engine, per-engine badges and disagreement flags, objects restored on reload (with their seed masks), track-state badges, Clear track, absent ranges,
 concurrent jobs, jobs from other tabs shown, zoom and pan, export for
 rotoscoping, and keyboard shortcuts.
 

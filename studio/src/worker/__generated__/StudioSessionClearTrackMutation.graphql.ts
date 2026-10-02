@@ -1,5 +1,5 @@
 /**
- * @generated SignedSource<<9f16d8efd338f28885ed0c55f7fa12aa>>
+ * @generated SignedSource<<2bcc415674a9f905962c46dac2701bc0>>
  * @lightSyntaxTransform
  * @nogrep
  */
@@ -22,6 +22,11 @@ export type StudioSessionClearTrackMutation$data = {
     readonly frames: ReadonlyArray<number> | null | undefined;
     readonly nFrames: number;
     readonly objectId: number;
+    readonly ranges: ReadonlyArray<{
+      readonly end: number;
+      readonly start: number;
+      readonly state: string;
+    }>;
     readonly seeds: ReadonlyArray<{
       readonly frameIndex: number;
       readonly labels: ReadonlyArray<number>;
@@ -176,6 +181,32 @@ v4 = [
           (v3/*: any*/)
         ],
         "storageKey": null
+      },
+      {
+        "alias": null,
+        "args": null,
+        "concreteType": "ObjectRange",
+        "kind": "LinkedField",
+        "name": "ranges",
+        "plural": true,
+        "selections": [
+          {
+            "alias": null,
+            "args": null,
+            "kind": "ScalarField",
+            "name": "start",
+            "storageKey": null
+          },
+          {
+            "alias": null,
+            "args": null,
+            "kind": "ScalarField",
+            "name": "end",
+            "storageKey": null
+          },
+          (v1/*: any*/)
+        ],
+        "storageKey": null
       }
     ],
     "storageKey": null
@@ -199,16 +230,16 @@ return {
     "selections": (v4/*: any*/)
   },
   "params": {
-    "cacheID": "db50188053362b581385651c5cd6e256",
+    "cacheID": "056593f980907421310cb0d5191de77c",
     "id": null,
     "metadata": {},
     "name": "StudioSessionClearTrackMutation",
     "operationKind": "mutation",
-    "text": "mutation StudioSessionClearTrackMutation(\n  $input: ClearTrackInput!\n) {\n  clearTrack(input: $input) {\n    objectId\n    state\n    frames\n    nFrames\n    seeds {\n      frameIndex\n      points\n      labels\n      mask {\n        size\n        counts\n      }\n    }\n    tracks {\n      engine\n      state\n      frames\n      nFrames\n    }\n  }\n}\n"
+    "text": "mutation StudioSessionClearTrackMutation(\n  $input: ClearTrackInput!\n) {\n  clearTrack(input: $input) {\n    objectId\n    state\n    frames\n    nFrames\n    seeds {\n      frameIndex\n      points\n      labels\n      mask {\n        size\n        counts\n      }\n    }\n    tracks {\n      engine\n      state\n      frames\n      nFrames\n    }\n    ranges {\n      start\n      end\n      state\n    }\n  }\n}\n"
   }
 };
 })();
 
-(node as any).hash = "62e1b431a687f2d58c46580a9deabe65";
+(node as any).hash = "fc74475e356c66c583ea60999c141cc4";
 
 export default node;

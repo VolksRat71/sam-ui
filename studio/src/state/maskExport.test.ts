@@ -1,6 +1,6 @@
 // sam-ui (Apache-2.0). New file, not from SAM 2.
 import {describe, expect, it} from 'vitest';
-import {matteName, readme, rotoDecisions, type Provenance} from './maskExport';
+import {matteName, readme, rotoDecisions, withoutAbsent, type Provenance} from './maskExport';
 
 const prov: Provenance = {
   engine: 'browser-sam2',
@@ -41,5 +41,20 @@ describe('rotoDecisions', () => {
     expect(notes).toMatchObject({engine: 'browser-sam2', model: prov.model, n_frames: 24});
     expect(notes.products.car).toMatchObject({object_id: 2, engine: 'browser-sam2', state: 'tracked'});
     expect(matteName('car', 0)).toBe('data/mattes_tracked/car/00001.png');
+  });
+});
+
+describe('absent ranges in exports', () => {
+  const car = {objectId: 2, label: 'Red car', name: 'car', state: 'tracked', prompt: 'red car', color: '#ff0000', ranges: [{start: 3, end: 5, state: 'absent' as const}]};
+
+  it('empties the masks of absent frames, and only of that object', () => {
+    const maskAt = withoutAbsent((id: number, frame: number) => `${id}@${frame}`, [car, {objectId: 7}]);
+    expect([2, 3, 5, 6].map(f => maskAt(2, f))).toEqual(['2@2', null, null, '2@6']);
+    expect(maskAt(7, 4)).toBe('7@4');
+  });
+
+  it('leaves the clicks inside a range out of anchors.json', () => {
+    const files = rotoDecisions(prov, [car], () => new Map([[1, [[0.5, 0.5, 1]] as const], [4, [[0.25, 0.25, 1]] as const]]), () => 24);
+    expect(Object.keys(JSON.parse(files['anchors.json']).car.points)).toEqual(['2']);
   });
 });
