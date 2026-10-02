@@ -432,3 +432,58 @@ def test_real_sam2_corrections_cut_and_grow_the_tracked_mask(tmp_path):
             results.append(f"pos f{f}: area {red[f].sum()} -> {out.sum()}, red {r0} -> {r1}, orange {o0} -> {o1}")
             assert out.sum() > red[f].sum() and r1 > 0.9 * r0 and o1 > 2000
     print("\n" + "\n".join(results))
+
+
+def _sam3_ok() -> bool:
+    from tracks.sam3_engine import available
+
+    return available() is None
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("engine", ["sam2", "sam3"])
+@pytest.mark.skipif(not CKPT.exists() or os.environ.get("SAM_UI_SLOW") != "1",
+                    reason="set SAM_UI_SLOW=1 with the large checkpoint in checkpoints/")
+def test_real_engine_tracks_through_a_not_here_seed(tmp_path, engine):
+    """A lone-negative 'not on this frame' seed on frame 10 blanks frame 10 and
+    leaves its neighbours as they were. Conditioned on it, SAM 2 dropped the
+    bar on frames 9-19 (IoU 0.000); SAM 3 conditions on it safely (min 0.996)."""
+    from sam2.build_sam import build_sam2_video_predictor
+    from tracks.engine import Sam2Engine
+    from tracks.sam3_engine import Sam3Engine
+
+    if engine == "sam3" and not _sam3_ok():
+        pytest.skip("needs the SAM 3 weights")
+    h, w, clip = 240, 320, str(tmp_path / "bar.mp4")
+    _twotone(clip, n=30, h=h, w=w)
+    dev = "mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu")
+    if engine == "sam2":
+        eng = Sam2Engine(build_sam2_video_predictor("configs/sam2.1/sam2.1_hiera_l.yaml", str(CKPT), device=dev),
+                         "large")
+    else:
+        eng = Sam3Engine(device=dev)
+
+    y = 125 / h
+    red = lambda f: [(30 + 5 * f + 25) / w, y]
+    orange = lambda f: [(30 + 5 * f + 75) / w, y]
+    pos = lambda f: {"points": [red(f), orange(f)], "labels": [1, 1]}
+    empty = {"points": [orange(10), red(10)], "labels": [0, 0], "mask": rle.encode(np.zeros((h, w), bool))}
+    configs = {
+        "ref1": {0: pos(0)},
+        "emp1": {0: pos(0), 10: empty},
+        "ref2": {0: pos(0), 20: pos(20)},
+        "emp2": {0: pos(0), 10: empty, 20: pos(20)},
+    }
+    with torch.inference_mode():
+        tracks = {k: {f: np.asarray(m[1], bool) for f, m in eng.track(clip, {1: v}) if 1 in m}
+                  for k, v in configs.items()}
+    near = list(range(4, 10)) + list(range(11, 20))
+    lines, ok = [], True
+    for refk, empk in (("ref1", "emp1"), ("ref2", "emp2")):
+        ref, emp = tracks[refk], tracks[empk]
+        ious = [(emp[f] & ref[f]).sum() / max((emp[f] | ref[f]).sum(), 1) for f in near]
+        lines.append(f"{engine} {empk}: f10 area {ref[10].sum()} -> {emp[10].sum()}, "
+                     f"neighbour IoU min {min(ious):.3f} mean {np.mean(ious):.3f}")
+        ok = ok and emp[10].sum() == 0 and min(ious) > 0.9
+    print("\n" + "\n".join(lines))
+    assert ok, lines
