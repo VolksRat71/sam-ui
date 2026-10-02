@@ -243,7 +243,9 @@ class TrackService:
     def _end_absence(self, video: str, obj_id: int, frame: int) -> None:
         for r in self.seeds.ranges(video, obj_id):
             if r["state"] == ABSENT and r["start"] <= frame <= r["end"]:
-                self.seeds.paint_range(video, obj_id, frame, r["end"], None)
+                # the absent layer only: a candidate (or present mark) under it is
+                # not the user's absence, and annotations are outside the undo record
+                self.seeds.paint_range(video, obj_id, frame, r["end"], None, clear=[ABSENT])
                 return
 
     def is_absent(self, video: str, obj_id: int, frame: int) -> bool:
