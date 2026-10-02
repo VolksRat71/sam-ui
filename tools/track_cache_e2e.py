@@ -129,6 +129,19 @@ def post_stream(route, body):
     return ids, frames, time.time() - t0
 
 
+def merged(frames):
+    """{frame: {object: mask}} over a stream's parts. A job with bounded passes
+    for several objects sends a frame once per object, in separate parts, so
+    a frame's objects can arrive apart; no object may arrive twice on one."""
+    out = {}
+    for f, m in frames:
+        twice = set(out.get(f, {})) & set(m)
+        if twice:
+            check(False, f"frame {f} streams object(s) {sorted(twice)} more than once")
+        out.setdefault(f, {}).update(m)
+    return out
+
+
 def upload(path: Path) -> str:
     """uploadVideo, as a multipart GraphQL request; returns uploads/<hash>.mp4."""
     boundary = uuid.uuid4().hex
@@ -264,7 +277,7 @@ def correction():
     add(0, 0, [[55 / W, 125 / H], [105 / W, 125 / H]], [1, 1])  # object 0: both halves
     add(1, 0, [[55 / W, 125 / H], [105 / W, 125 / H]], [1, 0])  # object 1: red only
     _, frames, _ = post_stream("/track_objects", {"session_id": sid})
-    fr = dict(frames)
+    fr = merged(frames)
     check(sum(halves(fr[10][0], 10)) > 4800, "the job tracks the whole bar to frame 10")
     check(halves(fr[12][1], 12)[1] < 100, "and the red half alone as object 1")
     for g in (10, 15):  # a tracked frame, then one after the first correction made the track stale
@@ -278,7 +291,7 @@ def correction():
     check(red > 0.9 * red0 and org > 2000,
           f"a lone positive on frame 12 grows the red half to the bar (red {red0} -> {red}, orange {orange0} -> {org})")
     _, frames, _ = post_stream("/track_objects", {"session_id": sid})
-    fr = dict(frames)
+    fr = merged(frames)
     for g in (10, 15, 19):
         red, org = halves(fr[g][0], g)
         check(red > 2400 and org < 100, f"after the re-track, frame {g} is red only ({red} red, {org} orange px)")
@@ -433,30 +446,32 @@ def bounded_retrack():
     sid, _ = start()
     gql('mutation($s: String!) { clearPointsInVideo(input: {sessionId: $s}) { success } }', {"s": sid})
 
-    def add(frame, pt, label):
+    def add(frame, pts, labels):
         gql('mutation($i: AddPointsInput!) { addPoints(input: $i) { frameIndex } }',
             {"i": {"sessionId": sid, "frameIndex": frame, "objectId": 0, "clearOldPoints": True,
-                   "labels": [label], "points": [pt]}})
+                   "labels": labels, "points": pts}})
 
     def iou(a, b):
         u = (a | b).sum()
         return 1.0 if u == 0 else float((a & b).sum() / u)
 
     y, x = cross_obj(0)
-    add(0, [(x + CS / 2) / W, (y + CS / 2) / H], 1)
+    add(0, [[(x + CS / 2) / W, (y + CS / 2) / H]], [1])
     _, frames, t0 = post_stream("/track_objects", {"session_id": sid})
     old = {f: m[0] for f, m in frames}
     check(sorted(old) == list(range(CN)), f"the first track covers all {CN} frames ({t0:.1f} s)")
     extra = {f: int((old[f] & ~cross_truth(f)).sum()) for f in range(CN)}
     c = max(extra, key=extra.get)
     if extra[c] > 50:  # the track holds some of the look-alike: cut it away there
+        # SAM 2 needs a positive on the frame (needs_positive): one on the square, the negative on the look-alike
         ys, xs = np.nonzero(old[c] & ~cross_truth(c))
-        add(c, [(xs.mean() + .5) / W, (ys.mean() + .5) / H], 0)
-        what = f"a negative click on the {extra[c]} look-alike px of frame {c}"
+        y, x = cross_obj(c)
+        add(c, [[(x + CS / 2) / W, (y + CS / 2) / H], [(xs.mean() + .5) / W, (ys.mean() + .5) / H]], [1, 0])
+        what = f"a positive on the square and a negative on the {extra[c]} look-alike px of frame {c}"
     else:  # a clean track: a refining click mid-clip
         c = CN // 2
         y, x = cross_obj(c)
-        add(c, [(x + CS / 2) / W, (y + CS / 2) / H], 1)
+        add(c, [[(x + CS / 2) / W, (y + CS / 2) / H]], [1])
         what = f"a refining click on frame {c} (the track held no look-alike)"
     import threading
     box, waits = {}, []

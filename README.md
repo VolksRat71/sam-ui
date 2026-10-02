@@ -139,9 +139,10 @@ Details and progress: [Platform support, #16](https://github.com/VolksRat71/sam-
   stretch around the corrected frame and keeps the cached track beyond it: the pass
   starts a little before the frame, from the cached masks there, and stops once ten
   frames in a row agree with the cache (IoU above 0.98). On the gallery dog clip
-  (289 frames) a one-click fix on frame 148 re-tracked 31 frames in 19 s, against
-  144 s for a full re-track, and on every re-tracked frame its masks were within
-  IoU 0.987 of the full re-track's. SAM 2 lets a correction nudge distant frames too
+  (289 frames) a fix on frame 148, a positive on the dog and a negative on the red
+  pixel its mask took in, re-tracked 31 frames in 7.5 s, against 130 s for a full
+  re-track, and on every re-tracked frame its masks were within IoU 0.987 of the
+  full re-track's. SAM 2 lets a correction nudge distant frames too
   (the full re-track moved frame 55 to IoU 0.936 of the old track), and the kept
   frames stay as they were, so each track records which pass made each frame
   (`POST /track_provenance`) and the review lists the bounded stretches. A tracked

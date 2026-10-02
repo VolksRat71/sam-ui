@@ -38,6 +38,13 @@ WHOLE: Window = (0, None)
 class Engine(Protocol):
     name: str
     model: str
+    # True when a cleared seed never conditions the engine, so it is output
+    # only: its frame is blanked (strip_cleared) and nothing else moves.
+    skips_cleared: bool
+
+    def plan(self, objects: Dict[int, Seeds], windows: Optional[Windows] = None) -> List["Unit"]:
+        """The passes a job over `objects` makes, in order (see plan_units)."""
+        ...
 
     def track(self, video_path: str, objects: Dict[int, Seeds], video_handle: Optional[Any] = None,
               windows: Optional[Windows] = None) -> Iterator[FrameMasks]:
@@ -113,6 +120,7 @@ class Sam2Engine:
     """
 
     name = "sam2"
+    skips_cleared = True
 
     def __init__(self, predictor, model: str, offload_video_to_cpu: bool = False,
                  autocast: Callable[[], contextlib.AbstractContextManager] = contextlib.nullcontext,
@@ -195,20 +203,32 @@ class Sam2Engine:
         One object per state, so the MPS trap of objects first seeded on
         different frames (see track) cannot arise.
 
+        Cleared seeds are stripped as track() strips them (strip_cleared): they
+        never condition the state, and the object's output on their frames is
+        blanked, in both directions, before `stop` sees it. A stretch whose
+        only seeds are cleared yields nothing, as track() does for an object
+        with no other seed. Priming skips their frames too (they are in
+        stretch.seeds): the cache holds the blanked output there, not the
+        mask the model tracked through.
+
         It also yields None, a step with no frame, after each seed and each
         primed frame: a point where the caller may let go of the model lock,
         which it otherwise holds from one yield to the next."""
         o, start = stretch.obj_id, stretch.start
+        kept, blank = strip_cleared({o: stretch.seeds})
+        seeds = kept[o]
+        if not seeds:
+            return
         with self.autocast():
             if video_handle is not None:
                 state = job_state_like(video_handle)
             else:
                 state = self.predictor.init_state(video_path, offload_video_to_cpu=self.offload_video_to_cpu)
             try:
-                for frame in sorted(stretch.seeds):
-                    seed_into_state(self.predictor, state, o, frame, stretch.seeds[frame])
+                for frame in sorted(seeds):
+                    seed_into_state(self.predictor, state, o, frame, seeds[frame])
                     yield None
-                if self.prime and stretch.cached and start not in stretch.seeds:
+                if self.prime and stretch.cached and start not in seeds:
                     for _ in prime_from_cache(self.predictor, state, o, stretch, self.prime):
                         yield None
                 limits = {False: stretch.hi - start, True: start - stretch.lo}
@@ -220,9 +240,10 @@ class Sam2Engine:
                         sam2_prune(self.predictor, state, frame, start, reverse)
                         if reverse and frame == start:
                             continue
-                        m = (masks[list(obj_ids).index(o)] > self.score_thresh)[0].cpu().numpy()
-                        done = stop(frame, reverse, m)
-                        yield frame, {o: m}
+                        out = blanked(frame, {o: (masks[list(obj_ids).index(o)] > self.score_thresh)[0].cpu().numpy()},
+                                      blank)
+                        done = stop(frame, reverse, out[o])
+                        yield frame, out
                         if done:
                             break
             finally:
@@ -313,6 +334,7 @@ class FakeEngine:
     `influence`, in full and bounded passes alike."""
 
     name = "fake"
+    skips_cleared = False
 
     def __init__(self, n_frames: int = 5, shape=(24, 32), model: str = "fake-1", influence: int = 0):
         self.n_frames = n_frames
