@@ -152,3 +152,58 @@ def test_a_link_the_backend_made_under_the_data_folder_opens_but_cannot_be_climb
         assert len(api.started) == 1
     finally:
         set_videos(saved)
+
+
+def test_normalised_forms_of_a_listed_path_open_it_and_unlisted_ones_stay_refused(tmp_path, monkeypatch):
+    from data.store import set_videos
+
+    saved = _listed(monkeypatch, tmp_path, ["clip.mp4", "sub/clip.mp4"])
+    (tmp_path / "other.mp4").write_bytes(b"")  # on disk, never listed
+    try:
+        api = FakeAPI()
+        for ok in ["./clip.mp4", "sub//clip.mp4", "sub/./clip.mp4", "sub/../clip.mp4"]:
+            assert _start(api, ok).errors is None, ok
+        assert api.started == [os.path.join(str(tmp_path), "clip.mp4"), os.path.join(str(tmp_path), "sub", "clip.mp4"),
+                               os.path.join(str(tmp_path), "sub", "clip.mp4"), os.path.join(str(tmp_path), "clip.mp4")]
+        for bad in ["./other.mp4", "sub//other.mp4", "sub/../other.mp4"]:
+            assert _start(api, bad).errors, bad
+        assert len(api.started) == 4
+    finally:
+        set_videos(saved)
+
+
+def test_a_listed_entry_outside_the_data_folder_is_still_refused(tmp_path, monkeypatch):
+    """Being listed is not enough: the path must also stay inside DATA_PATH."""
+    from data.store import set_videos
+
+    root = tmp_path / "data"
+    root.mkdir()
+    (tmp_path / "outside.mp4").write_bytes(b"")
+    saved = _listed(monkeypatch, root, ["../outside.mp4"])
+    try:
+        api = FakeAPI()
+        r = _start(api, "../outside.mp4")
+        assert r.errors and str(tmp_path) not in str(r.errors[0]) and api.started == []
+    finally:
+        set_videos(saved)
+
+
+def test_an_upload_on_another_thread_does_not_break_a_start(tmp_path, monkeypatch):
+    """uploadVideo adds to the listing while startSession checks it; walking
+    the listing then raised "dictionary changed size during iteration"."""
+    from data.store import get_videos, set_videos
+
+    saved = _listed(monkeypatch, tmp_path, ["gallery/x.mp4"])
+
+    class Growing(dict):
+        def values(self):  # an upload lands mid-walk
+            for v in super().values():
+                self[f"uploads/{len(self)}.mp4"] = SimpleNamespace(path=f"uploads/{len(self)}.mp4")
+                yield v
+
+    set_videos(Growing(get_videos()))
+    try:
+        api = FakeAPI()
+        assert _start(api, "gallery/x.mp4").errors is None and len(api.started) == 1
+    finally:
+        set_videos(saved)
