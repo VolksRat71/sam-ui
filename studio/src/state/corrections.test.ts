@@ -1,6 +1,6 @@
 // sam-ui (Apache-2.0). New file, not from SAM 2.
 import {describe, expect, it} from 'vitest';
-import {goneSteps, isNeedsPositive, needsPositive, planClicks, refusedAsAbsent} from './corrections';
+import {goneSteps, isNeedsPositive, needsPositive, planClicks, planRemoval, refusedAsAbsent} from './corrections';
 
 describe('needsPositive', () => {
   it('is true for negatives only on SAM 2 and the browser engine', () => {
@@ -63,6 +63,20 @@ describe('planClicks on a text frame', () => {
   });
   it('sends a lone negative on SAM 3, asking whether the object is gone', () => {
     expect(planClicks([], [neg], 'sam3')).toEqual({kind: 'send', points: [neg], gone: true});
+  });
+});
+
+describe('planRemoval', () => {
+  const pos: [number, number, 0 | 1] = [0.1, 0.1, 1];
+
+  it("goes back to a text frame's mask on the first engine that reads text, not the one on screen", () => {
+    // engine null: on SAM 2 the backend refuses a text prompt named for it
+    expect(planRemoval([], 'dog')).toEqual({kind: 'restoreText', text: 'dog', engine: null});
+  });
+  it('corrects the clicks while some remain, or when the frame has no text', () => {
+    expect(planRemoval([pos], 'dog')).toEqual({kind: 'correct'});
+    expect(planRemoval([], undefined)).toEqual({kind: 'correct'});
+    expect(planRemoval([pos], null)).toEqual({kind: 'correct'});
   });
 });
 

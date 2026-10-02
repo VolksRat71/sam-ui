@@ -114,7 +114,7 @@ export type StudioMethods = {
     result: void;
   };
   /** Seed one frame of an object from a phrase (SAM 3); its best match becomes the frame's mask. */
-  textPrompt: {args: {objectId: number; frameIndex: number; text: string; engine: string}; result: TextPromptResult};
+  textPrompt: {args: {objectId: number; frameIndex: number; text: string; engine: string | null}; result: TextPromptResult};
   removeObject: {args: {objectId: number}; result: void};
   clearTrack: {args: {objectId: number; engine: string | null}; result: ServerObject};
   /** Mark frames start-end of an object absent, or clear them (state null). */
