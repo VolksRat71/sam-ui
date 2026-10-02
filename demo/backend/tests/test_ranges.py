@@ -464,3 +464,45 @@ def test_real_sam3_tracks_each_window_on_its_own(tmp_path):
           f"min IoU {min(ious.values()):.3f}")
     assert sorted(got) == [f for f in range(N) if not GAP[0] <= f <= GAP[1]]  # nothing inside the gap
     assert min(ious.values()) > 0.9
+
+
+# -- cleared seeds ('not on this frame', #23) inside windows --------------------------
+
+_CLEARED = {"points": [[0.5, 0.5]], "labels": [0]}  # no positive, no mask: cleared
+
+
+def test_a_cleared_seed_opens_no_window_but_joins_the_key_of_the_window_it_is_in():
+    r = [{"start": 4, "end": 6, "state": ABSENT}]
+    got = seeded_windows({1: seed(), 2: _CLEARED, 8: _CLEARED}, r)
+    assert got == [((0, 3), {1: seed(), 2: _CLEARED})]  # (7, None) holds only a cleared seed
+    assert seeded_windows({8: _CLEARED}, []) == []
+    # a window opened by a positive keeps its cleared seed, so adding one re-tracks that window
+    assert seeded_windows({1: seed()}, r)[0][1] != got[0][1]
+
+
+@pytest.fixture
+def h2(tmp_path, monkeypatch):
+    """The service over the real Sam2Engine on a stub predictor (it strips cleared seeds)."""
+    monkeypatch.setenv("SAM_UI_EXPORT_ROOT", str(tmp_path))
+    e = Sam2Engine(_StubPredictor(n=10), model="stub")
+    e.n_frames = 10  # the clip's length, which a live session's video handle gives
+    return Harness(tmp_path, engine=e)
+
+
+def test_a_window_whose_only_seed_is_cleared_stays_empty_and_the_track_covers_the_clip(h2):
+    h2.click(1, frame=1)
+    h2.click(1, frame=8, labels=(0,))  # cleared, past the gap
+    h2.click(1, frame=2, labels=(0,))  # cleared, inside the seeded window
+    mark(h2, 1, 4, 6)
+    total = h2.service.job_frames(h2.video, [1], 10)
+    _, frames = h2.track()
+    assert total == len(frames)  # the progress total counts what the stream sends
+    by = {}
+    for f, m in frames:
+        assert f not in by
+        by[f] = m[1]
+    assert sorted(by) == list(range(10))
+    assert all(by[f].any() for f in (0, 1, 3))
+    assert not any(by[f].any() for f in (2, 4, 5, 6, 7, 8, 9))  # blanked, absent, and the cleared-only side
+    assert h2.state(1) == TRACKED
+    assert h2.service.tracks.meta(h2.video, 1, "sam2")["n_frames"] == 10
