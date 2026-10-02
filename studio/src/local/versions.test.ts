@@ -122,6 +122,22 @@ describe('OfflineService undo (test_versions.py)', () => {
     expect(await stateOf(svc)).toBe('tracked');
   });
 
+  it('a positive that ends an absence is one undo step with its range', async () => {
+    const svc = new OfflineService(new MemoryKv());
+    await svc.recordPoints(V, 1, 0, [[0.5, 0.5, 1]], mask('04'));
+    await svc.setRange(V, 1, 2, 9, 'absent');
+    const depth = (await svc.history(V, 1)).undo.length;
+    await svc.recordPoints(V, 1, 6, [[0.2, 0.2, 1]], mask('13'), VARIANT, true); // the object is back
+    expect((await info(svc)).ranges).toEqual([{start: 2, end: 5, state: 'absent'}]);
+    expect((await svc.history(V, 1)).undo.length).toBe(depth + 1);
+    let o = await svc.undo(V, 1, VARIANT);
+    expect(o.seeds.map(s => s.frameIndex)).toEqual([0]);
+    expect(o.ranges).toEqual([{start: 2, end: 9, state: 'absent'}]);
+    o = await svc.redo(V, 1, VARIANT);
+    expect(o.seeds.map(s => s.frameIndex)).toEqual([0, 6]);
+    expect(o.ranges).toEqual([{start: 2, end: 5, state: 'absent'}]);
+  });
+
   it('covers ranges, survives a new instance, and a new change clears redo', async () => {
     const kv = new MemoryKv();
     const svc = new OfflineService(kv);

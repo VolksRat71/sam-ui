@@ -51,7 +51,8 @@ import {buildExport} from './maskExports';
 import type {TrackObject} from '~/local/sam2/tracker';
 import {BROWSER_ENGINE, engineLabel} from '~/state/engines';
 import {maskSegments} from '~/state/segments';
-import {type FrameRange, type PaintOptions, type RangeState, absentAt, normalizeRanges, planUnits, rangesKey} from '~/state/ranges';
+import {refusedAsAbsent} from '~/state/corrections';
+import {type FrameRange, type PaintOptions, type RangeState, absentAt, endAbsenceAt, normalizeRanges, planUnits, rangesKey} from '~/state/ranges';
 import {colorFor, DEFAULT_ENGINE, type NormPoint, type ServerObject} from '~/state/objects';
 import type MaskOverlayEffect from './MaskOverlayEffect';
 import {paintAlpha} from './maskPixels';
@@ -782,9 +783,12 @@ export default class StudioSession {
 
   // -- clicks ----------------------------------------------------------------
 
-  async setPoints(objectId: number, frameIndex: number, points: NormPoint[]): Promise<void> {
-    if (points.length > 0 && absentAt(this._ranges.get(objectId), frameIndex)) {
-      // the backend refuses these too; the UI says so before it sends
+  async setPoints(objectId: number, frameIndex: number, points: NormPoint[], engine?: string): Promise<void> {
+    // on an absent frame, clicks with no positive are refused (the backend
+    // refuses them too; the UI says so before it sends); a positive ends the
+    // absence at this frame, once the click has gone through
+    const absent = absentAt(this._ranges.get(objectId), frameIndex);
+    if (refusedAsAbsent(points, absent)) {
       throw new Error(`frame ${frameIndex + 1} is marked absent for this object: unmark it to click here`);
     }
     const t = this._tracklet(objectId);
@@ -798,7 +802,8 @@ export default class StudioSession {
         list = [];
       } else {
         const {rle} = await this._local.click(frameIndex, points);
-        await this._offline.recordPoints(video, objectId, frameIndex, points, rle, this._variant);
+        // a positive inside an absent range ends it, in the same undo step as the click
+        await this._offline.recordPoints(video, objectId, frameIndex, points, rle, this._variant, absent);
         list = [{objectId, rleMask: rle}];
       }
     } else if (points.length === 0) {
@@ -818,6 +823,7 @@ export default class StudioSession {
           points: points.map(p => [p[0], p[1]]),
           labels: points.map(p => p[2]),
           clearOldPoints: true,
+          engine: engine ?? null,
         },
       });
       const local = this._isLocal ? this._local.click(frameIndex, points) : null;
@@ -828,6 +834,10 @@ export default class StudioSession {
       } else if (mine != null) {
         list = [{objectId, rleMask: mine.rle}];
       }
+    }
+    if (absent && points.length > 0) {
+      // as the backend did: the range no longer hides this frame's new mask
+      this._ranges.set(objectId, endAbsenceAt(this._ranges.get(objectId), frameIndex));
     }
     this._setSeedPoints(t, frameIndex, points);
     if (this._offline == null && this._storeKey != null && points.length > 0 && !this._local.heldIds().has(objectId)) {
@@ -1031,7 +1041,7 @@ export default class StudioSession {
    * on the wrong one): one undo step for each. Needs the backend, whose SAM 2
    * segments them for the target; with no backend the browser engine does.
    */
-  async moveClicks(frameIndex: number, fromId: number, toId: number): Promise<ServerObject[]> {
+  async moveClicks(frameIndex: number, fromId: number, toId: number, engine?: string): Promise<ServerObject[]> {
     if (absentAt(this._ranges.get(toId), frameIndex)) {
       throw new Error(`frame ${frameIndex + 1} is marked absent for that object: unmark it to move clicks there`);
     }
@@ -1056,7 +1066,7 @@ export default class StudioSession {
       ];
     } else {
       const res = await mutate<StudioSessionMoveClicksMutation>(this.env, MOVE_CLICKS, {
-        input: {sessionId: this.sessionId, frameIndex, fromObjectId: fromId, toObjectId: toId},
+        input: {sessionId: this.sessionId, frameIndex, fromObjectId: fromId, toObjectId: toId, engine: engine ?? null},
       });
       out = [];
       for (const o of plain(res.moveClicks) as ServerObject[]) {

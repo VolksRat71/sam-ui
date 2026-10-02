@@ -5,6 +5,7 @@ input AddPointsInput {
   objectId: Int!
   labels: [Int!]!
   points: [[Float!]!]!
+  engine: String
 }
 
 type CancelPropagateInVideo {
@@ -134,6 +135,7 @@ input MoveClicksInput {
   frameIndex: Int!
   fromObjectId: Int!
   toObjectId: Int!
+  engine: String
 }
 
 type TrackVersion {

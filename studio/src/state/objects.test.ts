@@ -16,8 +16,10 @@ import {
   jobProgress,
   nextObjectId,
   reducer,
+  seedFrames,
   staleIds,
 } from './objects';
+import {absentUntilNextSeed} from './ranges';
 
 function run(actions: Action[], state: StudioState = initialState): StudioState {
   return actions.reduce(reducer, state);
@@ -246,6 +248,19 @@ describe('state transitions', () => {
     expect(s.activeId).toBe(2);
   });
 
+  it('a removed seedless object the server still lists comes back on sync', () => {
+    // Why removeObject always reaches the backend: a stored object can have
+    // no seeds left, and the next sync restores whatever the server lists.
+    const seedless = server(4, 'untracked', []);
+    const s = run([
+      {type: 'restore', objects: [server(0, 'tracked'), seedless]},
+      {type: 'removed', id: 4},
+    ]);
+    expect(s.objects.map(o => o.id)).toEqual([0]);
+    expect(run([{type: 'sync', objects: [server(0, 'tracked'), seedless]}], s).objects.map(o => o.id)).toEqual([0, 4]);
+    expect(run([{type: 'sync', objects: [server(0, 'tracked')]}], s).objects.map(o => o.id)).toEqual([0]);
+  });
+
   it('start over empties the list', () => {
     const s = run([{type: 'restore', objects: [server(0, 'tracked')]}, {type: 'reset'}]);
     expect(s).toEqual(initialState);
@@ -271,7 +286,7 @@ describe('limits and hints', () => {
     expect(needsPositiveClick(byId(s, 0), 3)).toBe(false);
     expect(needsPositiveClick(byId(s, 0), 4)).toBe(false);
     expect(needsPositiveClick(undefined, 2)).toBe(false);
-    // a lone negative on a tracked frame cuts the tracked mask: the frame keeps one, no hint
+    // a frame that still shows a mask (a legacy seed trimmed by the removed anchor) needs nothing
     expect(needsPositiveClick(byId(s, 0), 2, true)).toBe(false);
   });
 
@@ -470,5 +485,17 @@ describe('the object layout (issue #21)', () => {
     s = run([{type: 'trackStarted', key: 1, ids: [1]}], s);
     expect(groupDirtyIds(s, 'cast')).toEqual([]); // held by the job
     expect(groupDirtyIds(s, 'nope')).toEqual([]);
+  });
+});
+
+describe('seed frames for "Gone for a while?"', () => {
+  it('counts a cleared seed (negatives only, from SAM 3) as the next seed', () => {
+    const s = run([
+      {type: 'restore', objects: [server(0, 'tracked')]},
+      {type: 'setPoints', id: 0, frame: 30, points: [[0.4, 0.4, 0]]},
+    ]);
+    const o = byId(s, 0);
+    expect(seedFrames(o)).toEqual([0, 30]);
+    expect(absentUntilNextSeed(seedFrames(o), 20, 100)).toEqual([20, 29]);
   });
 });
