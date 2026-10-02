@@ -17,6 +17,7 @@ from app_conf import (
     DATA_PATH,
     DEFAULT_VIDEO_PATH,
     MAX_UPLOAD_VIDEO_DURATION,
+    RETAIN_ORIGINAL_UPLOADS,
     UPLOADS_PATH,
     UPLOADS_PREFIX,
 )
@@ -403,8 +404,6 @@ def process_video(
             duration_time_sec=duration_time_sec,
         )
 
-        os.remove(in_path)  # don't need original video now
-
         out_video_metadata = get_video_metadata(out_path)
         if out_video_metadata.num_video_frames == 0:
             raise Exception(
@@ -421,6 +420,16 @@ def process_video(
             filepath = os.path.join(UPLOADS_PATH, f"{file_hash}.mp4")
 
         assert filepath is not None and file_key is not None
+        if RETAIN_ORIGINAL_UPLOADS:
+            from data.assets import retain_upload
+
+            retain_upload(
+                Path(in_path), root=DATA_PATH / "assets",
+                working_copy_sha256=file_hash,
+                start_time_sec=start_time_sec,
+                duration_time_sec=duration_time_sec,
+            )
+        os.remove(in_path)
         shutil.move(out_path, filepath)
 
         return filepath, file_key, out_video_metadata
