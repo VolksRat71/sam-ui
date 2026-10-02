@@ -30,6 +30,7 @@ import {cleanObjectName} from '~/state/fileNames';
 import {type Layout, arrange, layoutReducer, parseLayout} from '~/state/layout';
 import type {NormPoint, ServerObject} from '~/state/objects';
 import {
+  ABSENT,
   type FrameRange,
   type Layers,
   type Mark,
@@ -546,7 +547,8 @@ export class OfflineService {
   private async _endAbsence(video: string, obj: number, frame: number): Promise<FrameRange[]> {
     const r = rangeAt(await this.seeds.ranges(video, obj), frame);
     if (r != null) {
-      await this.seeds.paintRange(video, obj, frame, r.end, null);
+      // the absent layer only: a candidate or present mark under the range is not the user's absence
+      await this.seeds.paintRange(video, obj, frame, r.end, null, {clear: [ABSENT]});
     }
     return this.seeds.ranges(video, obj);
   }
