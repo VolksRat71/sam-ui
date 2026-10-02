@@ -18,9 +18,19 @@ with default names (object_<n>, palette colours).
 
 Frames are numbered from 1 in the working folder and from 0 in sam-ui, so
 sam-ui frame i is file (i + 1). Only tracked objects are exported unless
-include_stale; untracked ones are listed as skipped. Existing products.json /
-anchors.json / shots.json are decisions a person confirmed: they are not
-overwritten without force.
+include_stale; untracked ones are listed as skipped.
+
+What force gates: products.json / anchors.json / shots.json are decisions a
+person confirmed, and data/mattes_tracked/<pid> may hold mattes repaired by
+hand, so without force an existing decision file or a non-empty matte folder
+of an exported object is a refusal. With force they are replaced (the matte
+folder is deleted and refilled). sam-ui's own outputs are always rewritten:
+notes/sam-ui-export.json, and with frames the JPEGs in data/frames (clip.mp4
+and data/review.json are written only when missing).
+
+Every path export writes or deletes must resolve, links followed, to inside
+the export root, and a matte folder it would delete must not be a link at all;
+all of it is checked before anything is written, so a refusal changes nothing.
 """
 import json
 import os
@@ -55,13 +65,47 @@ def export_root() -> Path:
     return Path(os.environ.get("SAM_UI_EXPORT_ROOT", str(default))).expanduser().resolve()
 
 
+def _inside(root: Path, p: Path) -> bool:
+    """p, links followed, is root or under it (root is already resolved)."""
+    try:
+        real = p.resolve()
+    except (OSError, RuntimeError):  # a link loop: refused, not a 500
+        return False
+    return real == root or root in real.parents
+
+
 def _check_out(out_dir: str) -> Path:
     out = Path(out_dir).expanduser().resolve()
-    root = export_root()
-    if out != root and root not in out.parents:
+    if not _inside(export_root(), out):
         # name only the folder asked for, never the server's own root
         raise ExportError(f"export folder {out_dir!r} is outside the export root (set SAM_UI_EXPORT_ROOT)")
     return out
+
+
+def _check_targets(out: Path, out_dir: str, pids: List[str], frames: bool, force: bool) -> None:
+    """Refuse before writing: a path that leads outside the root, a linked
+    matte folder, or (without force) a decision or matte that would be replaced.
+    Refusals name paths relative to out_dir, never where a link points."""
+    root = export_root()
+    mattes = [f"data/mattes_tracked/{pid}" for pid in pids]
+    rels = ["data", "data/mattes_tracked", "notes", "data/review.json", "notes/sam-ui-export.json",
+            *DECISIONS, *mattes]
+    if frames:
+        fdir = out / "data" / "frames"
+        # ffmpeg -y writes through whatever already sits at a frame's name
+        listed = sorted(fdir.iterdir()) if fdir.is_dir() and _inside(root, fdir) else []
+        rels += ["data/clip.mp4", "data/frames", *(f"data/frames/{p.name}" for p in listed)]
+    for rel in rels:
+        if not _inside(root, out / rel):
+            raise ExportError(f"{out_dir!r}: {rel} leads outside the export root")
+    for rel in mattes:
+        if (out / rel).is_symlink():
+            raise ExportError(f"{out_dir!r}: {rel} is a link; sam-ui only replaces its own matte folders")
+    if not force:
+        clash = [n for n in DECISIONS if (out / n).exists()]
+        clash += [rel for rel in mattes if (out / rel).is_dir() and any((out / rel).iterdir())]
+        if clash:
+            raise ExportError(f"{out_dir!r} already has {clash}; pass force to replace them")
 
 
 def _spec(obj_id: int, given: Optional[Dict], index: int) -> Dict:
@@ -80,10 +124,6 @@ def export(service, video: str, video_path: str, out_dir: str, objects: Optional
            engine: Optional[str] = None) -> Dict:
     out = _check_out(out_dir)
     engine = service.get_engine(engine).name if engine else service.default
-    if not force:
-        clash = [n for n in DECISIONS if (out / n).exists()]
-        if clash:
-            raise ExportError(f"{out_dir!r} already has {clash}; pass force to replace them")
     wanted = sorted(int(o) for o in objects) if objects else service.seeds.objects(video)
     ok_states = (TRACKED, STALE) if include_stale else (TRACKED,)
     specs, skipped = {}, {}
@@ -96,6 +136,7 @@ def export(service, video: str, video_path: str, out_dir: str, objects: Optional
     ids = [s["id"] for s, _ in specs.values()]
     if len(set(ids)) != len(ids):
         raise ExportError(f"duplicate product ids {ids}")
+    _check_targets(out, out_dir, ids, frames, force)
 
     (out / "data" / "mattes_tracked").mkdir(parents=True, exist_ok=True)
     (out / "notes").mkdir(exist_ok=True)
