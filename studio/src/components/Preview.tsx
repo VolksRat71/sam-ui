@@ -280,7 +280,7 @@ export default function Preview({session, mode, onModeChange}: Props) {
             })}
           </svg>
         </div>
-        <CorrectionNudge nudge={session.nudge} hint={session.hint} sam3Available={session.sam3Available} onTrim={() => session.nudgeTrim(() => onModeChange('positive'))} onSam3={session.nudgeSam3} />
+        <CorrectionNudge nudge={session.nudge} hint={session.hint} sam3Available={session.sam3Available} onTrim={() => session.nudgeTrim(() => onModeChange('positive'))} onSam3={session.nudgeSam3} onGone={session.markGone} />
         {status !== 'ready' && (
           <div className="stage-overlay">
             {status === 'failed' ? (

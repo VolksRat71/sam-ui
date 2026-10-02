@@ -29,7 +29,7 @@ import {API_ENDPOINT, OBJECT_LIMIT} from '~/config';
 import type {LocalModelStatus, LocalOptions} from '~/local/LocalEngine';
 import {browserModelName, parseQuality} from '~/local/sam2/config';
 import {BROWSER_ENGINE, engineLabel, pickerEngines, textPrompts} from '~/state/engines';
-import {isNeedsPositive, planClicks, type Nudge} from '~/state/corrections';
+import {goneSteps, isNeedsPositive, planClicks, refusedAsAbsent, type Hint, type Nudge} from '~/state/corrections';
 import {cleanObjectName, objectName, uniqueFileNames} from '~/state/fileNames';
 import {type ExportedObject, type ExportKind, groupExport} from '~/state/maskExport';
 import {
@@ -54,6 +54,7 @@ import {
   isTracking,
   nextObjectId,
   reducer,
+  seedFrames,
   staleIds,
 } from '~/state/objects';
 import {moveTargets, undoBlock} from '~/state/history';
@@ -68,6 +69,7 @@ import {
   PRESENT,
   type RangeState,
   absentAt,
+  absentUntilNextSeed,
   normalizeMarks,
   normalizeRanges,
   paintTimeline,
@@ -124,6 +126,14 @@ export type Metadata = {numFrames: number; fps: number; width: number; height: n
 
 function message(error: unknown): string {
   return explainGraphQLError(error instanceof Error ? error.message : String(error));
+}
+
+/** Why a click on an absent frame is refused, and what to do instead. */
+function absentWarning(target: Parameters<typeof objectName>[0] | undefined, frame: number): string {
+  return (
+    `${target != null ? objectName(target) : 'This object'} is marked absent on frame ${frame + 1}. ` +
+    'Select that part of its lane and unmark it to click here.'
+  );
 }
 
 export default function useStudioSession(video: VideoItem) {
@@ -412,12 +422,13 @@ export default function useStudioSession(video: VideoItem) {
 
   // A frame's clicks the engine on screen cannot take (negatives only on SAM
   // 2): nothing is sent, the clicks stay as they were, and the preview nudges
-  // for a positive. `hint` 'gone': SAM 3 took negatives alone and emptied the
-  // frame, so the preview asks whether the object is gone for a while.
+  // for a positive. `hint` (kind 'gone'): SAM 3 took negatives alone and
+  // emptied the frame, so the preview asks whether the object is gone for a
+  // while. Both carry the object and frame their "Gone for a while?" marks.
   const [nudge, setNudge] = useState<Nudge | null>(null);
   const nudgeRef = useRef(nudge);
   nudgeRef.current = nudge;
-  const [hint, setHint] = useState<'gone' | null>(null);
+  const [hint, setHint] = useState<Hint | null>(null);
   /** The clicks the nudge refused, which Switch to SAM 3 sends. */
   const refused = useRef<NormPoint[]>([]);
   const showNudge = useCallback((objectId: number, frameIndex: number, points: NormPoint[], engine: string) => {
@@ -459,17 +470,25 @@ export default function useStudioSession(video: VideoItem) {
     [bridge, serial, sync, showNudge],
   );
 
-  /** Send a frame's new clicks, or nudge and keep the old ones (state/corrections.ts). */
+  /** Send a frame's new clicks, or refuse or nudge and keep the old ones (state/corrections.ts). */
   const correct = useCallback(
     (objectId: number, current: NormPoint[], next: NormPoint[]) => {
       const engine = stateRef.current.engine;
+      const target = stateRef.current.objects.find(o => o.id === objectId);
+      // inside an absent range, clicks with no positive are refused before any
+      // nudge: its "add a positive" would end the absence, not trim. A positive
+      // goes through and ends the absence at this frame; sync() shows the range.
+      if (refusedAsAbsent(next, absentAt(target?.ranges, frame))) {
+        setWarning(absentWarning(target, frame));
+        return;
+      }
       const plan = planClicks(current, next, engine);
       if (plan.kind === 'nudge') {
         showNudge(objectId, frame, next, engine);
         return;
       }
       setNudge(null);
-      setHint(plan.gone ? 'gone' : null);
+      setHint(plan.gone ? {kind: 'gone', objectId, frame} : null);
       setPoints(objectId, frame, [...plan.points], engine);
     },
     [frame, setPoints, showNudge],
@@ -533,14 +552,6 @@ export default function useStudioSession(video: VideoItem) {
         bridge.call('setActiveObject', {objectId: id}).catch(() => {});
       }
       const target = s.objects.find(o => o.id === id);
-      if (absentAt(target?.ranges, frame)) {
-        // refused, not a way to shrink the range: unmarking is its own, explicit step
-        setWarning(
-          `${target != null ? objectName(target) : 'This object'} is marked absent on frame ${frame + 1}. ` +
-            'Select that part of its lane and unmark it to click here.',
-        );
-        return;
-      }
       const current = target?.points[frame] ?? [];
       correct(id, current, [...current, [x, y, label]]);
     },
@@ -931,6 +942,25 @@ export default function useStudioSession(video: VideoItem) {
     [bridge, busy, frame, serial, sync],
   );
 
+  /**
+   * "Gone for a while?": mark the object absent from `frameIndex` until the
+   * frame before its next click after it (any click, a cleared seed too), or
+   * to the clip's end. Goes through setRange, the one path for ranges, so it
+   * syncs (and rolls back on failure) like any; overlapping an existing range
+   * merges with it (paintRange / normalizeRanges).
+   */
+  const markAbsentUntilNextSeed = useCallback(
+    (objectId: number, frameIndex: number) => {
+      const o = stateRef.current.objects.find(x => x.id === objectId);
+      if (o == null || meta.numFrames <= 0) {
+        return;
+      }
+      const [start, end] = absentUntilNextSeed(seedFrames(o), frameIndex, meta.numFrames);
+      setRange(objectId, start, end, ABSENT);
+    },
+    [meta.numFrames, setRange],
+  );
+
   /** Track with, and show, another engine. */
   const setEngine = useCallback(
     (engine: string) => {
@@ -957,17 +987,48 @@ export default function useStudioSession(video: VideoItem) {
   /** The nudge's "Switch to SAM 3": show SAM 3, and send it the refused clicks. */
   const nudgeSam3 = useCallback(() => {
     // the object may have been removed since the nudge: sending would re-create it
-    if (nudge == null || !sam3Available || !stateRef.current.objects.some(o => o.id === nudge.objectId)) {
+    const target = nudge == null ? undefined : stateRef.current.objects.find(o => o.id === nudge.objectId);
+    if (nudge == null || !sam3Available || target == null) {
       setNudge(null);
+      return;
+    }
+    // the nudge comes before the absent refusal, so it can stand on an absent
+    // frame: SAM 3 would be refused there too, so say why and send nothing
+    if (absentAt(target.ranges, nudge.frame)) {
+      setNudge(null);
+      setWarning(absentWarning(target, nudge.frame));
       return;
     }
     const points = refused.current;
     setEngine('sam3');
     setNudge(null);
     const plan = planClicks([], points, 'sam3');
-    setHint(plan.kind === 'send' && plan.gone ? 'gone' : null);
+    setHint(plan.kind === 'send' && plan.gone ? {kind: 'gone', objectId: nudge.objectId, frame: nudge.frame} : null);
     setPoints(nudge.objectId, nudge.frame, points, 'sam3');
   }, [nudge, sam3Available, setEngine, setPoints]);
+
+  /**
+   * The SAM 2 nudge's and the SAM 3 hint's "Gone for a while?", for the
+   * object and frame they are about (state/corrections.ts goneSteps). From the
+   * nudge, the frame's kept clicks are cleared first, through setPoints like
+   * any cleared frame; both queue on `serial`, so the clear lands first.
+   */
+  const markGone = useCallback(() => {
+    const target = nudge ?? hint;
+    setNudge(null);
+    setHint(null);
+    const o = target == null ? undefined : stateRef.current.objects.find(x => x.id === target.objectId);
+    if (target == null || o == null || meta.numFrames <= 0) {
+      return;
+    }
+    for (const step of goneSteps(nudge != null ? 'nudge' : 'hint', seedFrames(o), target.frame, meta.numFrames)) {
+      if (step.kind === 'clearFrame') {
+        setPoints(o.id, step.frame, [], nudge?.engine);
+      } else {
+        setRange(o.id, step.start, step.end, ABSENT);
+      }
+    }
+  }, [nudge, hint, meta.numFrames, setPoints, setRange]);
 
   /** The browser engine's model size and hole fill; its tracks made otherwise go stale. */
   const setLocalOptions = useCallback(
@@ -1397,6 +1458,7 @@ export default function useStudioSession(video: VideoItem) {
     hint,
     nudgeTrim,
     nudgeSam3,
+    markGone,
     localOptions,
     setLocalOptions,
     localModel,
@@ -1445,6 +1507,7 @@ export default function useStudioSession(video: VideoItem) {
     stepSeeds,
     restoreVersion,
     moveClicks,
+    markAbsentUntilNextSeed,
     removeObject,
     startOver,
     seek,

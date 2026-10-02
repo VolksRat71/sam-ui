@@ -19,6 +19,7 @@ import {
   seedFrames,
   staleIds,
 } from './objects';
+import {absentUntilNextSeed} from './ranges';
 
 function run(actions: Action[], state: StudioState = initialState): StudioState {
   return actions.reduce(reducer, state);
@@ -518,5 +519,17 @@ describe('text prompts', () => {
     const cleared = reducer(base, {type: 'setPoints', id: 1, frame: 4, points: []});
     expect(byId(cleared, 1).texts).toEqual({});
     expect(seedFrames(byId(cleared, 1))).toEqual([]);
+  });
+});
+
+describe('seed frames for "Gone for a while?"', () => {
+  it('counts a cleared seed (negatives only, from SAM 3) as the next seed', () => {
+    const s = run([
+      {type: 'restore', objects: [server(0, 'tracked')]},
+      {type: 'setPoints', id: 0, frame: 30, points: [[0.4, 0.4, 0]]},
+    ]);
+    const o = byId(s, 0);
+    expect(seedFrames(o)).toEqual([0, 30]);
+    expect(absentUntilNextSeed(seedFrames(o), 20, 100)).toEqual([20, 29]);
   });
 });

@@ -57,7 +57,7 @@ from tracks.bounded import Agreement, Provenance, Stretch, mask_iou
 from tracks.engine import WHOLE, Engine, Windows
 from tracks.jobs import TRACKING, JobRegistry
 from tracks.layout import Layout, LayoutStore
-from tracks.ranges import CANDIDATE, Window, absent_at, seeded_windows, window_frames
+from tracks.ranges import ABSENT, CANDIDATE, Window, absent_at, seeded_windows, window_frames
 from tracks.seeds import Seeds, SeedStore, seeds_hash, video_key, window_key
 from tracks.store import STALE, TRACKED, TrackStore
 from tracks import versions as ver
@@ -274,6 +274,18 @@ class TrackService:
         old candidates. All or nothing (ValueError). Never a seed change."""
         self.seeds.write_candidates(video, obj_id, candidates, replace)
         return self.object_info(video, obj_id)
+
+    def end_absence_at(self, video: str, obj_id: int, frame: int) -> None:
+        """The object is back at `frame`: the absent range containing it no
+        longer covers `frame` or anything after it in that range.
+
+        [s, e] becomes [s, frame-1]; at frame == s the range goes (paint
+        never writes [s, s-1]). A seed change like set_range, so the track
+        goes stale. No range there: nothing changes."""
+        for r in self.seeds.ranges(video, obj_id):
+            if r["state"] == ABSENT and r["start"] <= frame <= r["end"]:
+                self.seeds.paint_range(video, obj_id, frame, r["end"], None)
+                return
 
     def is_absent(self, video: str, obj_id: int, frame: int) -> bool:
         return absent_at(self.seeds.ranges(video, obj_id), frame)

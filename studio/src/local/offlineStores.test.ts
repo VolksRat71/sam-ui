@@ -206,6 +206,17 @@ describe('absent ranges (test_ranges.py)', () => {
     expect(await state(svc, 1)).toBe('tracked');
   });
 
+  it('end at a positive click: [s, e] becomes [s, f-1], and the track goes stale (end_absence_at)', async () => {
+    const svc = new OfflineService(new MemoryKv());
+    await svc.recordPoints(V, 1, 0, [[0.5, 0.5, 1]], rle);
+    await svc.setRange(V, 1, 10, 40, 'absent');
+    await tracked(svc, 1);
+    expect(await svc.endAbsenceAt(V, 1, 25)).toEqual([{start: 10, end: 24, state: 'absent'}]);
+    expect(await state(svc, 1)).toBe('stale');
+    expect(await svc.endAbsenceAt(V, 1, 5)).toEqual([{start: 10, end: 24, state: 'absent'}]); // not absent: unchanged
+    expect(await svc.endAbsenceAt(V, 1, 10)).toEqual([]); // at its start the range goes
+  });
+
   it('keep an object with a range and no clicks yet listed', async () => {
     const svc = new OfflineService(new MemoryKv());
     await svc.setRange(V, 3, 0, 2, 'absent');

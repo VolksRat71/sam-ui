@@ -44,9 +44,8 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
 from tracks import ranges as rng
-from tracks.text import has_prompt, normalize as normalize_text
-
 from tracks import rle
+from tracks.text import has_prompt, normalize as normalize_text
 
 Seeds = Dict[int, Dict[str, list]]
 

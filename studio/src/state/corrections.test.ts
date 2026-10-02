@@ -1,6 +1,6 @@
 // sam-ui (Apache-2.0). New file, not from SAM 2.
 import {describe, expect, it} from 'vitest';
-import {isNeedsPositive, needsPositive, planClicks} from './corrections';
+import {goneSteps, isNeedsPositive, needsPositive, planClicks, refusedAsAbsent} from './corrections';
 
 describe('needsPositive', () => {
   it('is true for negatives only on SAM 2 and the browser engine', () => {
@@ -60,5 +60,45 @@ describe('isNeedsPositive', () => {
     expect(isNeedsPositive('session expired')).toBe(false);
     expect(isNeedsPositive('this needs_positive_thing is unrelated')).toBe(false);
     expect(isNeedsPositive(null)).toBe(false);
+  });
+});
+
+describe('refusedAsAbsent', () => {
+  const pos: [number, number, 0 | 1] = [0.1, 0.1, 1];
+  const neg: [number, number, 0 | 1] = [0.5, 0.5, 0];
+
+  it('refuses clicks with no positive on an absent frame, before any nudge', () => {
+    expect(refusedAsAbsent([neg], true)).toBe(true);
+    expect(refusedAsAbsent([neg, neg], true)).toBe(true);
+    // planClicks would nudge "add a positive" here on SAM 2, which would end the absence, not trim
+    expect(planClicks([], [neg], 'sam2').kind).toBe('nudge');
+  });
+  it('lets a positive through: it ends the absence at that frame', () => {
+    expect(refusedAsAbsent([pos], true)).toBe(false);
+    expect(refusedAsAbsent([neg, pos], true)).toBe(false);
+  });
+  it('lets an emptied frame through, and refuses nothing off a range', () => {
+    expect(refusedAsAbsent([], true)).toBe(false);
+    expect(refusedAsAbsent([neg], false)).toBe(false);
+  });
+});
+
+describe('goneSteps ("Gone for a while?")', () => {
+  it('from the SAM 2 nudge, clears the frame\'s kept clicks, then marks it absent until the next seed', () => {
+    // [pos, neg] on 20, its positive deleted: the nudge kept both, and a
+    // positive left inside the range would end it at its own start
+    expect(goneSteps('nudge', [0, 20, 50], 20, 100)).toEqual([
+      {kind: 'clearFrame', frame: 20},
+      {kind: 'absent', start: 20, end: 49},
+    ]);
+  });
+
+  it('from the nudge on a frame with no clicks, only marks it absent', () => {
+    expect(goneSteps('nudge', [0, 50], 20, 100)).toEqual([{kind: 'absent', start: 20, end: 49}]);
+    expect(goneSteps('nudge', [], 20, 100)).toEqual([{kind: 'absent', start: 20, end: 99}]);
+  });
+
+  it('from the SAM 3 hint, keeps the frame\'s negatives and only marks it absent', () => {
+    expect(goneSteps('hint', [0, 20, 50], 20, 100)).toEqual([{kind: 'absent', start: 20, end: 49}]);
   });
 });

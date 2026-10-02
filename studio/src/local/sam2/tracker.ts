@@ -299,7 +299,7 @@ export class Sam2Tracker {
     const blanks = new Map<number, Set<number>>();
     for (const o of objects) {
       const withClicks = o.seeds.filter(s => s.points.length > 0 && s.frame >= lo && s.frame <= hi);
-      // cleared seeds never condition: an object with nothing else is not tracked
+      // cleared seeds never condition: an object with nothing else in the window is not tracked
       const {cond, blank} = splitSeeds(withClicks);
       if (cond.length === 0) {
         continue;

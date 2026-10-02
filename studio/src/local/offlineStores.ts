@@ -30,6 +30,7 @@ import {cleanObjectName} from '~/state/fileNames';
 import {type Layout, arrange, layoutReducer, parseLayout} from '~/state/layout';
 import type {NormPoint, ServerObject} from '~/state/objects';
 import {
+  ABSENT,
   type FrameRange,
   type Layers,
   type Mark,
@@ -39,6 +40,7 @@ import {
   normalizeMarks,
   normalizeRanges,
   paintTimeline,
+  rangeAt,
   timelineView,
   writeCandidates,
 } from '~/state/ranges';
@@ -488,10 +490,26 @@ export class OfflineService {
     return out;
   }
 
-  recordPoints(video: string, obj: number, frame: number, points: NormPoint[], mask: RLEObject | null, variant: string | null = null): Promise<Seeds> {
-    return this._change(video, obj, variant, () =>
-      this.seeds.addPoints(video, obj, frame, points.map(p => [p[0], p[1]]), points.map(p => p[2]), true, mask),
-    );
+  /**
+   * Store a frame's clicks. With `endAbsence` (a positive inside an absent
+   * range) the range also ends at `frame`, in the same change: one undo puts
+   * back the clicks and the range together (record_points on the backend).
+   */
+  recordPoints(
+    video: string,
+    obj: number,
+    frame: number,
+    points: NormPoint[],
+    mask: RLEObject | null,
+    variant: string | null = null,
+    endAbsence = false,
+  ): Promise<Seeds> {
+    return this._change(video, obj, variant, async () => {
+      if (endAbsence) {
+        await this._endAbsence(video, obj, frame);
+      }
+      return this.seeds.addPoints(video, obj, frame, points.map(p => [p[0], p[1]]), points.map(p => p[2]), true, mask);
+    });
   }
 
   /**
@@ -519,6 +537,20 @@ export class OfflineService {
     replace = false,
   ): Promise<TimelineRange[]> {
     return this.seeds.writeCandidates(video, obj, candidates, replace);
+  }
+
+  /** The object is back at `frame`: the absent range holding it ends the frame before (end_absence_at). */
+  endAbsenceAt(video: string, obj: number, frame: number, variant: string | null = null): Promise<FrameRange[]> {
+    return this._change(video, obj, variant, () => this._endAbsence(video, obj, frame));
+  }
+
+  private async _endAbsence(video: string, obj: number, frame: number): Promise<FrameRange[]> {
+    const r = rangeAt(await this.seeds.ranges(video, obj), frame);
+    if (r != null) {
+      // the absent layer only: a candidate or present mark under the range is not the user's absence
+      await this.seeds.paintRange(video, obj, frame, r.end, null, {clear: [ABSENT]});
+    }
+    return this.seeds.ranges(video, obj);
   }
 
   /** Drop one seed frame; with none left, the object's track goes too (its versions stay). */
