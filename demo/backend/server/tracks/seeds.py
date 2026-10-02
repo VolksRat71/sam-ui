@@ -24,7 +24,19 @@ import shutil
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from tracks import rle
+
 Seeds = Dict[int, Dict[str, list]]
+
+
+def cleared(seed: Dict) -> bool:
+    """True for a 'not on this frame' seed: clicks with no positive and an
+    approved mask that is empty (or none). A legacy anchor-trimmed seed
+    (no positive, non-empty mask) is not cleared."""
+    if not seed.get("points") or 1 in [int(l) for l in seed.get("labels", [])]:
+        return False
+    m = seed.get("mask")
+    return m is None or rle.area(m) == 0
 
 
 def seeds_hash(seeds: Seeds) -> str:

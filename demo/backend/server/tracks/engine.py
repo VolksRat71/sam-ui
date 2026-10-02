@@ -13,7 +13,7 @@ from typing import Any, Callable, Dict, Iterator, List, Optional, Protocol, Tupl
 import numpy as np
 
 from tracks import rle
-from tracks.seeds import Seeds
+from tracks.seeds import Seeds, cleared
 from tracks.streaming import sam2_prune
 
 FrameMasks = Tuple[int, Dict[int, np.ndarray]]
@@ -76,13 +76,15 @@ class Sam2Engine:
         datatype assertion in memory attention). A frame can so be yielded once
         per group, each time with that group's objects. The backbone features
         are cached per video, so the extra passes do not re-encode frames."""
+        objects, blank = strip_cleared(objects)
         objects = {o: s for o, s in objects.items() if any(v["points"] for v in s.values())}
         for group in groups_by_first_seed(objects):
-            yield from self._track_group(video_path, group, video_handle)
+            for frame, masks in self._track_group(video_path, group, video_handle):
+                yield frame, {o: np.zeros_like(m) if frame in blank[o] else m for o, m in masks.items()}
 
     def passes(self, objects: Dict[int, Seeds]) -> int:
         """How many times a job over `objects` runs the clip (one per group)."""
-        return max(1, len(groups_by_first_seed(objects)))
+        return max(1, len(groups_by_first_seed(strip_cleared(objects)[0])))
 
     def _track_group(self, video_path: str, objects: Dict[int, Seeds],
                      video_handle: Optional[Dict] = None) -> Iterator[FrameMasks]:
@@ -107,6 +109,17 @@ class Sam2Engine:
                                       for k, o in enumerate(obj_ids)}
             finally:
                 self.predictor.reset_state(state)
+
+
+def strip_cleared(objects: Dict[int, Seeds]) -> Tuple[Dict[int, Seeds], Dict[int, set]]:
+    """The objects without their cleared seeds, and each object's cleared frames.
+
+    sam-ui: a 'not on this frame' seed is output, not input. Given as a
+    conditioning frame, SAM 2 drops the object on the frames around it
+    (measured: IoU 0 on frames 9-19), so SAM 2 tracks through it and its
+    output there is blanked. SAM 3 conditions on it safely."""
+    blank = {o: {f for f, v in s.items() if cleared(v)} for o, s in objects.items()}
+    return {o: {f: v for f, v in s.items() if f not in blank[o]} for o, s in objects.items()}, blank
 
 
 def groups_by_first_seed(objects: Dict[int, Seeds]) -> List[Dict[int, Seeds]]:
