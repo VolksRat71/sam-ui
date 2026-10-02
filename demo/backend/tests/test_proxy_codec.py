@@ -69,7 +69,7 @@ def test_known_final_duration_preserved(tmp_path):
     assert codec.validate_proxy(source,recipe,output)['source_end'] is not None
 
 
-def varied_asset(tmp_path, width, height, *, sar=Fraction(1), rotation=0, negative=False):
+def varied_asset(tmp_path, width, height, *, sar=Fraction(1), rotation=0, negative=False, conflicting_durations=False):
     import av
     import numpy as np
     import subprocess
@@ -78,7 +78,7 @@ def varied_asset(tmp_path, width, height, *, sar=Fraction(1), rotation=0, negati
         s=out.add_stream('libx264',rate=24);s.width=width;s.height=height;s.pix_fmt='yuv444p'
         s.time_base=s.codec_context.time_base=Fraction(1,1000)
         s.codec_context.sample_aspect_ratio=sar;s.options={'crf':'0','bf':'0'}
-        for i,pts in enumerate([0,33,75,100]):
+        for i,pts in enumerate([0,40,80,120] if negative and not conflicting_durations else [0,33,75,100]):
             f=av.VideoFrame.from_ndarray(np.full((height,width,3),30+i*50,dtype=np.uint8),format='rgb24')
             f.pts=pts;f.time_base=Fraction(1,1000)
             for packet in s.encode(f):out.mux(packet)
@@ -131,3 +131,11 @@ def test_non_quarter_display_matrix_refused():
         def __bytes__(self):return struct.pack('=9i',65536,0,0,0,-65536,0,0,0,1<<30)
     with pytest.raises(ValueError,match='unsupported_display_transform'):
         api()._check_display_data(SimpleNamespace(side_data=[Side()]))
+
+
+def test_conflicting_pts_and_durations_not_silently_retimed(tmp_path):
+    source=varied_asset(tmp_path,128,64,negative=True,conflicting_durations=True)
+    recipe=effective_recipe(source,ProxyRecipe());out=tmp_path/'proxy.mp4'
+    api().encode_proxy(source,recipe,out)
+    with pytest.raises(ValueError,match='proxy_duration_mismatch'):
+        api().validate_proxy(source,recipe,out)
