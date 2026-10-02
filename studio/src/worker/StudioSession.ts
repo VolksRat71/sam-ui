@@ -1803,7 +1803,7 @@ export default class StudioSession {
       const ranges = this._ranges.get(id) ?? [];
       const seeds = this._seedPoints.get(id) ?? new Map<number, NormPoint[]>();
       const approved = this._seedMasks.get(id);
-      // "not on this frame" seeds, as the tracker decides them: never a disappearance
+      // "not on this frame" seeds, as the tracker decides them: never a disappearance, and a candidate's item skips them
       const seedOf = (frame: number, points: NormPoint[]) => ({frame, points, mask: (approved?.get(frame)?.data as RLEObject | undefined) ?? null});
       const cleared = [...seeds].filter(([frame, points]) => isClearedSeed(seedOf(frame, points))).map(([frame]) => frame);
       // a positive or text seed inside a candidate: that frame is confirmed present

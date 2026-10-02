@@ -123,9 +123,13 @@ describe('StudioSession review queue: a positive inside a candidate confirms tha
     expect(await candidateQueue([[0.3, 0.3, 1], [0.6, 0.6, 0]], 'mask')).toEqual([11]);
   });
 
-  it('does not confirm on a cleared seed (negatives only, no mask or an empty one)', async () => {
-    expect(await candidateQueue([[0.3, 0.3, 0]])).toEqual([10]);
-    expect(await candidateQueue([[0.3, 0.3, 0]], 'empty')).toEqual([10]);
+  it('skips a cleared seed on the start (negatives only, no mask or an empty one): the item moves on, the candidate stays', async () => {
+    expect(await candidateQueue([[0.3, 0.3, 0]])).toEqual([11]);
+    expect(await candidateQueue([[0.3, 0.3, 0]], 'empty')).toEqual([11]);
+  });
+
+  it('keeps the item on a seed that is neither confirmed nor cleared (a negative over a kept mask)', async () => {
+    expect(await candidateQueue([[0.3, 0.3, 0]], 'mask')).toEqual([10]);
   });
 
   it('confirms on a text seed (no clicks, a mask)', async () => {

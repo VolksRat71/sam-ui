@@ -11,7 +11,8 @@
 // Each frame's area, box, centroid and number of pieces are read from the RLE
 // runs; signals turn them into reasons (a jump, a change of area or of pieces,
 // a start, stop or reappearance, an engine disagreement, a candidate's first
-// frame not confirmed present by a positive or text seed, a bounded
+// frame neither confirmed present (a positive or text seed) nor marked not
+// here (a cleared seed), a bounded
 // re-track's seams, a review flag); locations() scores frames by the
 // WEIGHTS and merges neighbours by non-maximum suppression into a capped queue.
 //
@@ -217,7 +218,7 @@ export type SignalInputs = {
   bounded?: ReadonlyArray<readonly [number, number]>;
   flags?: ReadonlyArray<number>;
   seeds?: ReadonlyArray<number>;
-  /** Seed frames that are cleared ("not on this frame": no positive, no mask or an empty one). */
+  /** Seed frames that are cleared ("not on this frame": no positive, no mask or an empty one): passed over, and inside a candidate skipped by its item. */
   cleared?: ReadonlyArray<number>;
   /** Seed frames that confirm the object present (a positive, or a text seed): inside a candidate, out of the queue. */
   confirmed?: ReadonlyArray<number>;
@@ -331,16 +332,18 @@ export function signals(stats: ReadonlyMap<number, FrameStats>, nFrames: number,
     out.delete(f); // the user drew that mask: only their own flag still counts
   }
 
-  // a positive or text seed confirms its own frame present: a candidate's item sits on its first frame
-  // still unconfirmed (added after the seed frames, so a cleared seed confirms nothing)
+  // a positive or text seed confirms its own frame present, a cleared seed marks it not here: either way
+  // the user checked it, so a candidate's item sits on its first frame that is neither (added after the
+  // seed frames; a cleared seed does not resolve the candidate, it only moves the item on)
   const sure = new Set(inputs.confirmed ?? []);
+  const checked = (g: number) => sure.has(g) || blank.has(g);
   for (const c of inputs.candidates ?? []) {
     if (c.state !== CANDIDATE) {
       continue;
     }
     let f: number | null = null;
     for (let g = c.start; g <= c.end; g++) {
-      if (!sure.has(g)) {
+      if (!checked(g)) {
         f = g;
         break;
       }
@@ -348,10 +351,16 @@ export function signals(stats: ReadonlyMap<number, FrameStats>, nFrames: number,
     if (f != null && f >= 0 && f < nFrames && !gone(f)) {
       const score = c.score != null ? `, score ${fmt2(c.score)}` : '';
       const k = f - c.start;
+      const skipped = Array.from({length: k}, (_, i) => c.start + i);
+      const how = skipped.every(g => sure.has(g))
+        ? 'confirmed present'
+        : skipped.every(g => blank.has(g))
+          ? 'marked not here'
+          : 'confirmed present or marked not here';
       const where =
         k === 0
           ? `starts here (frames ${c.start + 1}-${c.end + 1})`
-          : `resumes here (frames ${c.start + 1}-${c.end + 1}; ${k} frame${k > 1 ? 's' : ''} confirmed present before it)`;
+          : `resumes here (frames ${c.start + 1}-${c.end + 1}; ${k} frame${k > 1 ? 's' : ''} ${how} before it)`;
       add(reason('candidate', f, 1, `an unconfirmed candidate range from ${c.source}${score} ${where}`));
     }
   }

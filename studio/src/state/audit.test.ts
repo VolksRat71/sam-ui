@@ -490,15 +490,49 @@ describe('a positive inside a candidate confirms that frame present (Nate, 2026-
     expect(signals(statsOf(moving()), 30, {candidates: cand, seeds: every, confirmed: every}).size).toBe(0);
   });
 
-  it('does not confirm on a cleared seed', () => {
+  it('confirms nothing on a cleared seed, but the item still skips that frame (option B, below)', () => {
     const got = signals(statsOf(moving()), 30, {candidates: cand, seeds: [0, 10], cleared: [10]});
-    expect(kinds(got, 10)).toEqual(['candidate']);
-    expect(got.get(10)![0].detail).toContain('starts here');
+    expect(got.get(11)![0].detail).not.toContain('confirmed present');
   });
 
   it('confirms on a text seed (no clicks, a mask)', () => {
     const got = signals(statsOf(moving()), 30, {candidates: cand, seeds: [], confirmed: [10]});
     expect(got.has(10)).toBe(false);
     expect(kinds(got, 11)).toEqual(['candidate']);
+  });
+});
+
+describe('a cleared seed inside a candidate: the item skips that frame too (Nate, option B, 2026-10-02)', () => {
+  const cand = [{start: 10, end: 14, state: 'candidate', source: 'text:dog@sam3'}] as NonNullable<Parameters<typeof signals>[2]>['candidates'];
+  const isCandidate = (got: ReturnType<typeof signals>, f: number) => (got.get(f) ?? []).some(r => r.kind === 'candidate');
+
+  it("moves the item off a cleared seed on the candidate's start, to the next frame", () => {
+    const got = signals(statsOf(moving()), 30, {candidates: cand, seeds: [0, 10], cleared: [10]});
+    expect(got.has(10)).toBe(false);
+    expect(kinds(got, 11)).toEqual(['candidate']);
+    expect(got.get(11)![0].detail).toBe('an unconfirmed candidate range from text:dog@sam3 resumes here (frames 11-15; 1 frame marked not here before it)');
+  });
+
+  it('skips a mix of confirmed and cleared frames at the start to the first frame that is neither', () => {
+    const got = signals(statsOf(moving()), 30, {candidates: cand, seeds: [10, 11, 12], cleared: [11], confirmed: [10, 12]});
+    expect([...got.keys()]).toEqual([13]);
+    expect(kinds(got, 13)).toEqual(['candidate']);
+    expect(got.get(13)![0].detail).toBe(
+      'an unconfirmed candidate range from text:dog@sam3 resumes here (frames 11-15; 3 frames confirmed present or marked not here before it)',
+    );
+  });
+
+  it('has no item when every frame of the candidate is confirmed or cleared', () => {
+    const every = [10, 11, 12, 13, 14];
+    expect(signals(statsOf(moving()), 30, {candidates: cand, seeds: every, cleared: [11, 13], confirmed: [10, 12, 14]}).size).toBe(0);
+    const onlyCleared = signals(statsOf(moving()), 30, {candidates: cand, seeds: every, cleared: every});
+    expect([...onlyCleared.keys()].some(f => isCandidate(onlyCleared, f))).toBe(false);
+  });
+
+  it('leaves the item on an unchecked start when the cleared seed is further inside', () => {
+    const got = signals(statsOf(moving()), 30, {candidates: cand, seeds: [0, 12], cleared: [12]});
+    expect(kinds(got, 10)).toEqual(['candidate']);
+    expect(got.get(10)![0].detail).toContain('starts here (frames 11-15)');
+    expect([...got.keys()].filter(f => isCandidate(got, f))).toEqual([10]);
   });
 });

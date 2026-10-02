@@ -883,7 +883,7 @@ class TrackService:
                                     disagreement=ious, pair=(name, other or ""), bounded=bnd.spans(meta),
                                     flags=flags.get(o, []),
                                     seeds=[f for f, v in info["seeds"].items() if v.get("points")],
-                                    # "not on this frame": never a disappearance
+                                    # "not on this frame": never a disappearance, and a candidate's item skips it
                                     cleared=[f for f, v in info["seeds"].items() if cleared(v)],
                                     # a positive or text seed inside a candidate: that frame is confirmed present
                                     confirmed=[f for f, v in info["seeds"].items() if confirmed(v)])

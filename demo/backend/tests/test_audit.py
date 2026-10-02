@@ -460,9 +460,10 @@ def parity_case():
         masks[f] = enc(m)
     inputs = {"absent": [{"start": 33, "end": 35, "state": "absent"}],
               "candidates": [{"start": 20, "end": 24, "state": "candidate", "source": "text:dog@sam3", "score": 0.7}],
-              "disagreement": {"5": 0.4, "6": 0.9, "36": 0.125}, "bounded": [[27, 31]], "flags": [2], "seeds": [0, 12, 14, 20],
-              "cleared": [12, 14],  # 12 holds a mask from before the skip; 14 starts the vanishing
-              "confirmed": [0, 20]}  # a positive on the candidate's first frame: it resumes at 21
+              "disagreement": {"5": 0.4, "6": 0.9, "36": 0.125}, "bounded": [[27, 31]], "flags": [2], "seeds": [0, 12, 14, 20, 21],
+              # 12 holds a mask from before the skip; 14 starts the vanishing; 20 is "not here" on the candidate's start
+              "cleared": [12, 14, 20],
+              "confirmed": [0, 21]}  # and a positive on the frame after it: the candidate resumes at 22
     return masks, inputs
 
 
@@ -705,10 +706,36 @@ def test_a_positive_anywhere_inside_a_candidate_confirms_only_its_own_frame():
     assert signals(stats_of(moving()), 30, candidates=[CAND], seeds=every, confirmed=every) == {}
 
 
-def test_a_cleared_seed_inside_a_candidate_does_not_confirm_it():
+# -- a cleared seed inside a candidate: the item skips that frame too (Nate, option B, 2026-10-02) --
+
+def test_a_cleared_seed_on_a_candidates_start_moves_its_item_to_the_next_frame():
     got = signals(stats_of(moving()), 30, candidates=[CAND], seeds=[0, 10], cleared=[10])
-    assert kinds(got, 10) == ["candidate"]  # "not on this frame" is no confirmation: the candidate stays
-    assert "starts here" in got[10][0]["detail"]
+    assert 10 not in got  # "not on this frame": nothing left to check there
+    assert kinds(got, 11) == ["candidate"]  # the candidate is not resolved: its item moves on
+    assert got[11][0]["detail"] == ("an unconfirmed candidate range from text:dog@sam3 resumes here "
+                                    "(frames 11-15; 1 frame marked not here before it)")
+
+
+def test_confirmed_and_cleared_frames_at_a_candidates_start_skip_to_the_first_frame_that_is_neither():
+    got = signals(stats_of(moving()), 30, candidates=[CAND], seeds=[10, 11, 12], cleared=[11], confirmed=[10, 12])
+    assert set(got) == {13} and kinds(got, 13) == ["candidate"]
+    assert got[13][0]["detail"] == ("an unconfirmed candidate range from text:dog@sam3 resumes here "
+                                    "(frames 11-15; 3 frames confirmed present or marked not here before it)")
+
+
+def test_a_candidate_whose_frames_are_all_confirmed_or_cleared_has_no_item():
+    every = list(range(10, 15))
+    got = signals(stats_of(moving()), 30, candidates=[CAND], seeds=every, cleared=[11, 13], confirmed=[10, 12, 14])
+    assert got == {}
+    only_cleared = signals(stats_of(moving()), 30, candidates=[CAND], seeds=every, cleared=every)
+    assert all(r["kind"] != "candidate" for rs in only_cleared.values() for r in rs)
+
+
+def test_a_cleared_seed_in_the_middle_of_a_candidate_leaves_an_unchecked_start_where_it_is():
+    got = signals(stats_of(moving()), 30, candidates=[CAND], seeds=[0, 12], cleared=[12])
+    assert kinds(got, 10) == ["candidate"]
+    assert "starts here (frames 11-15)" in got[10][0]["detail"]
+    assert all(r["kind"] != "candidate" for f, rs in got.items() if f != 10 for r in rs)
 
 
 def test_a_text_seed_inside_a_candidate_confirms_that_frame():
@@ -735,9 +762,11 @@ def test_a_positive_inside_a_candidate_confirms_that_frame_in_the_queue(hs):
     assert [(r["start"], r["end"], r["state"]) for r in timeline] == [(10, 20, CANDIDATE)]  # derived, never painted
 
 
-def test_a_cleared_seed_inside_a_candidate_does_not_confirm_it_in_the_queue(hs):
+def test_a_cleared_seed_on_a_candidates_start_moves_its_item_in_the_queue(hs):
     tracked(hs)
     hs.service.set_range(hs.video, 1, 10, 20, CANDIDATE, source="text:dog@sam3", score=0.6)
     lone_negative(hs, 10)
     assert cleared(hs.service.seeds.seeds(hs.video, 1)[10])
-    assert candidate_frames(queue(hs)) == [10]
+    assert candidate_frames(queue(hs)) == [11]  # skipped, not resolved: the item moves to the next frame
+    timeline = hs.service.object_info(hs.video, 1)["ranges"]
+    assert [(r["start"], r["end"], r["state"]) for r in timeline] == [(10, 20, CANDIDATE)]
