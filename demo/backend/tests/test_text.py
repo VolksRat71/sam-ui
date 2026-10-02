@@ -365,6 +365,66 @@ def test_a_text_prompt_is_not_held_to_the_clicks_needs_positive_rule(tmp_path):
     assert stub.mask_calls == [(2, 1)]
 
 
+
+def _text_frame(tmp_path):
+    """A real InferenceAPI (a stub SAM 2) whose object 1 has a text seed on frame 2."""
+    from flask import Flask
+    from test_inference_api import H, W, StubPredictor, start
+    from inference.predictor import InferenceAPI
+    from tracks.routes import make_blueprint
+
+    big = np.zeros((H, W), bool)
+    big[2:6, 2:6] = True
+
+    class Detector(TextFake):
+        def segment_text(self, video_path, frame, text):
+            return TextMatch(mask=big, score=0.9, instances=1, box=[2, 2, 5, 5])
+
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"frames")
+    a = InferenceAPI(predictor=StubPredictor(), tracks_root=str(tmp_path / "tracks"))
+    a.tracks.engine = FakeEngine(n_frames=6, shape=(H, W))
+    a.tracks._specs = {"fake3": EngineSpec("fake3", "fake3-1", Detector, text=lambda: None)}
+    sid = start(a, str(video))
+    app = Flask(__name__)
+    app.register_blueprint(make_blueprint(a.track_context, a.tracks))
+    r = app.test_client().post("/text_prompt", json={"session_id": sid, "object_id": 1, "frame_index": 2, "text": "box"})
+    assert r.status_code == 200 and r.json["matched"]
+    return a, sid, lambda: a.tracks.seeds.seeds(a.session_states[sid]["video"], 1)[2]
+
+
+@pytest.mark.parametrize("engine", [None, "sam2", "browser-sam2"])
+def test_a_lone_negative_on_a_text_frame_is_refused_off_sam3(tmp_path, engine):
+    """The ruling: SAM 2 empties a frame given only negatives, even with a mask
+    fed in through add_new_mask, which is how a text mask enters (spec fact 1).
+    So off SAM 3 a text frame is held to needs_positive like any frame, and the
+    refused click leaves its text seed as it was."""
+    from test_inference_api import click
+
+    a, sid, seed = _text_frame(tmp_path)
+    before = seed()
+    with pytest.raises(ValueError, match="^needs_positive:"):
+        click(a, sid, 1, 2, [[0.1, 0.1]], [0], engine=engine)
+    assert seed() == before and before["text"] == "box" and before["points"] == []
+
+
+def test_a_positive_and_a_negative_trim_a_text_frame_off_sam3(tmp_path):
+    from test_inference_api import click
+
+    a, sid, seed = _text_frame(tmp_path)
+    click(a, sid, 1, 2, [[0.3, 0.3], [0.1, 0.1]], [1, 0], engine="sam2")
+    s = seed()
+    assert s["text"] == "box" and s["labels"] == [1, 0]
+
+
+def test_a_lone_negative_on_a_text_frame_goes_through_on_sam3(tmp_path):
+    from test_inference_api import click
+
+    a, sid, seed = _text_frame(tmp_path)
+    click(a, sid, 1, 2, [[0.1, 0.1]], [0], engine="sam3")
+    s = seed()
+    assert s["text"] == "box" and s["labels"] == [0]
+
 def test_graphql_seeds_carry_their_text():
     from test_schema import INFO, FakeAPI, run
 

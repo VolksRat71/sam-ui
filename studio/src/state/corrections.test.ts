@@ -1,6 +1,6 @@
 // sam-ui (Apache-2.0). New file, not from SAM 2.
 import {describe, expect, it} from 'vitest';
-import {goneSteps, isNeedsPositive, needsPositive, planClicks, refusedAsAbsent} from './corrections';
+import {goneSteps, isNeedsPositive, needsPositive, planClicks, planRemoval, refusedAsAbsent} from './corrections';
 
 describe('needsPositive', () => {
   it('is true for negatives only on SAM 2 and the browser engine', () => {
@@ -42,6 +42,41 @@ describe('planClicks', () => {
     expect(planClicks([pos, neg], [neg], 'sam3')).toEqual({kind: 'send', points: [neg], gone: true});
     expect(planClicks([], [neg], 'sam3')).toEqual({kind: 'send', points: [neg], gone: true});
     expect(planClicks([], [pos], 'sam3')).toEqual({kind: 'send', points: [pos], gone: false});
+  });
+});
+
+describe('planClicks on a text frame', () => {
+  // A text seed has no clicks, only its positive mask, so its frame's current
+  // clicks are []. The ruling: off SAM 3 a lone negative there is refused like
+  // on any frame, since SAM 2 empties a frame given only negatives even with a
+  // mask fed in through add_new_mask, which is how a text mask enters (spec
+  // fact 1). The backend refuses it with needs_positive too. To trim, add a positive.
+  const pos: [number, number, 0 | 1] = [0.1, 0.1, 1];
+  const neg: [number, number, 0 | 1] = [0.5, 0.5, 0];
+
+  it('nudges a lone negative on SAM 2 and the browser engine', () => {
+    expect(planClicks([], [neg], 'sam2')).toEqual({kind: 'nudge', points: []});
+    expect(planClicks([], [neg], 'browser-sam2')).toEqual({kind: 'nudge', points: []});
+  });
+  it('sends a positive plus a negative on SAM 2', () => {
+    expect(planClicks([], [pos, neg], 'sam2')).toEqual({kind: 'send', points: [pos, neg], gone: false});
+  });
+  it('sends a lone negative on SAM 3, asking whether the object is gone', () => {
+    expect(planClicks([], [neg], 'sam3')).toEqual({kind: 'send', points: [neg], gone: true});
+  });
+});
+
+describe('planRemoval', () => {
+  const pos: [number, number, 0 | 1] = [0.1, 0.1, 1];
+
+  it("goes back to a text frame's mask on the first engine that reads text, not the one on screen", () => {
+    // engine null: on SAM 2 the backend refuses a text prompt named for it
+    expect(planRemoval([], 'dog')).toEqual({kind: 'restoreText', text: 'dog', engine: null});
+  });
+  it('corrects the clicks while some remain, or when the frame has no text', () => {
+    expect(planRemoval([pos], 'dog')).toEqual({kind: 'correct'});
+    expect(planRemoval([], undefined)).toEqual({kind: 'correct'});
+    expect(planRemoval([pos], null)).toEqual({kind: 'correct'});
   });
 });
 
