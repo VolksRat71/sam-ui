@@ -26,9 +26,28 @@ code for the browser engine, and the two must agree.
      components the number of pieces changes;
      retrack    a bounded re-track (#19) starts or stops here (its seams),
                 or, weaker (RETRACK_INSIDE), made this frame;
-     candidate  an unconfirmed candidate range (draft 5) starts here.
+     candidate  an unconfirmed candidate range (draft 5) starts here, or
+                resumes here after frames confirmed present or marked
+                not here.
    Frames inside an absent range raise nothing, and nothing is compared
    across one. On a seed frame only a flag counts: the user drew that mask.
+   A seed that asserts the object (a positive click, or a text seed:
+   tracks/seeds.py confirmed()) confirms its frame present, and a cleared
+   seed marks its frame not here: either way the user has checked that
+   frame, so inside a candidate it is out of the queue and the candidate's
+   review item sits on its first frame that is neither. Only the clicked
+   frame counts, and nothing is stored: the queue derives it from the seeds.
+   A cleared seed does not resolve the candidate (it stays a candidate in
+   the timeline and a review item on its next unchecked frame), and when
+   every frame of it is checked it raises nothing. A seed that is neither
+   (a legacy anchor-trimmed one) can still hold the item: the one reason a
+   seed frame keeps that it did not raise itself.
+   A cleared seed ("not on this frame": negatives only, an empty mask) is
+   no disappearance: its frame is passed over, so the frames either side
+   of it are compared with each other (SAM 2 blanks that frame by design),
+   and the track stopping into a cleared frame or an absent range (SAM 3
+   keeps a cleared look-alike out for a while) is no stop. Coming back
+   after one is still a reappearance.
 3. locations(): per frame, a score (the WEIGHTS sum of its reasons), then
    non-maximum suppression: the best frame takes every frame with a reason
    within NMS_RADIUS of it (never across an absent range) into one location,
@@ -215,13 +234,17 @@ def _reason(kind: str, frame: int, strength: float, detail: str) -> Reason:
 def signals(stats: Dict[int, Stats], n_frames: int, *, absent: Iterable[Dict] = (), candidates: Iterable[Dict] = (),
             disagreement: Optional[Dict[int, float]] = None, threshold: float = DISAGREE_IOU,
             pair: Tuple[str, str] = ("the engines", ""), bounded: Iterable[Sequence[int]] = (),
-            flags: Iterable[int] = (), seeds: Iterable[int] = ()) -> Dict[int, List[Reason]]:
+            flags: Iterable[int] = (), seeds: Iterable[int] = (),
+            cleared: Iterable[int] = (), confirmed: Iterable[int] = ()) -> Dict[int, List[Reason]]:
     """{frame: [reason]} for the frames worth a look (see the module doc).
     `stats` is frame_stats() per frame; `absent` the object's absent ranges;
     `candidates` its candidate ranges as the timeline shows them;
     `disagreement` {frame: IoU} against another engine (`pair` names the
     two); `bounded` the [first, last] stretches bounded passes made; `flags`
-    the user's flagged frames; `seeds` its frames with clicks."""
+    the user's flagged frames; `seeds` its frames with clicks; `cleared`
+    those whose seed is cleared (tracks/seeds.py cleared()); `confirmed`
+    those whose seed confirms the object present (tracks/seeds.py confirmed()).
+    A candidate's item skips both."""
     absent = [r for r in rng.normalize(absent) if r["state"] == rng.ABSENT]
     out: Dict[int, List[Reason]] = defaultdict(list)
 
@@ -231,34 +254,56 @@ def signals(stats: Dict[int, Stats], n_frames: int, *, absent: Iterable[Dict] = 
     def there(f: int) -> bool:
         return 0 <= f < n_frames and f in stats and stats[f]["area"] > 0 and not gone(f)
 
+    blank = set(int(f) for f in cleared)
+
+    def passed_over(f: int) -> bool:  # a cleared seed's frame (one in an absent range stays a gap)
+        return f in blank and not gone(f)
+
+    def before(f: int) -> Optional[int]:
+        g = f - 1
+        while g >= 0 and passed_over(g):
+            g -= 1
+        return g if g >= 0 else None
+
+    def after(f: int) -> Optional[int]:
+        g = f + 1
+        while g < n_frames and passed_over(g):
+            g += 1
+        return g if g < n_frames else None
+
     seen = False
     moves: List[Tuple[float, float]] = []  # the current run's frame-to-frame moves
     for f in range(n_frames):
+        if passed_over(f):
+            continue
         if not there(f):
             moves = []
             continue
         st = stats[f]
-        if not there(f - 1) and f > 0:
+        p, q = before(f), after(f)
+        if p is not None and not there(p):
             if seen:
                 out[f].append(_reason("reappear", f, 1.0, "the object comes back after a gap"))
             else:
                 out[f].append(_reason("start", f, 1.0, "the track starts here"))
-        if not there(f + 1) and f < n_frames - 1:
+        if q is not None and not there(q) and not (passed_over(f + 1) or gone(f + 1)):
             out[f].append(_reason("stop", f, 1.0, "the track stops after this frame"))
         seen = True
-        if not there(f - 1):
+        if p is None or not there(p):
             continue
-        pv = stats[f - 1]
+        pv, gap = stats[p], f - p
         a0, a1 = pv["area"], st["area"]
         rel = abs(a1 - a0) / max(a0, a1)
         if rel >= AREA_JUMP:
+            span = "in one frame" if gap == 1 else f"across {gap - 1} cleared frame{'s' if gap > 2 else ''}"
             out[f].append(_reason("area", f, _ramp(rel, AREA_JUMP, AREA_FULL),
-                                  f"the mask {'grows' if a1 > a0 else 'shrinks'} by {pct(rel)}% in one frame"))
+                                  f"the mask {'grows' if a1 > a0 else 'shrinks'} by {pct(rel)}% {span}"))
         if st["components"] != pv["components"]:
             out[f].append(_reason("components", f, 1.0,
                                   f"the mask goes from {pv['components']} to {st['components']} pieces"))
         vx = _median([m[0] for m in moves[-JUMP_HISTORY:]]) if moves else 0.0
         vy = _median([m[1] for m in moves[-JUMP_HISTORY:]]) if moves else 0.0
+        vx, vy = vx * gap, vy * gap  # the predicted move, over the cleared frames too
         (cx0, cy0), (cx1, cy1) = pv["centroid"], st["centroid"]
         off = math.hypot(cx1 - (cx0 + vx), cy1 - (cy0 + vy)) / max(_diag(pv["bbox"]), _diag(st["bbox"]))
         b = pv["bbox"]
@@ -269,7 +314,7 @@ def signals(stats: Dict[int, Stats], n_frames: int, *, absent: Iterable[Dict] = 
             out[f].append(_reason("jump", f, strength,
                                   f"the mask moves {fmt2(off)} of its size off its course, and its box overlaps "
                                   f"the expected one by {pct(1 - surprise)}%"))
-        moves.append((cx1 - cx0, cy1 - cy0))
+        moves.append(((cx1 - cx0) / gap, (cy1 - cy0) / gap))
 
     a_name, b_name = pair
     for f, iou in sorted((disagreement or {}).items()):
@@ -289,16 +334,28 @@ def signals(stats: Dict[int, Stats], n_frames: int, *, absent: Iterable[Dict] = 
             else:
                 out[f].append(_reason("retrack", f, RETRACK_INSIDE, "made by a re-track near a correction"))
 
-    for c in candidates:
-        if c.get("state") == rng.CANDIDATE and 0 <= c["start"] < n_frames and not gone(c["start"]):
-            score = f", score {fmt2(c['score'])}" if c.get("score") is not None else ""
-            out[c["start"]].append(_reason("candidate", c["start"], 1.0,
-                                           f"an unconfirmed candidate range from {c.get('source')}{score} starts here "
-                                           f"(frames {c['start'] + 1}-{c['end'] + 1})"))
-
-    seed_frames = set(int(f) for f in seeds)
+    seed_frames = set(int(f) for f in seeds) | blank
     for f in seed_frames:  # the user drew that mask: only their own flag still counts
         out.pop(f, None)
+
+    sure = set(int(f) for f in confirmed)
+    checked = sure | blank  # confirmed present, or marked not here: either way nothing left to look at
+    for c in candidates:  # added after the seed frames: only a checked frame is skipped
+        if c.get("state") != rng.CANDIDATE:
+            continue
+        f = next((g for g in range(c["start"], c["end"] + 1) if g not in checked), None)  # first unchecked
+        if f is not None and 0 <= f < n_frames and not gone(f):
+            score = f", score {fmt2(c['score'])}" if c.get("score") is not None else ""
+            k = f - c["start"]
+            skipped = range(c["start"], f)
+            how = ("confirmed present" if all(g in sure for g in skipped) else
+                   "marked not here" if all(g in blank for g in skipped) else
+                   "confirmed present or marked not here")
+            where = (f"starts here (frames {c['start'] + 1}-{c['end'] + 1})" if k == 0 else
+                     f"resumes here (frames {c['start'] + 1}-{c['end'] + 1}; {k} frame{'s' if k > 1 else ''} "
+                     f"{how} before it)")
+            out[f].append(_reason("candidate", f, 1.0, f"an unconfirmed candidate range from {c.get('source')}{score} "
+                                                       f"{where}"))
     for f in sorted(set(int(f) for f in flags)):
         if 0 <= f < n_frames and not gone(f):  # a flag left inside a range marked absent since
             out[f].append(_reason("flag", f, 1.0, "flagged for a correction"))

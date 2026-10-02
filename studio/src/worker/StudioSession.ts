@@ -56,10 +56,11 @@ import type {Layout} from '~/state/layout';
 import {layoutFromResponse} from '~/state/layoutSync';
 import type {ExportedObject, ExportGroup, ExportKind} from '~/state/maskExport';
 import {buildExport} from './maskExports';
-import type {TrackObject} from '~/local/sam2/tracker';
+import {isClearedSeed, isConfirmedSeed, type TrackObject} from '~/local/sam2/tracker';
 import {BROWSER_ENGINE, engineLabel} from '~/state/engines';
 import {maskSegments} from '~/state/segments';
-import {type FrameRange, type Mark, type PaintOptions, type RangeState, absentAt, normalizeRanges, planUnits, rangesKey} from '~/state/ranges';
+import {refusedAsAbsent} from '~/state/corrections';
+import {type FrameRange, type Mark, type PaintOptions, type RangeState, absentAt, endAbsenceAt, normalizeRanges, planUnits, rangesKey} from '~/state/ranges';
 import {colorFor, DEFAULT_ENGINE, type NormPoint, type ServerObject} from '~/state/objects';
 import type MaskOverlayEffect from './MaskOverlayEffect';
 import {paintAlpha} from './maskPixels';
@@ -800,9 +801,12 @@ export default class StudioSession {
 
   // -- clicks ----------------------------------------------------------------
 
-  async setPoints(objectId: number, frameIndex: number, points: NormPoint[]): Promise<void> {
-    if (points.length > 0 && absentAt(this._ranges.get(objectId), frameIndex)) {
-      // the backend refuses these too; the UI says so before it sends
+  async setPoints(objectId: number, frameIndex: number, points: NormPoint[], engine?: string): Promise<void> {
+    // on an absent frame, clicks with no positive are refused (the backend
+    // refuses them too; the UI says so before it sends); a positive ends the
+    // absence at this frame, once the click has gone through
+    const absent = absentAt(this._ranges.get(objectId), frameIndex);
+    if (refusedAsAbsent(points, absent)) {
       throw new Error(`frame ${frameIndex + 1} is marked absent for this object: unmark it to click here`);
     }
     const t = this._tracklet(objectId);
@@ -816,7 +820,8 @@ export default class StudioSession {
         list = [];
       } else {
         const {rle} = await this._local.click(frameIndex, points);
-        await this._offline.recordPoints(video, objectId, frameIndex, points, rle, this._variant);
+        // a positive inside an absent range ends it, in the same undo step as the click
+        await this._offline.recordPoints(video, objectId, frameIndex, points, rle, this._variant, absent);
         list = [{objectId, rleMask: rle}];
       }
     } else if (points.length === 0) {
@@ -836,6 +841,7 @@ export default class StudioSession {
           points: points.map(p => [p[0], p[1]]),
           labels: points.map(p => p[2]),
           clearOldPoints: true,
+          engine: engine ?? null,
         },
       });
       const local = this._isLocal ? this._local.click(frameIndex, points) : null;
@@ -846,6 +852,10 @@ export default class StudioSession {
       } else if (mine != null) {
         list = [{objectId, rleMask: mine.rle}];
       }
+    }
+    if (absent && points.length > 0) {
+      // as the backend did: the range no longer hides this frame's new mask
+      this._ranges.set(objectId, endAbsenceAt(this._ranges.get(objectId), frameIndex));
     }
     this._setSeedPoints(t, frameIndex, points);
     if (this._offline == null && this._storeKey != null && points.length > 0 && !this._local.heldIds().has(objectId)) {
@@ -877,10 +887,11 @@ export default class StudioSession {
    * POST /text_prompt: seed this frame of an object from a phrase. The
    * backend's text engine (SAM 3) takes the phrase's best instance there as
    * the frame's approved mask, replacing the frame's clicks; a phrase that
-   * matches nothing changes nothing. Needs a backend (the browser engine
+   * matches nothing changes nothing. `engine` null: the backend's first
+   * engine that reads text. Needs a backend (the browser engine
    * takes clicks only).
    */
-  async textPrompt(objectId: number, frameIndex: number, text: string, engine: string): Promise<TextPromptResult> {
+  async textPrompt(objectId: number, frameIndex: number, text: string, engine: string | null): Promise<TextPromptResult> {
     if (this._offline != null) {
       throw new Error('text prompts need SAM 3 in the desktop app');
     }
@@ -910,7 +921,7 @@ export default class StudioSession {
       objectId,
       frameIndex,
       text: body.text ?? text,
-      engine: body.engine ?? engine,
+      engine: body.engine ?? engine ?? '',
       matched: body.matched === true && body.mask != null,
       score: body.score ?? 0,
       instances: body.instances ?? 0,
@@ -1154,7 +1165,7 @@ export default class StudioSession {
    * on the wrong one): one undo step for each. Needs the backend, whose SAM 2
    * segments them for the target; with no backend the browser engine does.
    */
-  async moveClicks(frameIndex: number, fromId: number, toId: number): Promise<ServerObject[]> {
+  async moveClicks(frameIndex: number, fromId: number, toId: number, engine?: string): Promise<ServerObject[]> {
     if (absentAt(this._ranges.get(toId), frameIndex)) {
       throw new Error(`frame ${frameIndex + 1} is marked absent for that object: unmark it to move clicks there`);
     }
@@ -1179,7 +1190,7 @@ export default class StudioSession {
       ];
     } else {
       const res = await mutate<StudioSessionMoveClicksMutation>(this.env, MOVE_CLICKS, {
-        input: {sessionId: this.sessionId, frameIndex, fromObjectId: fromId, toObjectId: toId},
+        input: {sessionId: this.sessionId, frameIndex, fromObjectId: fromId, toObjectId: toId, engine: engine ?? null},
       });
       out = [];
       for (const o of plain(res.moveClicks) as ServerObject[]) {
@@ -1905,6 +1916,12 @@ export default class StudioSession {
       const track = await this._local.store.get(video, id);
       const ranges = this._ranges.get(id) ?? [];
       const seeds = this._seedPoints.get(id) ?? new Map<number, NormPoint[]>();
+      const approved = this._seedMasks.get(id);
+      // "not on this frame" seeds, as the tracker decides them: never a disappearance, and a candidate's item skips them
+      const seedOf = (frame: number, points: NormPoint[]) => ({frame, points, mask: (approved?.get(frame)?.data as RLEObject | undefined) ?? null});
+      const cleared = [...seeds].filter(([frame, points]) => isClearedSeed(seedOf(frame, points))).map(([frame]) => frame);
+      // a positive or text seed inside a candidate: that frame is confirmed present
+      const confirmed = [...seeds].filter(([frame, points]) => isConfirmedSeed(seedOf(frame, points))).map(([frame]) => frame);
       const {state} = localTrackEntry(track, {seedsKey: seedsKey(seeds, ranges), variant: this._local.variant, running: held.has(id)});
       objects.push({
         id,
@@ -1914,6 +1931,8 @@ export default class StudioSession {
         ranges,
         candidates: candidates[id] ?? [],
         seeds: [...seeds.keys()],
+        cleared,
+        confirmed,
         flags: flags[id] ?? [],
       });
     }

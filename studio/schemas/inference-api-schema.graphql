@@ -23,6 +23,8 @@ input AddPointsInput {
   objectId: Int!
   labels: [Int!]!
   points: [[Float!]!]!
+  # sam-ui: the engine studio shows; null counts as SAM 2
+  engine: String
 }
 
 type CancelPropagateInVideo {
@@ -167,6 +169,8 @@ input MoveClicksInput {
   frameIndex: Int!
   fromObjectId: Int!
   toObjectId: Int!
+  # sam-ui: the engine studio shows; null counts as SAM 2
+  engine: String
 }
 
 # sam-ui: one kept track of an object's earlier (or current) seeds

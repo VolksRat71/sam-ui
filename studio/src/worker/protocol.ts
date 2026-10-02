@@ -138,13 +138,17 @@ export type StudioMethods = {
   /** `key`: the video's sha256, which keys its data with no backend. */
   startSession: {args: {path: string; key?: string}; result: SessionInfo};
   closeSession: {args: Record<string, never>; result: void};
-  /** Replace one object's clicks on one frame (none: clear the frame). */
+  /**
+   * Replace one object's clicks on one frame (none: clear the frame).
+   * `engine`: the one on screen; the backend refuses negatives alone on any
+   * engine but SAM 3 (`needs_positive:`), and a missing one counts as SAM 2.
+   */
   setPoints: {
-    args: {objectId: number; frameIndex: number; points: NormPoint[]};
+    args: {objectId: number; frameIndex: number; points: NormPoint[]; engine?: string};
     result: void;
   };
   /** Seed one frame of an object from a phrase (SAM 3); its best match becomes the frame's mask. */
-  textPrompt: {args: {objectId: number; frameIndex: number; text: string; engine: string}; result: TextPromptResult};
+  textPrompt: {args: {objectId: number; frameIndex: number; text: string; engine: string | null}; result: TextPromptResult};
   /** EXPERIMENTAL: look for a phrase across the whole clip (SAM 3) and write each appearance as a candidate range. */
   discoverText: {args: {objectId: number; text: string; engine: string; stride?: number}; result: DiscoverTextResult};
   removeObject: {args: {objectId: number}; result: void};
@@ -169,8 +173,11 @@ export type StudioMethods = {
   redo: {args: {objectId: number}; result: ServerObject};
   /** Go back to one of the object's kept versions (the list's key, and the engine that made it). */
   restoreVersion: {args: {objectId: number; key: string; engine: string}; result: ServerObject};
-  /** Move one object's clicks on a frame to another object; answers both objects. */
-  moveClicks: {args: {frameIndex: number; fromId: number; toId: number}; result: ServerObject[]};
+  /**
+   * Move one object's clicks on a frame to another object; answers both objects.
+   * `engine`: the one on screen, as for setPoints (a missing one counts as SAM 2).
+   */
+  moveClicks: {args: {frameIndex: number; fromId: number; toId: number; engine?: string}; result: ServerObject[]};
   /**
    * Run a track job for these ids (the backend skips any another job holds);
    * resolves when its stream closes. `key` names the job in events.

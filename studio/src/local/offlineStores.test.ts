@@ -93,6 +93,10 @@ describe('OfflineService (test_api.py)', () => {
     await svc.removeObject(V, 2);
     expect((await svc.objects(V, VARIANT)).map(o => o.objectId)).toEqual([1]);
     expect(await svc.tracks.list(V)).toEqual([]);
+    // like the backend: a seedless stored object goes, and an id never stored is a no-op
+    await svc.removeObject(V, 1);
+    await svc.removeObject(V, 99);
+    expect(await svc.objects(V, VARIANT)).toEqual([]);
   });
 
   it('keeps tracks and objects across a new instance, and clears a video whole', async () => {
@@ -202,6 +206,17 @@ describe('absent ranges (test_ranges.py)', () => {
     expect(await state(svc, 1)).toBe('tracked');
   });
 
+  it('end at a positive click: [s, e] becomes [s, f-1], and the track goes stale (end_absence_at)', async () => {
+    const svc = new OfflineService(new MemoryKv());
+    await svc.recordPoints(V, 1, 0, [[0.5, 0.5, 1]], rle);
+    await svc.setRange(V, 1, 10, 40, 'absent');
+    await tracked(svc, 1);
+    expect(await svc.endAbsenceAt(V, 1, 25)).toEqual([{start: 10, end: 24, state: 'absent'}]);
+    expect(await state(svc, 1)).toBe('stale');
+    expect(await svc.endAbsenceAt(V, 1, 5)).toEqual([{start: 10, end: 24, state: 'absent'}]); // not absent: unchanged
+    expect(await svc.endAbsenceAt(V, 1, 10)).toEqual([]); // at its start the range goes
+  });
+
   it('keep an object with a range and no clicks yet listed', async () => {
     const svc = new OfflineService(new MemoryKv());
     await svc.setRange(V, 3, 0, 2, 'absent');
@@ -249,5 +264,27 @@ describe('candidate and present ranges (test_candidates.py)', () => {
     expect(await svc.setRange(V, 2, 0, 1, null, null, {clear: ['candidate']})).toEqual([c(5, 6)]);
     await expect(svc.writeCandidates(V, 2, [{start: 8, end: 9, source: ''}], true)).rejects.toThrow(/source/);
     expect((await svc.objectInfo(V, 2, VARIANT, new Set())).ranges).toEqual([c(5, 6)]);
+  });
+
+  // a candidate is not an absent range (Task 11 item 3)
+  it('a positive that ends an absence keeps the candidate under it, and undo puts the range back over it', async () => {
+    const svc = new OfflineService(new MemoryKv());
+    await svc.recordPoints(V, 1, 0, [[0.5, 0.5, 1]], rle);
+    await svc.writeCandidates(V, 1, [{start: 5, end: 35, source: DOG, score: 0.5}]);
+    await svc.setRange(V, 1, 10, 40, 'absent', VARIANT);
+    await svc.recordPoints(V, 1, 25, [[0.5, 0.5, 1]], rle, VARIANT, true); // the object is back at 25
+    expect(await svc.seeds.ranges(V, 1)).toEqual([{start: 10, end: 24, state: 'absent'}]);
+    expect(await svc.seeds.marks(V, 1)).toEqual([c(5, 35, 0.5)]); // the candidate layer is whole
+    expect(await svc.seeds.timeline(V, 1)).toEqual([c(5, 9, 0.5), {start: 10, end: 24, state: 'absent'}, c(25, 35, 0.5)]);
+    await svc.undo(V, 1, VARIANT); // one step: the click and the range's end together
+    expect(await svc.seeds.timeline(V, 1)).toEqual([c(5, 9, 0.5), {start: 10, end: 40, state: 'absent'}]);
+  });
+
+  it('a positive inside a candidate neither ends nor trims it', async () => {
+    const svc = new OfflineService(new MemoryKv());
+    await svc.writeCandidates(V, 1, [{start: 2, end: 40, source: DOG, score: 0.7}]);
+    await svc.recordPoints(V, 1, 25, [[0.5, 0.5, 1]], rle, VARIANT, true);
+    expect(await svc.endAbsenceAt(V, 1, 30, VARIANT)).toEqual([]); // no absent range there: nothing changes
+    expect(await svc.seeds.timeline(V, 1)).toEqual([c(2, 40, 0.7)]);
   });
 });

@@ -38,8 +38,10 @@ that carry Meta's header: those come from Meta's SAM 2 demo frontend (see below)
   rotoscoping working folder (`products.json`, `anchors.json` in full-res pixels,
   `shots.json`, `data/mattes_tracked/<pid>/%05d.png` numbered from 1, optionally
   `data/clip.mp4` + `data/frames/`), which the rotoscoping-video-subjects pipeline
-  loads and traces unchanged. Writes only under `SAM_UI_EXPORT_ROOT` (default
-  ~/Movies) and never replaces confirmed decision files without `force`.
+  loads and traces unchanged. Writes and deletes only under `SAM_UI_EXPORT_ROOT`
+  (default ~/Movies/sam-ui), links followed, and never replaces confirmed
+  decision files or existing mattes without `force`; its own notes and frames
+  are always rewritten.
 - studio (`studio/`) is the served UI: a Vite + React + TypeScript editor with
   resizable panes, preview, timeline, and Media / Objects / Effects sections, built
   on the per-object track API. **Meta's demo frontend (`demo/frontend`) was

@@ -132,17 +132,17 @@ Details and progress: [Platform support, #16](https://github.com/VolksRat71/sam-
   job holds it). Track runs only what isn't current.
 - **Corrections that stick.** Click on any frame to fix a mask; the next Track uses
   your corrected mask on that frame. A correction refines the tracked mask, even
-  after an earlier correction has made the track stale: a lone negative click cuts
-  away only the region it is on, and a lone positive click adds one. (Plain SAM 2
-  empties a frame whose clicks are all negative; the backend adds an anchor click
-  inside the tracked mask.)
+  after an earlier correction has made the track stale: a negative click, sent with
+  a positive on the part to keep, cuts away only the region it is on, and a lone
+  positive click adds one. SAM 2 needs a positive on the frame.
 - **Re-track only what a correction changes.** On SAM 2, a correction re-tracks a
   stretch around the corrected frame and keeps the cached track beyond it: the pass
   starts a little before the frame, from the cached masks there, and stops once ten
   frames in a row agree with the cache (IoU above 0.98). On the gallery dog clip
-  (289 frames) a one-click fix on frame 148 re-tracked 31 frames in 19 s, against
-  144 s for a full re-track, and on every re-tracked frame its masks were within
-  IoU 0.987 of the full re-track's. SAM 2 lets a correction nudge distant frames too
+  (289 frames) a fix on frame 148, a positive on the dog and a negative on the red
+  pixel its mask took in, re-tracked 31 frames in 7.5 s, against 130 s for a full
+  re-track, and on every re-tracked frame its masks were within IoU 0.987 of the
+  full re-track's. SAM 2 lets a correction nudge distant frames too
   (the full re-track moved frame 55 to IoU 0.936 of the old track), and the kept
   frames stay as they were, so each track records which pass made each frame
   (`POST /track_provenance`) and the review lists the bounded stretches. A tracked
@@ -269,7 +269,7 @@ option in studio stays disabled, with the reason shown, until they're found.
 | --- | --- | --- |
 | `SAM_UI_FEATURE_CACHE_GB` | 6 | backbone feature cache budget (0 turns it off) |
 | `SAM_UI_SESSION_TTL_MIN` | 30 | idle sessions are freed after this long (0 keeps them) |
-| `SAM_UI_EXPORT_ROOT` | `~/Movies` | rotoscoping exports may only write under this folder |
+| `SAM_UI_EXPORT_ROOT` | `~/Movies/sam-ui` (the desktop app sets your home folder) | rotoscoping exports may only write under this folder |
 | `SAM_UI_SAM3_WEIGHTS` | `~/.cache/rotoscoping-video-subjects/weights/sam3-hf` | where the SAM 3 weights are |
 | `SAM_UI_SAM3_DTYPE` | `fp32` | SAM 3's precision: `fp16` or `bf16` cut its memory and time, and move masks a little (see Hardware) |
 | `SAM_UI_SAM2_DTYPE` | `fp32` | SAM 2's autocast on MPS: `fp16` or `bf16` halve its time, save no memory and move masks a little |

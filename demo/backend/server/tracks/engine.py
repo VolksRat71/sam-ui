@@ -26,7 +26,7 @@ import numpy as np
 from tracks import rle
 from tracks.bounded import PRIME, StopFn, Stretch
 from tracks.ranges import Window, in_window
-from tracks.seeds import Seeds
+from tracks.seeds import Seeds, cleared
 from tracks.streaming import sam2_prune
 from tracks.text import has_prompt
 
@@ -38,6 +38,13 @@ WHOLE: Window = (0, None)
 class Engine(Protocol):
     name: str
     model: str
+    # True when a cleared seed never conditions the engine, so it is output
+    # only: its frame is blanked (strip_cleared) and nothing else moves.
+    skips_cleared: bool
+
+    def plan(self, objects: Dict[int, Seeds], windows: Optional[Windows] = None) -> List["Unit"]:
+        """The passes a job over `objects` makes, in order (see plan_units)."""
+        ...
 
     def track(self, video_path: str, objects: Dict[int, Seeds], video_handle: Optional[Any] = None,
               windows: Optional[Windows] = None) -> Iterator[FrameMasks]:
@@ -113,6 +120,7 @@ class Sam2Engine:
     """
 
     name = "sam2"
+    skips_cleared = True
 
     def __init__(self, predictor, model: str, offload_video_to_cpu: bool = False,
                  autocast: Callable[[], contextlib.AbstractContextManager] = contextlib.nullcontext,
@@ -133,13 +141,20 @@ class Sam2Engine:
         per group, each time with that group's objects. The backbone features
         are cached per video, so the extra passes do not re-encode frames.
         Each window of an object is a unit of its own, grouped the same way
-        within the window."""
+        within the window. Cleared seeds are stripped before planning (see
+        strip_cleared), so they neither open nor condition a unit, and each
+        object's output is blanked on its cleared frames in every unit, in
+        both directions."""
+        blank = strip_cleared(objects)[1]
         for unit in self.plan(objects, windows):
-            yield from self._track_group(video_path, unit, video_handle)
+            for frame, masks in self._track_group(video_path, unit, video_handle):
+                yield frame, blanked(frame, masks, blank)
 
     def plan(self, objects: Dict[int, Seeds], windows: Optional[Windows] = None) -> List[Unit]:
-        """The passes a job over `objects` makes, in order."""
-        return plan_units(objects, windows, by_first_seed=True)
+        """The passes a job over `objects` makes, in order. Cleared seeds are
+        left out, as track() leaves them out, so a window whose only seed is
+        cleared makes no pass and an object's first seed is its first kept one."""
+        return plan_units(strip_cleared(objects)[0], windows, by_first_seed=True)
 
     def passes(self, objects: Dict[int, Seeds], windows: Optional[Windows] = None) -> int:
         """How many times a job over `objects` runs (one per unit)."""
@@ -188,20 +203,32 @@ class Sam2Engine:
         One object per state, so the MPS trap of objects first seeded on
         different frames (see track) cannot arise.
 
+        Cleared seeds are stripped as track() strips them (strip_cleared): they
+        never condition the state, and the object's output on their frames is
+        blanked, in both directions, before `stop` sees it. A stretch whose
+        only seeds are cleared yields nothing, as track() does for an object
+        with no other seed. Priming skips their frames too (they are in
+        stretch.seeds): the cache holds the blanked output there, not the
+        mask the model tracked through.
+
         It also yields None, a step with no frame, after each seed and each
         primed frame: a point where the caller may let go of the model lock,
         which it otherwise holds from one yield to the next."""
         o, start = stretch.obj_id, stretch.start
+        kept, blank = strip_cleared({o: stretch.seeds})
+        seeds = kept[o]
+        if not seeds:
+            return
         with self.autocast():
             if video_handle is not None:
                 state = job_state_like(video_handle)
             else:
                 state = self.predictor.init_state(video_path, offload_video_to_cpu=self.offload_video_to_cpu)
             try:
-                for frame in sorted(stretch.seeds):
-                    seed_into_state(self.predictor, state, o, frame, stretch.seeds[frame])
+                for frame in sorted(seeds):
+                    seed_into_state(self.predictor, state, o, frame, seeds[frame])
                     yield None
-                if self.prime and stretch.cached and start not in stretch.seeds:
+                if self.prime and stretch.cached and start not in seeds:
                     for _ in prime_from_cache(self.predictor, state, o, stretch, self.prime):
                         yield None
                 limits = {False: stretch.hi - start, True: start - stretch.lo}
@@ -213,13 +240,30 @@ class Sam2Engine:
                         sam2_prune(self.predictor, state, frame, start, reverse)
                         if reverse and frame == start:
                             continue
-                        m = (masks[list(obj_ids).index(o)] > self.score_thresh)[0].cpu().numpy()
-                        done = stop(frame, reverse, m)
-                        yield frame, {o: m}
+                        out = blanked(frame, {o: (masks[list(obj_ids).index(o)] > self.score_thresh)[0].cpu().numpy()},
+                                      blank)
+                        done = stop(frame, reverse, out[o])
+                        yield frame, out
                         if done:
                             break
             finally:
                 self.predictor.reset_state(state)
+
+
+def strip_cleared(objects: Dict[int, Seeds]) -> Tuple[Dict[int, Seeds], Dict[int, set]]:
+    """The objects without their cleared seeds, and each object's cleared frames.
+
+    sam-ui: a 'not on this frame' seed is output, not input. Given as a
+    conditioning frame, SAM 2 drops the object on the frames around it
+    (measured: IoU 0 on frames 9-19), so SAM 2 tracks through it and its
+    output there is blanked. SAM 3 conditions on it safely."""
+    blank = {o: {f for f, v in s.items() if cleared(v)} for o, s in objects.items()}
+    return {o: {f: v for f, v in s.items() if f not in blank[o]} for o, s in objects.items()}, blank
+
+
+def blanked(frame: int, masks: Dict[int, np.ndarray], blank: Dict[int, set]) -> Dict[int, np.ndarray]:
+    """One frame's masks with each object's cleared frame (strip_cleared) emptied."""
+    return {o: np.zeros_like(m) if frame in blank.get(o, ()) else m for o, m in masks.items()}
 
 
 def groups_by_first_seed(objects: Dict[int, Seeds]) -> List[Dict[int, Seeds]]:
@@ -290,6 +334,7 @@ class FakeEngine:
     `influence`, in full and bounded passes alike."""
 
     name = "fake"
+    skips_cleared = False
 
     def __init__(self, n_frames: int = 5, shape=(24, 32), model: str = "fake-1", influence: int = 0):
         self.n_frames = n_frames

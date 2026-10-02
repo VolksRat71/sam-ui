@@ -146,6 +146,18 @@
     height: 44px;
     transform: translate(-50%, -50%);
   }
+  /* the correction nudge (CorrectionNudge): stays inside a narrow stage, and
+     its buttons take a finger like every other button here */
+  .stage-hint {
+    right: 12px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+  }
+  .stage-hint button {
+    min-height: 44px;
+  }
 }
 
 @media (pointer: coarse) {

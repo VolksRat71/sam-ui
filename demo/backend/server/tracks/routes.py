@@ -70,7 +70,11 @@ POST /text_prompt {session_id, object_id, frame_index, text, engine?}: seed one
 POST /export {session_id, out_dir, objects?, include_stale?, frames?, force?, engine?, union?, flags?}:
   write tracked objects as a rotoscoping working folder (see tracks/export.py),
   in the layout's order, with a folder per group (union: a union matte each);
-  out_dir must be under SAM_UI_EXPORT_ROOT (default ~/Movies). 400 on a refusal.
+  out_dir (a string) must be under SAM_UI_EXPORT_ROOT (default ~/Movies/sam-ui),
+  and so must every path written or deleted inside it, links followed. force
+  replaces decision files and existing mattes; 400 on a refusal. The reply
+  gives out_dir back as asked and leaves out the source video's path (it stays
+  in the export's notes/sam-ui-export.json).
   data/review.json carries the audit queue (flags: the studio's review flags).
 
 The routes get everything through `resolve(session_id)`, so tests can mount
@@ -381,6 +385,8 @@ def make_blueprint(resolve: Callable[[str], TrackContext], service: Optional[Tra
     def export_route() -> Response:
         data = request.json
         ctx = resolve(data["session_id"])
+        if not isinstance(data.get("out_dir"), str):
+            return jsonify({"error": "out_dir must be a string"}), 400
         flags = _flags(data)
         if flags is None:
             return jsonify({"error": "flags must map object ids to lists of frames"}), 400
@@ -391,6 +397,9 @@ def make_blueprint(resolve: Callable[[str], TrackContext], service: Optional[Tra
                               union=bool(data.get("union")), flags=flags)
         except ExportError as err:
             return jsonify({"error": str(err)}), 400
-        return jsonify(manifest)
+        # the server's own paths stay on the server
+        reply = {k: v for k, v in manifest.items() if k != "video_path"}
+        reply["out_dir"] = data["out_dir"]
+        return jsonify(reply)
 
     return bp
