@@ -50,7 +50,6 @@ import {
   groupDirtyIds,
   orderedObjects,
   preferredEngine,
-  hasSeeds,
   initialState,
   isTracking,
   nextObjectId,
@@ -1244,14 +1243,10 @@ export default function useStudioSession(video: VideoItem) {
       if (bridge == null) {
         return;
       }
-      const o = stateRef.current.objects.find(x => x.id === objectId);
       serial(async () => {
-        // an object never clicked exists only here (with, at most, a name)
-        if (o != null && hasSeeds(o)) {
-          await bridge.call('removeObject', {objectId});
-        } else if (o?.name != null) {
-          await bridge.call('renameObject', {objectId, name: null}).catch(() => {});
-        }
+        // Seedless objects can still exist in storage (for example after undo).
+        // Removal is idempotent for a new local-only layer, too.
+        await bridge.call('removeObject', {objectId});
         dispatch({type: 'removed', id: objectId});
         await sync();
       });
