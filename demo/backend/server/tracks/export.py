@@ -35,20 +35,29 @@ the export root, and a matte folder it would delete must not be a link at all
 anything is written, so a refusal changes nothing, and checked again as each
 folder is used. Each file is written to a temp name beside it and os.replace'd
 into place, so a link or hard link planted meanwhile is replaced, never written
-through. ffmpeg fills a fresh mkdtemp folder that then takes data/frames' place
-by rename, so it never writes into, and export never clears, a data/frames that
-could have been swapped for a link. (What remains is the instant between a
-folder's re-check and its use, for data, notes and the matte folders: a link
-swapped in there could redirect that one mkdir, rmtree or write. Closing it
-needs dir-fd syscalls.)
+through. For frames, data is opened once without following a link; ffmpeg
+fills a fresh hidden folder made through that descriptor, which then takes
+data/frames' place by rename, and the old folder is removed, all through the
+descriptor. So export never writes into, or clears, a data/frames or a data
+swapped for a link, and if data by path is no longer that folder after ffmpeg
+the frames are refused, not installed.
+
+What remains: ffmpeg itself writes by path, so a process that can write in
+the export root, reads the hidden folder's random name and swaps data mid-run
+could redirect those JPEG writes (the export then refuses). And the instant
+between a folder's re-check and its use, for data, notes and the matte
+folders (or a parent), could redirect that one mkdir, matte rmtree or file
+replace. Closing both needs every write made through directory descriptors.
 """
 import contextlib
 import functools
 import io
 import json
+import logging
 import os
 import re
 import shutil
+import stat
 import subprocess
 import tempfile
 import time
@@ -65,6 +74,7 @@ from tracks.store import STALE, TRACKED
 PALETTE = ["#b4ff00", "#ff4fa3", "#3fd0ff", "#ffb020", "#9b6bff", "#2fe38a", "#ff5a36", "#f2f25a"]
 ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
 DECISIONS = ("products.json", "anchors.json", "shots.json")
+logger = logging.getLogger(__name__)
 
 
 class ExportError(ValueError):
@@ -246,6 +256,26 @@ def export(service, video: str, video_path: str, out_dir: str, objects: Optional
     return {"out_dir": str(out), **manifest}
 
 
+def _entry(fd: int, name: str) -> Optional[os.stat_result]:
+    """name in the folder fd holds, links not followed, or None."""
+    try:
+        return os.stat(name, dir_fd=fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return None
+
+
+def _same_folder(fd: int, data: Path, name: str) -> None:
+    """data/name by path still is name in the folder fd holds: data was not
+    swapped for a link or another folder meanwhile."""
+    held, by_path = os.stat(name, dir_fd=fd, follow_symlinks=False), None
+    with contextlib.suppress(OSError):
+        now, then = os.stat(data, follow_symlinks=False), os.fstat(fd)
+        if (now.st_ino, now.st_dev) == (then.st_ino, then.st_dev):
+            by_path = os.stat(data / name, follow_symlinks=False)
+    if by_path is None or (by_path.st_ino, by_path.st_dev) != (held.st_ino, held.st_dev):
+        raise ExportError("data was replaced while the frames were extracted; the new frames were not installed")
+
+
 def _extract_frames(video_path: str, out: Path, n_frames: int, guard) -> Dict:
     """data/clip.mp4 and data/frames/%05d.jpg from the very file sam-ui decoded,
     so the mattes line up with the frames pixel for pixel."""
@@ -255,30 +285,41 @@ def _extract_frames(video_path: str, out: Path, n_frames: int, guard) -> Dict:
         with _replacing(clip) as tmp:
             shutil.copy2(video_path, tmp)
     # ffmpeg -y writes through whatever sits at a frame's name, so it never
-    # writes into data/frames: it fills a fresh folder (mkdtemp: a new name,
-    # 0700), which then takes data/frames' place by rename. Renames move a
-    # link rather than follow it. On a failure the old frames stay as they were.
+    # writes into data/frames: it fills a fresh hidden folder, which then takes
+    # data/frames' place by rename. data is opened once, without following a
+    # link, and the folder is made, swapped and cleared through that
+    # descriptor, so a data swapped for a link later cannot redirect any of it.
     data = guard(out / "data")
-    new = Path(tempfile.mkdtemp(dir=data, prefix=".frames."))
+    fd = os.open(data, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    name = f".frames.{uuid.uuid4().hex}"
     try:
-        subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(clip), "-an", "-q:v", "2", str(new / "%05d.jpg")],
-                       check=True)
-        got = len(list(new.glob("*.jpg")))
-        os.chmod(new, 0o755)  # as a plain mkdir would leave it
-        fdir = data / "frames"
-        if fdir.is_symlink() or fdir.exists():
-            old = data / f".frames.old.{uuid.uuid4().hex}"
-            os.rename(fdir, old)
+        os.mkdir(name, 0o700, dir_fd=fd)
+        try:
+            _same_folder(fd, data, name)
+            subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(clip), "-an", "-q:v", "2",
+                            str(data / name / "%05d.jpg")], check=True)
+            # ffmpeg wrote by path: refuse its frames unless that path still is this folder
+            _same_folder(fd, data, name)
+            got = sum(n.endswith(".jpg") for n in os.listdir(data / name))
+            os.chmod(name, 0o755, dir_fd=fd)  # as a plain mkdir would leave it
+            old = None
+            if _entry(fd, "frames"):
+                old = f".frames.old.{uuid.uuid4().hex}"
+                os.rename("frames", old, src_dir_fd=fd, dst_dir_fd=fd)
+            os.rename(name, "frames", src_dir_fd=fd, dst_dir_fd=fd)
+        except BaseException:
+            shutil.rmtree(name, dir_fd=fd, ignore_errors=True)
+            raise
+        if old:  # the new frames are in place; a stuck old folder is only clutter
             try:
-                shutil.rmtree(old)
-            except OSError:
-                if not old.is_symlink():  # rmtree refuses a link: drop the link, never its target
-                    raise
-                old.unlink()
-        os.rename(new, fdir)
-    except BaseException:
-        shutil.rmtree(new, ignore_errors=True)
-        raise
+                if stat.S_ISLNK(_entry(fd, old).st_mode):
+                    os.unlink(old, dir_fd=fd)  # a link: drop it, never its target
+                else:
+                    shutil.rmtree(old, dir_fd=fd)
+            except OSError as err:
+                logger.warning("export: could not remove the old frames (left as data/%s): %s", old, err)
+    finally:
+        os.close(fd)
     info: Dict = {"frames_extracted": True, "frames_on_disk": got}
     if n_frames and got != n_frames:
         info["warning"] = f"ffmpeg wrote {got} frames but the tracks cover {n_frames}: check the frame alignment"

@@ -403,6 +403,54 @@ def test_a_failed_ffmpeg_leaves_the_old_frames_and_no_temp_folder(h, tmp_path, t
     assert not [p for p in (out / "data").iterdir() if p.name.startswith(".frames")]
 
 
+def test_data_swapped_for_a_link_while_ffmpeg_runs_is_a_refusal(h, tmp_path, tmp_path_factory, monkeypatch):
+    """Re-review demo 7: data was checked before ffmpeg and used by path after
+    it, so swapping data for a link mid-run (keeping ffmpeg's own folder
+    reachable) made export rmtree <link target>/frames and answer 200. The
+    swap is now done through a descriptor held on the real data folder, and a
+    data that no longer is that folder is refused."""
+    outside, out, _ = _frames_case(h, tmp_path, tmp_path_factory)
+    (outside / "frames").mkdir()
+    (outside / "frames" / "holiday.jpg").write_bytes(b"their photo")
+
+    def swap(pattern):
+        new = Path(pattern).parent  # data/.frames.<random>: listable by anyone who can read data
+        os.rename(out / "data", out / "data.real")
+        (outside / new.name).symlink_to(out / "data.real" / new.name)
+        (out / "data").symlink_to(outside)
+
+    _fake_ffmpeg(monkeypatch, swap)
+    code, m = export(h, out_dir=str(out), frames=True)
+    assert code == 400 and "data" in m["error"] and str(outside) not in m["error"]
+    assert (outside / "frames" / "holiday.jpg").read_bytes() == b"their photo"
+    real = out / "data.real"
+    assert sorted(p.name for p in (real / "frames").iterdir()) == ["00009.jpg"]  # old frames untouched
+    assert not [p for p in real.iterdir() if p.name.startswith(".frames")]  # its temp folder cleaned up
+
+
+def test_new_frames_are_installed_even_if_the_old_ones_cannot_be_removed(h, tmp_path, tmp_path_factory,
+                                                                          monkeypatch):
+    """Re-review demo 9: removing the old frames failed after they were moved
+    aside, and the export raised with no data/frames at all. The new frames go
+    in first; an old folder that will not go is logged and left hidden."""
+    import tracks.export as E
+
+    outside, out, _ = _frames_case(h, tmp_path, tmp_path_factory)
+    _fake_ffmpeg(monkeypatch)
+    rmtree = E.shutil.rmtree
+
+    def stuck(p, *a, **k):
+        if ".frames.old." in str(p):
+            raise PermissionError("nope")
+        return rmtree(p, *a, **k)
+
+    monkeypatch.setattr(E.shutil, "rmtree", stuck)
+    code, m = export(h, out_dir=str(out), frames=True)
+    assert code == 200 and m["frames_on_disk"] == 1
+    assert sorted(p.name for p in (out / "data" / "frames").iterdir()) == ["00001.jpg"]
+    assert [p.name for p in (out / "data").iterdir() if p.name.startswith(".frames.old.")]
+
+
 @pytest.mark.parametrize("rel", ["data", "notes"])
 def test_a_broken_link_where_a_folder_belongs_is_a_400(h, tmp_path, rel):
     h.click(1)
