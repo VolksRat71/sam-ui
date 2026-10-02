@@ -14,6 +14,8 @@ const NEEDS_POSITIVE = /(^|\s)needs_positive:/;
 type Click = readonly [number, number, number];
 
 export type Nudge = {objectId: number; frame: number; engine: string};
+/** SAM 3 took a frame's negatives alone and emptied it: "Gone for a while?" for that object and frame. */
+export type Hint = {kind: 'gone'; objectId: number; frame: number};
 
 /** True when SAM 2 (or the browser's SAM 2.1 tiny) would be asked to keep nothing. */
 export function needsPositive(points: ReadonlyArray<Click>, engine: string): boolean {

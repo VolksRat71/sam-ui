@@ -14,8 +14,10 @@ import {
   jobProgress,
   nextObjectId,
   reducer,
+  seedFrames,
   staleIds,
 } from './objects';
+import {absentUntilNextSeed} from './ranges';
 
 function run(actions: Action[], state: StudioState = initialState): StudioState {
   return actions.reduce(reducer, state);
@@ -404,5 +406,17 @@ describe('absent ranges', () => {
     let s = run([{type: 'restore', objects: [tracked]}]);
     s = run([{type: 'setRanges', id: 1, ranges: [{start: 4, end: 5, state: 'absent'}, {start: 6, end: 6, state: 'absent'}]}], s);
     expect(byId(s, 1).state).toBe('tracked');
+  });
+});
+
+describe('seed frames for "Gone for a while?"', () => {
+  it('counts a cleared seed (negatives only, from SAM 3) as the next seed', () => {
+    const s = run([
+      {type: 'restore', objects: [server(0, 'tracked')]},
+      {type: 'setPoints', id: 0, frame: 30, points: [[0.4, 0.4, 0]]},
+    ]);
+    const o = byId(s, 0);
+    expect(seedFrames(o)).toEqual([0, 30]);
+    expect(absentUntilNextSeed(seedFrames(o), 20, 100)).toEqual([20, 29]);
   });
 });

@@ -3,6 +3,7 @@ import {describe, expect, it} from 'vitest';
 import {
   ABSENT,
   absentAt,
+  absentUntilNextSeed,
   endAbsenceAt,
   normalizeRanges,
   paintRange,
@@ -88,5 +89,22 @@ describe('absent ranges', () => {
     expect(endAbsenceAt(two, 45)).toEqual(two); // not absent there: unchanged
     expect(endAbsenceAt(undefined, 3)).toEqual([]);
     expect(two).toEqual([r(10, 40), r(50, 60)]); // the input is left alone
+  });
+});
+
+describe('absentUntilNextSeed', () => {
+  it('runs from the frame to the one before the next seed after it, else to the clip end', () => {
+    expect(absentUntilNextSeed([0, 50], 20, 100)).toEqual([20, 49]);
+    expect(absentUntilNextSeed([0], 20, 100)).toEqual([20, 99]);
+    expect(absentUntilNextSeed([0, 20, 50], 20, 100)).toEqual([20, 49]); // a seed on the frame itself is not "next"
+  });
+
+  it('handles the last frame, unsorted seeds and duplicates', () => {
+    expect(absentUntilNextSeed([0], 99, 100)).toEqual([99, 99]);
+    expect(absentUntilNextSeed([0, 99], 99, 100)).toEqual([99, 99]);
+    expect(absentUntilNextSeed([70, 0, 50, 30], 20, 100)).toEqual([20, 29]);
+    expect(absentUntilNextSeed([50, 50, 0, 50], 20, 100)).toEqual([20, 49]);
+    expect(absentUntilNextSeed([], 20, 100)).toEqual([20, 99]);
+    expect(absentUntilNextSeed([21], 20, 100)).toEqual([20, 20]); // the very next frame: just this one
   });
 });

@@ -29,7 +29,7 @@ import {API_ENDPOINT, OBJECT_LIMIT} from '~/config';
 import type {LocalModelStatus, LocalOptions} from '~/local/LocalEngine';
 import {browserModelName, parseQuality} from '~/local/sam2/config';
 import {BROWSER_ENGINE, engineLabel, pickerEngines} from '~/state/engines';
-import {isNeedsPositive, planClicks, refusedAsAbsent, type Nudge} from '~/state/corrections';
+import {isNeedsPositive, planClicks, refusedAsAbsent, type Hint, type Nudge} from '~/state/corrections';
 import {cleanObjectName, objectName, uniqueFileNames} from '~/state/fileNames';
 import type {ExportedObject, ExportKind} from '~/state/maskExport';
 import {
@@ -42,10 +42,11 @@ import {
   initialState,
   nextObjectId,
   reducer,
+  seedFrames,
   staleIds,
 } from '~/state/objects';
 import {clearFlag, parseFlagMap, pruneFlags, toggleFlag as toggled, type FlagMap} from '~/state/flags';
-import {absentAt, normalizeRanges, paintRange, type RangeState} from '~/state/ranges';
+import {ABSENT, absentAt, absentUntilNextSeed, normalizeRanges, paintRange, type RangeState} from '~/state/ranges';
 import type {EngineInfo, RunningJob, TrackletSummary} from '~/worker/protocol';
 
 /** Where two engines disagree on one object: frames under the IoU threshold. */
@@ -355,12 +356,13 @@ export default function useStudioSession(video: VideoItem) {
 
   // A frame's clicks the engine on screen cannot take (negatives only on SAM
   // 2): nothing is sent, the clicks stay as they were, and the preview nudges
-  // for a positive. `hint` 'gone': SAM 3 took negatives alone and emptied the
-  // frame, so the preview asks whether the object is gone for a while.
+  // for a positive. `hint` (kind 'gone'): SAM 3 took negatives alone and
+  // emptied the frame, so the preview asks whether the object is gone for a
+  // while. Both carry the object and frame their "Gone for a while?" marks.
   const [nudge, setNudge] = useState<Nudge | null>(null);
   const nudgeRef = useRef(nudge);
   nudgeRef.current = nudge;
-  const [hint, setHint] = useState<'gone' | null>(null);
+  const [hint, setHint] = useState<Hint | null>(null);
   /** The clicks the nudge refused, which Switch to SAM 3 sends. */
   const refused = useRef<NormPoint[]>([]);
   const showNudge = useCallback((objectId: number, frameIndex: number, points: NormPoint[], engine: string) => {
@@ -420,7 +422,7 @@ export default function useStudioSession(video: VideoItem) {
         return;
       }
       setNudge(null);
-      setHint(plan.gone ? 'gone' : null);
+      setHint(plan.gone ? {kind: 'gone', objectId, frame} : null);
       setPoints(objectId, frame, [...plan.points], engine);
     },
     [frame, setPoints, showNudge],
@@ -651,6 +653,25 @@ export default function useStudioSession(video: VideoItem) {
     [bridge, serial, sync],
   );
 
+  /**
+   * "Gone for a while?": mark the object absent from `frameIndex` until the
+   * frame before its next click after it (any click, a cleared seed too), or
+   * to the clip's end. Goes through setRange, the one path for ranges, so it
+   * syncs (and rolls back on failure) like any; overlapping an existing range
+   * merges with it (paintRange / normalizeRanges).
+   */
+  const markAbsentUntilNextSeed = useCallback(
+    (objectId: number, frameIndex: number) => {
+      const o = stateRef.current.objects.find(x => x.id === objectId);
+      if (o == null || meta.numFrames <= 0) {
+        return;
+      }
+      const [start, end] = absentUntilNextSeed(seedFrames(o), frameIndex, meta.numFrames);
+      setRange(objectId, start, end, ABSENT);
+    },
+    [meta.numFrames, setRange],
+  );
+
   /** Track with, and show, another engine. */
   const setEngine = useCallback(
     (engine: string) => {
@@ -693,9 +714,19 @@ export default function useStudioSession(video: VideoItem) {
     setEngine('sam3');
     setNudge(null);
     const plan = planClicks([], points, 'sam3');
-    setHint(plan.kind === 'send' && plan.gone ? 'gone' : null);
+    setHint(plan.kind === 'send' && plan.gone ? {kind: 'gone', objectId: nudge.objectId, frame: nudge.frame} : null);
     setPoints(nudge.objectId, nudge.frame, points, 'sam3');
   }, [nudge, sam3Available, setEngine, setPoints]);
+
+  /** The SAM 2 nudge's and the SAM 3 hint's "Gone for a while?", for the object and frame they are about. */
+  const markGone = useCallback(() => {
+    const target = nudge ?? hint;
+    setNudge(null);
+    setHint(null);
+    if (target != null) {
+      markAbsentUntilNextSeed(target.objectId, target.frame);
+    }
+  }, [nudge, hint, markAbsentUntilNextSeed]);
 
   /** The browser engine's model size and hole fill; its tracks made otherwise go stale. */
   const setLocalOptions = useCallback(
@@ -972,6 +1003,7 @@ export default function useStudioSession(video: VideoItem) {
     hint,
     nudgeTrim,
     nudgeSam3,
+    markGone,
     localOptions,
     setLocalOptions,
     localModel,
@@ -999,6 +1031,7 @@ export default function useStudioSession(video: VideoItem) {
     cancelTrack,
     clearTrack,
     setRange,
+    markAbsentUntilNextSeed,
     removeObject,
     startOver,
     seek,

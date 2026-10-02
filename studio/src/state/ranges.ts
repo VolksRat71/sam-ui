@@ -75,6 +75,17 @@ export function endAbsenceAt(ranges: ReadonlyArray<FrameRange> | undefined, fram
   return r == null ? normalizeRanges(ranges) : paintRange(ranges ?? [], frame, r.end, null);
 }
 
+/**
+ * [frame, end]: from `frame` up to the frame before the object's next seed
+ * after it, else the clip's last frame. "Gone for a while?": the object is
+ * absent until the click where it comes back. A seed on `frame` itself is
+ * not "next"; a cleared seed (negatives only) is still a seed.
+ */
+export function absentUntilNextSeed(seedFrames: ReadonlyArray<number>, frame: number, nFrames: number): [number, number] {
+  const next = seedFrames.filter(f => f > frame).sort((a, b) => a - b)[0];
+  return [frame, next == null ? nFrames - 1 : next - 1];
+}
+
 /** The absent range holding `frame`, if any. */
 export function rangeAt(ranges: ReadonlyArray<FrameRange> | undefined, frame: number): FrameRange | null {
   return ranges?.find(r => r.start <= frame && frame <= r.end) ?? null;
