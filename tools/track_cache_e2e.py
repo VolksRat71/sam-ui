@@ -22,19 +22,20 @@ that first.
 Phase 1: track A and B; add C and Track again (only C may run); clear B.
 Phase 2: a new session must bring back A and C tracked and B untracked.
 Correction: a two-tone bar tracked as one object, and its red half as a
-second. On a frame only the job tracked, a lone negative click on the orange
-half must cut just that half, and so must one on a second frame once the
-first correction has made the track stale; the re-track must carry it to
-later frames. A lone positive on the orange half must grow the red-only track
-to the whole bar. (Plain SAM 2 empties a frame whose clicks are all negative;
-the backend adds an anchor click inside the cached mask, tracks/anchor.py.)
+second. On a frame only the job tracked, a positive on the red half with a
+negative on the orange half must cut just the orange half, and so must the
+same pair on a second frame once the first correction has made the track
+stale; the re-track must carry it to later frames. A lone positive on the
+orange half must grow the red-only track to the whole bar. (SAM 2 needs a
+positive on the frame: a lone negative is refused, see needs_positive.)
 Responsive: while a track job runs, a click on another object must answer in
 well under a frame's worth of the job, and the job must still finish.
 Absent: a red square leaves the shot on frame 12 and comes back elsewhere on
 frame 20, while a look-alike stands in for it. Clicked once on each side and
 marked absent 12-19 (setObjectRange), the job must stream the gap empty,
-track both sides, refuse a click inside the gap, and re-track only the far
-side after a far-side click. /export must write empty mattes for the gap.
+track both sides, refuse a negative click inside the gap, and re-track only
+the far side after a far-side click. /export must write empty mattes for the
+gap. A positive inside the gap then ends the absence at its frame.
 """
 import argparse
 import json
@@ -238,6 +239,7 @@ def correction():
         xg = 30 + 5 * g
         return int(m[100:150, xg:xg + 50].sum()), int(m[100:150, xg + 50:xg + 100].sum())
 
+    red_half = lambda g: [(30 + 5 * g + 25) / W, 125 / H]
     orange = lambda g: [(30 + 5 * g + 75) / W, 125 / H]
     add(0, 0, [[55 / W, 125 / H], [105 / W, 125 / H]], [1, 1])  # object 0: both halves
     add(1, 0, [[55 / W, 125 / H], [105 / W, 125 / H]], [1, 0])  # object 1: red only
@@ -247,9 +249,10 @@ def correction():
     check(halves(fr[12][1], 12)[1] < 100, "and the red half alone as object 1")
     for g in (10, 15):  # a tracked frame, then one after the first correction made the track stale
         red0, orange0 = halves(fr[g][0], g)
-        red, org = halves(add(0, g, [orange(g)], [0]), g)
+        red, org = halves(add(0, g, [red_half(g), orange(g)], [1, 0]), g)
         check(red > 0.9 * red0 and org < 100,
-              f"a lone negative on frame {g} cuts only the orange half (red {red0} -> {red}, orange {orange0} -> {org})")
+              f"a positive on red and a negative on orange on frame {g} cut only the orange half "
+              f"(red {red0} -> {red}, orange {orange0} -> {org})")
     red0, orange0 = halves(fr[12][1], 12)
     red, org = halves(add(1, 12, [orange(12)], [1]), 12)
     check(red > 0.9 * red0 and org > 2000,
@@ -327,12 +330,15 @@ def absent():
     near = min(iou(fr[f], gap_truth(f)) for f in range(GAP[0]))
     far = min(iou(fr[f], gap_truth(f)) for f in range(GAP[1] + 1, 30))
     check(near > 0.9 and far > 0.9, f"both sides track the square (min IoU near {near:.3f}, far {far:.3f})")
+    # a negative-only click inside the gap is refused; engine sam3 takes lone
+    # negatives, so it meets the absent check rather than SAM 2's needs_positive
     req = urllib.request.Request(f"{API}/graphql", json.dumps({
         "query": 'mutation($i: AddPointsInput!) { addPoints(input: $i) { frameIndex } }',
         "variables": {"i": {"sessionId": sid, "frameIndex": 15, "objectId": 0, "clearOldPoints": True,
-                            "labels": [1], "points": [[0.5, 0.5]]}}}).encode(), {"Content-Type": "application/json"})
+                            "labels": [0], "points": [[0.5, 0.5]], "engine": "sam3"}}}).encode(),
+        {"Content-Type": "application/json"})
     errors = json.load(urllib.request.urlopen(req)).get("errors") or []
-    check(any("marked absent" in e.get("message", "") for e in errors), "a click inside the gap is refused")
+    check(any("marked absent" in e.get("message", "") for e in errors), "a negative click inside the gap is refused")
     add(27)
     _, frames, t = post_stream("/track_objects", {"session_id": sid})
     fr = {f: m[0] for f, m in frames}
@@ -350,6 +356,16 @@ def absent():
     finally:
         import shutil
         shutil.rmtree(out, ignore_errors=True)
+    # a positive inside the gap says the square is back: the absence ends there
+    # (Nate, 2026-10-02), so 12-19 becomes 12-14 and the click is a seed
+    gql('mutation($i: AddPointsInput!) { addPoints(input: $i) { frameIndex } }',
+        {"i": {"sessionId": sid, "frameIndex": 15, "objectId": 0, "clearOldPoints": True,
+               "labels": [1], "points": [[0.5, 0.5]]}})
+    obj = next(o for o in gql('query($s: String!) { objectTracks(sessionId: $s) '
+                              '{ objectId state ranges { start end state } } }', {"s": sid})["objectTracks"]
+               if o["objectId"] == 0)
+    check(obj["ranges"] == [{"start": GAP[0], "end": 14, "state": "absent"}] and obj["state"] == "stale",
+          f"a positive inside the gap ends the absence there ({obj['ranges']}, {obj['state']})")
 
 
 def responsive():

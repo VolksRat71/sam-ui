@@ -132,10 +132,9 @@ Details and progress: [Platform support, #16](https://github.com/VolksRat71/sam-
   job holds it). Track runs only what isn't current.
 - **Corrections that stick.** Click on any frame to fix a mask; the next Track uses
   your corrected mask on that frame. A correction refines the tracked mask, even
-  after an earlier correction has made the track stale: a lone negative click cuts
-  away only the region it is on, and a lone positive click adds one. (Plain SAM 2
-  empties a frame whose clicks are all negative; the backend adds an anchor click
-  inside the tracked mask.)
+  after an earlier correction has made the track stale: a negative click, sent with
+  a positive on the part to keep, cuts away only the region it is on, and a lone
+  positive click adds one. SAM 2 needs a positive on the frame.
 - **Absent ranges.** Mark a span of frames where an object is not in the shot (it
   left the frame, went behind something, or is gone after a cut). Those frames stay
   empty in the preview and in every export, the tracker never runs on them, and the

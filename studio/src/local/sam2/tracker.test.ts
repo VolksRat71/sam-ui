@@ -2,7 +2,7 @@
 import {describe, expect, it} from 'vitest';
 import type {Sam2Constants} from './config';
 import {maskToRle, rleToMask} from './masks';
-import {promptOf, type Releasable, type Sam2Models, Sam2Tracker, type TrackObject} from './tracker';
+import {isClearedSeed, promptOf, type Releasable, type Sam2Models, Sam2Tracker, splitSeeds, type TrackObject, type TrackWindow} from './tracker';
 
 const S = 32; // model input size
 const F = 2; // feature side: 4 tokens per memory block
@@ -73,9 +73,9 @@ class FakeModels implements Sam2Models {
   }
 }
 
-async function run(tracker: Sam2Tracker, objects: Parameters<Sam2Tracker['track']>[0]) {
+async function run(tracker: Sam2Tracker, objects: Parameters<Sam2Tracker['track']>[0], window?: TrackWindow) {
   const frames: Array<{frame: number; masks: Map<number, unknown>}> = [];
-  for await (const f of tracker.track(objects)) {
+  for await (const f of tracker.track(objects, undefined, window)) {
     frames.push(f);
   }
   return frames;
@@ -90,7 +90,74 @@ describe('promptOf', () => {
   });
 });
 
+describe('cleared seeds', () => {
+  const band = new Uint8Array(16 * 12);
+  band.fill(1, 16 * 4, 16 * 8);
+  const kept = maskToRle(band, 16, 12);
+  const empty = maskToRle(new Uint8Array(16 * 12), 16, 12);
+
+  it('a seed with no positive and no approved mask, or an empty one, is cleared', () => {
+    expect(isClearedSeed({frame: 1, points: [[0.5, 0.5, 0]]})).toBe(true);
+    expect(isClearedSeed({frame: 1, points: [[0.5, 0.5, 0]], mask: null})).toBe(true);
+    expect(isClearedSeed({frame: 1, points: [[0.5, 0.5, 0]], mask: empty})).toBe(true);
+  });
+
+  it('a positive, or a legacy anchor-trimmed seed (no positive, a mask), is not', () => {
+    expect(isClearedSeed({frame: 1, points: [[0.5, 0.5, 1], [0.2, 0.2, 0]]})).toBe(false);
+    expect(isClearedSeed({frame: 1, points: [[0.5, 0.5, 0]], mask: kept})).toBe(false);
+  });
+
+  it('a text seed (no clicks, its positive mask) is not cleared and conditions', () => {
+    expect(isClearedSeed({frame: 3, points: [], mask: kept})).toBe(false);
+    const {cond, blank} = splitSeeds([{frame: 3, points: [], mask: kept}]);
+    expect(cond.map(s => s.frame)).toEqual([3]);
+    expect([...blank]).toEqual([]);
+  });
+
+  it('splits an object\'s seeds into conditioning frames and frames to blank', () => {
+    const {cond, blank} = splitSeeds([
+      {frame: 0, points: [[0.5, 0.5, 1]]},
+      {frame: 4, points: [[0.5, 0.5, 0]], mask: null},
+      {frame: 6, points: [[0.5, 0.5, 0]], mask: kept},
+    ]);
+    expect(cond.map(s => s.frame)).toEqual([0, 6]);
+    expect([...blank]).toEqual([4]);
+  });
+});
+
 describe('Sam2Tracker', () => {
+  it('never conditions on a cleared seed, tracks through it, and blanks its frame', async () => {
+    const models = new FakeModels();
+    const tracker = new Sam2Tracker(models, {numFrames: 4, width: 16, height: 12});
+    const frames = await run(tracker, [
+      {id: 0, seeds: [{frame: 0, points: [[0.5, 0.5, 1]]}, {frame: 2, points: [[0.5, 0.5, 0]], mask: null}]},
+    ]);
+    expect(frames.map(f => f.frame)).toEqual([0, 1, 2, 3]);
+    // only frame 0 is decoded as a seed; frame 2 is tracked like any other frame
+    expect(models.calls.filter(c => c.kind === 'decode' && !c.cond).map(c => c.frame)).toEqual([0]);
+    expect(models.calls.some(c => c.kind === 'attend' && c.frame === 2)).toBe(true);
+    // its output is empty, the frames around it are not
+    const area = (f: number) => rleToMask(frames.find(x => x.frame === f)!.masks.get(0) as never).mask.reduce((a, b) => a + b, 0);
+    expect(area(2)).toBe(0);
+    expect(area(1)).toBeGreaterThan(0);
+    expect(area(3)).toBeGreaterThan(0);
+    expect(models.open).toBe(0);
+  });
+
+  it('skips an object whose only seeds are cleared, without failing the others', async () => {
+    const models = new FakeModels();
+    const tracker = new Sam2Tracker(models, {numFrames: 3, width: 8, height: 8});
+    const frames = await run(tracker, [
+      {id: 0, seeds: [{frame: 1, points: [[0.5, 0.5, 0]]}]},
+      {id: 1, seeds: [{frame: 0, points: [[0.5, 0.5, 1]]}]},
+    ]);
+    expect(frames.map(f => f.frame)).toEqual([0, 1, 2]);
+    expect(frames.every(f => [...f.masks.keys()].join() === '1')).toBe(true);
+    expect(await run(new Sam2Tracker(new FakeModels(), {numFrames: 3, width: 8, height: 8}), [
+      {id: 0, seeds: [{frame: 1, points: [[0.5, 0.5, 0]]}]},
+    ])).toEqual([]);
+  });
+
   it('seeds, tracks forward from the earliest seed, then backwards, each frame once', async () => {
     const models = new FakeModels();
     const tracker = new Sam2Tracker(models, {numFrames: 6, width: 16, height: 12});
@@ -130,6 +197,47 @@ describe('Sam2Tracker', () => {
     }
     expect(before).toEqual([2, 3, 4, 1, 0]);
     expect(models.open).toBe(0);
+  });
+
+  it('inside a window, never conditions on a cleared seed and blanks it, in both directions', async () => {
+    const models = new FakeModels();
+    const tracker = new Sam2Tracker(models, {numFrames: 12, width: 16, height: 12});
+    const frames = await run(
+      tracker,
+      [
+        {
+          id: 0,
+          seeds: [
+            {frame: 2, points: [[0.5, 0.5, 1]]}, // outside the window: ignored
+            {frame: 5, points: [[0.5, 0.5, 0]], mask: null}, // cleared, behind the start
+            {frame: 6, points: [[0.5, 0.5, 1]]},
+            {frame: 8, points: [[0.5, 0.5, 0]], mask: null}, // cleared, ahead of it
+          ],
+        },
+      ],
+      {lo: 4, hi: 9},
+    );
+    // the start is the window's first kept seed (6), not the cleared 5
+    expect(frames.map(f => f.frame)).toEqual([6, 7, 8, 9, 5, 4]);
+    expect(models.calls.filter(c => c.kind === 'decode' && !c.cond).map(c => c.frame)).toEqual([6]);
+    expect(models.calls.every(c => c.frame >= 4 && c.frame <= 9)).toBe(true);
+    const area = (f: number) => rleToMask(frames.find(x => x.frame === f)!.masks.get(0) as never).mask.reduce((a, b) => a + b, 0);
+    expect([area(5), area(8)]).toEqual([0, 0]);
+    for (const f of [4, 7, 9]) {
+      expect(area(f)).toBeGreaterThan(0);
+    }
+    expect(models.open).toBe(0);
+  });
+
+  it('skips an object whose only seeds in a window are cleared, and tracks the others there', async () => {
+    const opts = {numFrames: 10, width: 8, height: 8};
+    const gone: TrackObject = {id: 0, seeds: [{frame: 1, points: [[0.5, 0.5, 0]]}, {frame: 8, points: [[0.5, 0.5, 1]]}]};
+    const frames = await run(new Sam2Tracker(new FakeModels(), opts), [gone, {id: 1, seeds: [{frame: 0, points: [[0.5, 0.5, 1]]}]}], {lo: 0, hi: 5});
+    expect(frames.map(f => f.frame)).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(frames.every(f => [...f.masks.keys()].join() === '1')).toBe(true);
+    expect(await run(new Sam2Tracker(new FakeModels(), opts), [gone], {lo: 0, hi: 5})).toEqual([]);
+    // past the gap its positive opens a window of its own
+    expect((await run(new Sam2Tracker(new FakeModels(), opts), [gone], {lo: 7, hi: null})).map(f => f.frame)).toEqual([8, 9, 7]);
   });
 
   it('uses an approved mask as the seed output and memory, and the clicks for the pointer', async () => {
