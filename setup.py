@@ -3,6 +3,7 @@
 
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
+# Modified by sam-ui: decord is no longer a dependency (video is decoded with PyAV).
 import os
 
 from setuptools import find_packages, setup
@@ -36,14 +37,13 @@ EXTRA_PACKAGES = {
         "matplotlib>=3.9.1",
         "jupyter>=1.0.0",
         "opencv-python>=4.7.0",
-        "eva-decord>=0.6.1",
+        "av>=13.0.0",
     ],
     "interactive-demo": [
         "Flask>=3.0.3",
         "Flask-Cors>=5.0.0",
         "av>=13.0.0",
         "dataclasses-json>=0.6.7",
-        "eva-decord>=0.6.1",
         "gunicorn>=23.0.0",
         "imagesize>=1.4.1",
         "pycocotools>=2.0.8",
