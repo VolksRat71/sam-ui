@@ -29,6 +29,7 @@ import {API_ENDPOINT, OBJECT_LIMIT} from '~/config';
 import type {LocalModelStatus, LocalOptions} from '~/local/LocalEngine';
 import {browserModelName, parseQuality} from '~/local/sam2/config';
 import {BROWSER_ENGINE, engineLabel, pickerEngines} from '~/state/engines';
+import {isNeedsPositive, planClicks, type Nudge} from '~/state/corrections';
 import {cleanObjectName, objectName, uniqueFileNames} from '~/state/fileNames';
 import type {ExportedObject, ExportKind} from '~/state/maskExport';
 import {
@@ -38,11 +39,12 @@ import {
   comparableIds,
   dirtyIds,
   preferredEngine,
-  hasSeeds,
   initialState,
   nextObjectId,
   reducer,
+  staleIds,
 } from '~/state/objects';
+import {clearFlag, parseFlagMap, pruneFlags, toggleFlag as toggled, type FlagMap} from '~/state/flags';
 import type {EngineInfo, RunningJob, TrackletSummary} from '~/worker/protocol';
 
 /** Where two engines disagree on one object: frames under the IoU threshold. */
@@ -335,18 +337,76 @@ export default function useStudioSession(video: VideoItem) {
   const noEngine = engines.length > 0 && engines.every(e => !e.available);
   const busy = repainting || status !== 'ready' || noEngine;
 
+  // review flags (F while scrubbing), saved per video in this browser
+  const flagsKey = `sam-ui-studio:flags:${video.path}`;
+  const [flags, setFlags] = useState<FlagMap>(() => parseFlagMap(readJson(flagsKey, {})));
+  useEffect(() => {
+    writeJson(flagsKey, flags);
+  }, [flagsKey, flags]);
+
+  // A frame's clicks the engine on screen cannot take (negatives only on SAM
+  // 2): nothing is sent, the clicks stay as they were, and the preview nudges
+  // for a positive. `hint` 'gone': SAM 3 took negatives alone and emptied the
+  // frame, so the preview asks whether the object is gone for a while.
+  const [nudge, setNudge] = useState<Nudge | null>(null);
+  const nudgeRef = useRef(nudge);
+  nudgeRef.current = nudge;
+  const [hint, setHint] = useState<'gone' | null>(null);
+  /** The clicks the nudge refused, which Switch to SAM 3 sends. */
+  const refused = useRef<NormPoint[]>([]);
+  const showNudge = useCallback((objectId: number, frameIndex: number, points: NormPoint[], engine: string) => {
+    refused.current = points;
+    setHint(null);
+    setNudge({objectId, frame: frameIndex, engine});
+  }, []);
+  useEffect(() => {
+    setNudge(null);
+    setHint(null);
+  }, [frame]);
+
   const setPoints = useCallback(
-    (objectId: number, frameIndex: number, points: NormPoint[]) => {
+    (objectId: number, frameIndex: number, points: NormPoint[], engine: string = stateRef.current.engine) => {
       if (bridge == null) {
         return;
       }
+      const before = stateRef.current.objects.find(o => o.id === objectId)?.points[frameIndex] ?? [];
       dispatch({type: 'setPoints', id: objectId, frame: frameIndex, points});
       serial(async () => {
-        await bridge.call('setPoints', {objectId, frameIndex, points});
+        try {
+          await bridge.call('setPoints', {objectId, frameIndex, points, engine});
+          if (points.length > 0) {
+            setFlags(m => clearFlag(m, objectId, frameIndex)); // corrected
+          }
+        } catch (error) {
+          if (!isNeedsPositive(error)) {
+            setHint(null); // a SAM 3 send that failed emptied nothing
+            throw error;
+          }
+          // the backend refused what studio let through (an old cached list,
+          // a race) and kept the frame as it was: so does studio, and it nudges
+          dispatch({type: 'setPoints', id: objectId, frame: frameIndex, points: before});
+          showNudge(objectId, frameIndex, points, engine);
+        }
         await sync();
       });
     },
-    [bridge, serial, sync],
+    [bridge, serial, sync, showNudge],
+  );
+
+  /** Send a frame's new clicks, or nudge and keep the old ones (state/corrections.ts). */
+  const correct = useCallback(
+    (objectId: number, current: NormPoint[], next: NormPoint[]) => {
+      const engine = stateRef.current.engine;
+      const plan = planClicks(current, next, engine);
+      if (plan.kind === 'nudge') {
+        showNudge(objectId, frame, next, engine);
+        return;
+      }
+      setNudge(null);
+      setHint(plan.gone ? 'gone' : null);
+      setPoints(objectId, frame, [...plan.points], engine);
+    },
+    [frame, setPoints, showNudge],
   );
 
   /** A new object's id: past every id this video has used, and remembered. */
@@ -381,9 +441,9 @@ export default function useStudioSession(video: VideoItem) {
         bridge.call('setActiveObject', {objectId: id}).catch(() => {});
       }
       const current = s.objects.find(o => o.id === id)?.points[frame] ?? [];
-      setPoints(id, frame, [...current, [x, y, label]]);
+      correct(id, current, [...current, [x, y, label]]);
     },
-    [bridge, busy, playing, frame, setPoints, claimId],
+    [bridge, busy, playing, frame, correct, claimId],
   );
 
   const removePoint = useCallback(
@@ -394,9 +454,10 @@ export default function useStudioSession(video: VideoItem) {
         return;
       }
       const current = o.points[frame] ?? [];
-      setPoints(o.id, frame, current.filter((_, i) => i !== index));
+      // deleting the last positive while negatives remain nudges too
+      correct(o.id, current, current.filter((_, i) => i !== index));
     },
-    [busy, playing, frame, setPoints],
+    [busy, playing, frame, correct],
   );
 
   const addObject = useCallback(() => {
@@ -430,6 +491,8 @@ export default function useStudioSession(video: VideoItem) {
   const selectObject = useCallback(
     (id: number | null) => {
       dispatch({type: 'select', id});
+      setNudge(null);
+      setHint(null);
       bridge?.call('setActiveObject', {objectId: id}).catch(() => {});
     },
     [bridge],
@@ -545,10 +608,35 @@ export default function useStudioSession(video: VideoItem) {
       }
       dispatch({type: 'setEngine', engine});
       writeJson(ENGINE_KEY, engine);
+      setNudge(null);
+      setHint(null);
       bridge.call('setEngine', {engine}).catch(error => setWarning(message(error)));
     },
     [bridge],
   );
+
+  const sam3Available = engines.some(e => e.name === 'sam3' && e.available);
+
+  /** The nudge's "Add a positive to trim": clicks add positives again (`addMode` sets the toggle). */
+  const nudgeTrim = useCallback((addMode: () => void) => {
+    addMode();
+    setNudge(null);
+  }, []);
+
+  /** The nudge's "Switch to SAM 3": show SAM 3, and send it the refused clicks. */
+  const nudgeSam3 = useCallback(() => {
+    // the object may have been removed since the nudge: sending would re-create it
+    if (nudge == null || !sam3Available || !stateRef.current.objects.some(o => o.id === nudge.objectId)) {
+      setNudge(null);
+      return;
+    }
+    const points = refused.current;
+    setEngine('sam3');
+    setNudge(null);
+    const plan = planClicks([], points, 'sam3');
+    setHint(plan.kind === 'send' && plan.gone ? 'gone' : null);
+    setPoints(nudge.objectId, nudge.frame, points, 'sam3');
+  }, [nudge, sam3Available, setEngine, setPoints]);
 
   /** The browser engine's model size and hole fill; its tracks made otherwise go stale. */
   const setLocalOptions = useCallback(
@@ -577,6 +665,10 @@ export default function useStudioSession(video: VideoItem) {
     if (status === 'ready') {
       setObjectEffects(m => {
         const pruned = pruneEffects(m, idsKey === '' ? [] : idsKey.split(',').map(Number));
+        return Object.keys(pruned).length === Object.keys(m).length ? m : pruned;
+      });
+      setFlags(m => {
+        const pruned = pruneFlags(m, idsKey === '' ? [] : idsKey.split(',').map(Number));
         return Object.keys(pruned).length === Object.keys(m).length ? m : pruned;
       });
     }
@@ -729,14 +821,15 @@ export default function useStudioSession(video: VideoItem) {
       if (bridge == null) {
         return;
       }
-      const o = stateRef.current.objects.find(x => x.id === objectId);
+      if (objectId === nudgeRef.current?.objectId) {
+        setNudge(null); // its Switch to SAM 3 would send clicks for the removed object
+      }
+      setHint(null);
       serial(async () => {
-        // an object never clicked exists only here (with, at most, a name)
-        if (o != null && hasSeeds(o)) {
-          await bridge.call('removeObject', {objectId});
-        } else if (o?.name != null) {
-          await bridge.call('renameObject', {objectId, name: null}).catch(() => {});
-        }
+        // Always ask the backend, clicked or not: a stored object can have no
+        // seeds left (an undo, a cleared frame) and would come back on sync.
+        // Removing an id it never stored is a no-op, so a new layer is fine too.
+        await bridge.call('removeObject', {objectId});
         dispatch({type: 'removed', id: objectId});
         await sync();
       });
@@ -748,6 +841,8 @@ export default function useStudioSession(video: VideoItem) {
     if (bridge == null) {
       return;
     }
+    setNudge(null);
+    setHint(null);
     serial(async () => {
       await bridge.call('startOver', {});
       dispatch({type: 'reset'});
@@ -778,6 +873,22 @@ export default function useStudioSession(video: VideoItem) {
 
   const dirty = useMemo(() => dirtyIds(state), [state]);
 
+  /** Flag the current frame of the selected object for a correction, or unflag it. */
+  const toggleFlag = useCallback(() => {
+    const id = stateRef.current.activeId;
+    if (id != null && meta.numFrames > 0) {
+      setFlags(m => toggled(m, id, frame));
+    }
+  }, [frame, meta.numFrames]);
+
+  // a stale track stays on screen, faded, until the re-track (corrected frames show at full strength)
+  const staleKey = staleIds(state).join(',');
+  useEffect(() => {
+    bridge
+      ?.call('setStaleObjects', {objectIds: staleKey === '' ? [] : staleKey.split(',').map(Number)})
+      .catch(() => {});
+  }, [bridge, staleKey]);
+
   return {
     bridge,
     state,
@@ -796,10 +907,17 @@ export default function useStudioSession(video: VideoItem) {
     canAdd: canAddObject(state, OBJECT_LIMIT) && !noEngine,
     engines,
     setEngine,
+    sam3Available,
+    nudge,
+    hint,
+    nudgeTrim,
+    nudgeSam3,
     localOptions,
     setLocalOptions,
     localModel,
     disagreement,
+    flags,
+    toggleFlag,
     objectEffects,
     pickObjectEffect,
     variantCounts,

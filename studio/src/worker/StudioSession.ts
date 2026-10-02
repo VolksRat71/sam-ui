@@ -403,7 +403,7 @@ export default class StudioSession {
 
   // -- clicks ----------------------------------------------------------------
 
-  async setPoints(objectId: number, frameIndex: number, points: NormPoint[]): Promise<void> {
+  async setPoints(objectId: number, frameIndex: number, points: NormPoint[], engine?: string): Promise<void> {
     const t = this._tracklet(objectId);
     let list: RleList;
     if (this._offline != null) {
@@ -435,6 +435,7 @@ export default class StudioSession {
           points: points.map(p => [p[0], p[1]]),
           labels: points.map(p => p[2]),
           clearOldPoints: true,
+          engine: engine ?? null,
         },
       });
       const local = this._isLocal ? this._local.click(frameIndex, points) : null;
@@ -1040,6 +1041,13 @@ export default class StudioSession {
 
   setActiveObject(objectId: number | null): void {
     this._overlay.activeObjectId = objectId;
+    this._render(true);
+  }
+
+  /** Draw these objects' track faded, except on frames their clicks made. */
+  setStaleObjects(objectIds: number[]): void {
+    const stale = new Set(objectIds);
+    this._overlay.faded = (id, frame) => stale.has(id) && !(this._seedMasks.get(id)?.has(frame) ?? false);
     this._render(true);
   }
 
