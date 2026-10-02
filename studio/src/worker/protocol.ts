@@ -87,9 +87,13 @@ export type StudioMethods = {
   /** `key`: the video's sha256, which keys its data with no backend. */
   startSession: {args: {path: string; key?: string}; result: SessionInfo};
   closeSession: {args: Record<string, never>; result: void};
-  /** Replace one object's clicks on one frame (none: clear the frame). */
+  /**
+   * Replace one object's clicks on one frame (none: clear the frame).
+   * `engine`: the one on screen; the backend refuses negatives alone on any
+   * engine but SAM 3 (`needs_positive:`), and a missing one counts as SAM 2.
+   */
   setPoints: {
-    args: {objectId: number; frameIndex: number; points: NormPoint[]};
+    args: {objectId: number; frameIndex: number; points: NormPoint[]; engine?: string};
     result: void;
   };
   removeObject: {args: {objectId: number}; result: void};

@@ -53,8 +53,9 @@ def meta(h, obj=1, engine="fake"):
 
 
 def correct(h, frame, obj=1):
-    """A lone negative click: the correction the fake engine reacts to."""
-    h.click(obj, frame=frame, points=[[0.3, 0.3]], labels=(0,))
+    """A positive with a negative: the correction the fake engine reacts to.
+    (A lone negative is a cleared seed, 'not on this frame', since #26.)"""
+    h.click(obj, frame=frame, points=[[0.5, 0.5], [0.3, 0.3]], labels=(1, 0))
 
 
 # -- the pieces -------------------------------------------------------------------
@@ -533,8 +534,11 @@ def test_real_sam2_bounded_retrack_matches_a_full_retrack(tmp_path):
     extra = {f: int((old[f] & ~truth[f]).sum()) for f in range(CN)}
     c = max(extra, key=extra.get)
     if extra[c] > 50:  # cut the look-alike away where the track holds most of it
+        # SAM 2 needs a positive on the frame (needs_positive): one on the square, the negative on the look-alike
         ys, xs = np.nonzero(old[c] & ~truth[c])
-        click(a, sid, 1, c, [[(xs.mean() + .5) / CW, (ys.mean() + .5) / CH]], [0])
+        y, x = cross_obj(c)
+        click(a, sid, 1, c, [[(x + CS / 2) / CW, (y + CS / 2) / CH], [(xs.mean() + .5) / CW, (ys.mean() + .5) / CH]],
+              [1, 0])
     else:  # a clean track: refine mid-clip
         c = CN // 2
         y, x = cross_obj(c)
