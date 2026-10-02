@@ -120,7 +120,9 @@ python3 -m http.server 7390 --bind 127.0.0.1 --directory /tmp/pages   # http://1
   phrase's best match on the frame on screen becomes that frame's mask,
   replacing its clicks, and the row says the score, and how many things
   matched when several did. A click on that frame refines the mask and keeps
-  the text; clearing the frame's clicks clears the text too. A phrase that
+  the text, and deleting the frame's last click goes back to the text's mask.
+  To trim it on SAM 2 or the browser engine, add a positive with the
+  negatives: a negative alone is refused there, as on any frame. A phrase that
   matches nothing changes nothing. The frame is marked on the lane like a
   clicked one, titled with its text. With SAM 2 or the browser engine the
   field is disabled and says why (`GET /engines` reports `text` per engine).
