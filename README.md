@@ -86,6 +86,12 @@ Details and progress: [Platform support, #16](https://github.com/VolksRat71/sam-
   so nothing seen before the gap carries into the frames after it. A side with no
   clicks stays empty. Marking or unmarking a range makes the track stale, and the
   re-track runs only the sides that changed.
+- **Text prompts (SAM 3).** Type what to find ("dog") for the selected object and
+  SAM 3's detector segments it on the frame on screen: the best match becomes that
+  frame's mask, as if clicked, and the object tracks from it with any engine. When
+  several things match it says how many and takes the best; a click there refines
+  the mask. SAM 2 and the browser engine take clicks only, and the field says so.
+  The detector shares SAM 3's backbone with the tracker, so it adds about 2 GB.
 - **Keep working while it tracks.** A track job holds the model one frame at a time,
   so clicks come back in about 0.1 s even while a job runs. Jobs can overlap, and
   each has its own cancel.

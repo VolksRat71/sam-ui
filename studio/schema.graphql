@@ -108,6 +108,7 @@ type SeedFrame {
   points: [[Float!]!]!
   labels: [Int!]!
   mask: RLEMask
+  text: String
 }
 
 type ObjectTrack {

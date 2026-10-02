@@ -107,6 +107,7 @@ const handlers: Handlers = {
   closeSession: () => session.closeSession(),
   setPoints: ({objectId, frameIndex, points, engine}) =>
     session.setPoints(objectId, frameIndex, points, engine),
+  textPrompt: ({objectId, frameIndex, text, engine}) => session.textPrompt(objectId, frameIndex, text, engine),
   removeObject: ({objectId}) => session.removeObject(objectId),
   clearTrack: ({objectId, engine}) => session.clearTrack(objectId, engine),
   setRange: ({objectId, start, end, state}) => session.setRange(objectId, start, end, state),

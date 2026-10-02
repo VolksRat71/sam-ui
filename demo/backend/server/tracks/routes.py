@@ -27,6 +27,13 @@ POST /rename_object {session_id, object_id, name}: name an object (trimmed, at
   most 64 characters; empty clears it). Metadata only: no track goes stale.
   Answers {"object_id", "name"}.
 POST /object_names {session_id}: {"names": {"<object_id>": name}} for the video.
+POST /text_prompt {session_id, object_id, frame_index, text, engine?}: seed one
+  frame of an object from a phrase (tracks/text.py) with the first engine that
+  reads text (SAM 3), or `engine`. Answers {"object_id", "frame_index", "text",
+  "engine", "matched", "score", "instances", "box", "mask"}: the best instance's
+  mask as RLE, now the frame's approved seed, or matched false and mask null
+  when nothing matched (nothing is stored). 400 when no engine reads text, the
+  frame is absent, or there is no text.
 POST /export {session_id, out_dir, objects?, include_stale?, frames?, force?, engine?}:
   write tracked objects as a rotoscoping working folder (see tracks/export.py);
   out_dir must be under SAM_UI_EXPORT_ROOT (default ~/Movies). 400 on a refusal.
@@ -43,6 +50,7 @@ from typing import Callable, Iterator, Optional
 from flask import Blueprint, Response, jsonify, request
 
 from inference.multipart import MultipartResponseBuilder
+from tracks import rle
 from tracks.export import ExportError, export
 from tracks.jobs import Job
 from tracks.service import FrameRle, JobResult, TrackService, UnknownEngine
@@ -60,6 +68,9 @@ class TrackContext:
     lock: contextlib.AbstractContextManager = field(default_factory=contextlib.nullcontext)
     autocast: Callable[[], contextlib.AbstractContextManager] = contextlib.nullcontext
     video_handle: Optional[object] = None  # the session's loaded video, shared with jobs
+    # tells the interactive session of a new seed mask (obj_id, frame, HxW bool),
+    # so a click on that frame refines it; called under `lock`
+    seed_mask: Optional[Callable[[int, int, object], None]] = None
 
 
 def part(frame: int, masks) -> bytes:
@@ -191,6 +202,23 @@ def make_blueprint(resolve: Callable[[str], TrackContext], service: Optional[Tra
         ctx = resolve(data["session_id"])
         return jsonify(ctx.service.disagreement(ctx.video, data.get("object_ids"), data.get("a"),
                                                 data.get("b", "sam3"), float(data.get("threshold", 0.8))))
+
+    @bp.route("/text_prompt", methods=["POST"])
+    def text_prompt() -> Response:
+        data = request.json
+        ctx = resolve(data["session_id"])
+        try:
+            obj = int(data["object_id"])
+            with ctx.lock, ctx.autocast():  # the model, and a consistent write of the seeds
+                out = ctx.service.text_prompt(ctx.video, ctx.path, obj, data.get("frame_index"), data.get("text"),
+                                              data.get("engine"))
+                if out["mask"] is not None and ctx.seed_mask is not None:
+                    ctx.seed_mask(obj, out["frame_index"], rle.decode(out["mask"]))
+        except UnknownEngine:
+            raise
+        except (ValueError, KeyError, TypeError) as err:
+            return jsonify({"error": str(err)}), 400
+        return jsonify(out)
 
     @bp.route("/rename_object", methods=["POST"])
     def rename_object() -> Response:
