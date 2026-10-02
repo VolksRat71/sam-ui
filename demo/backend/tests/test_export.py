@@ -110,7 +110,7 @@ def _tree(d):
 LINKS = [("data", True, False), ("data/mattes_tracked", True, False), ("data/mattes_tracked/object_1", True, False),
          ("notes", True, False), ("products.json", False, False), ("notes/sam-ui-export.json", False, False),
          ("data/review.json", False, False), ("data/frames", True, True), ("data/clip.mp4", False, True),
-         ("data/frames/00001.jpg", False, True)]
+         ("data/frames/00001.jpg", False, True), ("data/groups", True, False)]
 
 
 @pytest.mark.parametrize("link,is_dir,frames", LINKS)
@@ -614,6 +614,46 @@ def test_group_folders_are_unique(h, tmp_path):
     _layout(h, [1, 2], [{**CAST, "members": [1]}, {**CAST, "id": "g2", "members": [2]}])
     code, m = export(h, out_dir=str(tmp_path / "b"))
     assert [g["folder"] for g in m["groups"]] == ["the_cast", "the_cast_2"]
+
+
+def test_a_linked_groups_folder_is_refused_even_inside_the_root(h, tmp_path):
+    """data/groups is rmtree'd and remade on every export, so, as a matte
+    folder, a link there is refused rather than followed (integration: #29's
+    containment over the object-groups export)."""
+    h.click(1), h.click(3)
+    h.track()
+    _layout(h, [1, 3], [CAST])
+    elsewhere = tmp_path / "other"
+    elsewhere.mkdir()
+    (elsewhere / "keep.json").write_text("theirs")
+    out = tmp_path / "build"
+    (out / "data").mkdir(parents=True)
+    (out / "data" / "groups").symlink_to(elsewhere)
+    code, m = export(h, out_dir=str(out), force=True, union=True)
+    assert code == 400 and "data/groups" in m["error"]
+    assert (elsewhere / "keep.json").read_text() == "theirs" and sorted(p.name for p in elsewhere.iterdir()) == [
+        "keep.json"]
+
+
+def test_group_files_and_review_json_replace_a_hard_link_not_write_through_it(h, tmp_path, tmp_path_factory):
+    """group.json, the union mattes and data/review.json are written as every
+    export file is, to a temp name and os.replace'd (integration: #29's atomic
+    writes over the groups and audit-queue exports)."""
+    h.click(1), h.click(3)
+    h.track()
+    _layout(h, [1, 3], [CAST])
+    outside = tmp_path_factory.mktemp("outside")
+    (outside / "victim").write_text("keep")
+    out = tmp_path / "build"
+    (out / "data").mkdir(parents=True)
+    os.link(outside / "victim", out / "data" / "review.json")
+    code, m = export(h, out_dir=str(out), union=True)
+    assert code == 200 and (outside / "victim").read_text() == "keep"
+    assert isinstance(json.loads((out / "data" / "review.json").read_text()), dict)
+    assert sorted(json.loads((out / "data/groups/the_cast/group.json").read_text())["members"]) == ["object_1", "object_3"]
+    assert (out / "data/groups/the_cast/union/00001.png").exists()
+    leftovers = [p for p in out.rglob("*") if p.name.endswith(".tmp")]
+    assert leftovers == []
 
 
 # -- the audit queue (draft 7): data/review.json carries it, reviewed or not ------------
