@@ -41,6 +41,13 @@ describe('seedsKey', () => {
     expect(marked).not.toBe(seedsKey(a));
     expect(marked).not.toBe(seedsKey(a, [{start: 6, end: 10, state: 'absent'}]));
   });
+
+  it('changes when a negatives-only frame is added, so the track goes stale', () => {
+    // the tracker never conditions on such a frame, but blanks it: a new track is due
+    const before = new Map<number, NormPoint[]>([[0, [[0.5, 0.5, 1]]]]);
+    const after = new Map<number, NormPoint[]>([...before, [9, [[0.2, 0.2, 0]]]]);
+    expect(seedsKey(after)).not.toBe(seedsKey(before));
+  });
 });
 
 describe('localTrackEntry', () => {

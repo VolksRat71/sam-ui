@@ -99,11 +99,20 @@ def window_frames(w: Window, n_frames: int) -> range:
 
 
 def seeded_windows(seeds: Dict[int, Dict], ranges: Iterable[Dict]) -> List[Tuple[Window, Dict[int, Dict]]]:
-    """The windows that hold at least one seed (clicks or text), each with only
-    its own seeds. Seeds inside an absent range belong to no window."""
+    """The windows that hold at least one seed (clicks or text), each with
+    only its own seeds. Seeds inside an absent range belong to no window.
+
+    A cleared seed ('not on this frame': no positive, empty mask) does not
+    open a window: a window whose only seeds are cleared is not tracked and
+    stays empty. Inside a window opened by another seed it is kept, so the
+    window's key changes with it; SAM 2 strips it from conditioning and blanks
+    its frame (tracks/engine.py strip_cleared), SAM 3 conditions on it. A text
+    seed is never cleared: its mask is the positive."""
+    from tracks.seeds import cleared  # seeds imports this module
+
     out = []
     for w in windows(ranges):
         mine = {f: v for f, v in seeds.items() if has_prompt(v) and in_window(f, w)}
-        if mine:
+        if any(not cleared(v) for v in mine.values()):
             out.append((w, mine))
     return out

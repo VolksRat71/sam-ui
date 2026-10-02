@@ -5,6 +5,7 @@ input AddPointsInput {
   objectId: Int!
   labels: [Int!]!
   points: [[Float!]!]!
+  engine: String
 }
 
 type CancelPropagateInVideo {

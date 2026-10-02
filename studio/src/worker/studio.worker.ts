@@ -105,8 +105,8 @@ const handlers: Handlers = {
   init: ({endpoint, offline}) => session.init(endpoint, offline),
   startSession: ({path, key}) => session.startSession(path, key),
   closeSession: () => session.closeSession(),
-  setPoints: ({objectId, frameIndex, points}) =>
-    session.setPoints(objectId, frameIndex, points),
+  setPoints: ({objectId, frameIndex, points, engine}) =>
+    session.setPoints(objectId, frameIndex, points, engine),
   textPrompt: ({objectId, frameIndex, text, engine}) => session.textPrompt(objectId, frameIndex, text, engine),
   removeObject: ({objectId}) => session.removeObject(objectId),
   clearTrack: ({objectId, engine}) => session.clearTrack(objectId, engine),
