@@ -45,6 +45,27 @@ describe('planClicks', () => {
   });
 });
 
+describe('planClicks on a text frame', () => {
+  // A text seed has no clicks, only its positive mask, so its frame's current
+  // clicks are []. The ruling: off SAM 3 a lone negative there is refused like
+  // on any frame, since SAM 2 empties a frame given only negatives even with a
+  // mask fed in through add_new_mask, which is how a text mask enters (spec
+  // fact 1). The backend refuses it with needs_positive too. To trim, add a positive.
+  const pos: [number, number, 0 | 1] = [0.1, 0.1, 1];
+  const neg: [number, number, 0 | 1] = [0.5, 0.5, 0];
+
+  it('nudges a lone negative on SAM 2 and the browser engine', () => {
+    expect(planClicks([], [neg], 'sam2')).toEqual({kind: 'nudge', points: []});
+    expect(planClicks([], [neg], 'browser-sam2')).toEqual({kind: 'nudge', points: []});
+  });
+  it('sends a positive plus a negative on SAM 2', () => {
+    expect(planClicks([], [pos, neg], 'sam2')).toEqual({kind: 'send', points: [pos, neg], gone: false});
+  });
+  it('sends a lone negative on SAM 3, asking whether the object is gone', () => {
+    expect(planClicks([], [neg], 'sam3')).toEqual({kind: 'send', points: [neg], gone: true});
+  });
+});
+
 describe('isNeedsPositive', () => {
   it('matches the backend refusal, bare or in Relay\'s wrapper', () => {
     expect(isNeedsPositive('needs_positive: SAM 2 needs a positive click on frame 3')).toBe(true);
