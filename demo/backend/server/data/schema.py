@@ -322,7 +322,9 @@ def session_video_path(rel: str) -> str:
     if not inside:
         raise refused
     listed = get_videos() or {}  # upstream starts the store as [] until videos are set
-    if os.path.normpath(rel) not in {os.path.normpath(v.path) for v in listed.values()}:
+    # a lookup, not a walk: an upload on another thread may add to it meanwhile.
+    # Videos are keyed by code, which get_video makes equal to the path.
+    if listed.get(os.path.normpath(rel)) is None:
         raise ValueError(f"not a listed video: {rel!r}")
     if not os.path.isfile(full):
         raise ValueError(f"no video file for {rel!r}")
