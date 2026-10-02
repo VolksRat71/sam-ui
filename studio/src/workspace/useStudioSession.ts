@@ -350,6 +350,8 @@ export default function useStudioSession(video: VideoItem) {
   // for a positive. `hint` 'gone': SAM 3 took negatives alone and emptied the
   // frame, so the preview asks whether the object is gone for a while.
   const [nudge, setNudge] = useState<Nudge | null>(null);
+  const nudgeRef = useRef(nudge);
+  nudgeRef.current = nudge;
   const [hint, setHint] = useState<'gone' | null>(null);
   /** The clicks the nudge refused, which Switch to SAM 3 sends. */
   const refused = useRef<NormPoint[]>([]);
@@ -370,14 +372,15 @@ export default function useStudioSession(video: VideoItem) {
       }
       const before = stateRef.current.objects.find(o => o.id === objectId)?.points[frameIndex] ?? [];
       dispatch({type: 'setPoints', id: objectId, frame: frameIndex, points});
-      if (points.length > 0) {
-        setFlags(m => clearFlag(m, objectId, frameIndex)); // corrected
-      }
       serial(async () => {
         try {
           await bridge.call('setPoints', {objectId, frameIndex, points, engine});
+          if (points.length > 0) {
+            setFlags(m => clearFlag(m, objectId, frameIndex)); // corrected
+          }
         } catch (error) {
           if (!isNeedsPositive(error)) {
+            setHint(null); // a SAM 3 send that failed emptied nothing
             throw error;
           }
           // the backend refused what studio let through (an old cached list,
@@ -623,7 +626,9 @@ export default function useStudioSession(video: VideoItem) {
 
   /** The nudge's "Switch to SAM 3": show SAM 3, and send it the refused clicks. */
   const nudgeSam3 = useCallback(() => {
-    if (nudge == null || !sam3Available) {
+    // the object may have been removed since the nudge: sending would re-create it
+    if (nudge == null || !sam3Available || !stateRef.current.objects.some(o => o.id === nudge.objectId)) {
+      setNudge(null);
       return;
     }
     const points = refused.current;
@@ -818,6 +823,10 @@ export default function useStudioSession(video: VideoItem) {
         return;
       }
       const o = stateRef.current.objects.find(x => x.id === objectId);
+      if (objectId === nudgeRef.current?.objectId) {
+        setNudge(null); // its Switch to SAM 3 would send clicks for the removed object
+      }
+      setHint(null);
       serial(async () => {
         // an object never clicked exists only here (with, at most, a name)
         if (o != null && hasSeeds(o)) {
@@ -836,6 +845,8 @@ export default function useStudioSession(video: VideoItem) {
     if (bridge == null) {
       return;
     }
+    setNudge(null);
+    setHint(null);
     serial(async () => {
       await bridge.call('startOver', {});
       dispatch({type: 'reset'});
