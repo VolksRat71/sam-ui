@@ -99,6 +99,109 @@ def test_refusals_and_replies_never_name_the_servers_own_paths(h, tmp_path):
     assert notes["video_path"]  # still recorded beside the export
 
 
+def _tree(d):
+    """Every path under d with its bytes (None for a folder), to show nothing changed."""
+    return {str(p.relative_to(d)): None if p.is_dir() else p.read_bytes() for p in sorted(d.rglob("*"))}
+
+
+# (link inside the export folder, whether it points at a folder, frames=)
+LINKS = [("data", True, False), ("data/mattes_tracked", True, False), ("data/mattes_tracked/object_1", True, False),
+         ("notes", True, False), ("products.json", False, False), ("notes/sam-ui-export.json", False, False),
+         ("data/review.json", False, False), ("data/frames", True, True), ("data/clip.mp4", False, True),
+         ("data/frames/00001.jpg", False, True)]
+
+
+@pytest.mark.parametrize("link,is_dir,frames", LINKS)
+def test_a_link_inside_the_export_folder_cannot_lead_outside_the_root(h, tmp_path, tmp_path_factory, link, is_dir,
+                                                                      frames):
+    """Only out_dir was checked against the root, so a link planted inside it
+    (out/data -> elsewhere) let export write, or rmtree, outside the root.
+    Every path export writes or deletes is checked with links followed, before
+    anything is written, so even with force nothing outside changes."""
+    h.click(1)
+    h.track()
+    outside = tmp_path_factory.mktemp("outside")
+    (outside / "mattes_tracked" / "object_1").mkdir(parents=True)
+    (outside / "mattes_tracked" / "object_1" / "00001.png").write_bytes(b"theirs")
+    (outside / "victim").write_text("keep")
+    before = _tree(outside)
+    out = tmp_path / "build"
+    (out / link).parent.mkdir(parents=True, exist_ok=True)
+    (out / link).symlink_to(outside if is_dir else outside / "victim")
+    code, m = export(h, out_dir=str(out), force=True, frames=frames)
+    assert code == 400 and "outside the export root" in m["error"] and link in m["error"]
+    assert str(tmp_path) not in m["error"].replace(repr(str(out)), "") and str(outside) not in m["error"]
+    assert _tree(outside) == before
+
+
+def test_a_dangling_link_cannot_create_a_file_outside_the_root(h, tmp_path, tmp_path_factory):
+    h.click(1)
+    h.track()
+    outside = tmp_path_factory.mktemp("outside")
+    out = tmp_path / "build"
+    (out / "data").mkdir(parents=True)
+    (out / "data" / "review.json").symlink_to(outside / "new.json")  # nothing there yet
+    code, m = export(h, out_dir=str(out))
+    assert code == 400 and "data/review.json" in m["error"] and not (outside / "new.json").exists()
+
+
+def test_a_link_loop_is_a_refusal_not_a_crash(h, tmp_path):
+    h.click(1)
+    h.track()
+    out = tmp_path / "build"
+    out.mkdir()
+    (out / "data").symlink_to(out / "data")
+    code, m = export(h, out_dir=str(out), force=True)
+    assert code == 400 and "data" in m["error"]
+
+
+def test_a_linked_matte_folder_is_refused_even_inside_the_root(h, tmp_path):
+    """The matte folder is rmtree'd and refilled; a link there is refused
+    rather than followed, wherever it points."""
+    h.click(1)
+    h.track()
+    elsewhere = tmp_path / "other"
+    elsewhere.mkdir()
+    (elsewhere / "00001.png").write_bytes(b"theirs")
+    out = tmp_path / "build"
+    (out / "data" / "mattes_tracked").mkdir(parents=True)
+    (out / "data" / "mattes_tracked" / "object_1").symlink_to(elsewhere)
+    code, m = export(h, out_dir=str(out), force=True)
+    assert code == 400 and "data/mattes_tracked/object_1" in m["error"]
+    assert (elsewhere / "00001.png").read_bytes() == b"theirs"
+
+
+def test_existing_mattes_are_not_replaced_without_force(h, tmp_path):
+    """force gates the decision files and each exported object's matte folder;
+    notes/sam-ui-export.json and data/frames are sam-ui's own and rewritten."""
+    h.click(1)
+    h.track()
+    out = tmp_path / "build"
+    assert export(h, out_dir=str(out))[0] == 200
+    for n in ("products.json", "anchors.json", "shots.json"):
+        (out / n).unlink()  # no decision clash left: only the mattes
+    stale = out / "data" / "mattes_tracked" / "object_1" / "stale.png"
+    stale.write_bytes(b"by hand")
+    (out / "notes" / "sam-ui-export.json").write_text("{}")
+    code, m = export(h, out_dir=str(out))
+    assert code == 400 and "data/mattes_tracked/object_1" in m["error"] and "force" in m["error"]
+    assert stale.exists() and (out / "notes" / "sam-ui-export.json").read_text() == "{}"
+    assert export(h, out_dir=str(out), force=True)[0] == 200
+    assert not stale.exists() and (out / "data" / "mattes_tracked" / "object_1" / "00001.png").exists()
+    assert json.loads((out / "notes" / "sam-ui-export.json").read_text())["products"]
+
+
+@pytest.mark.parametrize("bad", [5, ["a"], None])
+def test_out_dir_must_be_a_string(h, bad):
+    code, m = export(h, out_dir=bad)
+    assert code == 400 and "out_dir must be a string" in m["error"]
+
+
+def test_a_missing_out_dir_is_a_400(h):
+    code, m = export(h)
+    assert code == 400 and "out_dir must be a string" in m["error"]
+
+
 def test_the_default_export_root_is_sam_uis_own_folder(monkeypatch, tmp_path):
     from tracks.export import export_root
 
