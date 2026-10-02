@@ -256,7 +256,7 @@ describe('limits and hints', () => {
     expect(needsPositiveClick(byId(s, 0), 3)).toBe(false);
     expect(needsPositiveClick(byId(s, 0), 4)).toBe(false);
     expect(needsPositiveClick(undefined, 2)).toBe(false);
-    // a lone negative on a tracked frame cuts the tracked mask: the frame keeps one, no hint
+    // a frame that still shows a mask (a legacy seed trimmed by the removed anchor) needs nothing
     expect(needsPositiveClick(byId(s, 0), 2, true)).toBe(false);
   });
 
