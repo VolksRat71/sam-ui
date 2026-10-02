@@ -774,3 +774,25 @@ def test_real_sam2_bounded_retrack_matches_a_full_retrack(tmp_path):
     assert prov["state"] == TRACKED and c in inside and 0 < len(inside) < CN
     assert all((bnd[f] == old[f]).all() for f in range(CN) if f not in inside)  # outside: the cache, untouched
     assert min(v) > MIN_IOU_VS_FULL and np.mean(v) > MEAN_IOU_VS_FULL
+
+    # A mid-clip 'not on this frame' seed, stored as SAM 3 stores a lone negative
+    # (its mask empty). SAM 2 never conditions on it, so the job blanks that frame
+    # and runs no model, and a full re-track must agree on it and its neighbours.
+    g = 3 * CN // 4 if abs(3 * CN // 4 - c) > 10 else CN // 4
+    y, x = cross_obj(g)
+    a.tracks.record_points(video, 1, g, [[(x + CS / 2) / CW, (y + CS / 2) / CH]], [0], True,
+                           mask=rle.encode(np.zeros((CH, CW), bool)))
+    blank, t_g = track()
+    prov_g = a.tracks.provenance(video, 1)
+    full_g, t_fg = track(full=True)
+    near = [f for f in range(g - 5, g + 6) if f != g]
+    w = [mask_iou(blank[f], full_g[f]) for f in near]
+    print(f"cleared seed on frame {g}: blanked in {t_g:.2f} s (passes {prov_g['bounded']}) against "
+          f"{t_fg:.1f} s for a full re-track; frame {g} area {int(full[g].sum())} -> bounded {int(blank[g].sum())}, "
+          f"full {int(full_g[g].sum())}; neighbours {near[0]}-{near[-1]} IoU vs full min {min(w):.4f}")
+    last = prov_g["passes"][-1]
+    assert last["kind"] == "bounded" and last["frames"] == [g, g] and last["attempts"] == 0
+    assert prov_g["bounded"] == [[g, g]] and full[g].any()
+    assert not blank[g].any() and not full_g[g].any()
+    assert all((blank[f] == full[f]).all() for f in range(CN) if f != g)  # the cache, kept
+    assert min(w) > MIN_IOU_VS_FULL
