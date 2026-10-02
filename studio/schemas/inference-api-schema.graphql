@@ -22,6 +22,8 @@ input AddPointsInput {
   objectId: Int!
   labels: [Int!]!
   points: [[Float!]!]!
+  # sam-ui: the engine studio shows; null counts as SAM 2
+  engine: String
 }
 
 type CancelPropagateInVideo {

@@ -64,6 +64,28 @@ export function absentAt(ranges: ReadonlyArray<FrameRange> | undefined, frame: n
   return ranges?.some(r => r.state === ABSENT && r.start <= frame && frame <= r.end) ?? false;
 }
 
+/**
+ * The object is back at `frame` (a positive click there): the absent range
+ * holding it becomes [start, frame - 1], or goes when frame is its start.
+ * The backend's TrackService.end_absence_at, mirrored so the worker shows
+ * the click's mask before the next sync.
+ */
+export function endAbsenceAt(ranges: ReadonlyArray<FrameRange> | undefined, frame: number): FrameRange[] {
+  const r = normalizeRanges(ranges).find(x => x.state === ABSENT && x.start <= frame && frame <= x.end);
+  return r == null ? normalizeRanges(ranges) : paintRange(ranges ?? [], frame, r.end, null);
+}
+
+/**
+ * [frame, end]: from `frame` up to the frame before the object's next seed
+ * after it, else the clip's last frame. "Gone for a while?": the object is
+ * absent until the click where it comes back. A seed on `frame` itself is
+ * not "next"; a cleared seed (negatives only) is still a seed.
+ */
+export function absentUntilNextSeed(seedFrames: ReadonlyArray<number>, frame: number, nFrames: number): [number, number] {
+  const next = seedFrames.filter(f => f > frame).sort((a, b) => a - b)[0];
+  return [frame, next == null ? nFrames - 1 : next - 1];
+}
+
 /** The absent range holding `frame`, if any. */
 export function rangeAt(ranges: ReadonlyArray<FrameRange> | undefined, frame: number): FrameRange | null {
   return ranges?.find(r => r.start <= frame && frame <= r.end) ?? null;

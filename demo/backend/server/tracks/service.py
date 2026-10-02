@@ -42,8 +42,8 @@ from tracks import rle
 from tracks.bounded import Agreement, Provenance, Stretch, mask_iou
 from tracks.engine import WHOLE, Engine, Windows
 from tracks.jobs import TRACKING, JobRegistry
-from tracks.ranges import Window, absent_at, seeded_windows, window_frames
-from tracks.seeds import Seeds, SeedStore, seeds_hash, video_key, window_key
+from tracks.ranges import ABSENT, Window, absent_at, seeded_windows, window_frames
+from tracks.seeds import Seeds, SeedStore, cleared, seeds_hash, video_key, window_key
 from tracks.store import TRACKED, TrackStore
 from tracks import versions as ver
 from tracks.versions import VersionStore
@@ -206,6 +206,18 @@ class TrackService:
         with self._seed_change(video, obj_id):
             self.seeds.paint_range(video, obj_id, start, end, state)
         return self.object_info(video, obj_id)
+
+    def end_absence_at(self, video: str, obj_id: int, frame: int) -> None:
+        """The object is back at `frame`: the absent range containing it no
+        longer covers `frame` or anything after it in that range.
+
+        [s, e] becomes [s, frame-1]; at frame == s the range goes (paint
+        never writes [s, s-1]). A seed change like set_range, so the track
+        goes stale. No range there: nothing changes."""
+        for r in self.seeds.ranges(video, obj_id):
+            if r["state"] == ABSENT and r["start"] <= frame <= r["end"]:
+                self.seeds.paint_range(video, obj_id, frame, r["end"], None)
+                return
 
     def is_absent(self, video: str, obj_id: int, frame: int) -> bool:
         return absent_at(self.seeds.ranges(video, obj_id), frame)
@@ -451,7 +463,7 @@ class TrackService:
             for w, k in wins:
                 if k not in old_keys and w in old_bounds:
                     changed = bnd.changed_frames(meta["seed_keys"], seeds, w)
-                    if changed:
+                    if changed and not self._uncleared_removal(e, meta, seeds, changed):
                         touched[w] = changed
         if not keep and not touched:
             return {}, {}
@@ -467,6 +479,16 @@ class TrackService:
         reuse = {w: whole[w] for w in keep if w in whole}
         bounded = {w: _Bounded(touched[w], mine[w], whole[w]) for w in touched if w in whole}
         return reuse, bounded
+
+    @staticmethod
+    def _uncleared_removal(e: Engine, meta: Dict, seeds: Seeds, changed: List[int]) -> bool:
+        """True when, on an engine that skips cleared seeds, a changed frame's
+        seed is cleared now but was a real seed (or the track does not say):
+        a conditioning frame went, which a bounded pass cannot answer."""
+        if not e.skips_cleared:
+            return False
+        was_cleared = set(meta.get("cleared_seeds") or [])
+        return any(cleared(seeds[c]) and str(c) in meta["seed_keys"] and c not in was_cleared for c in changed)
 
     @staticmethod
     def _engine_windows(plans: Dict[int, _ObjectPlan]) -> Optional[Windows]:
@@ -609,13 +631,20 @@ class TrackService:
         of its frames is sent, so every frame still goes out once. Each
         engine step that sends nothing yields None (see track's `steps`)."""
         span = window_frames(w, n)
-        first_seed = min(b.seeds)
+        # a cleared seed the engine skips (SAM 2) never conditions it, so it
+        # changes its own frame only: no pass, see the loop after the passes
+        blank_only = [c for c in b.changed if e.skips_cleared and cleared(b.seeds[c])]
+        changed = [c for c in b.changed if c not in blank_only]
+        # where a full pass of the window starts: its first seed, or for SAM 2
+        # its first seed that is not cleared (Sam2Engine.plan strips those)
+        units = e.plan({o: b.seeds}, {o: [w]}) if changed else []
+        first_seed = min(u.start for u in units) if units else min(b.seeds)
         made = set()
         reached = span[0] - 1  # the last frame an earlier pass in this window made
-        for i, c in enumerate(b.changed):
-            hi = b.changed[i + 1] - 1 if i + 1 < len(b.changed) else span[-1]
+        for i, c in enumerate(changed):
+            hi = changed[i + 1] - 1 if i + 1 < len(changed) else span[-1]
             floor = reached + 1
-            anchor = max(floor, first_seed)  # no pass starts before it (c is a seed, so c >= first_seed)
+            anchor = max(floor, first_seed)  # no pass starts before it (c is a kept seed, so c >= first_seed)
             pid = prov.bounded(p.hash, w, c, b.seeds[c])
             lead, attempts = bnd.LEAD, 0
             while True:
@@ -657,6 +686,16 @@ class TrackService:
             done = [f for f, _ in ran]
             prov.finish(pid, done, stop.agreed[False], not at_anchor or stop.agreed[True], attempts)
             reached = max(done + [c])
+        for c in blank_only:
+            if c in made:  # a pass crossed it, and the engine blanked it there
+                continue
+            r = rle.encode(np.zeros(b.old[c]["size"], bool))
+            pid = prov.bounded(p.hash, w, c, b.seeds[c])
+            frames[c] = r
+            prov.made(c, pid)
+            prov.finish(pid, [c], True, True, 0)  # no model ran: the rest of the window is the cache, exactly
+            made.add(c)
+            yield c, {o: r}
         for f in span:
             if f not in made:
                 frames[f] = b.old[f]

@@ -22,7 +22,7 @@ import type {RLEObject} from '@/jscocotools/mask';
 import {BROWSER_ENGINE} from '~/state/engines';
 import {cleanObjectName} from '~/state/fileNames';
 import type {NormPoint, ServerObject} from '~/state/objects';
-import {type FrameRange, type RangeState, normalizeRanges, paintRange} from '~/state/ranges';
+import {type FrameRange, type RangeState, normalizeRanges, paintRange, rangeAt} from '~/state/ranges';
 import {type Kv, readJson, writeJson} from './kv';
 import type {SeedHistory, TrackVersion} from '~/state/history';
 import {
@@ -432,6 +432,12 @@ export class OfflineService {
   /** Mark frames start-end absent, or clear them (null). The track goes stale, as on the backend. */
   setRange(video: string, obj: number, start: number, end: number, state: RangeState | null, variant: string | null = null): Promise<FrameRange[]> {
     return this._change(video, obj, variant, () => this.seeds.paintRange(video, obj, start, end, state));
+  }
+
+  /** The object is back at `frame`: the absent range holding it ends the frame before (end_absence_at). */
+  async endAbsenceAt(video: string, obj: number, frame: number): Promise<FrameRange[]> {
+    const r = rangeAt(await this.seeds.ranges(video, obj), frame);
+    return r == null ? this.seeds.ranges(video, obj) : this.seeds.paintRange(video, obj, frame, r.end, null);
   }
 
   /** Drop one seed frame; with none left, the object's track goes too (its versions stay). */

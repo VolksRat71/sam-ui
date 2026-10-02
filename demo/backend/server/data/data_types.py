@@ -292,6 +292,7 @@ class AddPointsInput:
     object_id: int
     labels: List[int]
     points: List[List[float]]
+    engine: Optional[str] = None  # the engine the studio shows; null is the session's (SAM 2)
 
 
 @strawberry.input

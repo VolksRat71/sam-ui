@@ -93,6 +93,10 @@ describe('OfflineService (test_api.py)', () => {
     await svc.removeObject(V, 2);
     expect((await svc.objects(V, VARIANT)).map(o => o.objectId)).toEqual([1]);
     expect(await svc.tracks.list(V)).toEqual([]);
+    // like the backend: a seedless stored object goes, and an id never stored is a no-op
+    await svc.removeObject(V, 1);
+    await svc.removeObject(V, 99);
+    expect(await svc.objects(V, VARIANT)).toEqual([]);
   });
 
   it('keeps tracks and objects across a new instance, and clears a video whole', async () => {
@@ -157,6 +161,17 @@ describe('absent ranges (test_ranges.py)', () => {
     expect(await svc.setRange(V, 1, 6, 6, null)).toEqual([{start: 4, end: 5, state: 'absent'}, {start: 7, end: 8, state: 'absent'}]);
     await svc.setRange(V, 1, 0, 20, null);
     expect(await state(svc, 1)).toBe('tracked');
+  });
+
+  it('end at a positive click: [s, e] becomes [s, f-1], and the track goes stale (end_absence_at)', async () => {
+    const svc = new OfflineService(new MemoryKv());
+    await svc.recordPoints(V, 1, 0, [[0.5, 0.5, 1]], rle);
+    await svc.setRange(V, 1, 10, 40, 'absent');
+    await tracked(svc, 1);
+    expect(await svc.endAbsenceAt(V, 1, 25)).toEqual([{start: 10, end: 24, state: 'absent'}]);
+    expect(await state(svc, 1)).toBe('stale');
+    expect(await svc.endAbsenceAt(V, 1, 5)).toEqual([{start: 10, end: 24, state: 'absent'}]); // not absent: unchanged
+    expect(await svc.endAbsenceAt(V, 1, 10)).toEqual([]); // at its start the range goes
   });
 
   it('keep an object with a range and no clicks yet listed', async () => {
