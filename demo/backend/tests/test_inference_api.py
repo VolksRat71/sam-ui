@@ -360,6 +360,33 @@ def test_clear_frame_remove_object_and_start_over_keep_the_store_in_step(world):
     assert a.object_tracks(sid) == []
 
 
+def test_removing_a_seedless_or_never_stored_object_is_safe(world):
+    """Studio removes every layer through the backend, clicked or not: a stored
+    object with no seeds left (still listed, so it would come back on sync), a
+    name-only object, and a new layer the backend never saw must all go
+    without an error."""
+    make, _, path = world
+    a = make()
+    sid = start(a, path)
+    video = a.session_states[sid]["video"]
+    click(a, sid, 1, 0, [[0.5, 0.5]], [1])
+    a.clear_points_in_frame(ClearPointsInFrameRequest(type="clear_points_in_frame", session_id=sid,
+                                                      frame_index=0, object_id=1))
+    a.tracks.rename_object(video, 2, "cup")
+    assert [o["object_id"] for o in a.object_tracks(sid)] == [1]  # seedless, still stored
+    for obj in (1, 2, 7):  # 7: never clicked, never named
+        a.remove_object(RemoveObjectRequest(type="remove_object", session_id=sid, object_id=obj))
+    assert a.object_tracks(sid) == [] and a.tracks.object_names(video) == {}
+
+
+def test_sam2_removes_an_object_it_never_saw_without_an_error():
+    """The stub's remove_object is lenient; so is the real one (strict=False)."""
+    from sam2.sam2_video_predictor import SAM2VideoPredictor
+
+    real = object.__new__(SAM2VideoPredictor)  # no model: an unknown id returns before touching it
+    assert SAM2VideoPredictor.remove_object(real, {"obj_id_to_idx": {1: 0}, "obj_ids": [1]}, 7) == ([1], [])
+
+
 def test_idle_sessions_expire_but_a_busy_one_is_kept(world, monkeypatch):
     make, _, path = world
     a = make()

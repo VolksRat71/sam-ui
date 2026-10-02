@@ -39,7 +39,6 @@ import {
   comparableIds,
   dirtyIds,
   preferredEngine,
-  hasSeeds,
   initialState,
   nextObjectId,
   reducer,
@@ -822,18 +821,15 @@ export default function useStudioSession(video: VideoItem) {
       if (bridge == null) {
         return;
       }
-      const o = stateRef.current.objects.find(x => x.id === objectId);
       if (objectId === nudgeRef.current?.objectId) {
         setNudge(null); // its Switch to SAM 3 would send clicks for the removed object
       }
       setHint(null);
       serial(async () => {
-        // an object never clicked exists only here (with, at most, a name)
-        if (o != null && hasSeeds(o)) {
-          await bridge.call('removeObject', {objectId});
-        } else if (o?.name != null) {
-          await bridge.call('renameObject', {objectId, name: null}).catch(() => {});
-        }
+        // Always ask the backend, clicked or not: a stored object can have no
+        // seeds left (an undo, a cleared frame) and would come back on sync.
+        // Removing an id it never stored is a no-op, so a new layer is fine too.
+        await bridge.call('removeObject', {objectId});
         dispatch({type: 'removed', id: objectId});
         await sync();
       });

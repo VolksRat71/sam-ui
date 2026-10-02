@@ -231,6 +231,19 @@ describe('state transitions', () => {
     expect(s.activeId).toBe(2);
   });
 
+  it('a removed seedless object the server still lists comes back on sync', () => {
+    // Why removeObject always reaches the backend: a stored object can have
+    // no seeds left, and the next sync restores whatever the server lists.
+    const seedless = server(4, 'untracked', []);
+    const s = run([
+      {type: 'restore', objects: [server(0, 'tracked'), seedless]},
+      {type: 'removed', id: 4},
+    ]);
+    expect(s.objects.map(o => o.id)).toEqual([0]);
+    expect(run([{type: 'sync', objects: [server(0, 'tracked'), seedless]}], s).objects.map(o => o.id)).toEqual([0, 4]);
+    expect(run([{type: 'sync', objects: [server(0, 'tracked')]}], s).objects.map(o => o.id)).toEqual([0]);
+  });
+
   it('start over empties the list', () => {
     const s = run([{type: 'restore', objects: [server(0, 'tracked')]}, {type: 'reset'}]);
     expect(s).toEqual(initialState);
