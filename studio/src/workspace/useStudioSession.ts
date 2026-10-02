@@ -94,6 +94,14 @@ function message(error: unknown): string {
   return explainGraphQLError(error instanceof Error ? error.message : String(error));
 }
 
+/** Why a click on an absent frame is refused, and what to do instead. */
+function absentWarning(target: Parameters<typeof objectName>[0] | undefined, frame: number): string {
+  return (
+    `${target != null ? objectName(target) : 'This object'} is marked absent on frame ${frame + 1}. ` +
+    'Select that part of its lane and unmark it to click here.'
+  );
+}
+
 export default function useStudioSession(video: VideoItem) {
   const [bridge, setBridge] = useState<StudioBridge | null>(null);
   // the engine is remembered per browser: a reload keeps showing the tracks you chose
@@ -452,10 +460,7 @@ export default function useStudioSession(video: VideoItem) {
           return false;
         }
         // refused, not a way to shrink the range: unmarking is its own, explicit step
-        setWarning(
-          `${target != null ? objectName(target) : 'This object'} is marked absent on frame ${frame + 1}. ` +
-            'Select that part of its lane and unmark it to click here.',
-        );
+        setWarning(absentWarning(target, frame));
         return true;
       });
     },
@@ -675,8 +680,16 @@ export default function useStudioSession(video: VideoItem) {
   /** The nudge's "Switch to SAM 3": show SAM 3, and send it the refused clicks. */
   const nudgeSam3 = useCallback(() => {
     // the object may have been removed since the nudge: sending would re-create it
-    if (nudge == null || !sam3Available || !stateRef.current.objects.some(o => o.id === nudge.objectId)) {
+    const target = nudge == null ? undefined : stateRef.current.objects.find(o => o.id === nudge.objectId);
+    if (nudge == null || !sam3Available || target == null) {
       setNudge(null);
+      return;
+    }
+    // the nudge comes before the absent refusal, so it can stand on an absent
+    // frame: SAM 3 would be refused there too, so say why and send nothing
+    if (absentAt(target.ranges, nudge.frame)) {
+      setNudge(null);
+      setWarning(absentWarning(target, nudge.frame));
       return;
     }
     const points = refused.current;
