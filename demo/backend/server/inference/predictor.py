@@ -48,6 +48,12 @@ from tracks.service import EngineSpec, TrackService
 
 logger = logging.getLogger(__name__)
 
+# sam-ui: the refusal a click gets when SAM 2 would be handed a frame with no
+# positive; its message starts with "needs_positive: " for the studio to match.
+NEEDS_POSITIVE = "needs_positive"
+# the engines that take a click as SAM 2 does (None: the request named none)
+SAM2_FAMILY = (None, "sam2", "browser-sam2")
+
 
 class InferenceAPI:
 
@@ -192,6 +198,19 @@ class InferenceAPI:
             points = request.points
             labels = request.labels
             clear_old_points = request.clear_old_points
+
+            # sam-ui: SAM 2 was trained on a positive first, then corrections; given
+            # only negatives it empties the frame, and an empty frame saved as a seed
+            # erases the object on the frames around it (measured). So on SAM 2 a frame
+            # whose clicks have no positive is refused; SAM 3 takes it as "not here".
+            if clear_old_points:
+                user_labels = [int(l) for l in labels]
+            else:
+                old = self.tracks.seeds.seeds(session["video"], obj_id).get(frame_idx) or {}
+                user_labels = [int(l) for l in old.get("labels", [])] + [int(l) for l in labels]
+            if user_labels and 1 not in user_labels and request.engine in SAM2_FAMILY:
+                raise ValueError(f"{NEEDS_POSITIVE}: SAM 2 needs a positive click to keep part of object {obj_id} "
+                                 f"on frame {frame_idx}")
 
             # sam-ui: a first click on a frame SAM 2 holds no mask for (a frame
             # tracked by a job, not in this state) refines that frame's cached

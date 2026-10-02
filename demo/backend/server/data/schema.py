@@ -207,6 +207,7 @@ class Mutation:
             points=input.points,
             labels=input.labels,
             clear_old_points=input.clear_old_points,
+            engine=input.engine,
         )
         reponse = inference_api.add_points(request)
 

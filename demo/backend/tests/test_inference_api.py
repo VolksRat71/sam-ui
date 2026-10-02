@@ -136,9 +136,9 @@ def start(api, path):
     return api.start_session(StartSessionRequest(type="start_session", path=path)).session_id
 
 
-def click(api, sid, obj, frame, points, labels, clear=True):
+def click(api, sid, obj, frame, points, labels, clear=True, engine=None):
     r = api.add_points(AddPointsRequest(type="add_points", session_id=sid, frame_index=frame, object_id=obj,
-                                        points=points, labels=labels, clear_old_points=clear))
+                                        points=points, labels=labels, clear_old_points=clear, engine=engine))
     return {v.object_id: rle.decode({"size": v.mask.size, "counts": v.mask.counts}) for v in r.results}
 
 
@@ -250,6 +250,40 @@ def test_a_lone_positive_on_a_stale_track_grows_the_cached_mask(world):
     cached = rle.decode(a.tracks.tracks.mask_at(ctx.video, 1, "fake", 3))
     out = click(a, sid, 1, 3, [[0.9, 0.9]], [1])
     assert (out[1] >= cached).all() and out[1].sum() > cached.sum()
+
+
+def test_a_lone_negative_on_sam2_is_refused_and_records_nothing(world):
+    make, stub, path = world
+    a, sid, ctx = tracked(make, path)
+    cached = rle.decode(a.tracks.tracks.mask_at(ctx.video, 1, "fake", 4))
+    before = a.object_tracks(sid)[0]["seeds"].get(4)
+    for engine in (None, "sam2", "browser-sam2"):
+        with pytest.raises(ValueError, match=r"^needs_positive: "):
+            click(a, sid, 1, 4, [corner(cached)], [0], engine=engine)
+    assert a.object_tracks(sid)[0]["seeds"].get(4) == before
+
+
+def test_a_lone_negative_on_sam3_empties_the_frame_and_is_recorded(world):
+    make, stub, path = world
+    a, sid, ctx = tracked(make, path)
+    cached = rle.decode(a.tracks.tracks.mask_at(ctx.video, 1, "fake", 4))
+    out = click(a, sid, 1, 4, [corner(cached)], [0], engine="sam3")[1]
+    assert not out.any()
+    seed = a.object_tracks(sid)[0]["seeds"][4]
+    assert seed["labels"] == [0]
+
+
+def test_appending_without_clear_counts_the_stored_clicks(world):
+    make, stub, path = world
+    a, sid, ctx = tracked(make, path)
+    cached = rle.decode(a.tracks.tracks.mask_at(ctx.video, 1, "fake", 4))
+    ys, xs = cached.nonzero()
+    mid = [(xs[len(xs) // 2] + 0.5) / W, (ys[len(ys) // 2] + 0.5) / H]
+    click(a, sid, 1, 4, [mid], [1], engine="sam2")
+    # a negative appended to a frame that already has the user's positive is a trim
+    a.add_points(AddPointsRequest(type="add_points", session_id=sid, frame_index=4, object_id=1,
+                                  points=[corner(cached)], labels=[0], clear_old_points=False, engine="sam2"))
+    assert a.object_tracks(sid)[0]["seeds"][4]["labels"] == [1, 0]
 
 
 def test_an_empty_cached_frame_is_not_used_to_prime_a_click(world):
