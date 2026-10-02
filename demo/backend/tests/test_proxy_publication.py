@@ -159,3 +159,45 @@ def test_reencoding_bytes_do_not_define_proxy_identity(tmp_path,enabled,monkeypa
     second=build(directory,tmp_path/'two')
     assert first['proxy_id']==second['proxy_id']
     assert first['provenance']['artifact_sha256']!=second['provenance']['artifact_sha256']
+
+
+def test_reuse_refuses_source_hash_provenance_mismatch(tmp_path,enabled):
+    directory=asset(tmp_path);root=tmp_path/'proxies';record=build(directory,root)
+    manifest=root/record['proxy_id']/'proxy.json'
+    data=json.loads(manifest.read_text());data['source_sha256']='0'*64
+    manifest.write_text(json.dumps(data))
+    with pytest.raises(ValueError,match='proxy_manifest_mismatch'):build(directory,root)
+
+
+@pytest.mark.parametrize('value',[[],None,3,'invalid'])
+def test_reuse_malformed_manifest_is_structured_error(tmp_path,enabled,value):
+    directory=asset(tmp_path);root=tmp_path/'proxies';record=build(directory,root)
+    (root/record['proxy_id']/'proxy.json').write_text(json.dumps(value))
+    with pytest.raises(ValueError,match='invalid_proxy_metadata'):build(directory,root)
+
+
+def test_cleanup_error_preserves_primary_diagnostic(tmp_path,enabled,monkeypatch):
+    p=api();directory=asset(tmp_path);root=tmp_path/'proxies'
+    def bad_encode(*args):raise ValueError('source_pts_mismatch')
+    def bad_cleanup(*args):raise PermissionError('/private/secret/staging')
+    monkeypatch.setattr(p,'encode_proxy',bad_encode)
+    monkeypatch.setattr(p.shutil,'rmtree',bad_cleanup)
+    with pytest.raises(ValueError) as exc:build(directory,root)
+    assert str(exc.value)=='source_pts_mismatch'
+    assert '/private' not in str(exc.value)
+    assert not list(root.glob('*/proxy.json'))
+
+
+def test_cleanup_error_after_concurrent_reuse_is_structured(tmp_path,enabled,monkeypatch):
+    import errno
+    p=api();directory=asset(tmp_path);root=tmp_path/'proxies';real_rename=p.os.rename
+    def winner(stage,destination):
+        real_rename(stage,destination)
+        p.shutil.copytree(destination,stage)
+        raise FileExistsError(errno.EEXIST,'concurrent winner')
+    def bad_cleanup(*args):raise PermissionError('/private/secret/staging')
+    monkeypatch.setattr(p.os,'rename',winner)
+    monkeypatch.setattr(p.shutil,'rmtree',bad_cleanup)
+    with pytest.raises(ValueError,match='proxy_staging_cleanup_failed') as exc:build(directory,root)
+    assert '/private' not in str(exc.value)
+    assert len([p for p in root.glob('*/proxy.json') if not p.parent.name.startswith('.')])==1

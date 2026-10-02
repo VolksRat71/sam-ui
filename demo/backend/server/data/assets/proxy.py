@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import sys
 import tempfile
 
 import av
@@ -27,8 +28,11 @@ def _enabled() -> None:
 def _reuse(destination, source, recipe, identity):
     safe_path(destination)
     manifest = json.loads(_read(destination/'proxy.json'))
+    if not isinstance(manifest,dict) or not isinstance(manifest.get('provenance'),dict):
+        raise ValueError('invalid_proxy_metadata')
     if (manifest.get('schema_version') != 1 or manifest.get('status') != 'ready'
             or manifest.get('proxy_id') != identity or manifest.get('asset_id') != source.asset_id
+            or manifest.get('source_sha256') != source.source_sha256
             or manifest.get('frame_table_hash') != source.frame_table_hash
             or manifest.get('recipe') != recipe):
         raise ValueError('proxy_manifest_mismatch')
@@ -99,4 +103,13 @@ def build_proxy(asset_dir: Path, proxy_root: Path, recipe: ProxyRecipe,
         raise ValueError(code) from exc
     finally:
         if stage is not None:
-            shutil.rmtree(stage)
+            primary_error = sys.exc_info()[1]
+            try:
+                shutil.rmtree(stage)
+            except OSError as cleanup_error:
+                if primary_error is None:
+                    raise ValueError('proxy_staging_cleanup_failed') from cleanup_error
+                # Preserve the actionable primary error; leave only this hidden
+                # staging directory for later recovery, never a ready artifact.
+                if hasattr(primary_error,'add_note'):
+                    primary_error.add_note('proxy_staging_cleanup_failed')
