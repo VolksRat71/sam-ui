@@ -93,6 +93,10 @@ describe('OfflineService (test_api.py)', () => {
     await svc.removeObject(V, 2);
     expect((await svc.objects(V, VARIANT)).map(o => o.objectId)).toEqual([1]);
     expect(await svc.tracks.list(V)).toEqual([]);
+    // like the backend: a seedless stored object goes, and an id never stored is a no-op
+    await svc.removeObject(V, 1);
+    await svc.removeObject(V, 99);
+    expect(await svc.objects(V, VARIANT)).toEqual([]);
   });
 
   it('keeps tracks and objects across a new instance, and clears a video whole', async () => {

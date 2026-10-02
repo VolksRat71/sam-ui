@@ -457,7 +457,7 @@ export default class StudioSession {
 
   // -- clicks ----------------------------------------------------------------
 
-  async setPoints(objectId: number, frameIndex: number, points: NormPoint[]): Promise<void> {
+  async setPoints(objectId: number, frameIndex: number, points: NormPoint[], engine?: string): Promise<void> {
     if (points.length > 0 && absentAt(this._ranges.get(objectId), frameIndex)) {
       // the backend refuses these too; the UI says so before it sends
       throw new Error(`frame ${frameIndex + 1} is marked absent for this object: unmark it to click here`);
@@ -493,6 +493,7 @@ export default class StudioSession {
           points: points.map(p => [p[0], p[1]]),
           labels: points.map(p => p[2]),
           clearOldPoints: true,
+          engine: engine ?? null,
         },
       });
       const local = this._isLocal ? this._local.click(frameIndex, points) : null;

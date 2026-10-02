@@ -307,8 +307,12 @@ def test_a_click_inside_an_absent_range_is_refused_and_records_nothing(world):
     click(api, sid, 1, 0, [[0.5, 0.5]], [1])
     api.set_object_range(sid, 1, 2, 4, ABSENT)
     calls = (len(stub.point_calls), len(stub.mask_calls))
-    with pytest.raises(ValueError, match="marked absent"):
+    # a lone negative on SAM 2 meets the needs_positive guard first; on SAM 3,
+    # which takes it, it reaches the absent check
+    with pytest.raises(ValueError, match="needs_positive"):
         click(api, sid, 1, 3, [[0.5, 0.5]], [0])
+    with pytest.raises(ValueError, match="marked absent"):
+        click(api, sid, 1, 3, [[0.5, 0.5]], [0], engine="sam3")
     assert (len(stub.point_calls), len(stub.mask_calls)) == calls  # SAM never saw it, nothing primed
     video = api.session_states[sid]["video"]
     assert sorted(api.tracks.seeds.seeds(video, 1)) == [0]

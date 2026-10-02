@@ -299,11 +299,11 @@ export function canAddObject(state: StudioState, limit: number): boolean {
 }
 
 /**
- * True when every click on this frame is negative and the frame has no mask.
- * On a tracked frame the backend's SAM 2 cuts the clicked region from the
- * tracked mask (`masked`: the frame still shows one). With no mask to refine,
- * as in the browser engine, SAM 2 returns an empty mask, and the frame needs
- * one positive click on what to keep.
+ * True when every click on this frame is negative and the frame shows no
+ * mask. SAM 2 refuses such clicks before they are stored (the nudge,
+ * state/corrections.ts), so on SAM 2 this holds only for frames stored on
+ * SAM 3 (an emptied frame). `masked`: the frame still shows a mask, as a
+ * legacy seed trimmed by the removed hidden anchor does, and needs nothing.
  */
 export function needsPositiveClick(o: StudioObject | undefined, frame: number, masked = false): boolean {
   const pts = o?.points[frame];

@@ -6,7 +6,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from tracks import rle
 from tracks.engine import FakeEngine, Sam2Engine
+from tracks.seeds import cleared
 
 REPO = Path(__file__).resolve().parents[3]
 CKPT = REPO / "checkpoints" / "sam2.1_hiera_large.pt"
@@ -34,6 +36,11 @@ class _StubPredictor:
                               normalize_coords):
         assert normalize_coords is False and clear_old_points is True
         self.added.append((obj_id, frame_idx, points.tolist(), labels.tolist()))
+        if obj_id not in inference_state["obj_ids"]:
+            inference_state["obj_ids"].append(obj_id)
+
+    def add_new_mask(self, inference_state, frame_idx, obj_id, mask):
+        self.added.append((obj_id, frame_idx, "mask", int(mask.sum())))
         if obj_id not in inference_state["obj_ids"]:
             inference_state["obj_ids"].append(obj_id)
 
@@ -88,6 +95,97 @@ def test_sam2_engine_skips_objects_without_points_and_releases_state_on_cancel()
     assert [a[0] for a in p.added] == [1] and p.reset == 1
     assert list(e.track("v.mp4", {2: {}})) == []  # nothing to seed: no job at all
 
+
+_ZEROS, _ONES = np.zeros((2, 2), bool), np.ones((2, 2), bool)
+_POS = {"points": [[0.5, 0.5]], "labels": [1]}
+_CLEARED = {"points": [[0.5, 0.5]], "labels": [0], "mask": rle.encode(_ZEROS)}
+
+
+def test_cleared_is_a_negatives_only_seed_with_an_empty_or_no_mask():
+    assert cleared(_CLEARED)
+    assert cleared({"points": [[0.5, 0.5]], "labels": [0]})  # no mask and no positive
+    # a legacy anchor-trimmed seed: no positive, but the mask it approved is not empty
+    assert not cleared({"points": [[0.5, 0.5]], "labels": [0], "mask": rle.encode(_ONES)})
+    assert not cleared({"points": [[0.5, 0.5], [0.2, 0.2]], "labels": [0, 1], "mask": rle.encode(_ZEROS)})
+    assert not cleared({"points": [], "labels": [], "mask": rle.encode(_ONES)})  # a text seed
+
+
+def test_sam2_engine_tracks_through_a_cleared_seed_and_blanks_its_frame():
+    """Given as a conditioning frame, an empty seed makes SAM 2 drop the object
+    on the frames around it: so it is never fed, and its frame comes out empty."""
+    p = _StubPredictor(n=4)
+    frames = dict(Sam2Engine(p, model="stub").track("v.mp4", {1: {0: _POS, 2: _CLEARED}}))
+    assert [a[:2] for a in p.added] == [(1, 0)]  # frame 2 never reaches the predictor
+    assert sorted(frames) == [0, 1, 2, 3]
+    assert not frames[2][1].any()
+    assert all(frames[f][1].all() for f in (0, 1, 3))
+
+
+def test_an_object_with_only_a_cleared_seed_yields_nothing():
+    p = _StubPredictor(n=4)
+    e = Sam2Engine(p, model="stub")
+    assert list(e.track("v.mp4", {1: {2: _CLEARED}})) == []
+    assert p.added == [] and p.reset == 0
+
+
+def test_a_cleared_seed_does_not_decide_the_pass_an_object_runs_in():
+    """Object 2's first seed with points is the cleared frame 0, but its first
+    real seed is frame 2: it runs in its own pass, after object 1's."""
+    p = _StubPredictor(n=4)
+    e = Sam2Engine(p, model="stub")
+    seeds = {1: {0: _POS}, 2: {0: _CLEARED, 2: _POS}}
+    assert e.passes(seeds) == 2
+    out = list(e.track("v.mp4", seeds))
+    assert [set(m) for _, m in out] == [{1}] * 4 + [{2}] * 4
+    assert not dict(out[4:])[0][2].any()  # object 2's cleared frame 0 is blank
+
+
+
+def test_a_cleared_frame_blanks_only_its_own_object():
+    p = _StubPredictor(n=4)
+    frames = dict(Sam2Engine(p, model="stub").track("v.mp4", {1: {0: _POS, 2: _CLEARED}, 2: {0: _POS}}))
+    assert not frames[2][1].any() and frames[2][2].all()
+
+
+def test_a_legacy_anchor_trimmed_seed_still_reaches_the_predictor():
+    """No positive but a non-empty approved mask: a real seed, not a cleared one."""
+    p = _StubPredictor(n=4)
+    trimmed = {"points": [[0.5, 0.5]], "labels": [0], "mask": rle.encode(_ONES)}
+    frames = dict(Sam2Engine(p, model="stub").track("v.mp4", {1: {0: _POS, 2: trimmed}}))
+    assert (1, 2, "mask", 4) in p.added
+    assert frames[2][1].all()
+
+
+def test_inside_a_window_a_cleared_seed_is_stripped_and_blanked_in_both_directions():
+    """Absent ranges split the track into units; each unit strips its cleared
+    seeds and blanks their frames, forward and back from the unit's start."""
+    p = _StubPredictor(n=12)
+    e = Sam2Engine(p, model="stub")
+    seeds = {1: {1: _POS, 4: _CLEARED, 5: _POS, 7: _CLEARED, 10: _CLEARED}}
+    windows = {1: [(0, 1), (3, 8)]}  # 2 and 9-11 absent
+    assert e.passes(seeds, windows) == 2 and [u.start for u in e.plan(seeds, windows)] == [1, 5]
+    frames = {}
+    for f, m in e.track("v.mp4", seeds, windows=windows):
+        assert f not in frames
+        frames[f] = m[1]
+    assert [a[:2] for a in p.added] == [(1, 1), (1, 5)]  # no cleared frame reaches the predictor
+    assert sorted(frames) == [0, 1, 3, 4, 5, 6, 7, 8]
+    assert not frames[4].any() and not frames[7].any()  # behind the start (4) and ahead of it (7)
+    assert all(frames[f].all() for f in (0, 1, 3, 5, 6, 8))
+    assert p.reset == e.passes(seeds, windows)
+
+
+def test_a_window_whose_only_seed_is_cleared_makes_no_pass():
+    p = _StubPredictor(n=12)
+    e = Sam2Engine(p, model="stub")
+    seeds = {1: {2: _CLEARED, 9: _POS}, 2: {1: _POS}}
+    windows = {1: [(0, 4), (8, None)], 2: [(0, 4)]}
+    assert [(u.lo, sorted(u.objects)) for u in e.plan(seeds, windows)] == [(0, [2]), (8, [1])]
+    out = list(e.track("v.mp4", seeds, windows=windows))
+    assert all(1 not in m for f, m in out if f <= 4)  # object 1 has nothing in (0, 4)
+    assert sorted(f for f, m in out if 1 in m) == [8, 9, 10, 11]
+    assert p.reset == e.passes(seeds, windows) == 2
+    assert list(e.track("v.mp4", {1: {2: _CLEARED}}, windows={1: [(0, 4)]})) == []
 
 def _synthetic_video(path):
     """Two squares moving across a noisy background: no footage involved."""

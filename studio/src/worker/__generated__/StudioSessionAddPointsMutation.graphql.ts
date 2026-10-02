@@ -1,5 +1,5 @@
 /**
- * @generated SignedSource<<9d9b83d0877f8174e91bfd3cf0915d72>>
+ * @generated SignedSource<<efa32dafc37ac49eafd321ef9de103aa>>
  * @lightSyntaxTransform
  * @nogrep
  */
@@ -11,6 +11,7 @@
 import { ConcreteRequest, Mutation } from 'relay-runtime';
 export type AddPointsInput = {
   clearOldPoints: boolean;
+  engine?: string | null | undefined;
   frameIndex: number;
   labels: ReadonlyArray<number>;
   objectId: number;
