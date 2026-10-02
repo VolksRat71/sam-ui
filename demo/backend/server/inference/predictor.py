@@ -51,8 +51,9 @@ logger = logging.getLogger(__name__)
 # sam-ui: the refusal a click gets when SAM 2 would be handed a frame with no
 # positive; its message starts with "needs_positive: " for the studio to match.
 NEEDS_POSITIVE = "needs_positive"
-# the engines that take a click as SAM 2 does (None: the request named none)
-SAM2_FAMILY = (None, "sam2", "browser-sam2")
+# the engines that take a frame of only negatives as "not here"; every other
+# engine (none named, a typo, one this server doesn't know) is held to SAM 2's rule
+TAKES_NOT_HERE = ("sam3",)
 
 
 class InferenceAPI:
@@ -203,12 +204,13 @@ class InferenceAPI:
             # only negatives it empties the frame, and an empty frame saved as a seed
             # erases the object on the frames around it (measured). So on SAM 2 a frame
             # whose clicks have no positive is refused; SAM 3 takes it as "not here".
+            # An unknown engine is treated as SAM 2, so a typo can't poison a seed.
             if clear_old_points:
                 user_labels = [int(l) for l in labels]
             else:
                 old = self.tracks.seeds.seeds(session["video"], obj_id).get(frame_idx) or {}
                 user_labels = [int(l) for l in old.get("labels", [])] + [int(l) for l in labels]
-            if user_labels and 1 not in user_labels and request.engine in SAM2_FAMILY:
+            if user_labels and 1 not in user_labels and request.engine not in TAKES_NOT_HERE:
                 raise ValueError(f"{NEEDS_POSITIVE}: SAM 2 needs a positive click to keep part of object {obj_id} "
                                  f"on frame {frame_idx}")
 

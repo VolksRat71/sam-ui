@@ -256,11 +256,16 @@ def test_a_lone_negative_on_sam2_is_refused_and_records_nothing(world):
     make, stub, path = world
     a, sid, ctx = tracked(make, path)
     cached = rle.decode(a.tracks.tracks.mask_at(ctx.video, 1, "fake", 4))
-    before = a.object_tracks(sid)[0]["seeds"].get(4)
-    for engine in (None, "sam2", "browser-sam2"):
+    before = a.object_tracks(sid)[0]
+    primes = list(stub.mask_calls)
+    # only sam3 takes a lone negative; an unnamed, unknown or mis-cased engine is held to SAM 2's rule
+    for engine in (None, "sam2", "browser-sam2", "", "SAM2", "nope"):
         with pytest.raises(ValueError, match=r"^needs_positive: "):
             click(a, sid, 1, 4, [corner(cached)], [0], engine=engine)
-    assert a.object_tracks(sid)[0]["seeds"].get(4) == before
+    after = a.object_tracks(sid)[0]
+    assert 4 not in after["seeds"] and after == before  # no seed, and state and every track's staleness kept
+    assert after["state"] == TRACKED
+    assert stub.mask_calls == primes  # nothing was primed
 
 
 def test_a_lone_negative_on_sam3_empties_the_frame_and_is_recorded(world):
