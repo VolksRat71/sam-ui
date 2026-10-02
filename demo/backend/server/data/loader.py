@@ -2,7 +2,8 @@
 # All rights reserved.
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
-# Modified by sam-ui: uploads are listed with the gallery.
+# Modified by sam-ui: uploads, and videos opened in place (data/linked.py), are
+# listed with the gallery.
 
 import os
 import shutil
@@ -38,6 +39,12 @@ def preload_data() -> Dict[str, Video]:
     for p in sorted(glob(os.path.join(UPLOADS_PATH, "*.mp4"))):
         video = get_video(p, UPLOADS_PATH)
         all_videos.setdefault(video.code, video)
+
+    # sam-ui: and footage opened in place (After Effects), whose file is still there
+    from data.linked import preload as preload_linked
+
+    for code, video in preload_linked().items():
+        all_videos.setdefault(code, video)
 
     return all_videos
 

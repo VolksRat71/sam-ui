@@ -8,6 +8,9 @@
 //   3. wait for /healthy, then open the window on http://127.0.0.1:<port>/.
 // The backend is stopped when the app quits. SAM 3 is bring-your-own: its
 // weights (Meta's SAM License) are never shipped; SAM 3 > Choose weights folder.
+// After Effects (ae-bridge.js, ae-roto.js) is reached from here only, never
+// from the page: its bridge refuses browser origins, and only this process
+// holds the token that lets the backend open a file in place.
 'use strict';
 
 const {app, BrowserWindow, Menu, dialog, ipcMain, shell} = require('electron');
@@ -15,7 +18,10 @@ const {spawn} = require('node:child_process');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const net = require('node:net');
+const os = require('node:os');
 const path = require('node:path');
+const {createAeClient, describeError} = require('./ae-bridge');
+const roto = require('./ae-roto');
 const {downloadRepo, downloadVerified} = require('./hf-download');
 
 const CHECKPOINT_URL = 'https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_large.pt';
@@ -49,6 +55,8 @@ let backend = null;
 let backendPort = null;
 let mainWindow = null;
 let quitting = false;
+// lets this process, and not the page, register a file for in-place open (data/linked.py)
+const LINK_TOKEN = crypto.randomBytes(32).toString('hex');
 
 function paths() {
   const res = process.resourcesPath;
@@ -162,6 +170,7 @@ function startBackend(p, port) {
     // lock the backend to this app's page: no CORS, only our Host and Origin (local_guard.py)
     SAM_UI_CORS: 'off',
     SAM_UI_ALLOWED_HOST: `127.0.0.1:${port}`,
+    SAM_UI_LINK_TOKEN: LINK_TOKEN,
     ...(settings.sam3Weights ? {SAM_UI_SAM3_WEIGHTS: settings.sam3Weights} : {}),
   };
   const child = spawn(
@@ -335,6 +344,52 @@ ipcMain.on('sam3:restart', event => {
   if (!fromSam3Window(event)) return;
   app.relaunch();
   app.quit();
+});
+
+// -- After Effects ---------------------------------------------------------
+// Every call answers {ok: true, value} or {ok: false, error: {state, message,
+// installUrl, problems?}}: an Error thrown across IPC loses its code.
+
+const ae = createAeClient();
+const fromMainWindow = event => mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents;
+const linkedBackend = () => roto.backendClient({port: backendPort, token: LINK_TOKEN});
+
+function aeHandle(channel, fn) {
+  ipcMain.handle(channel, async (event, arg) => {
+    if (!fromMainWindow(event)) return {ok: false, error: {state: 'forbidden', message: 'refused'}};
+    try {
+      return {ok: true, value: await fn(arg, event)};
+    } catch (err) {
+      const problems = err?.detail?.problems;
+      return {ok: false, error: {...describeError(err), ...(problems ? {problems} : {})}};
+    }
+  });
+}
+
+aeHandle('ae:status', () => ae.status());
+aeHandle('ae:media', async () => roto.eligibleMedia(await ae.listMedia()));
+aeHandle('ae:open', itemId => {
+  if (!Number.isInteger(itemId)) throw new Error('an item id is a whole number');
+  // the page names an item, never a path: the path comes from After Effects, listed again here
+  return roto.openFromAe({client: ae, backend: linkedBackend(), itemId});
+});
+aeHandle('ae:source', videoPath => linkedBackend().sourceOf(String(videoPath)));
+aeHandle('ae:export', async (req, event) => {
+  if (req == null || typeof req.videoPath !== 'string' || !Array.isArray(req.objects)) throw new Error('bad export request');
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sam-ui-ae-'));
+  try {
+    return await roto.exportToAe({
+      client: ae,
+      backend: linkedBackend(),
+      videoPath: req.videoPath,
+      objects: req.objects,
+      studio: req.studio ?? null,
+      tmpDir,
+      onProgress: (fraction, label) => !event.sender.isDestroyed() && event.sender.send('ae:progress', {fraction, label}),
+    });
+  } finally {
+    fs.rmSync(tmpDir, {recursive: true, force: true});
+  }
 });
 
 app.on('before-quit', () => {
