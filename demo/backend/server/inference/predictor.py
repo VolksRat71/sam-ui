@@ -2,7 +2,7 @@
 # All rights reserved.
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
-# Modified by sam-ui: clicks are recorded as seeds, track jobs run through tracks/, a correction refines the cached track mask, and a click inside an absent range is refused.
+# Modified by sam-ui: clicks are recorded as seeds, track jobs run through tracks/, a correction refines the cached track mask, and a positive inside an absent range ends it there (clicks with no positive there are refused).
 
 import contextlib
 import logging
