@@ -20,6 +20,7 @@ from app_conf import (
     DATA_PATH,
     DEFAULT_VIDEO_PATH,
     MAX_UPLOAD_VIDEO_DURATION,
+    RETAIN_ORIGINAL_UPLOADS,
     UPLOADS_PATH,
     UPLOADS_PREFIX,
 )
@@ -90,7 +91,7 @@ class Query:
         # Fallback is returning the first video
         if not all_videos:  # sam-ui: a clear error, not a bare StopIteration
             raise ValueError(
-                f"no videos: put an .mp4 in {DATA_PATH}/gallery or upload one"
+                "no videos: put an .mp4 in the data folder's gallery/ or upload one"
             )
         return next(iter(all_videos.values()))
 
@@ -240,7 +241,7 @@ class Mutation:
         return [
             ObjectTrack.from_info(o)
             for o in inference_api.move_clicks(
-                input.session_id, input.frame_index, input.from_object_id, input.to_object_id
+                input.session_id, input.frame_index, input.from_object_id, input.to_object_id, input.engine
             )
         ]
 
@@ -271,6 +272,7 @@ class Mutation:
             points=input.points,
             labels=input.labels,
             clear_old_points=input.clear_old_points,
+            engine=input.engine,
         )
         reponse = inference_api.add_points(request)
 
@@ -367,17 +369,31 @@ class Mutation:
 
 
 def session_video_path(rel: str) -> str:
-    """`rel` (as the page sends it, e.g. "gallery/x.mp4") under DATA_PATH, or
-    ValueError. The check is on the path's text, not its resolved target, so a
-    link the backend made itself under DATA_PATH (an in-place link to footage
-    elsewhere) still opens, while an absolute path or a `..` that climbs out of
-    DATA_PATH is refused."""
-    root = os.path.normpath(str(DATA_PATH))
+    """The file a session opens for `rel` (as the page sends it, e.g.
+    "gallery/x.mp4"), or ValueError naming only `rel`, never the server's own
+    path. `rel` must be one of the listed videos, stay inside DATA_PATH once
+    normalised, and exist. The check is on the path's text, not its resolved
+    target, so a link the backend made itself under DATA_PATH (an in-place link
+    to footage elsewhere) still opens, while an absolute path or a `..` that
+    climbs out of DATA_PATH is refused."""
+    refused = ValueError(f"not a video path under the data folder: {rel!r}")
+    root = os.path.abspath(str(DATA_PATH))  # abspath, not realpath: lexical
     if not rel or os.path.isabs(rel) or "\x00" in rel:
-        raise ValueError(f"not a video path under the data folder: {rel!r}")
+        raise refused
     full = os.path.normpath(os.path.join(root, rel))
-    if os.path.commonpath([root, full]) != root or full == root:
-        raise ValueError(f"not a video path under the data folder: {rel!r}")
+    try:
+        inside = os.path.commonpath([root, full]) == root and full != root
+    except ValueError:  # e.g. another drive on Windows
+        inside = False
+    if not inside:
+        raise refused
+    listed = get_videos() or {}  # upstream starts the store as [] until videos are set
+    # a lookup, not a walk: an upload on another thread may add to it meanwhile.
+    # Videos are keyed by code, which get_video makes equal to the path.
+    if listed.get(os.path.normpath(rel)) is None:
+        raise ValueError(f"not a listed video: {rel!r}")
+    if not os.path.isfile(full):
+        raise ValueError(f"no video file for {rel!r}")
     return full
 
 
@@ -453,8 +469,6 @@ def process_video(
             duration_time_sec=duration_time_sec,
         )
 
-        os.remove(in_path)  # don't need original video now
-
         out_video_metadata = get_video_metadata(out_path)
         if out_video_metadata.num_video_frames == 0:
             raise Exception(
@@ -471,6 +485,16 @@ def process_video(
             filepath = os.path.join(UPLOADS_PATH, f"{file_hash}.mp4")
 
         assert filepath is not None and file_key is not None
+        if RETAIN_ORIGINAL_UPLOADS:
+            from data.assets import retain_upload
+
+            retain_upload(
+                Path(in_path), root=DATA_PATH / "assets",
+                working_copy_sha256=file_hash,
+                start_time_sec=start_time_sec,
+                duration_time_sec=duration_time_sec,
+            )
+        os.remove(in_path)
         shutil.move(out_path, filepath)
 
         return filepath, file_key, out_video_metadata

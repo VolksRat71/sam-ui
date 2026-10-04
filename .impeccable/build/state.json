@@ -159,5 +159,17 @@
       "The force validator rejected the explicit user quote twice.",
       "The finish command still requires the waived responsive-gate fingerprint. No application sources changed after the final reviewed captures. The final disposition is recorded directly under Nate\u2019s explicit scope authorization."
     ]
+  },
+  "integrationReview": {
+    "date": "2026-10-04",
+    "main": "6ed090f046332f7e4b3baacb7e2201d48a29071e",
+    "disposition": "live-prototype-reviewed",
+    "evidence": ".impeccable/review/2026-10-04-integration.md",
+    "compFidelity": "waived by Nate 2026-10-01",
+    "tests": {
+      "backendFast": 641,
+      "studio": 421,
+      "desktop": 53
+    }
   }
 }

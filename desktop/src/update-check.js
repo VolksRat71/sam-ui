@@ -246,7 +246,8 @@ function createUpdateChecker({currentVersion, fetch, store, log = () => {}, now 
         const result = await fetchAndKeep();
         release = result.state === 'available' ? result.release : null;
       }
-      if (release != null && release.version === state.dismissed) return null;
+      // A manual check can show and dismiss this release while startup waits.
+      if (release != null && release.version === store.read().dismissed) return null;
       if (release != null) pending = release;
       return release;
     },

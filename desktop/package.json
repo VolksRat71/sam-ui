@@ -12,7 +12,7 @@
     "build:studio": "cd ../studio && VITE_API_ENDPOINT=same-origin npm run build",
     "build:python": "bash scripts/build-python.sh",
     "dist": "electron-builder --mac dmg --arm64",
-    "test": "node --test test/hf-download.test.js test/ae-bridge.test.js test/ae-roto.test.js test/update-check.test.js"
+    "test": "node --test test/hf-download.test.js test/update-check.test.js test/ae-bridge.test.js test/ae-roto.test.js"
   },
   "dependencies": {
     "ffmpeg-static": "^5.2.0"

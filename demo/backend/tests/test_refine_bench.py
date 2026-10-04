@@ -164,3 +164,101 @@ def test_mask_storage_round_trip(tmp_path):
     for f in range(5):
         want = m.get(f, np.zeros((H, W), bool))
         assert np.array_equal(rb.unpack(packed, f, H, W), want)
+
+
+def test_boundary_full_frame_does_not_agree_with_empty():
+    full = np.ones((8, 8), bool)
+    assert rb.boundary_f(full, np.zeros_like(full)) == 0.0
+    assert rb.boundary_f(full, full) == 1.0
+
+
+def test_gpu_lock_owner_is_visible_and_cleaned_up(tmp_path):
+    import json
+    lock = tmp_path / 'gpu-lock'
+    with rb.gpu_lock(lock):
+        owner = json.loads((lock / 'owner').read_text())
+        assert owner['pid'] > 0 and owner['job']
+        assert owner['started'] and owner['expected_end']
+    assert not lock.exists()
+
+
+def test_gpu_lock_never_removes_another_owner(tmp_path):
+    lock = tmp_path / 'gpu-lock'
+    lock.mkdir()
+    (lock / 'owner').write_text('another agent')
+    with pytest.raises(TimeoutError):
+        with rb.gpu_lock(lock, max_wait_s=0):
+            pytest.fail('must not acquire an occupied lock')
+    assert (lock / 'owner').read_text() == 'another agent'
+
+
+def test_changed_crop_parameters_invalidate_only_the_affected_cache(tmp_path, monkeypatch):
+    import json
+    from types import SimpleNamespace
+
+    calls = []
+
+    def fake_child(spec, lock, min_free):
+        calls.append(spec['kind'])
+        p = Path(spec['out'])
+        m = np.zeros((H, W), bool)
+        m[60:100, 100:140] = True
+        rb.save_masks(p, {0: m}, 1, H, W)
+        p.with_suffix('.json').write_text('{}')
+        p.with_suffix('.spec.json').write_text(json.dumps(spec))
+        return {}
+
+    monkeypatch.setattr(rb, 'child', fake_child)
+    a = SimpleNamespace(strategies=['s2'], min_free=20, env_pad=2, merge_gap=5, pad=.25, smooth=9)
+    rb.plan_object('dog', a, tmp_path, None)
+    rb.plan_object('dog', a, tmp_path, None)
+    assert calls == ['track', 'crop']
+    a.pad = .5
+    rb.plan_object('dog', a, tmp_path, None)
+    assert calls == ['track', 'crop', 'crop']
+
+
+def test_failed_child_invalidates_previous_success_metadata(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    p = tmp_path / 's2.npz'
+    meta = p.with_suffix('.json')
+    meta.write_text('{"track_s": 1}')
+    monkeypatch.setattr(rb, 'wait_for_memory', lambda _: 50)
+    monkeypatch.setattr(rb.subprocess, 'run', lambda *a, **k: SimpleNamespace(returncode=1, stdout='', stderr='failed'))
+    with pytest.raises(RuntimeError, match='failed'):
+        rb.child({'kind': 'crop', 'out': str(p)}, None, 20)
+    assert not meta.exists()
+
+
+def test_empty_rough_track_keeps_noncrop_strategies_and_skips_crops(tmp_path, monkeypatch, capsys):
+    import json
+    from types import SimpleNamespace
+    calls = []
+
+    def fake_child(spec, lock, min_free):
+        calls.append(Path(spec['out']).stem)
+        p = Path(spec['out'])
+        rb.save_masks(p, {}, 1, H, W)
+        p.with_suffix('.json').write_text('{}')
+        p.with_suffix('.spec.json').write_text(json.dumps(spec))
+        return {}
+
+    monkeypatch.setattr(rb, 'child', fake_child)
+    d = tmp_path / 'dog'
+    d.mkdir()
+    (d / 's2.json').write_text('{}')
+    a = SimpleNamespace(strategies=['reference', 's1', 's2', 's3', 's4'], min_free=20,
+                        env_pad=2, merge_gap=5, pad=.25, smooth=9, min_side=64,
+                        keyframe_every=10, s4_cond_frames=2)
+    rb.plan_object('dog', a, tmp_path, None)
+    assert calls == ['rough', 'reference', 's1', 's4']
+    assert not (d / 's2.json').exists()
+    assert 'no rough mask' in capsys.readouterr().out
+
+
+def test_incomplete_reference_is_not_scored(tmp_path):
+    d = tmp_path / 'dog'
+    d.mkdir()
+    rb.save_masks(d / 'reference.npz', {}, 1, H, W)
+    assert rb.score_object('dog', ['rough'], tmp_path) == []

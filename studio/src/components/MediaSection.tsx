@@ -3,10 +3,8 @@
 // The Media list: the backend's gallery videos plus this browser's uploads
 // (or, with no backend, the files opened into this browser and the bundled
 // samples), and an upload control. Picking a video starts a new session on it.
-// In the desktop app, Open from After Effects opens footage from the open AE
-// project in place (AeOpenModal), frame for frame. The upload itself is held
-// above this section (media/uploads.ts), so it survives the section being
-// hidden or remounted.
+// Uploads live above this section so they survive layout changes.
+// The desktop app can also open footage from the current After Effects project.
 import {Launch, TrashCan, Upload} from '@carbon/icons-react';
 import {useRef, useState} from 'react';
 import {aeBridge} from '~/lib/desktop';
@@ -28,7 +26,7 @@ type Props = {
   onSelect: (video: VideoItem) => void;
   /** The upload in flight, if any, and how to start one (App holds it). */
   uploads: UploadApi;
-  /** A video opened in place from After Effects (not an upload). */
+  /** Register footage opened from After Effects and select it. */
   onAdded: (video: VideoItem) => void;
   /** Ask to delete an upload (the app confirms it, above this pane). */
   onDelete: (video: VideoItem) => void;

@@ -50,6 +50,7 @@ import {
 import type {StudioObject} from '~/state/objects';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
 import ObjectsSection from './ObjectsSection';
+import LaneActions from './LaneActions';
 import {reviewSpans} from './reviewPresentation';
 import {ReviewGlyph} from './ReviewSection';
 
@@ -460,6 +461,7 @@ export default function Timeline({session, actions, inspector}: Props) {
                   }
                 }}
                 onClick={e => { e.stopPropagation(); session.selectObject(o.id); }}>
+                <LaneActions name={objectName(o)} disabled={n <= 0 || session.busy || session.status !== 'ready' || o.running || o.state === 'tracking'} onAbsent={() => session.markAbsentUntilNextSeed(o.id, frame)} />
                 {n > 0 && <div className="playhead" style={{left: pos(frame)}} />}
                 <div className="swimlane-line" style={{background: o.color}} />
                 {lane?.segments.map(([a, b]) => (

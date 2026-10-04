@@ -299,3 +299,78 @@ def test_the_session_sets_ranges_by_state_and_writes_candidates(world):
     info = api.set_object_range(sid, 1, 5, 5, CANDIDATE, source="tool", score=0.1)
     assert info["ranges"][-1] == cand(5, 5, "tool", 0.1)
     click(api, sid, 1, 5, [[0.5, 0.5]], [1])  # a candidate frame takes clicks
+
+
+# -- a candidate is not an absent range (the correction rules, Task 11 item 3) ----------------
+
+from tracks.ranges import seeded_windows, windows  # noqa: E402
+
+
+def test_normalize_never_merges_a_candidate_with_an_absent_range_beside_or_over_it():
+    assert normalize([rg(0, 4, ABSENT), cand(5, 9)]) == [rg(0, 4, ABSENT), cand(5, 9)]
+    assert normalize([rg(0, 6, ABSENT), cand(4, 9)]) == [rg(0, 6, ABSENT), cand(4, 9)]
+
+
+def test_a_candidate_never_splits_the_windows_or_opens_one():
+    seeds = {1: {"points": [[0.5, 0.5]], "labels": [1], "mask": None}}
+    assert windows([cand(3, 5)]) == [(0, None)]
+    assert windows([rg(3, 5, ABSENT), cand(6, 9)]) == [(0, 2), (6, None)]
+    assert seeded_windows(seeds, [cand(0, 9)]) == [((0, None), seeds)]
+
+
+def test_a_positive_that_ends_an_absence_keeps_the_candidate_under_it_and_undo_restores_both(world):
+    api_of, _, path = world
+    api = api_of()
+    sid = start(api, path)
+    video = api.session_states[sid]["video"]
+    click(api, sid, 1, 0, [[0.5, 0.5]], [1])
+    api.write_object_candidates(sid, 1, [cand(5, 35, score=0.5)])
+    api.set_object_range(sid, 1, 10, 40, ABSENT)
+    click(api, sid, 1, 25, [[0.5, 0.5]], [1])  # the object is back: the absence ends at 25
+    assert api.tracks.seeds.ranges(video, 1) == [rg(10, 24, ABSENT)]
+    assert api.tracks.seeds.annotations(video, 1) == [cand(5, 35, score=0.5)]  # the candidate layer is whole
+    assert api.object_tracks(sid)[0]["ranges"] == [cand(5, 9, score=0.5), rg(10, 24, ABSENT),
+                                                   cand(25, 35, score=0.5)]
+    info = api.undo_seeds(sid, 1)  # one step: the click and the range's end together
+    assert info["ranges"] == [cand(5, 9, score=0.5), rg(10, 40, ABSENT)]
+
+
+def test_a_positive_inside_a_candidate_neither_ends_nor_trims_it(world):
+    api_of, _, path = world
+    api = api_of()
+    sid = start(api, path)
+    video = api.session_states[sid]["video"]
+    api.write_object_candidates(sid, 1, [cand(2, 40, score=0.7)])
+    click(api, sid, 1, 25, [[0.5, 0.5]], [1])
+    api.tracks.end_absence_at(video, 1, 30)  # no absent range there: nothing changes
+    assert api.tracks.seeds.ranges(video, 1) == []
+    assert api.object_tracks(sid)[0]["ranges"] == [cand(2, 40, score=0.7)]
+    assert not api.tracks.is_absent(video, 1, 25)
+
+
+def test_a_negative_inside_a_candidate_is_not_refused_as_absent(world):
+    api_of, _, path = world
+    api = api_of()
+    sid = start(api, path)
+    video = api.session_states[sid]["video"]
+    click(api, sid, 1, 0, [[0.5, 0.5]], [1])
+    api.write_object_candidates(sid, 1, [cand(2, 20)])
+    api.set_object_range(sid, 1, 30, 40, ABSENT)
+    click(api, sid, 1, 5, [[0.5, 0.5]], [0], engine="sam3")  # SAM 3's "not here", on a candidate frame
+    click(api, sid, 1, 6, [[0.5, 0.5], [0.9, 0.9]], [1, 0])  # a trim on the default engine
+    assert api.tracks.seeds.seeds(video, 1)[5]["labels"] == [0]
+    assert api.tracks.seeds.seeds(video, 1)[6]["labels"] == [1, 0]
+    with pytest.raises(ValueError, match="marked absent"):  # the same click on an absent frame
+        click(api, sid, 1, 35, [[0.5, 0.5]], [0], engine="sam3")
+    assert api.object_tracks(sid)[0]["ranges"] == [cand(2, 20), rg(30, 40, ABSENT)]
+
+
+def test_clicks_move_onto_a_candidate_frame_and_leave_the_candidate_alone(world):
+    api_of, _, path = world
+    api = api_of()
+    sid = start(api, path)
+    click(api, sid, 1, 3, [[0.5, 0.5]], [1])
+    click(api, sid, 2, 0, [[0.5, 0.5]], [1])
+    api.write_object_candidates(sid, 2, [cand(0, 9)])
+    out = {o["object_id"]: o for o in api.move_clicks(sid, 3, 1, 2)}
+    assert out[2]["seeds"][3]["labels"] == [1] and out[2]["ranges"] == [cand(0, 9)]

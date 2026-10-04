@@ -261,3 +261,7 @@ Not canonized or repaired in this document: legacy hard-coded engine-history col
 Shift, Ctrl, or Cmd plus wheel zooms at the pointer; unmodified wheel pans. Shift events remapped to the horizontal axis also zoom. The engine chooser floats outside clipped panes, fits the viewport, focuses the selected engine, and returns focus to its trigger on Escape.
 
 Nate’s follow-up feedback explicitly restores mask-color correspondence and grouped-label indentation. This supersedes the earlier neutral-lane guidance; the 2026-10-01 comp-guidance waiver remains in force. See `.impeccable/review/2026-10-02-audit.md` for verification and limits.
+
+## Landed-stack presentation — 2026-10-04
+
+Correction messages use the neutral panel surface, wrap their exact contractual copy and actions, and stop events before they reach the preview. Each frame lane has an accessible actions menu for marking absence from the playhead. Menus stay inside the viewport and return focus on Escape or activation. Coarse-pointer controls retain 44px targets at desktop widths. The Review dock mounts once. See `.impeccable/review/2026-10-04-integration.md` for isolated-fixture evidence and checks. Nate’s October 1 comp-guidance waiver remains in force.

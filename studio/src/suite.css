@@ -198,15 +198,12 @@ input:not([type='checkbox']):not([type='radio']):not([type='range']) { min-heigh
   .timeline-tools { display: flex; flex-wrap: wrap; align-items: center; border-bottom: 1px solid var(--line); }
   .suite-timeline-header { order: 0; border: 0; flex: 1; gap: 6px; }
   .timeline-tools .transport { border: 0; flex: 1; flex-wrap: wrap; justify-content: flex-end; }
-  .timeline .button, .timeline .icon-button { height: 28px; min-height: 24px; }
-  .timeline .icon-button { width: 28px; min-width: 24px; }
   .timeline .frame-counter { margin-left: 4px; }
   .timeline .label-width { margin-left: 8px; }
   .suite-lanes .filmstrip { height: 28px; }
   .suite-lanes .scrubber, .suite-ruler .scrub-label { height: 44px; }
   .scrubber > .swimlane-review { top: 22px; }
   .suite-lanes .objects-actions { padding-block: 2px; }
-  .suite-lanes .group-header { height: 28px; }
   .suite-lanes .group-header:has(.group-options[open]) { height: auto; }
 }
 
@@ -231,4 +228,20 @@ input:not([type='checkbox']):not([type='radio']):not([type='range']) { min-heigh
 @media (max-width: 1023.98px) {
   .group-members .layer-summary { padding-inline-start: 28px; }
   .group-members .layer-detail-summary { padding-inline-start: 40px; }
+}
+
+/* Correction actions stay readable over footage without borrowing marker amber. */
+.stage-hint.correction-nudge { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; max-width: calc(100% - 24px); box-sizing: border-box; border-color: var(--line); border-radius: var(--radius); background: var(--panel); color: var(--text); pointer-events: auto; }
+.lane-actions { position: absolute; right: 2px; top: 0; z-index: 4; }
+.lane-actions > button { min-width: 24px; min-height: 24px; padding: 0 4px; background: var(--panel); }
+.lane-action-menu { position: fixed; z-index: 100; overflow: auto; box-sizing: border-box; padding: 4px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); color: var(--text); }
+.lane-action-menu > button { width: 100%; min-height: 32px; padding: 6px 8px; border: 0; border-radius: var(--radius); background: transparent; color: inherit; text-align: left; font: inherit; font-size: 12px; cursor: pointer; }
+.lane-action-menu > button:hover { background: var(--panel-raised); }
+.lane-action-menu > button:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+@media (pointer: coarse) { .lane-actions > button, .lane-action-menu > button, .correction-nudge button { min-width: 44px; min-height: 44px; } }
+
+@media (min-width: 1024px) and (pointer: fine) {
+  .timeline .button, .timeline .icon-button { height: 28px; min-height: 24px; }
+  .timeline .icon-button { width: 28px; min-width: 24px; }
+  .suite-lanes .group-header { height: 28px; }
 }

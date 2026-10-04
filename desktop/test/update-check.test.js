@@ -282,3 +282,17 @@ test('a body that stalls times out', async () => {
   const stall = async () => ({ok: true, status: 200, headers: {get: () => null}, text: () => new Promise(() => {})});
   assert.deepStrictEqual(await checkLatest({currentVersion: '0.2.0', fetch: stall, timeoutMs: 30}), {state: 'failed', reason: 'timed out after 30 ms'});
 });
+
+test('a delayed startup response does not restore a release dismissed after a manual check', async () => {
+  const replies = [];
+  const fetch = () => new Promise(resolve => replies.push(resolve));
+  const c = createUpdateChecker({currentVersion: '0.2.0', fetch, store: memoryStore()});
+  const startup = c.startup();
+  const manual = c.now();
+  replies[1](await fakeFetch(200, release('v0.3.0'))());
+  await manual;
+  assert.strictEqual(c.dismiss('0.3.0'), true);
+  replies[0](await fakeFetch(200, release('v0.3.0'))());
+  assert.strictEqual(await startup, null);
+  assert.strictEqual(c.pending(), null);
+});

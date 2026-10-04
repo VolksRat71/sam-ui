@@ -171,3 +171,34 @@ def test_close_idle_sessions_on_keeps_recent_and_busy_ones(tmp_path, monkeypatch
     assert a.close_idle_sessions_on(str(video)) == 1
     assert set(a.session_states) == {busy, recent}
     a.tracks.jobs.release(job)
+
+
+def test_an_uploaded_video_opens_in_a_session(tmp_path):
+    """The real path: uploadVideo transcodes, stores and lists the clip, and
+    startSession then opens the path it answered with."""
+    from app_conf import UPLOADS_PATH
+    from data.schema import schema
+    from data.store import get_videos, set_videos
+    from test_schema import FakeAPI
+
+    saved = get_videos()
+    if not isinstance(saved, dict):  # Meta's store starts as [] until app.py sets it
+        set_videos({})
+    src, path = clip(tmp_path / "phone.mp4"), None
+    try:
+        with open(src, "rb") as f:
+            r = schema.execute_sync("mutation($f: Upload!) { uploadVideo(file: $f) { path } }",
+                                    variable_values={"f": f})
+        assert r.errors is None, r.errors
+        path = r.data["uploadVideo"]["path"]
+        assert path.startswith("uploads/") and path in get_videos()
+        api = FakeAPI()
+        r = schema.execute_sync('mutation($p: String!) { startSession(input: {path: $p}) { sessionId } }',
+                                variable_values={"p": path}, context_value={"inference_api": api})
+        assert r.errors is None, r.errors
+        assert api.started == [str(Path(UPLOADS_PATH) / Path(path).name)]
+    finally:
+        if path:
+            (Path(UPLOADS_PATH) / Path(path).name).unlink(missing_ok=True)
+            get_videos().pop(path, None)
+        set_videos(saved)

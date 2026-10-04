@@ -37,6 +37,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -241,7 +242,9 @@ def iou(a: np.ndarray, b: np.ndarray) -> float:
 
 
 def _boundary(m: torch.Tensor) -> torch.Tensor:
-    er = -F.max_pool2d(-m[None, None], 3, 1, 1)[0, 0]
+    # Outside the image is background, including for a full-frame mask.
+    padded = F.pad(m[None, None], (1, 1, 1, 1), value=0)
+    er = -F.max_pool2d(-padded, 3, 1)[0, 0]
     return (m > 0) & (er <= 0)
 
 
@@ -292,24 +295,24 @@ def unpack(packed: np.ndarray, f: int, H: int, W: int) -> np.ndarray:
 
 class SubVideo:
     """A video SAM 2 can track (it stands in for inference_state["images"]):
-    a chosen list of source frames, each whole (resized to 1024 by PyAV, as
+    a chosen list of source frames, each whole (resized to 1024 by decord, as
     upstream and tracks.streaming do) or a square crop of it (cropped at native
     resolution, then resized). Masks come out at the source size for whole
     frames and at 1024 x 1024 for crops (paste_logits maps them back)."""
 
     def __init__(self, video_path: str, frames: Sequence[int], boxes: Optional[Sequence[Box]] = None):
-        from tracks.streaming import _PyAVRuns
+        from tracks.streaming import _DecordRuns
 
         self.frames = list(frames)
         self.boxes = list(boxes) if boxes is not None else None
         if self.boxes is not None and len(self.boxes) != len(self.frames):
             raise ValueError("one box per frame")
-        native = _PyAVRuns(video_path)
+        native = _DecordRuns(video_path)
         h, w = native.get(0).shape[:2]
         self.source_hw = (int(h), int(w))
         if self.boxes is None:
             del native
-            self._runs = _PyAVRuns(video_path, IMAGE_SIZE, IMAGE_SIZE)
+            self._runs = _DecordRuns(video_path, IMAGE_SIZE, IMAGE_SIZE)
             self.height, self.width = self.source_hw
         else:
             self._runs = native
@@ -457,7 +460,9 @@ def run_child(spec: Dict) -> Dict:
 
         probe = SubVideo(clip, [0])
         H, W = probe.source_hw
-        n = probe._runs.n
+        import decord
+
+        n = len(decord.VideoReader(clip))
         e = Sam2Engine(pred, model=spec["model"], offload_video_to_cpu=_device() == "mps")
         seeds = {1: {seed_f: {"points": [[sx / W, sy / H]], "labels": [1]}}}
         for f, by_obj in e.track(clip, seeds):
@@ -517,7 +522,8 @@ def run_child(spec: Dict) -> Dict:
 # --------------------------------------------------------------------------
 
 @contextlib.contextmanager
-def gpu_lock(path: Optional[Path], wait_s: int = 60, max_wait_s: int = 45 * 60):
+def gpu_lock(path: Optional[Path], wait_s: int = 60, max_wait_s: int = 45 * 60,
+             job: str = "refinement benchmark"):
     """mkdir lock shared with other agents; held only around one model batch."""
     if path is None:
         yield
@@ -528,18 +534,28 @@ def gpu_lock(path: Optional[Path], wait_s: int = 60, max_wait_s: int = 45 * 60):
             path.mkdir()
             break
         except FileExistsError:
+            try:
+                holder = (path / "owner").read_text().strip()
+            except FileNotFoundError:
+                holder = "owner file not yet available"
             if waited >= max_wait_s:
-                raise TimeoutError(f"GPU lock {path} held for {waited}s")
-            print(f"  gpu lock held, waiting ({waited}s)", flush=True)
+                raise TimeoutError(f"GPU lock {path} held for {waited}s: {holder}")
+            print(f"  gpu lock held by {holder}, waiting ({waited}s)", flush=True)
             time.sleep(wait_s)
             waited += wait_s
+    started = datetime.now(timezone.utc)
+    owner = path / "owner"
+    identity = json.dumps({"who": "refine_bench", "pid": os.getpid(), "job": job,
+                           "started": started.isoformat(),
+                           "expected_end": (started + timedelta(minutes=45)).isoformat()}, indent=1)
     try:
+        owner.write_text(identity)
         yield
     finally:
-        try:
+        # Never remove a lock that somebody else has taken over.
+        if owner.exists() and owner.read_text() == identity:
+            owner.unlink()
             path.rmdir()
-        except FileNotFoundError:
-            pass
 
 
 def memory_free_pct() -> Optional[int]:
@@ -564,10 +580,13 @@ def wait_for_memory(min_free: int, max_wait_s: int = 30 * 60) -> Optional[int]:
 
 def child(spec: Dict, lock: Optional[Path], min_free: int) -> Dict:
     free = wait_for_memory(min_free)
+    # A failed replacement must not leave old masks looking like a successful
+    # run of the new spec. Metadata is the success marker, written last.
+    Path(spec["out"]).with_suffix(".json").unlink(missing_ok=True)
     spec_path = Path(spec["out"]).with_suffix(".spec.json")
     spec_path.write_text(json.dumps(spec))
     env = {**os.environ, "PYTORCH_ENABLE_MPS_FALLBACK": "1", "TQDM_DISABLE": "1"}
-    with gpu_lock(lock):
+    with gpu_lock(lock, job=f"{spec['kind']}: {spec['out']}"):
         r = subprocess.run([sys.executable, __file__, "--_child", str(spec_path)],
                            capture_output=True, text=True, env=env, cwd=REPO)
     lines = [l for l in r.stdout.splitlines() if l.startswith("{")]
@@ -588,10 +607,16 @@ def plan_object(name: str, a, out: Path, lock: Optional[Path]) -> None:
 
     def run(strategy: str, spec: Dict):
         path = d / f"{strategy}.npz"
-        if path.exists() and (d / f"{strategy}.json").exists():
-            return
+        wanted = {"clip": clip, "seed": seed, "out": str(path), **spec}
+        if path.exists() and path.with_suffix(".json").exists():
+            try:
+                cached = json.loads(path.with_suffix(".spec.json").read_text())
+            except (OSError, ValueError):
+                cached = None
+            if cached == wanted:
+                return
         print(f"{name}: {strategy}", flush=True)
-        meta = child({"clip": clip, "seed": seed, "out": str(path), **spec}, lock, a.min_free)
+        meta = child(wanted, lock, a.min_free)
         print(f"  {json.dumps(meta)}", flush=True)
 
     want = set(a.strategies)
@@ -602,15 +627,23 @@ def plan_object(name: str, a, out: Path, lock: Optional[Path]) -> None:
     n, H, W = info["n"], info["H"], info["W"]
     nonempty = [bool(packed[f].any()) for f in range(n)]
     frames = envelope_frames(nonempty, a.env_pad, a.merge_gap, always=[seed_f])
-    boxes = fill_boxes([mask_bbox(unpack(packed, f, H, W)) if nonempty[f] else None for f in frames])
+    boxes = None
+    if want & {"s2", "s3"}:
+        if any(nonempty):
+            boxes = fill_boxes([mask_bbox(unpack(packed, f, H, W)) if nonempty[f] else None for f in frames])
+        else:
+            for strategy in sorted(want & {"s2", "s3"}):
+                # An older successful crop must not appear in this run's report.
+                (d / f"{strategy}.json").unlink(missing_ok=True)
+                print(f"{name}: skipping {strategy}: no rough mask for a crop trajectory", flush=True)
     base = {"frames": frames, "n": n, "H": H, "W": W}
     (d / "envelope.json").write_text(json.dumps({"frames": frames, "n": n}))
     if "s1" in want:
         run("s1", {"kind": "full", **base})
-    if "s2" in want:
+    if "s2" in want and boxes is not None:
         crops = fixed_crops(boxes, W, H, pad=a.pad, win=a.smooth)
         run("s2", {"kind": "crop", "boxes": [list(c) for c in crops], **base})
-    if "s3" in want:
+    if "s3" in want and boxes is not None:
         crops = adaptive_crops(boxes, W, H, win=a.smooth, min_side=a.min_side)
         run("s3", {"kind": "crop", "boxes": [list(c) for c in crops], **base})
     if "s4" in want:
@@ -640,7 +673,7 @@ def score_object(name: str, strategies: Sequence[str], out: Path) -> List[Dict]:
     import av
 
     d = out / name
-    if not (d / "reference.npz").exists():
+    if not all((d / f"reference.{ext}").exists() for ext in ("npz", "json")):
         return []
     have = [s for s in strategies if (d / f"{s}.npz").exists() and (d / f"{s}.json").exists()]
     ref, info = load_masks(d / "reference.npz")

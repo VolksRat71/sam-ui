@@ -34,8 +34,8 @@ tracker takes like any seed mask.
 Idle unloading (issue #11): the detector is dropped once no prompt has used it
 for SAM_UI_SAM3_DETECTOR_IDLE_S seconds (default 300), and the whole engine
 once nothing has for SAM_UI_SAM3_IDLE_S (default 600); "never" keeps either
-loaded. The next prompt or job loads it again (a few seconds). Every job and
-prompt hands the allocator's cached blocks back when it ends, after emptying
+loaded. The next prompt or job loads it again (a few seconds). Every job
+hands the allocator's cached blocks back when it ends, after emptying
 transformers' SAM 3 lru caches, whose few live tensors would pin whole heaps
 (tracks/memory.py). None of this changes a mask.
 """
@@ -45,6 +45,7 @@ import json
 import os
 import threading
 import time
+import weakref
 from pathlib import Path
 from typing import Dict, Iterator, List, Optional
 
@@ -148,6 +149,7 @@ def shared_detector(backbone, device, dtype):
 class Sam3Engine:
     name = "sam3"
     model = "sam3-tracker"
+    skips_cleared = False  # SAM 3 conditions on a cleared seed safely (engine.strip_cleared)
 
     def __init__(self, device: Optional[str] = None):
         self.device = device
@@ -161,6 +163,7 @@ class Sam3Engine:
         self._busy = 0
         self._used = {"engine": 0.0, "detector": 0.0}
         self._timer: Optional[threading.Timer] = None
+        self._timer_finalizer = None
 
     @property
     def loaded(self) -> bool:
@@ -208,17 +211,15 @@ class Sam3Engine:
     @contextlib.contextmanager
     def _using(self, part: str):
         """Mark the engine busy for one job or prompt, with autocast off; when
-        it ends, hand the allocator's cached blocks back and arm the idle
-        timer. Track jobs and text prompts run inside the routes' autocast,
-        which is SAM 2's (SAM_UI_SAM2_DTYPE, and bf16 on CUDA): SAM 3 runs at
+        it ends, arm the idle timer. Jobs also return allocator cache;
+        prompts keep it warm for the next interaction. Jobs and prompts run
+        inside the routes' autocast, which is SAM 2's (SAM_UI_SAM2_DTYPE, and bf16 on CUDA): SAM 3 runs at
         its own SAM_UI_SAM3_DTYPE, so it turns that off."""
         import torch
 
         with self._load_lock:
             self._busy += 1
-            if self._timer is not None:
-                self._timer.cancel()
-                self._timer = None
+            self._cancel_timer()
         try:
             with torch.autocast(self._device(), enabled=False):
                 yield
@@ -231,7 +232,24 @@ class Sam3Engine:
                     self._used["detector"] = now
             if not self.release_idle():  # an unload releases the cache itself
                 memory.clear_lru_caches()
-                memory.release_cached()
+                if part == "engine":
+                    memory.release_cached()
+
+    def _cancel_timer(self):
+        # Called under _load_lock. Detach so cancelled timers are not retained
+        # by the finalizer registry until the engine itself is collected.
+        if self._timer is not None:
+            self._timer.cancel()
+            self._timer = None
+        if self._timer_finalizer is not None:
+            self._timer_finalizer.detach()
+            self._timer_finalizer = None
+
+    @staticmethod
+    def _release_idle_weak(engine_ref):
+        engine = engine_ref()
+        if engine is not None:
+            engine.release_idle()
 
     def release_idle(self, now: Optional[float] = None) -> List[str]:
         """Unload what has sat unused past its idle time (the detector after
@@ -254,11 +272,11 @@ class Sam3Engine:
             due = [self._used[k] + s - now for k, s, on in (
                 ("detector", self.detector_idle_s, self._detector is not None),
                 ("engine", self.idle_s, self._loaded is not None)) if on and s is not None]
-            if self._timer is not None:
-                self._timer.cancel()
-                self._timer = None
+            self._cancel_timer()
             if due:
-                self._timer = threading.Timer(max(0.05, min(due)), self.release_idle)
+                self._timer = threading.Timer(max(0.05, min(due)), Sam3Engine._release_idle_weak,
+                                              args=(weakref.ref(self),))
+                self._timer_finalizer = weakref.finalize(self, self._timer.cancel)
                 self._timer.daemon = True
                 self._timer.start()
         if dropped:
@@ -272,9 +290,7 @@ class Sam3Engine:
             if self._busy:
                 raise RuntimeError("SAM 3 is in use")
             self._detector = self._loaded = None
-            if self._timer is not None:
-                self._timer.cancel()
-                self._timer = None
+            self._cancel_timer()
         memory.clear_lru_caches()
         memory.release_cached()
 

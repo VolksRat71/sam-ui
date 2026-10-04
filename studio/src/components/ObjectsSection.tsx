@@ -49,11 +49,9 @@ import {
   clearTarget,
   groupDirtyIds,
   isTracking,
-  needsPositiveClick,
   seedFrames,
   type StudioObject,
 } from '~/state/objects';
-import {maskedAt} from '~/state/segments';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
 
 type Props = {session: StudioSessionApi; renderLane?: (o: StudioObject) => ReactNode; inspector?: HTMLElement | null};
@@ -343,9 +341,8 @@ function ObjectRow({
   setDragged: (d: Dragged | null) => void;
   renderLane?: (o: StudioObject) => ReactNode; inspector?: HTMLElement | null;
 }) {
-  const {state, tracklets, frame, busy} = session;
+  const {state, busy} = session;
   const [drop, setDrop] = useState<'before' | 'after' | null>(null);
-  const t = tracklets.get(o.id);
   const active = o.id === state.activeId;
   const group = layout.groups.find(g => g.members.includes(o.id)) ?? null;
   const stepAction = (dir: -1 | 1): LayoutAction => ({type: 'stepObject', id: o.id, dir});
@@ -433,9 +430,6 @@ function ObjectRow({
           </div>
         )}
         {active && <TextPrompt o={o} session={session} />}
-        {active && needsPositiveClick(o, frame, maskedAt(t?.segments, frame)) && (
-          <div className="object-hint">Add a positive click to keep part of the object</div>
-        )}
         {o.error != null && <div className="object-error">Track failed: {o.error}</div>}
         <details className="layer-history"><summary>Keyframe history and versions</summary><HistoryControls o={o} session={session} /></details>
         <div className="object-actions" onClick={e => e.stopPropagation()}>

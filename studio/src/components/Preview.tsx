@@ -1,3 +1,4 @@
+import CorrectionNudge from './CorrectionNudge';
 // sam-ui (Apache-2.0). New file, not from SAM 2.
 //
 // The video preview: the worker-drawn canvas, fitted to its pane, with the
@@ -16,8 +17,6 @@ import {AddFilled, SubtractFilled, ZoomIn, ZoomOut} from '@carbon/icons-react';
 import {useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type PointerEvent} from 'react';
 import {labelFor, longPressStartsOn} from '~/lib/gestures';
 import {objectName} from '~/state/fileNames';
-import {needsPositiveClick} from '~/state/objects';
-import {maskedAt} from '~/state/segments';
 import {FIT, panBy, toScreen, zoomAt, zoomWheelDelta, type View} from '~/state/view';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
 import useTouchGestures from '~/workspace/useTouchGestures';
@@ -55,7 +54,7 @@ function useFittedBox(aspect: number) {
 }
 
 export default function Preview({session, mode, onModeChange}: Props) {
-  const {bridge, meta, state, frame, status, statusError, start, tracklets} = session;
+  const {bridge, meta, state, frame, status, statusError, start} = session;
   const aspect = meta.width > 0 && meta.height > 0 ? meta.width / meta.height : 16 / 9;
   const {ref, box} = useFittedBox(aspect);
   const [size] = useState(() => ({width: dim(meta.width), height: dim(meta.height)}));
@@ -89,7 +88,6 @@ export default function Preview({session, mode, onModeChange}: Props) {
   const points = active?.points[frame] ?? [];
   const track = active == null ? null : trackPresentation(active.state, active.running);
   const changedCount = state.objects.filter(o => o.state === 'stale').length;
-  const hint = needsPositiveClick(active, frame, maskedAt(active && tracklets.get(active.id)?.segments, frame));
 
   // zoom and pan
   const [view, setView] = useState<View>(FIT);
@@ -185,8 +183,9 @@ export default function Preview({session, mode, onModeChange}: Props) {
       if (rect == null) {
         return;
       }
-      const px = midX - (rect.left + rect.width / 2);
-      const py = midY - (rect.top + rect.height / 2);
+      // Scale about the old midpoint, then move it with the fingers.
+      const px = midX - dx - (rect.left + rect.width / 2);
+      const py = midY - dy - (rect.top + rect.height / 2);
       setView(v => panBy(zoomAt(v, factor, px, py, box.width, box.height), dx, dy, box.width, box.height));
     },
   });
@@ -278,7 +277,9 @@ export default function Preview({session, mode, onModeChange}: Props) {
                   className="point"
                   onClick={e => {
                     e.stopPropagation();
-                    session.removePoint(i);
+                    if (touch.allowsClick() && clickOk()) {
+                      session.removePoint(i);
+                    }
                   }}>
                   {/* a finger-sized target, on touch screens only (responsive.css) */}
                   <circle className="point-hit" cx={cx} cy={cy} r={22} />
@@ -290,11 +291,7 @@ export default function Preview({session, mode, onModeChange}: Props) {
             })}
           </svg>
         </div>
-        {hint && (
-          <div className="stage-hint" role="status">
-            Add a positive click to keep part of the object
-          </div>
-        )}
+        <CorrectionNudge nudge={session.nudge} hint={session.hint} sam3Available={session.sam3Available} onTrim={() => session.nudgeTrim(() => onModeChange('positive'))} onSam3={session.nudgeSam3} onGone={session.markGone} />
         {status !== 'ready' && (
           <div className="stage-overlay">
             {status === 'failed' ? (
