@@ -11,6 +11,7 @@ import {panelStorage} from '~/lib/storage';
 import {videoDisplayName} from '~/lib/uploadNames';
 import {BROWSER_ENGINE, engineLabel} from '~/state/engines';
 import {objectName} from '~/state/fileNames';
+import {historyShortcut} from '~/state/history';
 import {jobProgress} from '~/state/objects';
 import useStudioSession, {type VideoItem} from '~/workspace/useStudioSession';
 import ConfirmModal from './ConfirmModal';
@@ -24,6 +25,7 @@ import MaskExportModal from './MaskExportModal';
 import ExportVideoModal from './ExportVideoModal';
 import ObjectsSection from './ObjectsSection';
 import Preview, {type LabelMode} from './Preview';
+import ReviewSection from './ReviewSection';
 import Sidebar from './Sidebar';
 import Timeline from './Timeline';
 import UpdateBanner from './UpdateBanner';
@@ -47,11 +49,38 @@ export default function Workspace({video, renderMedia}: Props) {
   const nameOf = (id: number) => objectName(state.objects.find(o => o.id === id) ?? {id});
   const n = meta.numFrames;
 
-  // keyboard: space plays, arrows step (not while typing in a field)
+  // keyboard: space plays, arrows step, F flags the frame, Cmd-Z / Shift-Cmd-Z undo
+  // and redo the selected object's clicks, . and , step through the review
+  // queue and Y says its stop looks right (none of them while typing in a field;
+  // the review keys also work with a button focused, as after clicking a stop)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const step = historyShortcut(e);
+      if (step != null) {
+        e.preventDefault();
+        if (!e.repeat) {
+          session.stepSeeds(step);
+        }
+        return;
+      }
       const target = e.target as HTMLElement | null;
-      if (target != null && ['INPUT', 'TEXTAREA', 'BUTTON'].includes(target.tagName)) {
+      if (target != null && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) {
+        return;
+      }
+      const plain = !e.metaKey && !e.ctrlKey && !e.altKey;
+      if (plain && document.querySelector('.modal-backdrop') == null) {
+        if (e.key === '.' || e.key === ',') {
+          e.preventDefault();
+          session.stepReview(e.key === '.' ? 1 : -1);
+          return;
+        }
+        if ((e.key === 'y' || e.key === 'Y') && session.currentStop != null && !e.repeat) {
+          e.preventDefault();
+          session.markReviewed(session.currentStop, true, true);
+          return;
+        }
+      }
+      if (target != null && target.tagName === 'BUTTON') {
         return;
       }
       if (e.key === ' ') {
@@ -61,6 +90,8 @@ export default function Workspace({video, renderMedia}: Props) {
         session.seek(session.frame - 1);
       } else if (e.key === 'ArrowRight') {
         session.seek(session.frame + 1);
+      } else if ((e.key === 'f' || e.key === 'F') && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        session.toggleFlag();
       }
     };
     window.addEventListener('keydown', onKey);
@@ -85,6 +116,13 @@ export default function Workspace({video, renderMedia}: Props) {
               <span className="spinner small" />
               {job.canceling ? 'Cancelling' : 'Tracking'} {job.ids.map(nameOf).join(', ')}
               <span className="engine-tag">{engineLabel(job.engine)}</span>
+              {job.bounded.length > 0 && (
+                <span
+                  className="muted"
+                  title={`Re-tracking ${job.bounded.map(nameOf).join(', ')} only around the corrections, keeping the cached frames beyond`}>
+                  near corrections
+                </span>
+              )}
               {job.frames === 0 && session.engines.find(e => e.name === job.engine)?.loading && (
                 <span className="muted">loading the model…</span>
               )}
@@ -184,6 +222,15 @@ export default function Workspace({video, renderMedia}: Props) {
                     title: 'Objects',
                     badge: `${state.objects.length}/${OBJECT_LIMIT}`,
                     content: <ObjectsSection session={session} />,
+                  },
+                  {
+                    id: 'review',
+                    title: 'Review',
+                    badge:
+                      session.review != null && session.review.queue.length > 0
+                        ? `${session.review.queue.filter(e => !e.reviewed).length} to check / ${session.review.queue.length}`
+                        : undefined,
+                    content: <ReviewSection session={session} />,
                   },
                   {
                     id: 'effects',

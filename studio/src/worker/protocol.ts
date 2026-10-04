@@ -6,8 +6,11 @@
 // events (tracklet summaries, track progress).
 import type {JobOutcome} from '~/api/trackStream';
 import type {LocalModelStatus, LocalOptions} from '~/local/LocalEngine';
-import type {ExportedObject, ExportKind} from '~/state/maskExport';
+import type {QueueEntry, ReasonKind, ReviewQueue} from '~/state/audit';
+import type {Layout} from '~/state/layout';
+import type {ExportedObject, ExportGroup, ExportKind} from '~/state/maskExport';
 import type {NormPoint, ServerObject} from '~/state/objects';
+import type {Mark, RangeState} from '~/state/ranges';
 
 export type SessionInfo = {
   sessionId: string;
@@ -48,6 +51,23 @@ export type EngineInfo = {
   hint?: string;
   /** The picker's name for it, when not engineLabel(name). */
   label?: string;
+  /** It reads text prompts here (SAM 3's detector). A backend from before them sends none. */
+  text?: boolean;
+  /** Why it cannot read text here, when it cannot. */
+  textReason?: string | null;
+};
+
+/** POST /text_prompt's answer: the best instance of `text` on one frame. */
+export type TextPromptResult = {
+  objectId: number;
+  frameIndex: number;
+  text: string;
+  engine: string;
+  /** False: nothing on the frame matched, and nothing was stored. */
+  matched: boolean;
+  score: number;
+  /** How many instances matched; the best one is the frame's mask. */
+  instances: number;
 };
 
 /** POST /track_disagreement's answer. */
@@ -66,6 +86,10 @@ export type ExportRequest = {
   include_stale: boolean;
   frames: boolean;
   force: boolean;
+  /** One union matte per group (issue #21); an older backend ignores it. */
+  union?: boolean;
+  /** The review flags, by object id: they join data/review.json's audit queue. */
+  flags?: Record<string, number[]>;
 };
 
 /** POST /export's manifest (tracks/export.py). */
@@ -87,14 +111,44 @@ export type StudioMethods = {
   /** `key`: the video's sha256, which keys its data with no backend. */
   startSession: {args: {path: string; key?: string}; result: SessionInfo};
   closeSession: {args: Record<string, never>; result: void};
-  /** Replace one object's clicks on one frame (none: clear the frame). */
+  /**
+   * Replace one object's clicks on one frame (none: clear the frame).
+   * `engine`: the one on screen; the backend refuses negatives alone on any
+   * engine but SAM 3 (`needs_positive:`), and a missing one counts as SAM 2.
+   */
   setPoints: {
-    args: {objectId: number; frameIndex: number; points: NormPoint[]};
+    args: {objectId: number; frameIndex: number; points: NormPoint[]; engine?: string};
     result: void;
   };
+  /** Seed one frame of an object from a phrase (SAM 3); its best match becomes the frame's mask. */
+  textPrompt: {args: {objectId: number; frameIndex: number; text: string; engine: string | null}; result: TextPromptResult};
   removeObject: {args: {objectId: number}; result: void};
   clearTrack: {args: {objectId: number; engine: string | null}; result: ServerObject};
+  /**
+   * Set frames start-end of an object to a range state (state/ranges.ts), or
+   * clear them (state null: every state, or those in `clear`). A candidate
+   * takes its `source` and optional `score`. Only absent ranges change a track.
+   */
+  setRange: {
+    args: {objectId: number; start: number; end: number; state: RangeState | null; source?: string; score?: number; clear?: RangeState[]};
+    result: ServerObject;
+  };
+  /** Write candidate ranges in bulk (a discovery job's results); `replace` drops the old ones. */
+  writeCandidates: {
+    args: {objectId: number; candidates: Array<{start: number; end: number; source: string; score?: number | null}>; replace?: boolean};
+    result: ServerObject;
+  };
   objectTracks: {args: Record<string, never>; result: ServerObject[]};
+  /** Undo or redo one object's last seed change; a kept track of the restored clicks comes back with no job. */
+  undo: {args: {objectId: number}; result: ServerObject};
+  redo: {args: {objectId: number}; result: ServerObject};
+  /** Go back to one of the object's kept versions (the list's key, and the engine that made it). */
+  restoreVersion: {args: {objectId: number; key: string; engine: string}; result: ServerObject};
+  /**
+   * Move one object's clicks on a frame to another object; answers both objects.
+   * `engine`: the one on screen, as for setPoints (a missing one counts as SAM 2).
+   */
+  moveClicks: {args: {frameIndex: number; fromId: number; toId: number; engine?: string}; result: ServerObject[]};
   /**
    * Run a track job for these ids (the backend skips any another job holds);
    * resolves when its stream closes. `key` names the job in events.
@@ -109,10 +163,23 @@ export type StudioMethods = {
   /** Write tracked objects as a rotoscoping working folder; a refusal rejects with its reason. */
   export: {args: ExportRequest; result: ExportManifest};
   setActiveObject: {args: {objectId: number | null}; result: void};
+  /** Objects whose shown track is stale: drawn faded, except on frames with clicks. */
+  setStaleObjects: {args: {objectIds: number[]}; result: void};
   /** The engine the preview shows; its cached tracks are repainted. */
   setEngine: {args: {engine: string}; result: void};
   engines: {args: Record<string, never>; result: EngineInfo[]};
   disagreement: {args: {a: string; b: string; objectIds?: number[]}; result: Disagreement};
+  /**
+   * The audit queue (state/audit.ts) of `engine`'s tracks: the backend's for
+   * its engines, built here for the browser engine. `flags` are the review
+   * flags, and `candidates` each object's candidate ranges (the browser's queue reads them).
+   */
+  reviewQueue: {args: {engine: string; flags: Record<number, number[]>; candidates: Record<number, Mark[]>}; result: ReviewQueue};
+  /** Mark a queue stop reviewed ("looks right"), or unmark the stops over `span`. */
+  setReviewed: {
+    args: {objectId: number; frame: number; engine: string; reviewed: boolean; span: [number, number]; reasons: ReasonKind[]};
+    result: void;
+  };
   /** Every object's own selected-object effect (objects not listed: Overlay). */
   setObjectEffects: {args: {effects: Record<number, {name: string; variant: number}>}; result: void};
   /** How many variants each highlight effect has. */
@@ -131,9 +198,31 @@ export type StudioMethods = {
    * or the roto working folder. The objects' masks are the engine's on screen.
    */
   exportMasks: {
-    args: {kind: ExportKind; objects: ExportedObject[]; engine: string; engineLabel: string; model: string};
+    args: {
+      kind: ExportKind;
+      /** In export (layout) order. */
+      objects: ExportedObject[];
+      engine: string;
+      engineLabel: string;
+      model: string;
+      /** The groups with an exported member: a folder each (state/maskExport.ts groupExport). */
+      groups?: ExportGroup[];
+      /** Also one union mask per group. */
+      union?: boolean;
+      /** The audit queue's stops, for the roto folder's data/review.json. */
+      review?: QueueEntry[];
+    };
     result: ArrayBuffer;
   };
+  /**
+   * The objects' order and groups (state/layout.ts). `supported` is false on
+   * a backend from before layouts (creation order, no groups).
+   */
+  objectLayout: {args: Record<string, never>; result: {layout: Layout; supported: boolean}};
+  /** Store the layout. Metadata only: no track goes stale. `saved` false: an older backend. */
+  setObjectLayout: {args: {layout: Layout}; result: {saved: boolean}};
+  /** Members of hidden groups: kept off the preview (never off an export). */
+  setHiddenObjects: {args: {objectIds: number[]}; result: void};
   /** The browser engine's model size and hole fill (tracks made otherwise go stale). */
   setLocalOptions: {args: LocalOptions; result: void};
 };
@@ -162,7 +251,8 @@ export type TrackletSummary = {
 
 export type StudioEvent =
   | {type: 'tracklets'; tracklets: TrackletSummary[]}
-  | {type: 'jobStarted'; key: number; jobId: string | null; selected: number[]}
+  /** bounded: the selected ids re-tracked only around their corrections (Objects-Bounded). */
+  | {type: 'jobStarted'; key: number; jobId: string | null; selected: number[]; bounded?: number[]}
   | {type: 'trackFrame'; key: number; frameIndex: number}
   | {type: 'repaint'; active: boolean}
   | {type: 'exportProgress'; done: number}

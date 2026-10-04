@@ -3,11 +3,14 @@
 // Export masks as a zip, in the browser: grayscale mask videos, or Vector
 // JSON outlines (the rotoscoping skill's contours.py format). Every object
 // with a track on the engine on screen goes in, each file named after its
-// object; README.txt (and each JSON) records the engine and model.
+// object; README.txt (and each JSON) records the engine and model. Files
+// follow the Objects list's order, a grouped object's in its group's folder,
+// with one union mask per group if asked (issue #21).
 import {useEffect, useState} from 'react';
 import {saveBlob} from '~/lib/download';
 import {engineLabel} from '~/state/engines';
 import {defaultExportName, exportFileName, objectName, uniqueFileNames} from '~/state/fileNames';
+import {exportPath, groupExport, unionPath} from '~/state/maskExport';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
 import FileNameField from './FileNameField';
 
@@ -36,11 +39,19 @@ export default function MaskExportModal({session, kind, videoPath, onClose}: Pro
   const [done, setDone] = useState<{name: string; size: number} | null>(null);
   const busy = session.exportProgress != null;
   const {state} = session;
-  const objects = state.objects.filter(o => o.state === 'tracked' || o.state === 'stale');
+  const [union, setUnion] = useState(false);
+  const objects = session.ordered.filter(o => o.state === 'tracked' || o.state === 'stale');
   const names = uniqueFileNames(
     objects.map(o => objectName(o)),
     i => objectName(objects[i]),
   );
+  // where each file lands in the zip, as the export lays it out
+  const planned = groupExport(
+    kind,
+    objects.map((o, i) => ({objectId: o.id, label: objectName(o), name: names[i], state: o.state, prompt: '', color: o.color})),
+    state.layout,
+  );
+  const pathOf = new Map(planned.objects.map(o => [o.objectId, exportPath(o, planned.groups, t.ext)]));
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && !busy && onClose();
@@ -52,7 +63,7 @@ export default function MaskExportModal({session, kind, videoPath, onClose}: Pro
     setError(null);
     setDone(null);
     try {
-      const blob = await session.exportMasks(kind);
+      const blob = await session.exportMasks(kind, undefined, union && planned.groups.length > 0);
       const name = exportFileName(file, fallback, '.zip');
       saveBlob(blob, name);
       setDone({name, size: blob.size});
@@ -75,14 +86,25 @@ export default function MaskExportModal({session, kind, videoPath, onClose}: Pro
               {objects.map((o, i) => (
                 <li key={o.id}>
                   <span className="swatch" style={{background: o.color}} />
-                  <code>
-                    {names[i]}
-                    {t.ext}
-                  </code>
+                  <code>{pathOf.get(o.id) ?? `${names[i]}${t.ext}`}</code>
                   {o.state === 'stale' && <span className="badge stale">stale</span>}
                 </li>
               ))}
+              {union &&
+                planned.groups.map(g => (
+                  <li key={`union-${g.id}`}>
+                    <span className="swatch" style={{background: g.color}} />
+                    <code>{unionPath(g, planned.objects, t.ext)}</code>
+                    <span className="muted small">union</span>
+                  </li>
+                ))}
             </ul>
+          )}
+          {planned.groups.length > 0 && (
+            <label className="export-option muted small">
+              <input type="checkbox" checked={union} disabled={busy} onChange={e => setUnion(e.target.checked)} /> Also one
+              union mask per group (all its objects as one)
+            </label>
           )}
           <p className="muted small">
             From {engineLabel(state.engine)}: {session.modelOf(state.engine)}. The zip’s README.txt records it.

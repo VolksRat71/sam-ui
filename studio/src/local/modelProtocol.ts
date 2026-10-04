@@ -7,7 +7,7 @@
 import type {RLEObject} from '@/jscocotools/mask';
 import type {NormPoint} from '~/state/objects';
 import type {Quality} from './sam2/config';
-import type {TrackObject, TrackStats} from './sam2/tracker';
+import type {TrackObject, TrackStats, TrackWindow} from './sam2/tracker';
 
 export type VideoShape = {numFrames: number; width: number; height: number};
 
@@ -27,7 +27,11 @@ export type ModelMethods = {
   configure: {args: VideoShape & {key: string; fillHoleArea: number}; result: void};
   click: {args: {frame: number; points: NormPoint[]}; result: {rle: RLEObject; objectScore: number; ms: number}};
   /** Resolves when the job ends; frames arrive as `trackFrame` events. */
-  track: {args: {job: string; objects: TrackObject[]}; result: {frames: number; ms: number; stats: TrackStats; canceled: boolean}};
+  /** `window` confines the run to frames lo-hi (absent ranges split an object's track). */
+  track: {
+    args: {job: string; objects: TrackObject[]; window?: TrackWindow};
+    result: {frames: number; ms: number; stats: TrackStats; canceled: boolean};
+  };
   cancel: {args: {job: string}; result: boolean};
   stats: {args: Record<string, never>; result: ModelStats};
 };

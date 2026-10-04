@@ -28,6 +28,8 @@ const OVERLAY = 'Overlay';
 const META_MASK_SLOTS = 3;
 
 export default class ObjectHighlight extends AbstractEffect {
+  /** Objects kept off the drawing (a hidden group's members; off in exports). */
+  public hidden: (objectId: number) => boolean = () => false;
   private _effects = new Map<number, ObjectEffectSpec>();
   private _ready = new Map<string, Effect>();
 
@@ -93,6 +95,9 @@ export default class ObjectHighlight extends AbstractEffect {
     const groups = new Map<string, number[]>();
     const plain: number[] = [];
     tracklets.forEach((t, i) => {
+      if (this.hidden(t.id)) {
+        return;
+      }
       const e = this._effects.get(t.id);
       if (e == null || e.name === OVERLAY || !this._ready.has(e.name)) {
         plain.push(i);
