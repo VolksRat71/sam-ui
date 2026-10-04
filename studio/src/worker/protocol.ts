@@ -106,6 +106,7 @@ export type ExportManifest = {
 
 /** Each studio call: its arguments and what it resolves to. */
 export type StudioMethods = {
+  detailRequest: {args: {operation: import('~/state/detail').DetailOperation; args?: Record<string, unknown>}; result: unknown};
   /** `offline`: no backend; seeds, names and tracks live in this browser (OPFS). */
   init: {args: {endpoint: string; offline?: boolean}; result: void};
   /** `key`: the video's sha256, which keys its data with no backend. */

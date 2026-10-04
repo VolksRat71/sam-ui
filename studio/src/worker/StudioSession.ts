@@ -61,6 +61,7 @@ import {BROWSER_ENGINE, engineLabel} from '~/state/engines';
 import {maskSegments} from '~/state/segments';
 import {refusedAsAbsent} from '~/state/corrections';
 import {type FrameRange, type Mark, type PaintOptions, type RangeState, absentAt, endAbsenceAt, normalizeRanges, planUnits, rangesKey} from '~/state/ranges';
+import {combineDetail, type DetailState, type DetailOperation} from '~/state/detail';
 import {parseObjectColors, recolorTracklets, type ObjectColors} from '~/state/objectColors';
 import {colorFor, DEFAULT_ENGINE, type NormPoint, type ServerObject} from '~/state/objects';
 import type MaskOverlayEffect from './MaskOverlayEffect';
@@ -671,6 +672,8 @@ export default class StudioSession {
   private _sessionId: string | null = null;
   private _tracklets = new Map<number, Tracklet>();
   private _objectColors: ObjectColors = {};
+  private _details: DetailState = {enabled: false, objects: {}};
+  private _baseMasks = new Map<number, Map<number, Mask>>();
   /** Per object, the mask each seed frame's last click produced. */
   private _seedMasks = new Map<number, Map<number, Mask>>();
   private _seedPoints = new Map<number, Map<number, NormPoint[]>>();
@@ -794,6 +797,8 @@ export default class StudioSession {
   private _reset(): void {
     this._sessionId = null;
     this._tracklets.clear();
+    this._details = {enabled: false, objects: {}};
+    this._baseMasks.clear();
     this._seedMasks.clear();
     this._seedPoints.clear();
     this._ranges.clear();
@@ -956,6 +961,8 @@ export default class StudioSession {
     }
     const t = this._tracklets.get(objectId);
     this._tracklets.delete(objectId);
+    this._baseMasks.delete(objectId);
+    delete this._details.objects[objectId];
     this._seedMasks.delete(objectId);
     this._seedPoints.delete(objectId);
     this._ranges.delete(objectId);
@@ -1172,6 +1179,7 @@ export default class StudioSession {
 
   /** Show objects whose seeds changed under the preview: their clicks, seed masks, and cached track. */
   private async _showChanged(objects: ServerObject[]): Promise<void> {
+    if (this._details.enabled && !this._isLocal) await this.detailRequest('detail_state');
     for (const o of objects) {
       this._ranges.set(o.objectId, normalizeRanges(o.ranges));
       const t = this._tracklet(o.objectId);
@@ -1274,6 +1282,8 @@ export default class StudioSession {
       await this._local.store.clear(this._storeKey);
     }
     this._tracklets.clear();
+    this._baseMasks.clear();
+    this._details = {enabled: false, objects: {}};
     this._seedMasks.clear();
     this._seedPoints.clear();
     this._context.clearMasks();
@@ -1403,7 +1413,7 @@ export default class StudioSession {
           continue;
         }
         for (const r of part.results) {
-          this._setMask(this._tracklet(r.objectId), part.frameIndex, toMask(r.mask));
+          this._setMask(this._tracklet(r.objectId), part.frameIndex, toMask(r.mask), true);
         }
         // redraw only when the frame on screen changed; never move the view
         this._context.updateTracklets(
@@ -1713,6 +1723,32 @@ export default class StudioSession {
     this._local.setOptions(options);
   }
 
+  /** Experimental backend-only calls, using this worker's active session. */
+  async detailRequest(operation: DetailOperation, args: Record<string, unknown> = {}): Promise<unknown> {
+    if (this._offline != null || this._isLocal) {
+      if (operation === 'detail_state') return {enabled: false, objects: {}};
+      throw new Error('Refine Detail needs the desktop backend');
+    }
+    const response = await fetch(`${this._endpoint}/${operation}`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({...args, session_id: this.sessionId, engine: this._engine})});
+    if (operation === 'detail_state' && response.status === 404) return {enabled: false, objects: {}};
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error ?? `Refine Detail: HTTP ${response.status}`);
+    if (operation === 'detail_state') {
+      this._details = result as DetailState;
+      for (const t of this._tracklets.values()) {
+        const frames = this._baseMasks.get(t.id)?.keys() ?? [];
+        for (const f of frames) this._setMask(t, f, this._baseMasks.get(t.id)?.get(f), true);
+      }
+      this._render(true);
+    }
+    if (operation === 'apply_detail_crop' || operation === 'remove_detail_crop') {
+      await this.detailRequest('detail_state');
+      const objectId = (result as {object_id?: number}).object_id ?? args.object_id;
+      await this.repaint(typeof objectId === 'number' ? [objectId] : undefined);
+    }
+    return result;
+  }
+
   /** Stream cached tracks (all objects, or `objectIds`) into the preview. */
   async repaint(objectIds?: number[]): Promise<void> {
     if (this._isLocal) {
@@ -1723,7 +1759,7 @@ export default class StudioSession {
       const response = await fetch(`${this._endpoint}/track_masks`, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({session_id: this.sessionId, object_ids: objectIds ?? null, engine: this._engine}),
+        body: JSON.stringify({session_id: this.sessionId, object_ids: objectIds ?? null, engine: this._engine, base_only: true}),
       });
       if (!response.ok) {
         throw new Error(`track_masks: HTTP ${response.status}`);
@@ -1736,7 +1772,7 @@ export default class StudioSession {
           continue;
         }
         for (const r of part.results) {
-          this._setMask(this._tracklet(r.objectId), part.frameIndex, toMask(r.mask));
+          this._setMask(this._tracklet(r.objectId), part.frameIndex, toMask(r.mask), true);
         }
       }
       this._render(true);
@@ -1961,7 +1997,21 @@ export default class StudioSession {
     return [...this._tracklets.values()].sort((a, b) => a.id - b.id);
   }
 
-  private _setMask(t: Tracklet, frame: number, mask: Mask | undefined): void {
+  private _setMask(t: Tracklet, frame: number, mask: Mask | undefined, fromTrack = false): void {
+    if (!fromTrack) {
+      // A newer click/seed result supersedes this frame's cached track base.
+      // Detail-state refreshes must not resurrect it before an explicit repaint.
+      this._baseMasks.get(t.id)?.delete(frame);
+    }
+    if (fromTrack && !this._isLocal) {
+      const bases = this._baseMasks.get(t.id) ?? new Map<number, Mask>();
+      if (mask == null) bases.delete(frame); else bases.set(frame, mask);
+      this._baseMasks.set(t.id, bases);
+      if (this._details.enabled) {
+        const combined = combineDetail(mask?.data as RLEObject | undefined, this._details.objects[t.id]?.[frame] ?? []);
+        mask = combined == null ? undefined : toMask(combined);
+      }
+    }
     if (mask == null || absentAt(this._ranges.get(t.id), frame)) {
       delete t.masks[frame];
     } else {
@@ -1988,6 +2038,7 @@ export default class StudioSession {
   /** Drop a track's masks but keep what the clicks themselves produced. */
   private _keepSeedMasksOnly(t: Tracklet): void {
     t.masks = [];
+    this._baseMasks.delete(t.id);
     for (const [frame, mask] of this._seedMasks.get(t.id) ?? []) {
       this._setMask(t, frame, mask);
     }

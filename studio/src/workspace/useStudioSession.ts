@@ -1451,7 +1451,14 @@ export default function useStudioSession(video: VideoItem) {
       .catch(() => {});
   }, [bridge, staleKey]);
 
+  const detailRequest = async (operation: import('~/state/detail').DetailOperation, args?: Record<string, unknown>) => {
+    if (bridge == null || busy) throw new Error('Wait for the session to be ready');
+    const result = await bridge.call('detailRequest', {operation, args});
+    if (operation === 'apply_detail_crop' || operation === 'remove_detail_crop') await sync();
+    return result;
+  };
   return {
+    detailRequest,
     bridge,
     state,
     /** The objects in list order (the layout's): the list's, the lanes' and the exports' order. */

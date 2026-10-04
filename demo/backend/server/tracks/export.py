@@ -288,7 +288,7 @@ def export(service, video: str, video_path: str, out_dir: str, objects: Optional
         mdir.mkdir()
         size = None
         ranges = info.get("ranges") or []
-        for frame, r in service.tracks.masks(video, o, engine):
+        for frame, r in service.output_masks(video, o, engine):
             m = rle.decode(r)
             if absent_at(ranges, frame):
                 m[:] = False

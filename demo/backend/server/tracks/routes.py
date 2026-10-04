@@ -190,6 +190,8 @@ def _stream_cached(frames: Iterator[FrameRle]) -> Iterator[bytes]:
 def make_blueprint(resolve: Callable[[str], TrackContext], service: Optional[TrackService] = None) -> Blueprint:
     """`service` serves the routes that need no session (GET /engines)."""
     bp = Blueprint("tracks", __name__)
+    from tracks.detail_routes import register_detail_routes
+    register_detail_routes(bp, resolve)
 
     def _response(body: Iterator[bytes], ids, job: Optional[Job] = None) -> Response:
         r = Response(body, mimetype=f"multipart/x-savi-stream; boundary={BOUNDARY}")
@@ -233,7 +235,8 @@ def make_blueprint(resolve: Callable[[str], TrackContext], service: Optional[Tra
         ctx = resolve(data["session_id"])
         ids: Optional[list] = data.get("object_ids")
         shown = ctx.service.seeds.objects(ctx.video) if ids is None else ids
-        frames = ctx.service.cached(ctx.video, ids, data.get("engine"))
+        reader = ctx.service.cached_base if data.get("base_only") is True else ctx.service.cached
+        frames = reader(ctx.video, ids, data.get("engine"))
         return _response(_stream_cached(frames), shown)
 
     @bp.route("/cancel_track", methods=["POST"])

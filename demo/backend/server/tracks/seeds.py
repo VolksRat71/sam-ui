@@ -37,6 +37,7 @@ that frame; replayed alone, a negative click has nothing to subtract from.
 The points stay as the record of how the mask was made.
 """
 import hashlib
+import copy
 import json
 import os
 import shutil
@@ -133,11 +134,37 @@ class SeedStore:
     def _path(self, video: str, obj_id: int) -> Path:
         return self.root / video / str(int(obj_id)) / "seeds.json"
 
-    def seeds(self, video: str, obj_id: int) -> Seeds:
+    def raw_seeds(self, video: str, obj_id: int) -> Seeds:
         p = self._path(video, obj_id)
         if not p.exists():
             return {}
         return {int(f): v for f, v in json.loads(p.read_text()).items()}
+
+    def seeds(self, video: str, obj_id: int) -> Seeds:
+        return {f: {k: v for k, v in seed.items() if k != "details"}
+                for f, seed in self.raw_seeds(video, obj_id).items() if has_prompt(seed)}
+
+    def details(self, video: str, obj_id: int) -> Dict:
+        return {f: v["details"] for f, v in self.raw_seeds(video, obj_id).items() if v.get("details")}
+
+    def add_detail(self, video: str, obj_id: int, frame: int, detail: Dict) -> None:
+        from tracks.detail import validate_detail
+        detail = validate_detail(detail)
+        seeds = self.raw_seeds(video, obj_id)
+        seed = seeds.setdefault(frame, {"points": [], "labels": []})
+        details = seed.setdefault("details", [])
+        if any(d["id"] == detail["id"] for d in details):
+            return
+        details.append(detail)
+        self._save(video, obj_id, seeds)
+
+    def remove_detail(self, video: str, obj_id: int, frame: int, detail_id: str) -> None:
+        seeds = self.raw_seeds(video, obj_id)
+        if frame in seeds:
+            details = [d for d in seeds[frame].get("details", []) if d["id"] != detail_id]
+            if details: seeds[frame]["details"] = details
+            else: seeds[frame].pop("details", None)
+            self._save(video, obj_id, seeds)
 
     def objects(self, video: str) -> List[int]:
         d = self.root / video
@@ -151,7 +178,7 @@ class SeedStore:
     def _save(self, video: str, obj_id: int, seeds: Seeds) -> None:
         p = self._path(video, obj_id)
         p.parent.mkdir(parents=True, exist_ok=True)
-        _write_json_atomic(p, {str(f): v for f, v in sorted(seeds.items()) if has_prompt(v)})
+        _write_json_atomic(p, {str(f): v for f, v in sorted(seeds.items()) if has_prompt(v) or v.get("details")})
 
     def add_points(self, video: str, obj_id: int, frame: int, points: List[List[float]],
                    labels: List[int], clear_old_points: bool, mask: Optional[Dict] = None) -> Seeds:
@@ -159,32 +186,38 @@ class SeedStore:
         frame's points, otherwise they are appended. `mask` (RLE) is the mask
         the click produced; it replaces the frame's approved mask. A text
         prompt on the frame stays: the clicks refine the mask it made."""
-        seeds = self.seeds(video, obj_id)
+        seeds = self.raw_seeds(video, obj_id)
+        details = seeds.get(frame, {}).get("details")
         text = seeds.get(frame, {}).get("text")
         old = {"points": [], "labels": []} if clear_old_points else seeds.get(frame, {"points": [], "labels": []})
         seeds[frame] = {"points": old["points"] + [list(map(float, p)) for p in points],
                         "labels": old["labels"] + [int(l) for l in labels]}
+        if details:
+            seeds[frame]["details"] = details
         if text:
             seeds[frame]["text"] = text
         if mask is not None:
             seeds[frame]["mask"] = {"size": list(mask["size"]), "counts": mask["counts"]}
         self._save(video, obj_id, seeds)
-        return seeds
+        return self.seeds(video, obj_id)
 
     def set_text(self, video: str, obj_id: int, frame: int, text: str, mask: Dict) -> Seeds:
         """Seed this frame from a text prompt: the frame's clicks go, and
         `mask` (RLE, the engine's pick for the text) is its approved mask."""
-        seeds = self.seeds(video, obj_id)
+        seeds = self.raw_seeds(video, obj_id)
+        details = seeds.get(frame, {}).get("details")
         seeds[frame] = {"points": [], "labels": [], "text": normalize_text(text),
                         "mask": {"size": list(mask["size"]), "counts": mask["counts"]}}
+        if details:
+            seeds[frame]["details"] = details
         self._save(video, obj_id, seeds)
-        return seeds
+        return self.seeds(video, obj_id)
 
     def clear_frame(self, video: str, obj_id: int, frame: int) -> Seeds:
-        seeds = self.seeds(video, obj_id)
+        seeds = self.raw_seeds(video, obj_id)
         seeds.pop(frame, None)
         self._save(video, obj_id, seeds)
-        return seeds
+        return self.seeds(video, obj_id)
 
     def remove_object(self, video: str, obj_id: int) -> None:
         """Forget the object entirely: its seeds and all of its tracks."""
@@ -368,6 +401,20 @@ class SeedStore:
         seeds = {int(f): v for f, v in (files.get("seeds.json") or {}).items()}
         ranges = (files.get("ranges.json") or {}).get("ranges", [])
         return seeds_hash(seeds, ranges)
+
+    @staticmethod
+    def tracking_record(files: Dict[str, object]) -> Dict[str, object]:
+        out = copy.deepcopy(files)
+        if out.get("seeds.json") is not None:
+            out["seeds.json"] = {f: {k: v for k, v in seed.items() if k != "details"}
+                                 for f, seed in out["seeds.json"].items() if has_prompt(seed)}
+        return out
+
+    @staticmethod
+    def snapshot_key(files: Dict[str, object]) -> str:
+        if not any(v.get("details") for v in (files.get("seeds.json") or {}).values()):
+            return SeedStore.record_key(files)
+        return _sha({"schema": "sam-ui-detail-snapshot-v1", "files": files})
 
     def hash(self, video: str, obj_id: int) -> Optional[str]:
         seeds = self.seeds(video, obj_id)

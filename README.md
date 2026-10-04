@@ -270,6 +270,7 @@ option in studio stays disabled, with the reason shown, until they're found.
 
 | Setting | Default | What it does |
 | --- | --- | --- |
+| `SAM_UI_REFINE_DETAIL` | `0` (off) | `1` enables Experimental → Refine Detail in the backend studio |
 | `SAM_UI_FEATURE_CACHE_GB` | 6 | backbone feature cache budget (0 turns it off) |
 | `SAM_UI_SESSION_TTL_MIN` | 30 | idle sessions are freed after this long (0 keeps them) |
 | `SAM_UI_EXPORT_ROOT` | `~/Movies/sam-ui` (the desktop app sets your home folder) | rotoscoping exports may only write under this folder |
@@ -278,6 +279,17 @@ option in studio stays disabled, with the reason shown, until they're found.
 | `SAM_UI_SAM2_DTYPE` | `fp32` | SAM 2's autocast on MPS: `fp16` or `bf16` halve its time, save no memory and move masks a little |
 | `SAM_UI_SAM3_IDLE_S` | 600 | seconds before an unused SAM 3 is unloaded (`never` keeps it) |
 | `SAM_UI_SAM3_DETECTOR_IDLE_S` | 300 | seconds before SAM 3's unused text detector is unloaded (`never` keeps it) |
+
+**Refine Detail (experimental).** With the flag enabled, select an object and use
+Experimental → Refine Detail to box or click a small detail, add Include/Exclude
+crop points, and explicitly Refine and Apply. The stock SAM 2.1 pass uses the
+**working copy**, on this frame only; full-resolution original-media refinement
+comes later. Details add to a non-empty tracked mask and appear in the preview,
+matte export and AE handoff. They never enter tracking prompts or propagate.
+One Apply or Remove is one Undo. Replacing a frame's clicks preserves its details;
+clearing that frame or moving its clicks removes them. Details on other frames
+stay saved and can still be removed while their base is unavailable or absent.
+The browser-only engine does not expose this tool.
 
 ## How it fits together
 
