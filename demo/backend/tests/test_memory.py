@@ -210,3 +210,61 @@ def test_sam3_on_mps_ignores_sam2_dtype(monkeypatch):
             assert not torch.is_autocast_enabled("mps")
     if e._timer is not None:
         e._timer.cancel()
+
+
+def test_idle_timer_does_not_retain_dropped_engine(monkeypatch):
+    import gc
+    import weakref
+
+    monkeypatch.setattr(memory, "release_cached", lambda: None)
+    monkeypatch.setattr(memory, "clear_lru_caches", lambda *a: 0)
+    e = Sam3Engine(device="cpu")
+    e.idle_s = 600
+    e._loaded = ("proc", "model", "cpu")
+    with e._using("engine"):
+        pass
+    timer = e._timer
+    ref = weakref.ref(e)
+    try:
+        del e
+        gc.collect()
+        assert ref() is None
+        assert timer.finished.is_set()
+        timer.join(timeout=1)
+        assert not timer.is_alive()
+    finally:
+        timer.cancel()
+
+
+def test_prompts_keep_allocator_cache_until_job_end(engine, monkeypatch):
+    released = []
+    monkeypatch.setattr(memory, "release_cached", lambda: released.append(True))
+    engine.idle_s = engine.detector_idle_s = 600
+    with engine._using("detector"):
+        pass
+    assert released == []
+    with engine._using("engine"):
+        pass
+    assert released == [True]
+
+
+def test_weak_idle_timer_still_unloads_a_live_engine(engine):
+    engine.idle_s, engine.detector_idle_s = 0.05, None
+    with engine._using("detector"):
+        pass
+    timer = engine._timer
+    timer.join(timeout=2)
+    assert not timer.is_alive()
+    assert not engine.loaded and not engine.detector_loaded
+
+
+def test_new_use_cancels_timer_and_detaches_its_finalizer(engine):
+    engine.idle_s = engine.detector_idle_s = 600
+    with engine._using("detector"):
+        pass
+    timer, finalizer = engine._timer, engine._timer_finalizer
+    with engine._using("detector"):
+        assert timer.finished.is_set()
+        assert not finalizer.alive
+    engine.unload()
+    assert engine._timer is None and engine._timer_finalizer is None

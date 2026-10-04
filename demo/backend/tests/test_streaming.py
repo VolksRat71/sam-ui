@@ -172,12 +172,13 @@ def test_sam2_streamed_and_pruned_track_is_identical_and_bounded(tmp_path, monke
 
 @pytest.mark.slow
 @pytest.mark.skipif(not SLOW or not _sam3_ok(), reason="set SAM_UI_SLOW=1 with the SAM 3 weights")
-def test_sam3_streamed_and_pruned_track_is_identical(tmp_path, monkeypatch):
+def test_sam3_streamed_and_pruned_track_is_identical(tmp_path, monkeypatch, request):
     import tracks.sam3_engine as s3
     from tracks.streaming import Sam3Frames
 
     clip = str(_clip(tmp_path / "long.mp4", n=70))
     eng = s3.Sam3Engine()
+    request.addfinalizer(eng.unload)
 
     class Eager(Sam3Frames):
         """Every frame processed up front, as upstream's session holds them."""

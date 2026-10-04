@@ -444,7 +444,7 @@ if not GALLERY.is_dir():  # a worktree without the gallery: the main checkout's
 
 @pytest.mark.slow
 @pytest.mark.skipif(os.environ.get("SAM_UI_SLOW") != "1", reason="set SAM_UI_SLOW=1 (and have the SAM 3 weights)")
-def test_real_sam3_text_prompt_finds_the_dog_and_tracks_it():
+def test_real_sam3_text_prompt_finds_the_dog_and_tracks_it(request):
     import time
 
     import torch
@@ -457,13 +457,16 @@ def test_real_sam3_text_prompt_finds_the_dog_and_tracks_it():
     if not clip.exists():
         pytest.skip(f"no gallery clip at {clip}")
     e = sam3_engine.Sam3Engine()
+    request.addfinalizer(e.unload)
     mps = torch.backends.mps.is_available()
+    sam3_engine.memory.release_cached()
+    baseline = torch.mps.driver_allocated_memory() / 2 ** 30 if mps else 0.0
     peak = 0.0
 
     def mem():
         nonlocal peak
         if mps:
-            peak = max(peak, torch.mps.driver_allocated_memory() / 2 ** 30)
+            peak = max(peak, torch.mps.driver_allocated_memory() / 2 ** 30 - baseline)
 
     t0 = time.perf_counter()
     miss = e.segment_text(str(clip), 0, "giraffe")
@@ -505,13 +508,13 @@ def test_real_sam3_text_prompt_finds_the_dog_and_tracks_it():
           f"first prompt (loads) {t_first:.1f} s, warm prompt {t_prompt:.2f} s; tracked {n} frames in "
           f"{t_track:.1f} s, frame-to-frame IoU min {min(ious):.3f}, IoU with a fresh 'dog' on frame {n - 1} "
           f"{end_iou:.3f}, area {min(areas):.4f}-{max(areas):.4f}; "
-          f"peak MPS driver memory {peak:.1f} GB")
+          f"peak MPS driver memory above baseline {peak:.1f} GB (baseline {baseline:.1f} GB)")
     assert min(ious) > 0.6 and min(areas) > 0.3 * area and end_iou > 0.7
 
 
 @pytest.mark.slow
 @pytest.mark.skipif(os.environ.get("SAM_UI_SLOW") != "1", reason="set SAM_UI_SLOW=1 (and have the SAM 3 weights)")
-def test_real_sam3_text_detector_loaded_alone_is_from_pretrained_bit_for_bit():
+def test_real_sam3_text_detector_loaded_alone_is_from_pretrained_bit_for_bit(request):
     """shared_detector reads only the detector's own weights onto the device
     (issue #11). It must be the model Sam3Model.from_pretrained makes, with the
     tracker's backbone swapped in: the same weights, and the same outputs."""
@@ -529,6 +532,7 @@ def test_real_sam3_text_detector_loaded_alone_is_from_pretrained_bit_for_bit():
     if not clip.exists():
         pytest.skip(f"no gallery clip at {clip}")
     e = sam3_engine.Sam3Engine()
+    request.addfinalizer(e.unload)
     proc, model, dev = e._load()
     det, tok = e._load_detector()
     ref = Sam3Model.from_pretrained(str(sam3_engine.weights_path())).eval()
@@ -580,7 +584,7 @@ def test_real_sam3_text_detector_at_half_precision_has_from_pretrained_dtypes():
 
 @pytest.mark.slow
 @pytest.mark.skipif(os.environ.get("SAM_UI_SLOW") != "1", reason="set SAM_UI_SLOW=1 (and have the SAM 3 weights)")
-def test_real_sam3_text_and_track_ignore_sam2s_autocast(monkeypatch):
+def test_real_sam3_text_and_track_ignore_sam2s_autocast(monkeypatch, request):
     """The routes wrap jobs and prompts in SAM 2's autocast. With
     SAM_UI_SAM2_DTYPE=fp16, SAM 3 must give exactly its own fp32 masks."""
     import torch
@@ -597,6 +601,7 @@ def test_real_sam3_text_and_track_ignore_sam2s_autocast(monkeypatch):
     monkeypatch.delenv("SAM_UI_SAM3_DTYPE", raising=False)
     monkeypatch.setenv("SAM_UI_SAM2_DTYPE", "fp16")
     e = sam3_engine.Sam3Engine()
+    request.addfinalizer(e.unload)
     seeds = {1: {0: {"points": [[0.484, 0.611]], "labels": [1]}}}
 
     def run():
