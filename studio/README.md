@@ -306,7 +306,8 @@ Where it differs from Python SAM 2:
   frame's output and its memory, as in SAM 2. But its object pointer comes
   from the decoder run on the frame's clicks, since the exported decoder has
   no mask input (SAM 2 runs it with the mask as its dense prompt).
-- Frames are resized to the model size by the browser, not by decord.
+- Frames are resized to the model size by the browser, not by FFmpeg's
+  bicubic scaler as the backend resizes them.
 
 Parity with Python SAM 2.1 tiny runs in headed Chrome (WebGPU needs a GPU):
 
