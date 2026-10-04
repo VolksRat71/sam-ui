@@ -39,7 +39,7 @@
 import {chromium} from 'playwright-core';
 import {execFileSync, spawnSync} from 'node:child_process';
 import fs from 'node:fs';
-import http from 'node:http';
+import {serve} from './static-server.mjs';
 import path from 'node:path';
 
 const SECONDS = Number(process.env.CLIP_SECONDS ?? 300);
@@ -77,35 +77,6 @@ function makeClip() {
   );
 }
 
-/** A static server for a build folder, at URL's path (e.g. /sam-ui/). */
-function serve(dir) {
-  const u = new URL(URL_);
-  const types = {'.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.wasm': 'application/wasm'};
-  Object.assign(types, {'.json': 'application/json', '.mp4': 'video/mp4', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2'});
-  const root = path.resolve(dir);
-  const server = http.createServer((req, res) => {
-    const p = decodeURIComponent((req.url ?? '/').split('?')[0]);
-    if (!p.startsWith(u.pathname)) {
-      res.writeHead(404).end();
-      return;
-    }
-    let file = path.join(root, p.slice(u.pathname.length));
-    if (!file.startsWith(root)) {
-      res.writeHead(403).end();
-      return;
-    }
-    if (fs.existsSync(file) && fs.statSync(file).isDirectory()) {
-      file = path.join(file, 'index.html');
-    }
-    if (!fs.existsSync(file)) {
-      res.writeHead(404).end();
-      return;
-    }
-    res.writeHead(200, {'Content-Type': types[path.extname(file)] ?? 'application/octet-stream'});
-    fs.createReadStream(file).pipe(res);
-  });
-  return new Promise(resolve => server.listen(Number(u.port), u.hostname, () => resolve(server)));
-}
 
 const ps = () =>
   execFileSync('ps', ['-axo', 'pid=,ppid=,command='], {encoding: 'utf8', maxBuffer: 1 << 26})
@@ -168,7 +139,7 @@ if (process.env.MASK != null) {
   console.log(JSON.stringify({sampled: r.frames, expected: r.expected, min: Math.min(...v), mean: +(v.reduce((a, b) => a + b, 0) / v.length).toFixed(4)}));
   process.exit(r.frames === r.expected && Math.min(...v) >= MIN_IOU ? 0 : 1);
 }
-const server = process.env.SERVE != null ? await serve(process.env.SERVE) : null;
+const server = process.env.SERVE != null ? await serve(process.env.SERVE, URL_) : null;
 
 const COLUMNS = ['t_s', 'phase', 'frame', 'of', 'total_mb', 'chrome_mb', 'gpu_mb', 'renderer_mb', 'other_mb', 'vt_mb', 'js_heap_mb', 'uasm_mb', 'pressure'];
 const csv = `${STEM}.csv`;
