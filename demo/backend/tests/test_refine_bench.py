@@ -229,3 +229,36 @@ def test_failed_child_invalidates_previous_success_metadata(tmp_path, monkeypatc
     with pytest.raises(RuntimeError, match='failed'):
         rb.child({'kind': 'crop', 'out': str(p)}, None, 20)
     assert not meta.exists()
+
+
+def test_empty_rough_track_keeps_noncrop_strategies_and_skips_crops(tmp_path, monkeypatch, capsys):
+    import json
+    from types import SimpleNamespace
+    calls = []
+
+    def fake_child(spec, lock, min_free):
+        calls.append(Path(spec['out']).stem)
+        p = Path(spec['out'])
+        rb.save_masks(p, {}, 1, H, W)
+        p.with_suffix('.json').write_text('{}')
+        p.with_suffix('.spec.json').write_text(json.dumps(spec))
+        return {}
+
+    monkeypatch.setattr(rb, 'child', fake_child)
+    d = tmp_path / 'dog'
+    d.mkdir()
+    (d / 's2.json').write_text('{}')
+    a = SimpleNamespace(strategies=['reference', 's1', 's2', 's3', 's4'], min_free=20,
+                        env_pad=2, merge_gap=5, pad=.25, smooth=9, min_side=64,
+                        keyframe_every=10, s4_cond_frames=2)
+    rb.plan_object('dog', a, tmp_path, None)
+    assert calls == ['rough', 'reference', 's1', 's4']
+    assert not (d / 's2.json').exists()
+    assert 'no rough mask' in capsys.readouterr().out
+
+
+def test_incomplete_reference_is_not_scored(tmp_path):
+    d = tmp_path / 'dog'
+    d.mkdir()
+    rb.save_masks(d / 'reference.npz', {}, 1, H, W)
+    assert rb.score_object('dog', ['rough'], tmp_path) == []

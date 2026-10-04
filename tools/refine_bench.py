@@ -627,15 +627,23 @@ def plan_object(name: str, a, out: Path, lock: Optional[Path]) -> None:
     n, H, W = info["n"], info["H"], info["W"]
     nonempty = [bool(packed[f].any()) for f in range(n)]
     frames = envelope_frames(nonempty, a.env_pad, a.merge_gap, always=[seed_f])
-    boxes = fill_boxes([mask_bbox(unpack(packed, f, H, W)) if nonempty[f] else None for f in frames])
+    boxes = None
+    if want & {"s2", "s3"}:
+        if any(nonempty):
+            boxes = fill_boxes([mask_bbox(unpack(packed, f, H, W)) if nonempty[f] else None for f in frames])
+        else:
+            for strategy in sorted(want & {"s2", "s3"}):
+                # An older successful crop must not appear in this run's report.
+                (d / f"{strategy}.json").unlink(missing_ok=True)
+                print(f"{name}: skipping {strategy}: no rough mask for a crop trajectory", flush=True)
     base = {"frames": frames, "n": n, "H": H, "W": W}
     (d / "envelope.json").write_text(json.dumps({"frames": frames, "n": n}))
     if "s1" in want:
         run("s1", {"kind": "full", **base})
-    if "s2" in want:
+    if "s2" in want and boxes is not None:
         crops = fixed_crops(boxes, W, H, pad=a.pad, win=a.smooth)
         run("s2", {"kind": "crop", "boxes": [list(c) for c in crops], **base})
-    if "s3" in want:
+    if "s3" in want and boxes is not None:
         crops = adaptive_crops(boxes, W, H, win=a.smooth, min_side=a.min_side)
         run("s3", {"kind": "crop", "boxes": [list(c) for c in crops], **base})
     if "s4" in want:
@@ -665,7 +673,7 @@ def score_object(name: str, strategies: Sequence[str], out: Path) -> List[Dict]:
     import av
 
     d = out / name
-    if not (d / "reference.npz").exists():
+    if not all((d / f"reference.{ext}").exists() for ext in ("npz", "json")):
         return []
     have = [s for s in strategies if (d / f"{s}.npz").exists() and (d / f"{s}.json").exists()]
     ref, info = load_masks(d / "reference.npz")
