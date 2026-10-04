@@ -7,6 +7,7 @@
 // Dragging across a lane selects a span of frames, which the transport can
 // mark absent (the object is not in the shot) or unmark; an absent range is a
 // hatched block on the lane, and a window no click reaches carries a hint.
+// Lanes follow the Objects list's order (issue #21), with a group's colour by the name.
 import {
   ChevronLeft,
   ChevronRight,
@@ -186,11 +187,15 @@ export default function Timeline({session}: Props) {
       <div className="lanes">
         <div className="lane-labels">
           <div className="lane-label scrub-label">Video</div>
-          {state.objects.map(o => (
-            <div key={o.id} className="lane-label" style={{color: o.id === state.activeId ? '#fff' : undefined}}>
-              {objectName(o)}
-            </div>
-          ))}
+          {session.ordered.map(o => {
+            const group = state.layout.groups.find(g => g.members.includes(o.id));
+            return (
+              <div key={o.id} className="lane-label" style={{color: o.id === state.activeId ? '#fff' : undefined}}>
+                {group != null && <span className="lane-group-mark" style={{background: group.color}} title={group.name} />}
+                {objectName(o)}
+              </div>
+            );
+          })}
         </div>
         <div className="lane-tracks" ref={trackRef}>
           <div
@@ -218,7 +223,7 @@ export default function Timeline({session}: Props) {
               ))}
             </div>
           </div>
-          {state.objects.map(o => {
+          {session.ordered.map(o => {
             const lane = tracklets.get(o.id);
             const sel = selection?.id === o.id && span != null ? span : null;
             return (

@@ -1,6 +1,6 @@
 // sam-ui (Apache-2.0). New file, not from SAM 2.
 import {describe, expect, it} from 'vitest';
-import {matteName, readme, rotoDecisions, withoutAbsent, type Provenance} from './maskExport';
+import {exportPath, groupExport, matteName, readme, rotoDecisions, unionMatteName, unionPath, withoutAbsent, type Provenance} from './maskExport';
 
 const prov: Provenance = {
   engine: 'browser-sam2',
@@ -56,5 +56,62 @@ describe('absent ranges in exports', () => {
   it('leaves the clicks inside a range out of anchors.json', () => {
     const files = rotoDecisions(prov, [car], () => new Map([[1, [[0.5, 0.5, 1]] as const], [4, [[0.25, 0.25, 1]] as const]]), () => 24);
     expect(Object.keys(JSON.parse(files['anchors.json']).car.points)).toEqual(['2']);
+  });
+});
+
+describe('groups in exports (issue #21)', () => {
+  const obj = (objectId: number, name: string) => ({objectId, label: name, name, state: 'tracked', prompt: name, color: '#ffffff'});
+  const cast = {id: 'g1', name: 'The Cast', color: '#ff4fa3', members: [3, 1], collapsed: false, hidden: false};
+  const props = {id: 'g2', name: 'The Cast', color: '#3fd0ff', members: [2], collapsed: false, hidden: false};
+  const layout = {order: [2, 3, 1, 4], groups: [cast, props, {...cast, id: 'g3', name: 'Empty', members: [4]}]};
+
+  it('orders the objects by the layout and gives each its group', () => {
+    const {objects, groups} = groupExport('videos', [obj(1, 'Ann'), obj(2, 'Cup'), obj(3, 'Bob')], layout);
+    expect(objects.map(o => [o.objectId, o.group?.id ?? null])).toEqual([
+      [2, 'g2'],
+      [3, 'g1'],
+      [1, 'g1'],
+    ]);
+    // a group with no exported member has no folder; folder names are unique
+    expect(groups.map(g => [g.id, g.folder, g.members])).toEqual([
+      ['g1', 'The Cast', [3, 1]],
+      ['g2', 'The Cast (2)', [2]],
+    ]);
+  });
+
+  it('names roto group folders as tracks/export.py does', () => {
+    const {groups} = groupExport('folder', [obj(1, 'Ann'), obj(2, 'Cup'), obj(3, 'Bob')], layout);
+    expect(groups.map(g => g.folder)).toEqual(['the_cast', 'the_cast_2']);
+  });
+
+  it('puts grouped files in their group folder, and a union beside them', () => {
+    const {objects, groups} = groupExport('videos', [obj(1, 'Ann'), obj(4, 'Solo')], {order: [], groups: [cast]});
+    expect(objects.map(o => exportPath(o, groups, '.mp4'))).toEqual(['The Cast/Ann.mp4', 'Solo.mp4']);
+    expect(unionPath(groups[0], objects, '.mp4')).toBe('The Cast/The Cast union.mp4');
+    // a member already named like the union file keeps its name; the union moves aside
+    const clash = groupExport('videos', [obj(1, 'The Cast union')], {order: [], groups: [cast]});
+    expect(unionPath(clash.groups[0], clash.objects, '.mp4')).toBe('The Cast/The Cast union (2).mp4');
+  });
+
+  it('records each object’s group in the README', () => {
+    const {objects, groups} = groupExport('videos', [obj(1, 'Ann'), obj(4, 'Solo')], {order: [], groups: [cast]});
+    const text = readme('videos', prov, objects, groups, true);
+    expect(text).toContain('Ann: object id 1, named "Ann", tracked, group "The Cast"');
+    expect(text).toContain('Solo: object id 4, named "Solo", tracked\n');
+    expect(text).toContain('The Cast: folder "The Cast", 1 object, with a union mask');
+  });
+
+  it('records groups in the roto folder’s JSON, with a folder per group', () => {
+    const {objects, groups} = groupExport('folder', [obj(1, 'ann'), obj(4, 'solo')], {order: [], groups: [cast]});
+    const files = rotoDecisions(prov, objects, () => new Map(), () => 24, groups, false);
+    const products = JSON.parse(files['products.json']).products;
+    expect(products[0].meta).toEqual({sam_ui_object: 1, name: 'ann', group: {id: 'g1', name: 'The Cast'}});
+    expect(products[1].meta).toEqual({sam_ui_object: 4, name: 'solo'});
+    const notes = JSON.parse(files['notes/sam-ui-export.json']);
+    expect(notes.products.ann.group).toEqual({id: 'g1', name: 'The Cast'});
+    expect(notes.products.solo.group).toBeNull();
+    expect(notes.groups).toEqual([{id: 'g1', name: 'The Cast', color: '#ff4fa3', folder: 'the_cast', members: ['ann'], union: false}]);
+    expect(JSON.parse(files['data/groups/the_cast/group.json'])).toEqual({id: 'g1', name: 'The Cast', color: '#ff4fa3', members: ['ann'], union: false});
+    expect(unionMatteName(groups[0], 0)).toBe('data/groups/the_cast/union/00001.png');
   });
 });

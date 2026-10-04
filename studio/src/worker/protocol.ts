@@ -6,7 +6,8 @@
 // events (tracklet summaries, track progress).
 import type {JobOutcome} from '~/api/trackStream';
 import type {LocalModelStatus, LocalOptions} from '~/local/LocalEngine';
-import type {ExportedObject, ExportKind} from '~/state/maskExport';
+import type {Layout} from '~/state/layout';
+import type {ExportedObject, ExportGroup, ExportKind} from '~/state/maskExport';
 import type {NormPoint, ServerObject} from '~/state/objects';
 
 export type SessionInfo = {
@@ -66,6 +67,8 @@ export type ExportRequest = {
   include_stale: boolean;
   frames: boolean;
   force: boolean;
+  /** One union matte per group (issue #21); an older backend ignores it. */
+  union?: boolean;
 };
 
 /** POST /export's manifest (tracks/export.py). */
@@ -149,9 +152,29 @@ export type StudioMethods = {
    * or the roto working folder. The objects' masks are the engine's on screen.
    */
   exportMasks: {
-    args: {kind: ExportKind; objects: ExportedObject[]; engine: string; engineLabel: string; model: string};
+    args: {
+      kind: ExportKind;
+      /** In export (layout) order. */
+      objects: ExportedObject[];
+      engine: string;
+      engineLabel: string;
+      model: string;
+      /** The groups with an exported member: a folder each (state/maskExport.ts groupExport). */
+      groups?: ExportGroup[];
+      /** Also one union mask per group. */
+      union?: boolean;
+    };
     result: ArrayBuffer;
   };
+  /**
+   * The objects' order and groups (state/layout.ts). `supported` is false on
+   * a backend from before layouts (creation order, no groups).
+   */
+  objectLayout: {args: Record<string, never>; result: {layout: Layout; supported: boolean}};
+  /** Store the layout. Metadata only: no track goes stale. `saved` false: an older backend. */
+  setObjectLayout: {args: {layout: Layout}; result: {saved: boolean}};
+  /** Members of hidden groups: kept off the preview (never off an export). */
+  setHiddenObjects: {args: {objectIds: number[]}; result: void};
   /** The browser engine's model size and hole fill (tracks made otherwise go stale). */
   setLocalOptions: {args: LocalOptions; result: void};
 };

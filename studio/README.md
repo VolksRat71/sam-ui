@@ -142,6 +142,20 @@ python3 -m http.server 7390 --bind 127.0.0.1 --directory /tmp/pages   # http://1
   double-click the name (or the pencil) to rename it in place. Names are
   stored with the seeds (`POST /rename_object`) and never make a track stale;
   numbers are never reused after a delete.
+- **Order and groups.** Drag an object by its handle to reorder it, or onto a
+  group's header to put it in that group; Alt-Up / Alt-Down on the handle,
+  the arrow buttons and each object's *Group* menu do the same from the
+  keyboard. *New group* makes a group holding the selected object (or an
+  empty one). A group has a name, a colour, and collapses; its header can
+  Track only its stale or untracked members, clear their tracks, give them
+  all one effect, hide them in the preview (exports keep them) and Ungroup
+  (the objects stay, ungrouped). The order is also the timeline lanes' and
+  every export's: each group gets a folder in the zips (and
+  `data/groups/<group>/` in the roto folder), with an optional union mask per
+  group, and README.txt and the JSON name each object's group. The layout is
+  stored per video (`tracks/<video>/layout.json`, or OPFS with no backend),
+  outside the seeds hash: reordering never makes a track stale and is not an
+  undo step. Videos from before keep creation order.
 - **Track** runs the objects that are untracked or stale. Tracked objects never
   re-run, and their masks stay on screen. Jobs run beside you: you can keep
   clicking, adding objects and correcting while one runs, and pressing Track

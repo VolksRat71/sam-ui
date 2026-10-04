@@ -110,7 +110,7 @@ def _tree(d):
 LINKS = [("data", True, False), ("data/mattes_tracked", True, False), ("data/mattes_tracked/object_1", True, False),
          ("notes", True, False), ("products.json", False, False), ("notes/sam-ui-export.json", False, False),
          ("data/review.json", False, False), ("data/frames", True, True), ("data/clip.mp4", False, True),
-         ("data/frames/00001.jpg", False, True)]
+         ("data/frames/00001.jpg", False, True), ("data/groups", True, False)]
 
 
 @pytest.mark.parametrize("link,is_dir,frames", LINKS)
@@ -535,3 +535,101 @@ def test_the_roto_pipeline_loads_the_export(h, tmp_path):
     finally:
         sys.path.remove(str(ROTO_SCRIPTS))
     assert [p.id for p in prods] == ["object_1", "object_2"]
+
+
+# -- the object layout (issue #21): order and a folder per group ------------------
+
+def _layout(h, order, groups):
+    r = h.client.post("/set_object_layout", json={"session_id": "s", "layout": {"order": order, "groups": groups}})
+    assert r.status_code == 200
+
+
+CAST = {"id": "g1", "name": "The Cast", "color": "#ff4fa3", "members": [3, 1], "collapsed": False, "hidden": False}
+
+
+def test_an_export_follows_the_layout_order_and_records_groups(h, tmp_path):
+    h.click(1), h.click(2), h.click(3)
+    h.track()
+    _layout(h, [2, 3, 1], [CAST])
+    out = tmp_path / "build"
+    code, m = export(h, out_dir=str(out))
+    assert code == 200
+    products = json.loads((out / "products.json").read_text())["products"]
+    assert [p["id"] for p in products] == ["object_2", "object_3", "object_1"]
+    assert products[0]["meta"] == {"sam_ui_object": 2}  # ungrouped: no group key
+    assert products[1]["meta"] == {"sam_ui_object": 3, "group": {"id": "g1", "name": "The Cast"}}
+    # the manifest keeps the order, each product's group, and the groups themselves
+    notes = json.loads((out / "notes/sam-ui-export.json").read_text())
+    assert list(notes["products"]) == ["object_2", "object_3", "object_1"]
+    assert notes["products"]["object_1"]["group"] == {"id": "g1", "name": "The Cast"}
+    assert notes["products"]["object_2"]["group"] is None
+    assert notes["groups"] == [{"id": "g1", "name": "The Cast", "color": "#ff4fa3", "folder": "the_cast",
+                                "members": ["object_3", "object_1"], "union": False}]
+    # a folder per group; the mattes stay where the roto pipeline reads them
+    group_json = json.loads((out / "data/groups/the_cast/group.json").read_text())
+    assert group_json["members"] == ["object_3", "object_1"]
+    assert not (out / "data/groups/the_cast/union").exists()  # off by default
+    assert (out / "data/mattes_tracked/object_3/00001.png").exists()
+
+
+def test_a_union_matte_per_group_is_optional(h, tmp_path):
+    h.click(1), h.click(2), h.click(3)
+    h.track()
+    _layout(h, [1, 2, 3], [CAST])
+    out = tmp_path / "build"
+    code, m = export(h, out_dir=str(out), union=True)
+    assert code == 200 and m["groups"][0]["union"] is True
+    files = sorted(p.name for p in (out / "data/groups/the_cast/union").iterdir())
+    assert files == [f"{i:05d}.png" for i in range(1, 5)]
+    png = np.asarray(Image.open(out / "data/groups/the_cast/union/00002.png")) > 127
+    assert (png == (FakeEngine.mask(1, 1) | FakeEngine.mask(3, 1))).all()
+    assert not (png & FakeEngine.mask(2, 1) & ~FakeEngine.mask(1, 1) & ~FakeEngine.mask(3, 1)).any()
+
+
+def test_a_group_with_no_exported_member_gets_no_folder(h, tmp_path):
+    h.click(1), h.click(2), h.click(3)
+    h.track()
+    h.service.clear_track(h.video, 1)
+    h.service.clear_track(h.video, 3)
+    _layout(h, [1, 2, 3], [CAST])
+    out = tmp_path / "build"
+    code, m = export(h, out_dir=str(out), union=True)
+    assert code == 200 and m["groups"] == [] and not (out / "data/groups").exists()
+
+
+def test_a_re_export_drops_group_folders_that_are_gone(h, tmp_path):
+    h.click(1), h.click(3)
+    h.track()
+    _layout(h, [1, 3], [CAST])
+    out = tmp_path / "build"
+    export(h, out_dir=str(out))
+    _layout(h, [1, 3], [])
+    export(h, out_dir=str(out), force=True)
+    assert not (out / "data/groups").exists()
+
+
+def test_group_folders_are_unique(h, tmp_path):
+    h.click(1), h.click(2)
+    h.track()
+    _layout(h, [1, 2], [{**CAST, "members": [1]}, {**CAST, "id": "g2", "members": [2]}])
+    code, m = export(h, out_dir=str(tmp_path / "b"))
+    assert [g["folder"] for g in m["groups"]] == ["the_cast", "the_cast_2"]
+
+
+def test_a_linked_groups_folder_is_refused_even_inside_the_root(h, tmp_path):
+    """data/groups is rmtree'd and remade on every export, so, as a matte
+    folder, a link there is refused rather than followed (main's export
+    containment over the object-groups export)."""
+    h.click(1), h.click(3)
+    h.track()
+    _layout(h, [1, 3], [CAST])
+    elsewhere = tmp_path / "other"
+    elsewhere.mkdir()
+    (elsewhere / "keep.json").write_text("theirs")
+    out = tmp_path / "build"
+    (out / "data").mkdir(parents=True)
+    (out / "data" / "groups").symlink_to(elsewhere)
+    code, m = export(h, out_dir=str(out), force=True, union=True)
+    assert code == 400 and "data/groups" in m["error"]
+    assert (elsewhere / "keep.json").read_text() == "theirs" and sorted(p.name for p in elsewhere.iterdir()) == [
+        "keep.json"]

@@ -44,7 +44,9 @@ import {OpfsKv} from '~/local/kv';
 import {LocalEngine, type LocalOptions} from '~/local/LocalEngine';
 import {OfflineService, SeedStore} from '~/local/offlineStores';
 import {localTrackEntry, seedsKey, variantModel, withLocalTracks, type LocalTrackEntry} from '~/local/localTracks';
-import type {ExportedObject, ExportKind} from '~/state/maskExport';
+import type {Layout} from '~/state/layout';
+import {layoutFromResponse} from '~/state/layoutSync';
+import type {ExportedObject, ExportGroup, ExportKind} from '~/state/maskExport';
 import {buildExport} from './maskExports';
 import type {TrackObject} from '~/local/sam2/tracker';
 import {BROWSER_ENGINE, engineLabel} from '~/state/engines';
@@ -1381,6 +1383,8 @@ export default class StudioSession {
     engine: string;
     engineLabel: string;
     model: string;
+    groups?: ExportGroup[];
+    union?: boolean;
   }): Promise<ArrayBuffer> {
     const decoded = this._context['_decodedVideo'];
     if (decoded == null || this._videoPath == null || this._storeKey == null) {
@@ -1421,8 +1425,48 @@ export default class StudioSession {
         seedsOf: id => this._seedPoints.get(id) ?? new Map(),
       },
       done => this._emit({type: 'exportProgress', done}),
+      {groups: args.groups, union: args.union},
     );
     return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+  }
+
+  /**
+   * POST /object_layout. Only a missing route (a backend from before layouts)
+   * is "unsupported"; a network or server error throws, because the stored
+   * layout is then unknown, not empty (state/layoutSync.ts).
+   */
+  async objectLayout(): Promise<{layout: Layout; supported: boolean}> {
+    if (this._offline != null) {
+      return {layout: await this._offline.layout(this._storeKey!), supported: true};
+    }
+    const response = await fetch(`${this._endpoint}/object_layout`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({session_id: this.sessionId}),
+    }).catch(() => null);
+    const body = response?.ok ? await response.json().catch(() => null) : null;
+    return layoutFromResponse(response?.status ?? null, body);
+  }
+
+  /** POST /set_object_layout. A backend from before layouts answers 404: not saved, no error. */
+  async setObjectLayout(layout: Layout): Promise<{saved: boolean}> {
+    if (this._offline != null) {
+      await this._offline.setLayout(this._storeKey!, layout);
+      return {saved: true};
+    }
+    const response = await fetch(`${this._endpoint}/set_object_layout`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({session_id: this.sessionId, layout}),
+    }).catch(() => null);
+    if (response == null || response.status === 404 || response.status === 405) {
+      return {saved: false};
+    }
+    if (!response.ok) {
+      const body = (await response.json().catch(() => null)) as {error?: string} | null;
+      throw new Error(body?.error ?? `set_object_layout: HTTP ${response.status}`);
+    }
+    return {saved: true};
   }
 
   /** POST /rename_object. A backend from before names answers 404: not saved, no error. */

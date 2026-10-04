@@ -33,8 +33,14 @@ POST /rename_object {session_id, object_id, name}: name an object (trimmed, at
   most 64 characters; empty clears it). Metadata only: no track goes stale.
   Answers {"object_id", "name"}.
 POST /object_names {session_id}: {"names": {"<object_id>": name}} for the video.
-POST /export {session_id, out_dir, objects?, include_stale?, frames?, force?, engine?}:
-  write tracked objects as a rotoscoping working folder (see tracks/export.py);
+POST /object_layout {session_id}: {"layout": {"order", "groups"}}, the objects'
+  order and groups (tracks/layout.py). A video without one keeps creation order.
+POST /set_object_layout {session_id, layout}: store it (400 when malformed).
+  Metadata only: no track goes stale and nothing joins the undo history.
+  Answers {"layout"} as /object_layout would.
+POST /export {session_id, out_dir, objects?, include_stale?, frames?, force?, engine?, union?}:
+  write tracked objects as a rotoscoping working folder (see tracks/export.py),
+  in the layout's order, with a folder per group (union: a union matte each);
   out_dir (a string) must be under SAM_UI_EXPORT_ROOT (default ~/Movies/sam-ui),
   and so must every path written or deleted inside it, links followed. force
   replaces decision files and existing mattes; 400 on a refusal. The reply
@@ -56,6 +62,7 @@ from flask import Blueprint, Response, jsonify, request
 from inference.multipart import MultipartResponseBuilder
 from tracks.export import ExportError, export
 from tracks.jobs import Job
+from tracks.layout import LayoutError
 from tracks.service import FrameRle, JobResult, TrackService, UnknownEngine
 
 BOUNDARY = "frame"
@@ -237,6 +244,20 @@ def make_blueprint(resolve: Callable[[str], TrackContext], service: Optional[Tra
         ctx = resolve(request.json["session_id"])
         return jsonify({"names": {str(o): n for o, n in ctx.service.object_names(ctx.video).items()}})
 
+    @bp.route("/object_layout", methods=["POST"])
+    def object_layout() -> Response:
+        ctx = resolve(request.json["session_id"])
+        return jsonify({"layout": ctx.service.layout(ctx.video)})
+
+    @bp.route("/set_object_layout", methods=["POST"])
+    def set_object_layout() -> Response:
+        data = request.json
+        ctx = resolve(data["session_id"])
+        try:
+            return jsonify({"layout": ctx.service.set_layout(ctx.video, data.get("layout"))})
+        except LayoutError as err:
+            return jsonify({"error": str(err)}), 400
+
     @bp.route("/export", methods=["POST"])
     def export_route() -> Response:
         data = request.json
@@ -246,7 +267,8 @@ def make_blueprint(resolve: Callable[[str], TrackContext], service: Optional[Tra
         try:
             manifest = export(ctx.service, ctx.video, ctx.path, data["out_dir"], objects=data.get("objects"),
                               include_stale=bool(data.get("include_stale")), frames=bool(data.get("frames")),
-                              force=bool(data.get("force")), engine=data.get("engine"))
+                              force=bool(data.get("force")), engine=data.get("engine"),
+                              union=bool(data.get("union")))
         except ExportError as err:
             return jsonify({"error": str(err)}), 400
         # the server's own paths stay on the server

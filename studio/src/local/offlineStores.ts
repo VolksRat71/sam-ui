@@ -15,12 +15,16 @@
 //                                    the track itself
 //   tracks/<video>/<obj>/versions/<id>.json  each kept track, with its seed record
 //   tracks/<video>/<obj>/versions.json       their list, oldest first (LOCAL_KEEP kept)
+//   seeds/<video>/layout.json        {"order", "groups"}: the objects' order and
+//                                    groups (state/layout.ts), the backend's
+//                                    tracks/<video>/layout.json; in no seeds key
 // Removing an object removes its seeds, name, history and tracks; clearing the
 // last seed frame drops its current track (a track with no seeds could never
 // be redone) but keeps its versions, so an undo brings it back.
 import type {RLEObject} from '@/jscocotools/mask';
 import {BROWSER_ENGINE} from '~/state/engines';
 import {cleanObjectName} from '~/state/fileNames';
+import {type Layout, arrange, layoutReducer, parseLayout} from '~/state/layout';
 import type {NormPoint, ServerObject} from '~/state/objects';
 import {type FrameRange, type RangeState, normalizeRanges, paintRange, rangeAt} from '~/state/ranges';
 import {type Kv, readJson, writeJson} from './kv';
@@ -543,6 +547,37 @@ export class OfflineService {
   async removeObject(video: string, obj: number): Promise<void> {
     await this.seeds.removeObject(video, obj);
     await this.tracks.delete(video, obj);
+    const stored = await this._storedLayout(video);
+    if (stored != null) {
+      // out of the order and its group (the rest of the stored layout as it was)
+      await this._writeLayout(video, layoutReducer(stored, {type: 'removeObject', id: obj}, [...stored.order, ...stored.groups.flatMap(g => g.members), obj]));
+    }
+  }
+
+  // -- the object layout (issue #21): metadata, in no seeds key ----------------------
+
+  private _layoutPath(video: string): string {
+    return `seeds/${video}/layout.json`;
+  }
+
+  private async _storedLayout(video: string): Promise<Layout | null> {
+    const raw = await readJson<unknown>(this._kv, this._layoutPath(video));
+    return raw == null ? null : parseLayout(raw);
+  }
+
+  private _writeLayout(video: string, layout: Layout): Promise<void> {
+    return writeJson(this._kv, this._layoutPath(video), layout);
+  }
+
+  /** The objects' order and groups, against the objects there are (creation order without one). */
+  async layout(video: string): Promise<Layout> {
+    return arrange((await this._storedLayout(video)) ?? {order: [], groups: []}, await this.seeds.objects(video));
+  }
+
+  /** Store a layout as sent (it may name objects not clicked yet); answers it as layout() reads it. */
+  async setLayout(video: string, raw: unknown): Promise<Layout> {
+    await this._writeLayout(video, parseLayout(raw));
+    return this.layout(video);
   }
 
   async clearVideo(video: string): Promise<void> {

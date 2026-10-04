@@ -14,6 +14,7 @@
 // own transitions only keep the list right in between.
 import {THEME_COLORS} from '@/theme/colors';
 import {EMPTY_HISTORY, type SeedHistory, type ServerHistory, normalizeHistory} from './history';
+import {EMPTY_LAYOUT, type Layout, type LayoutAction, arrange, layoutReducer, parseLayout} from './layout';
 import {type FrameRange, normalizeRanges, rangesKey} from './ranges';
 
 export type TrackState = 'untracked' | 'stale' | 'tracked' | 'tracking';
@@ -115,6 +116,11 @@ export type StudioState = {
   jobs: Job[];
   /** The last job-level failure, shown until the next job starts. */
   notice: string | null;
+  /**
+   * The objects' order and groups (state/layout.ts): the list's, the lanes'
+   * and the exports' order. `objects` itself stays in id order.
+   */
+  layout: Layout;
 };
 
 export type Action =
@@ -141,7 +147,11 @@ export type Action =
   | {type: 'rename'; id: number; name: string | null}
   /** Names from the backend (ids it does not name keep theirs). */
   | {type: 'names'; names: Record<number, string>}
-  | {type: 'reset'};
+  | {type: 'reset'}
+  /** The stored layout (the backend's or this browser's), as loaded. */
+  | {type: 'setLayout'; layout: unknown}
+  /** A reorder or regroup. */
+  | {type: 'layout'; action: LayoutAction};
 
 export const initialState: StudioState = {
   engine: DEFAULT_ENGINE,
@@ -149,6 +159,7 @@ export const initialState: StudioState = {
   activeId: null,
   jobs: [],
   notice: null,
+  layout: EMPTY_LAYOUT,
 };
 
 const NO_TRACK: EngineTrack = {state: 'untracked', frames: null, nFrames: 0};
@@ -323,6 +334,19 @@ export function needsPositiveClick(o: StudioObject | undefined, frame: number, m
   return !masked && pts != null && pts.length > 0 && pts.every(p => p[2] === 0);
 }
 
+/** The objects in list order: the layout's, else creation order. */
+export function orderedObjects(state: Pick<StudioState, 'objects' | 'layout'>): StudioObject[] {
+  const byIdMap = new Map(state.objects.map(o => [o.id, o]));
+  return arrange(state.layout, state.objects.map(o => o.id)).order.map(id => byIdMap.get(id)!);
+}
+
+/** What a group's Track sends: its members a plain Track would run (dirtyIds), in list order. */
+export function groupDirtyIds(state: StudioState, groupId: string): number[] {
+  const members = arrange(state.layout, state.objects.map(o => o.id)).groups.find(g => g.id === groupId)?.members ?? [];
+  const dirty = new Set(dirtyIds(state));
+  return members.filter(id => dirty.has(id));
+}
+
 /** Objects whose shown track is stale: the preview draws it faded until the re-track. */
 export function staleIds(state: StudioState): number[] {
   return state.objects.filter(o => o.state === 'stale').map(o => o.id);
@@ -412,7 +436,12 @@ export function reducer(state: StudioState, action: Action): StudioState {
         running: false,
         error: null,
       };
-      return {...state, activeId: action.id, objects: [...state.objects, added].sort(byId)};
+      return {
+        ...state,
+        activeId: action.id,
+        objects: [...state.objects, added].sort(byId),
+        layout: layoutReducer(state.layout, {type: 'addObject', id: action.id}, state.objects.map(o => o.id)),
+      };
     }
 
     case 'select':
@@ -547,6 +576,7 @@ export function reducer(state: StudioState, action: Action): StudioState {
         ...state,
         objects: state.objects.filter(o => o.id !== action.id),
         activeId: state.activeId === action.id ? null : state.activeId,
+        layout: layoutReducer(state.layout, {type: 'removeObject', id: action.id}, state.objects.map(o => o.id)),
       };
 
     case 'rename':
@@ -560,6 +590,12 @@ export function reducer(state: StudioState, action: Action): StudioState {
 
     case 'reset':
       return {...initialState, engine: state.engine};
+
+    case 'setLayout':
+      return {...state, layout: arrange(parseLayout(action.layout), state.objects.map(o => o.id))};
+
+    case 'layout':
+      return {...state, layout: layoutReducer(state.layout, action.action, state.objects.map(o => o.id))};
   }
 }
 

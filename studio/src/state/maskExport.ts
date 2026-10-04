@@ -5,6 +5,15 @@
 // files, laid out as demo/backend/server/tracks/export.py writes them.
 // Frames inside an object's absent ranges export empty (a black matte, a null
 // outline), and its clicks there stay out of anchors.json, as the backend does.
+//
+// Exports follow the object layout (state/layout.ts): objects in list order,
+// and a folder per group. In the zips (videos, vectors) a grouped object's
+// file is in "<group>/", with an optional union of the group's masks there
+// too; in the roto folder the mattes stay in data/mattes_tracked/<pid>/ (the
+// pipeline reads them there) and each group gets data/groups/<folder>/, as
+// tracks/export.py writes it. README.txt and the JSON record each object's group.
+import {safeFileName} from './fileNames';
+import {arrange, type Layout} from './layout';
 import {absentAt, type FrameRange} from './ranges';
 
 export type ExportKind = 'videos' | 'vectors' | 'folder';
@@ -22,7 +31,84 @@ export type ExportedObject = {
   model?: string;
   /** Frames the object is marked absent on: exported empty. */
   ranges?: ReadonlyArray<FrameRange>;
+  /** Its group, if it has one (set by groupExport). */
+  group?: {id: string; name: string} | null;
 };
+
+/** A group as exported: only groups with an exported member get one. */
+export type ExportGroup = {
+  id: string;
+  name: string;
+  color: string;
+  /** Its folder: in the zip (videos, vectors), or under data/groups/ (folder). */
+  folder: string;
+  /** Object ids, in export order. */
+  members: number[];
+};
+
+/** The roto folder's group folder for a name: as tracks/export.py's _folder. */
+function rotoFolder(name: string, id: string): string {
+  const slug = name
+    .replace(/[^A-Za-z0-9_-]+/g, '_')
+    .replace(/^[_-]+|[_-]+$/g, '')
+    .toLowerCase()
+    .slice(0, 64);
+  return slug === '' ? id.toLowerCase() : slug;
+}
+
+/**
+ * The objects of an export in the layout's order, each with its group, and
+ * the groups that have an exported member, each with a unique folder.
+ */
+export function groupExport(
+  kind: ExportKind,
+  objects: ReadonlyArray<ExportedObject>,
+  layout: Layout,
+): {objects: ExportedObject[]; groups: ExportGroup[]} {
+  const arranged = arrange(layout, objects.map(o => o.objectId));
+  const byObject = new Map(objects.map(o => [o.objectId, o]));
+  const groupOfId = new Map(arranged.groups.flatMap(g => g.members.map(m => [m, g] as const)));
+  const ordered = arranged.order.map(id => {
+    const g = groupOfId.get(id);
+    return {...byObject.get(id)!, group: g != null ? {id: g.id, name: g.name} : null};
+  });
+  const used = new Set<string>();
+  const groups: ExportGroup[] = [];
+  for (const g of arranged.groups) {
+    if (g.members.length === 0) {
+      continue;
+    }
+    const base = kind === 'folder' ? rotoFolder(g.name, g.id) : safeFileName(g.name, 'Group');
+    let folder = base;
+    for (let k = 2; used.has(folder.toLowerCase()); k++) {
+      folder = kind === 'folder' ? `${base}_${k}` : `${base} (${k})`;
+    }
+    used.add(folder.toLowerCase());
+    groups.push({id: g.id, name: g.name, color: g.color, folder, members: g.members});
+  }
+  return {objects: ordered, groups};
+}
+
+/** A zip entry's path for an object's file: in its group's folder, if it has one. */
+export function exportPath(o: ExportedObject, groups: ReadonlyArray<ExportGroup>, ext: string): string {
+  const g = groups.find(x => x.id === o.group?.id);
+  return g != null ? `${g.folder}/${o.name}${ext}` : `${o.name}${ext}`;
+}
+
+/** The union file of a group in a zip: "<folder>/<folder> union<ext>", moved aside if a member has that name. */
+export function unionPath(g: ExportGroup, objects: ReadonlyArray<ExportedObject>, ext: string): string {
+  const taken = new Set(objects.filter(o => o.group?.id === g.id).map(o => o.name.toLowerCase()));
+  let name = `${g.folder} union`;
+  for (let k = 2; taken.has(name.toLowerCase()); k++) {
+    name = `${g.folder} union (${k})`;
+  }
+  return `${g.folder}/${name}${ext}`;
+}
+
+/** The roto folder's union matte of a group for 0-based frame i. */
+export function unionMatteName(g: ExportGroup, frame: number): string {
+  return `data/groups/${g.folder}/union/${String(frame + 1).padStart(5, '0')}.png`;
+}
 
 /** `maskAt` with every absent frame empty (null), even from a track made before the range. */
 export function withoutAbsent<T>(
@@ -53,7 +139,13 @@ const KIND_TITLE: Record<ExportKind, string> = {
 };
 
 /** README.txt of an export zip. */
-export function readme(kind: ExportKind, p: Provenance, objects: ReadonlyArray<ExportedObject>): string {
+export function readme(
+  kind: ExportKind,
+  p: Provenance,
+  objects: ReadonlyArray<ExportedObject>,
+  groups: ReadonlyArray<ExportGroup> = [],
+  union = false,
+): string {
   const lines = [
     'sam-ui export',
     '',
@@ -70,10 +162,20 @@ export function readme(kind: ExportKind, p: Provenance, objects: ReadonlyArray<E
     'Objects:',
     ...objects.map(
       o =>
-        `  ${o.name}: object id ${o.objectId}, named "${o.label}", ${o.state}${o.model != null && o.model !== p.model ? `, model ${o.model}` : ''}`,
+        `  ${o.name}: object id ${o.objectId}, named "${o.label}", ${o.state}${o.model != null && o.model !== p.model ? `, model ${o.model}` : ''}${o.group != null ? `, group "${o.group.name}"` : ''}`,
     ),
     '',
   ];
+  if (groups.length > 0) {
+    lines.push(
+      'Groups (each in its own folder):',
+      ...groups.map(
+        g =>
+          `  ${g.name}: folder "${kind === 'folder' ? `data/groups/${g.folder}` : g.folder}", ${g.members.length} ${g.members.length === 1 ? 'object' : 'objects'}${union ? ', with a union mask' : ''}`,
+      ),
+      '',
+    );
+  }
   if (kind === 'videos') {
     lines.push(
       'The videos are the size of the source (padded by one black row or column where',
@@ -96,6 +198,8 @@ export function rotoDecisions(
   objects: ReadonlyArray<ExportedObject>,
   seedsOf: (objectId: number) => Seeds,
   framesOf: (objectId: number) => number,
+  groups: ReadonlyArray<ExportGroup> = [],
+  union = false,
 ): Record<string, string> {
   const products = objects.map(o => ({
     id: o.name,
@@ -103,7 +207,16 @@ export function rotoDecisions(
     prompt: o.prompt,
     color: o.color,
     status: 'confirmed',
-    meta: {sam_ui_object: o.objectId, name: o.label},
+    meta: {sam_ui_object: o.objectId, name: o.label, ...(o.group != null ? {group: o.group} : {})},
+  }));
+  const pid = new Map(objects.map(o => [o.objectId, o.name]));
+  const groupEntries = groups.map(g => ({
+    id: g.id,
+    name: g.name,
+    color: g.color,
+    folder: g.folder,
+    members: g.members.map(m => pid.get(m)!).filter(x => x != null),
+    union,
   }));
   const anchors: Record<string, {points: Record<string, number[][]>}> = {};
   for (const o of objects) {
@@ -126,21 +239,34 @@ export function rotoDecisions(
     products: Object.fromEntries(
       objects.map(o => [
         o.name,
-        {object_id: o.objectId, state: o.state, engine: p.engine, model: o.model ?? p.model, frames: [0, p.frames - 1], n_frames: framesOf(o.objectId)},
+        {
+          object_id: o.objectId,
+          state: o.state,
+          engine: p.engine,
+          model: o.model ?? p.model,
+          frames: [0, p.frames - 1],
+          n_frames: framesOf(o.objectId),
+          group: o.group ?? null,
+        },
       ]),
     ),
     skipped: {},
     n_frames: p.frames,
+    groups: groupEntries,
     frames_extracted: false,
   };
   const json = (v: unknown) => JSON.stringify(v, null, 1);
-  return {
+  const files: Record<string, string> = {
     'products.json': json({products}),
     'anchors.json': json(anchors),
     'shots.json': json({cuts: [1], unsure: []}),
     'data/review.json': '{}',
     'notes/sam-ui-export.json': json(manifest),
   };
+  for (const {folder, ...g} of groupEntries) {
+    files[`data/groups/${folder}/group.json`] = json(g);
+  }
+  return files;
 }
 
 /** The matte's file name for 0-based frame i: clip frames are 1-based, 5 digits. */

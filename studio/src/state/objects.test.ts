@@ -9,7 +9,9 @@ import {
   comparableIds,
   preferredEngine,
   dirtyIds,
+  groupDirtyIds,
   initialState,
+  orderedObjects,
   needsPositiveClick,
   jobProgress,
   nextObjectId,
@@ -419,6 +421,51 @@ describe('absent ranges', () => {
     let s = run([{type: 'restore', objects: [tracked]}]);
     s = run([{type: 'setRanges', id: 1, ranges: [{start: 4, end: 5, state: 'absent'}, {start: 6, end: 6, state: 'absent'}]}], s);
     expect(byId(s, 1).state).toBe('tracked');
+  });
+});
+
+describe('the object layout (issue #21)', () => {
+  const cast = {id: 'cast', name: 'Cast', color: '#ff4fa3', members: [3, 1], collapsed: false, hidden: false};
+
+  it('starts in creation order, and a stored layout reorders the list without touching tracks', () => {
+    let s = run([{type: 'restore', objects: [server(1, 'tracked'), server(2, 'tracked'), server(3, 'tracked')]}]);
+    expect(orderedObjects(s).map(o => o.id)).toEqual([1, 2, 3]);
+    s = run([{type: 'setLayout', layout: {order: [2, 3, 1], groups: [cast]}}], s);
+    expect(orderedObjects(s).map(o => o.id)).toEqual([2, 3, 1]);
+    expect(s.objects.map(o => o.state)).toEqual(['tracked', 'tracked', 'tracked']);
+    expect(dirtyIds(s)).toEqual([]);
+  });
+
+  it('applies layout actions, and a new object goes last', () => {
+    let s = run([{type: 'restore', objects: [server(1, 'tracked'), server(2, 'tracked')]}]);
+    s = run([{type: 'layout', action: {type: 'stepObject', id: 2, dir: -1}}, {type: 'add', id: 5}], s);
+    expect(orderedObjects(s).map(o => o.id)).toEqual([2, 1, 5]);
+    expect(s.layout.order).toEqual([2, 1, 5]);
+  });
+
+  it('a removed object leaves the order and its group; a reset forgets the layout', () => {
+    let s = run([
+      {type: 'restore', objects: [server(1, 'tracked'), server(2, 'tracked'), server(3, 'tracked')]},
+      {type: 'setLayout', layout: {order: [2, 3, 1], groups: [cast]}},
+      {type: 'removed', id: 3},
+    ]);
+    expect(s.layout).toEqual({order: [2, 1], groups: [{...cast, members: [1]}]});
+    s = run([{type: 'reset'}], s);
+    expect(s.layout).toEqual({order: [], groups: []});
+  });
+
+  it("a group's Track runs only its stale or untracked members", () => {
+    let s = run([
+      {
+        type: 'restore',
+        objects: [server(1, 'stale'), server(2, 'untracked'), server(3, 'tracked'), server(4, 'untracked', [])],
+      },
+      {type: 'setLayout', layout: {order: [], groups: [{...cast, members: [1, 3, 4]}]}},
+    ]);
+    expect(groupDirtyIds(s, 'cast')).toEqual([1]); // 3 is tracked, 4 has no clicks, 2 is not a member
+    s = run([{type: 'trackStarted', key: 1, ids: [1]}], s);
+    expect(groupDirtyIds(s, 'cast')).toEqual([]); // held by the job
+    expect(groupDirtyIds(s, 'nope')).toEqual([]);
   });
 });
 
