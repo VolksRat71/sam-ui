@@ -8,6 +8,7 @@ import {readJson, writeJson} from '~/lib/storage';
 import type {MediaApi} from '~/media/mediaApi';
 import useLocalMedia from '~/media/useLocalMedia';
 import useServerMedia from '~/media/useServerMedia';
+import useUploads from '~/media/uploads';
 import {afterDelete} from '~/state/media';
 import type {VideoItem} from '~/workspace/useStudioSession';
 
@@ -77,6 +78,10 @@ function App({media}: {media: MediaApi}) {
     [media, current, videos],
   );
 
+  // held here, not in the Media section, so an upload outlives the section
+  // being hidden or remounted (a layout switch, a video switch)
+  const uploads = useUploads(media.add, added, media.limits);
+
   const renderMedia = useCallback(
     (locked: boolean) => (
       <MediaSection
@@ -84,14 +89,12 @@ function App({media}: {media: MediaApi}) {
         current={current}
         locked={locked}
         offline={media.offline}
-        limits={media.limits}
         onSelect={select}
-        onAdd={media.add}
-        onAdded={added}
+        uploads={uploads}
         onDelete={setDeleting}
       />
     ),
-    [videos, current, media, select, added],
+    [videos, current, media, select, uploads],
   );
 
   const dialog =

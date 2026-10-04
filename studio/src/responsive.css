@@ -1,0 +1,496 @@
+/* sam-ui (Apache-2.0). New file, not from SAM 2.
+ *
+ * Phones, tablets and foldables. styles.css is the desktop layout; this file
+ * only adds to it, and changes nothing at or above the desktop width with a
+ * mouse. The breakpoints are lib/layout.ts's (keep them in step):
+ *
+ *   desktop          width >= 1024                       resizable panes, unchanged
+ *   tablet           width 600-1023, not a phone on its side
+ *                      upright: preview, timeline, panel, stacked
+ *                      on its side: preview over timeline, panel beside them
+ *   phone-landscape  width < 1024, landscape, height <= 500
+ *                      preview on the left, timeline over panel on the right
+ *   phone-portrait   width < 600, not landscape-and-short
+ *                      preview, timeline, panel, stacked
+ *
+ * Below the desktop width the side panel's sections are tabs (Sidebar.tsx).
+ * The panes are react-resizable-panels panels, which set their flex sizes
+ * inline: the compact layouts place them on a grid instead (grid ignores flex
+ * sizes) and hide the dividers, so no component needs a second layout. The
+ * !important is there only to beat those inline styles.
+ *
+ * Touch-sized controls (44 px) apply on a coarse pointer at any width, and
+ * below the desktop width. */
+
+/* -- everywhere: safe areas (0 on a desktop, so max() keeps the 8 px) -------- */
+
+.app {
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-right: max(8px, env(safe-area-inset-right, 0px));
+  padding-bottom: max(8px, env(safe-area-inset-bottom, 0px));
+  padding-left: max(8px, env(safe-area-inset-left, 0px));
+}
+.toast {
+  right: max(16px, env(safe-area-inset-right, 0px));
+  bottom: max(16px, env(safe-area-inset-bottom, 0px));
+}
+
+/* the preview owns its touches: no page scroll, browser zoom or callout */
+.stage {
+  touch-action: none;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+/* a point marker's finger-sized target (Preview.tsx); a mouse uses the marker */
+.point .point-hit {
+  display: none;
+  fill: transparent;
+  stroke: none;
+}
+
+/* -- touch-sized controls ------------------------------------------------------ */
+
+@media (pointer: coarse), (max-width: 1023.98px) {
+  button,
+  [role='tab'],
+  label {
+    touch-action: manipulation; /* no double-tap zoom, no click delay */
+  }
+  .button,
+  .button.cta,
+  .toggle,
+  .segmented .toggle {
+    height: 44px;
+  }
+  .icon-button {
+    width: 44px;
+    height: 44px;
+  }
+  .zoom-level {
+    height: 44px;
+  }
+  .section-header {
+    height: 44px;
+  }
+  .effect-group-title {
+    min-height: 44px;
+  }
+  .link-button {
+    min-height: 44px;
+    padding: 0 2px;
+  }
+  .menu-item,
+  .engine-option-head {
+    min-height: 44px;
+    justify-content: center;
+  }
+  .engine-option-head {
+    align-items: center;
+  }
+  .check,
+  .engine-check,
+  .radio-group label,
+  .export-options label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 44px;
+  }
+  .dropzone {
+    min-height: 48px;
+  }
+  /* 16 px text in a field stops iOS zooming the page when it takes focus */
+  .field input,
+  .export-table input:not([type='checkbox']):not([type='color']) {
+    height: 44px;
+    font-size: 16px;
+  }
+  .object-name-input {
+    height: 36px;
+    font-size: 16px;
+  }
+  .export-table input[type='color'] {
+    width: 44px;
+    height: 44px;
+  }
+  /* one lane per object: tall enough to tap */
+  .swimlane,
+  .lane-label {
+    height: 44px;
+  }
+  /* small marks keep their look and get a 44 px target around them */
+  .rename-button,
+  .chip-close {
+    position: relative;
+  }
+  .icon-button.rename-button {
+    width: 32px;
+    height: 32px;
+    flex: none;
+  }
+  /* list rows never outgrow a narrow panel (a grid item's minimum is its content) */
+  .object-list,
+  .media-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .rename-button::after,
+  .chip-close::after,
+  .swimlane-seed::after,
+  .swimlane-flag::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 44px;
+    height: 44px;
+    transform: translate(-50%, -50%);
+  }
+}
+
+@media (pointer: coarse) {
+  .point .point-hit {
+    display: inline;
+  }
+  /* a divider a finger can find (desktop layout on a tablet) */
+  .resize-handle.vertical {
+    width: 14px;
+  }
+  .resize-handle.horizontal {
+    height: 14px;
+  }
+  .resize-handle.vertical::after {
+    left: 6px;
+  }
+  .resize-handle.horizontal::after {
+    top: 6px;
+  }
+}
+
+/* nothing shows only on hover where there is no hover */
+@media (hover: none) {
+  .rename-button {
+    opacity: 1;
+  }
+  .resize-handle::after {
+    opacity: 1;
+  }
+}
+
+/* -- compact layouts: below the desktop width ---------------------------------- */
+
+@media (max-width: 1023.98px) {
+  body {
+    overscroll-behavior: none; /* no pull-to-refresh out of the editor */
+  }
+
+  .topbar {
+    flex-wrap: wrap;
+    height: auto;
+    min-height: 52px;
+    padding: 6px 0;
+    gap: 8px 12px;
+  }
+  .topbar-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    margin-left: auto;
+    min-width: 0;
+  }
+  .topbar-status {
+    order: 3;
+    flex: 1 0 100%;
+  }
+  .topbar-status:empty {
+    display: none;
+  }
+  .brand {
+    font-size: 0; /* just the mark: the words would take the actions' row */
+  }
+  /* the engine's name gives way first, then Start over keeps only its icon
+     (its label stays its accessible name) */
+  .engine-picker {
+    min-width: 0;
+  }
+  .engine-button {
+    max-width: 100%;
+  }
+  .engine-button > span:first-child {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .topbar-actions > .button.subtle {
+    font-size: 0;
+    gap: 0;
+    padding: 0 13px;
+  }
+
+  /* the panes, on a grid: upright tablet (and phone, below) by default */
+  .main {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) clamp(150px, 22%, 240px) minmax(0, 0.85fr);
+    grid-template-areas: 'preview' 'timeline' 'panel';
+    gap: 8px;
+  }
+  .main > [data-panel-id='top'],
+  .main > [data-panel-id='top'] > [data-panel-group] {
+    display: contents !important;
+  }
+  .main .resize-handle {
+    display: none !important;
+  }
+  .main [data-panel-id='preview'] {
+    grid-area: preview;
+  }
+  .main [data-panel-id='timeline'] {
+    grid-area: timeline;
+  }
+  .main [data-panel-id='sidebar'] {
+    grid-area: panel;
+  }
+
+  /* the side panel's sections as tabs (Sidebar.tsx) */
+  .section-tabs {
+    display: flex;
+    flex: none;
+    border-bottom: 1px solid var(--line);
+    background: var(--panel-raised);
+  }
+  .section-tab {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-width: 0;
+    min-height: 44px;
+    padding: 0 8px;
+    border: none;
+    border-bottom: 2px solid transparent;
+    background: none;
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+  .section-tab .section-title {
+    flex: none;
+  }
+  .section-tab.selected {
+    color: var(--text);
+    border-bottom-color: #fff;
+  }
+  .sidebar.tabbed .section-body[hidden] {
+    display: none;
+  }
+
+  .preview-status {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .frame-counter {
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .lane-labels {
+    width: 56px;
+  }
+  .lane-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* popovers become a sheet along the bottom: a popover anchored to a
+     button can run off a narrow screen */
+  .engine-menu {
+    position: fixed;
+    top: auto;
+    left: max(8px, env(safe-area-inset-left, 0px));
+    right: max(8px, env(safe-area-inset-right, 0px));
+    bottom: max(8px, env(safe-area-inset-bottom, 0px));
+    z-index: 40;
+    width: auto;
+    max-width: 560px;
+    max-height: 75vh;
+    max-height: 75dvh;
+    margin: 0 auto;
+    overflow-y: auto;
+    border-radius: 12px;
+    box-shadow: 0 -8px 40px #000c;
+  }
+  /* a disabled entry's reason opens under it (on tap: it takes focus), not
+     beside the sheet */
+  .menu-item.engine-off .engine-tip,
+  .engine-option.engine-off .engine-tip {
+    position: static;
+    width: auto;
+    max-width: none;
+    margin: 6px 0 0;
+  }
+  .demo-tag .engine-tip {
+    max-width: min(260px, calc(100vw - 32px));
+  }
+
+  .toast {
+    left: max(8px, env(safe-area-inset-left, 0px));
+    right: max(8px, env(safe-area-inset-right, 0px));
+    bottom: max(8px, env(safe-area-inset-bottom, 0px));
+    max-width: none;
+  }
+  .modal-backdrop {
+    padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px)
+      env(safe-area-inset-left, 0px);
+  }
+  .modal {
+    max-height: calc(100vh - 32px);
+    max-height: calc(100dvh - 32px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+    overflow: auto;
+  }
+}
+
+/* tablet on its side (or a short, narrow window): the panel beside the preview */
+@media (max-width: 1023.98px) and (min-width: 600px) and (orientation: landscape) and (min-height: 500.02px) {
+  .main {
+    grid-template-columns: minmax(0, 1fr) minmax(280px, 36%);
+    grid-template-rows: minmax(0, 1fr) clamp(150px, 28%, 220px);
+    grid-template-areas:
+      'preview panel'
+      'timeline panel';
+  }
+}
+
+/* -- phones --------------------------------------------------------------------- */
+
+/* phone held upright: lib/layout.ts's phone-portrait, exactly */
+@media (max-width: 599.98px) and (orientation: portrait), (max-width: 599.98px) and (min-height: 500.02px) {
+  .main {
+    grid-template-rows: minmax(0, 1.3fr) clamp(150px, 24%, 220px) minmax(0, 1fr);
+  }
+  /* the top bar in two rows: engine, then Track (wide), Export, Start over */
+  .topbar-actions {
+    flex: 1 1 0;
+  }
+  .engine-picker {
+    flex: 1 1 0; /* shares the first row with the demo tag */
+    min-width: 120px;
+  }
+  .engine-button {
+    width: 100%;
+  }
+  .topbar-actions > .gradient-border {
+    flex: 1 1 auto;
+  }
+  .topbar-actions > .gradient-border > .cta {
+    width: 100%;
+    justify-content: center;
+  }
+  .demo-banner {
+    padding: 6px 8px;
+    font-size: 12px;
+  }
+  .preview-toolbar {
+    flex-wrap: wrap;
+    gap: 6px 8px;
+    padding: 6px;
+  }
+  .preview-status {
+    order: 3;
+    flex: 1 0 100%;
+    font-size: 12px;
+  }
+  .zoom-controls {
+    margin-left: auto;
+  }
+  .toggle {
+    padding: 0 12px;
+  }
+  .stage {
+    padding: 0 6px 6px;
+  }
+  .timeline {
+    padding: 4px 8px 8px;
+  }
+  .frame-counter {
+    margin-left: 6px;
+  }
+}
+
+/* both phones: a tighter top bar */
+@media (max-width: 599.98px), (max-width: 1023.98px) and (orientation: landscape) and (max-height: 500px) {
+  .topbar {
+    gap: 6px 8px;
+  }
+  .topbar-actions {
+    gap: 6px;
+  }
+}
+
+/* a tablet or a phone on its side: the top bar in one row, height is scarce */
+@media (max-width: 1023.98px) and (min-width: 600px) and (orientation: landscape),
+  (max-width: 1023.98px) and (orientation: landscape) and (max-height: 500px) {
+  .topbar {
+    flex-wrap: nowrap;
+  }
+  .topbar-status {
+    order: 0;
+    flex: 1 1 0;
+  }
+  .topbar-actions {
+    flex: 0 1 auto;
+    flex-wrap: nowrap;
+  }
+  .topbar-actions > * {
+    flex-shrink: 0;
+  }
+  .topbar-actions > .engine-picker {
+    flex-shrink: 1;
+  }
+}
+
+/* phone on its side: preview on the left, full height; timeline over panel */
+@media (max-width: 1023.98px) and (orientation: landscape) and (max-height: 500px) {
+  .app {
+    gap: 6px;
+  }
+  .topbar {
+    min-height: 0;
+    padding: 4px 0;
+  }
+  .main {
+    grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr);
+    grid-template-rows: clamp(118px, 45%, 170px) minmax(0, 1fr);
+    grid-template-areas:
+      'preview timeline'
+      'preview panel';
+    gap: 6px;
+  }
+  .demo-banner {
+    padding: 4px 8px;
+    font-size: 12px;
+  }
+  .preview-toolbar {
+    padding: 4px 6px;
+    gap: 8px;
+  }
+  .stage {
+    padding: 0 4px 4px;
+  }
+  .timeline {
+    padding: 4px 8px 6px;
+  }
+  .frame-counter .muted {
+    display: none; /* the frame number is what matters at this size */
+  }
+}
+
+/* the narrowest phones (a folded foldable's cover screen): Export keeps only
+   its icons, so Track, Export and Start over share a row */
+@media (max-width: 374.98px) {
+  .export-menu > .button {
+    font-size: 0;
+    gap: 2px;
+  }
+}
