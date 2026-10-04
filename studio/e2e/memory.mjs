@@ -317,11 +317,16 @@ try {
     await page.click('.export-menu > button');
     await page.click('.menu-item:has-text("Mask videos")');
     await page.waitForSelector('.modal');
-    const downloaded = page.waitForEvent('download', {timeout: 3600000});
+    const done = {v: null, error: null};
+    // Observe rejection before clicking: even a failed click closes the page
+    // in finally, which rejects any outstanding download wait.
+    page.waitForEvent('download', {timeout: 3600000}).then(
+      d => { done.v = d; },
+      error => { done.error = error; },
+    );
     await page.click('.modal button.primary');
-    const done = {v: null};
-    downloaded.then(d => (done.v = d));
     for (let last = 0; done.v == null; ) {
+      if (done.error != null) throw done.error;
       if (Date.now() - last >= EVERY) {
         last = Date.now();
         await sample();
