@@ -13,6 +13,7 @@ it at a scratch backend; --api is required so it never defaults to one in use.
 
     python tools/track_cache_e2e.py --api http://127.0.0.1:7373 --correction  # any time
     python tools/track_cache_e2e.py --api http://127.0.0.1:7373 --responsive  # any time
+    python tools/track_cache_e2e.py --api http://127.0.0.1:7373 --absent      # any time
 
 Phase 1 leaves its upload for phase 2 (remembered in ~/.cache/sam-ui-e2e/),
 which deletes it. A phase 1 that finds a leftover from an earlier run deletes
@@ -29,6 +30,12 @@ orange half must grow the red-only track to the whole bar. (SAM 2 needs a
 positive on the frame: a lone negative is refused, see needs_positive.)
 Responsive: while a track job runs, a click on another object must answer in
 well under a frame's worth of the job, and the job must still finish.
+Absent: a red square leaves the shot on frame 12 and comes back elsewhere on
+frame 20, while a look-alike stands in for it. Clicked once on each side and
+marked absent 12-19 (setObjectRange), the job must stream the gap empty,
+track both sides, refuse a negative click inside the gap, and re-track only
+the far side after a far-side click. /export must write empty mattes for the
+gap. A positive inside the gap then ends the absence at its frame.
 """
 import argparse
 import json
@@ -257,6 +264,110 @@ def correction():
         check(red > 2400 and org < 100, f"after the re-track, frame {g} is red only ({red} red, {org} orange px)")
 
 
+GAP = (12, 19)
+
+
+def make_gap(path: Path, n=30):
+    """tests/test_ranges.py's clip: the square is gone on 12-19, a look-alike is not."""
+    import av
+    bg = np.random.default_rng().integers(90, 140, (H, W, 3), dtype=np.uint8)
+    out = av.open(str(path), "w")
+    st = out.add_stream("libx264", rate=24, options={"crf": "12"})
+    st.width, st.height, st.pix_fmt = W, H, "yuv420p"
+    for i in range(n):
+        img = bg.copy()
+        if i < GAP[0]:
+            img[30:30 + S, 10 + 6 * i:10 + 6 * i + S] = (220, 40, 40)
+        elif i > GAP[1]:
+            x = 250 - 6 * (i - GAP[1] - 1)
+            img[160:160 + S, x:x + S] = (220, 40, 40)
+        else:
+            img[100:100 + S, 180:180 + S] = (220, 40, 40)  # the look-alike
+        for pkt in st.encode(av.VideoFrame.from_ndarray(img, format="rgb24")):
+            out.mux(pkt)
+    for pkt in st.encode():
+        out.mux(pkt)
+    out.close()
+
+
+def gap_truth(i):
+    m = np.zeros((H, W), bool)
+    if i < GAP[0]:
+        m[30:30 + S, 10 + 6 * i:10 + 6 * i + S] = True
+    elif i > GAP[1]:
+        x = 250 - 6 * (i - GAP[1] - 1)
+        m[160:160 + S, x:x + S] = True
+    return m
+
+
+def absent():
+    from PIL import Image
+
+    use_clip(make_gap, "gap.mp4")
+    sid, _ = start()
+    gql('mutation($s: String!) { clearPointsInVideo(input: {sessionId: $s}) { success } }', {"s": sid})
+
+    def add(frame):
+        ys, xs = np.nonzero(gap_truth(frame))
+        return gql('mutation($i: AddPointsInput!) { addPoints(input: $i) { frameIndex } }',
+                   {"i": {"sessionId": sid, "frameIndex": frame, "objectId": 0, "clearOldPoints": True,
+                          "labels": [1], "points": [[xs.mean() / W, ys.mean() / H]]}})
+
+    def iou(a, b):
+        u = (a | b).sum()
+        return 1.0 if u == 0 else float((a & b).sum() / u)
+
+    add(0), add(24)
+    r = gql('mutation($i: SetObjectRangeInput!) { setObjectRange(input: $i) { state ranges { start end state } } }',
+            {"i": {"sessionId": sid, "objectId": 0, "start": GAP[0], "end": GAP[1], "state": "absent"}})
+    check(r["setObjectRange"]["ranges"] == [{"start": GAP[0], "end": GAP[1], "state": "absent"}],
+          f"setObjectRange marks {GAP[0]}-{GAP[1]} absent")
+    _, frames, t = post_stream("/track_objects", {"session_id": sid})
+    fr = {f: m[0] for f, m in frames}
+    check(sorted(f for f, _ in frames) == list(range(30)), f"the job streams every frame once ({t:.1f} s)")
+    gap_px = [int(fr[f].sum()) for f in range(GAP[0], GAP[1] + 1)]
+    check(not any(gap_px), f"the gap is empty ({gap_px})")
+    near = min(iou(fr[f], gap_truth(f)) for f in range(GAP[0]))
+    far = min(iou(fr[f], gap_truth(f)) for f in range(GAP[1] + 1, 30))
+    check(near > 0.9 and far > 0.9, f"both sides track the square (min IoU near {near:.3f}, far {far:.3f})")
+    # a negative-only click inside the gap is refused; engine sam3 takes lone
+    # negatives, so it meets the absent check rather than SAM 2's needs_positive
+    req = urllib.request.Request(f"{API}/graphql", json.dumps({
+        "query": 'mutation($i: AddPointsInput!) { addPoints(input: $i) { frameIndex } }',
+        "variables": {"i": {"sessionId": sid, "frameIndex": 15, "objectId": 0, "clearOldPoints": True,
+                            "labels": [0], "points": [[0.5, 0.5]], "engine": "sam3"}}}).encode(),
+        {"Content-Type": "application/json"})
+    errors = json.load(urllib.request.urlopen(req)).get("errors") or []
+    check(any("marked absent" in e.get("message", "") for e in errors), "a negative click inside the gap is refused")
+    add(27)
+    _, frames, t = post_stream("/track_objects", {"session_id": sid})
+    fr = {f: m[0] for f, m in frames}
+    check(sorted(fr) == list(range(30)) and not any(fr[f].any() for f in range(GAP[0], GAP[1] + 1)),
+          f"a far-side click re-tracks with the gap still empty ({t:.1f} s, the near side from the cache)")
+    out = Path.home() / "Movies" / f"sam-ui-e2e-absent-{uuid.uuid4().hex[:8]}"
+    try:
+        req = urllib.request.Request(f"{API}/export", json.dumps({"session_id": sid, "out_dir": str(out)}).encode(),
+                                     {"Content-Type": "application/json"})
+        json.load(urllib.request.urlopen(req))
+        mattes = out / "data" / "mattes_tracked" / "object_0"
+        lit = {i: int((np.asarray(Image.open(mattes / f"{i + 1:05d}.png")) > 127).sum()) for i in range(30)}
+        check(not any(lit[f] for f in range(GAP[0], GAP[1] + 1)) and all(lit[f] for f in (0, 11, 20, 29)),
+              "/export writes empty mattes for the gap, full ones on both sides")
+    finally:
+        import shutil
+        shutil.rmtree(out, ignore_errors=True)
+    # a positive inside the gap says the square is back: the absence ends there
+    # (Nate, 2026-10-02), so 12-19 becomes 12-14 and the click is a seed
+    gql('mutation($i: AddPointsInput!) { addPoints(input: $i) { frameIndex } }',
+        {"i": {"sessionId": sid, "frameIndex": 15, "objectId": 0, "clearOldPoints": True,
+               "labels": [1], "points": [[0.5, 0.5]]}})
+    obj = next(o for o in gql('query($s: String!) { objectTracks(sessionId: $s) '
+                              '{ objectId state ranges { start end state } } }', {"s": sid})["objectTracks"]
+               if o["objectId"] == 0)
+    check(obj["ranges"] == [{"start": GAP[0], "end": 14, "state": "absent"}] and obj["state"] == "stale",
+          f"a positive inside the gap ends the absence there ({obj['ranges']}, {obj['state']})")
+
+
 def responsive():
     import threading
     sid, _ = start()
@@ -284,9 +395,15 @@ if __name__ == "__main__":
     ap.add_argument("--after-restart", action="store_true")
     ap.add_argument("--correction", action="store_true")
     ap.add_argument("--responsive", action="store_true")
+    ap.add_argument("--absent", action="store_true")
     a = ap.parse_args()
     API = a.api.rstrip("/")
-    if a.correction or a.responsive:
+    if a.absent:
+        try:
+            absent()
+        finally:
+            cleanup(REL)
+    elif a.correction or a.responsive:
         try:
             correction() if a.correction else (use_clip(make_video, "squares.mp4"), responsive())
         finally:

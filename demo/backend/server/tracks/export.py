@@ -16,6 +16,10 @@ steps run on sam-ui's tracks unchanged:
 the objects to export and names them; without it every object is exported
 with default names (object_<n>, palette colours).
 
+Frames inside an object's absent ranges (tracks/ranges.py) are written as
+empty mattes, even from a stale track made before the range was marked, and
+clicks inside them are left out of anchors.json: the object is not there.
+
 Frames are numbered from 1 in the working folder and from 0 in sam-ui, so
 sam-ui frame i is file (i + 1). Only tracked objects are exported unless
 include_stale; untracked ones are listed as skipped.
@@ -69,6 +73,7 @@ import numpy as np
 from PIL import Image
 
 from tracks import rle
+from tracks.ranges import absent_at
 from tracks.store import STALE, TRACKED
 
 PALETTE = ["#b4ff00", "#ff4fa3", "#3fd0ff", "#ffb020", "#9b6bff", "#2fe38a", "#ff5a36", "#f2f25a"]
@@ -220,8 +225,11 @@ def export(service, video: str, video_path: str, out_dir: str, objects: Optional
             shutil.rmtree(mdir)
         mdir.mkdir()
         size = None
+        ranges = info.get("ranges") or []
         for frame, r in service.tracks.masks(video, o, engine):
             m = rle.decode(r)
+            if absent_at(ranges, frame):
+                m[:] = False
             size = m.shape
             png = io.BytesIO()
             Image.fromarray((m * 255).astype(np.uint8)).save(png, format="PNG")
@@ -232,6 +240,8 @@ def export(service, video: str, video_path: str, out_dir: str, objects: Optional
         for frame, seed in sorted(info["seeds"].items()):
             if w is None:
                 break
+            if absent_at(ranges, frame):
+                continue
             points[str(frame + 1)] = [[round(x * w), round(y * h), int(lab)]
                                       for (x, y), lab in zip(seed["points"], seed["labels"])]
         if points:
@@ -239,7 +249,8 @@ def export(service, video: str, video_path: str, out_dir: str, objects: Optional
         products.append({"id": spec["id"], "shots": [1], "prompt": spec["prompt"], "color": spec["color"],
                          "status": "confirmed", "meta": {"sam_ui_object": o}})
         provenance[spec["id"]] = {"object_id": o, "state": info["state"], "engine": info["engine"],
-                                  "model": info["model"], "frames": info["frames"], "n_frames": info["n_frames"]}
+                                  "model": info["model"], "frames": info["frames"], "n_frames": info["n_frames"],
+                                  "ranges": ranges}
 
     write(out / "products.json", json.dumps({"products": products}, indent=1).encode())
     write(out / "anchors.json", json.dumps(anchors, indent=1).encode())

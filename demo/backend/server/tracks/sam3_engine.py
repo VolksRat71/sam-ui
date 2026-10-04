@@ -12,17 +12,18 @@ copied into this repository.
 Measured on the synthetic squares (MPS, fp32): IoU min 0.989 against SAM 2's
 0.974, at 1.43 s/frame against SAM 2's 0.61, with about 20 GB of MPS driver
 memory. Hence opt-in, per track job.
+
+Absent ranges (issue #20): each window of frames between them gets a session
+of its own, seeded only from its seeds, so nothing crosses a gap.
 """
 import importlib.util
 import os
 import threading
 from pathlib import Path
-from typing import Dict, Iterator, Optional
-
-import numpy as np
+from typing import Dict, Iterator, List, Optional
 
 from tracks import rle
-from tracks.engine import FrameMasks
+from tracks.engine import FrameMasks, Unit, Windows, plan_units
 from tracks.seeds import Seeds
 from tracks.streaming import Sam3Frames, sam3_prune
 
@@ -75,25 +76,41 @@ class Sam3Engine:
                 self._loaded = (proc, model, dev)
         return self._loaded
 
-    def track(self, video_path: str, objects: Dict[int, Seeds], video_handle=None) -> Iterator[FrameMasks]:
+    def plan(self, objects: Dict[int, Seeds], windows: Optional[Windows] = None) -> List[Unit]:
+        """One session per window, all of the window's objects together (SAM 3
+        has no MPS trap to split them by first seed)."""
+        return plan_units(objects, windows, by_first_seed=False)
+
+    def track(self, video_path: str, objects: Dict[int, Seeds], video_handle=None,
+              windows: Optional[Windows] = None) -> Iterator[FrameMasks]:
         import torch
 
-        objects = {o: s for o, s in objects.items() if any(v["points"] for v in s.values())}
-        if not objects:
+        units = self.plan(objects, windows)
+        if not units:
             return
         proc, model, dev = self._load()
-        # frames processed as tracking reaches them, not the whole clip up front
+        # frames processed as tracking reaches them, not the whole clip up front;
+        # shared by every window's session
         frames = Sam3Frames(video_path, proc, dtype=torch.float32)
+        for unit in units:
+            yield from self._track_unit(proc, model, dev, frames, unit)
+
+    def _track_unit(self, proc, model, dev, frames, unit: Unit) -> Iterator[FrameMasks]:
+        """A fresh session for one window, seeded only from its seeds, tracked
+        forward to the window's end and back to its start."""
+        import torch
+
+        objects, start = unit.objects, unit.start
         h, w = frames.height, frames.width
+        limits = {False: None if unit.hi is None else unit.hi - start, True: None if unit.lo == 0 else start - unit.lo}
         with torch.inference_mode():
             sess = proc.init_video_session(inference_device=dev, video_storage_device="cpu", dtype=torch.float32)
             sess.processed_frames = frames
             sess.video_height, sess.video_width = h, w
             by_frame: Dict[int, list] = {}
             for o, seeds in objects.items():
-                for f, v in seeds.items():
-                    if v["points"]:
-                        by_frame.setdefault(f, []).append(o)
+                for f in seeds:
+                    by_frame.setdefault(f, []).append(o)
             # Frame-major, one forward per seeded frame. Replaying in frame order
             # also means an object joins the session only at its first seed frame:
             # a forward runs every registered object, and one with no conditioning
@@ -112,9 +129,9 @@ class Sam3Engine:
                 # 5.17), so name every object seeded on this frame before the forward
                 sess.obj_with_new_inputs = sorted(by_frame[f])
                 model(inference_session=sess, frame_idx=f)
-            start = min(by_frame)
             for reverse in (False, True):
-                for out in model.propagate_in_video_iterator(sess, start_frame_idx=start, reverse=reverse):
+                bound = {} if limits[reverse] is None else {"max_frame_num_to_track": limits[reverse]}
+                for out in model.propagate_in_video_iterator(sess, start_frame_idx=start, reverse=reverse, **bound):
                     sam3_prune(model, sess, out.frame_idx, start, reverse)
                     if reverse and out.frame_idx == start:
                         continue

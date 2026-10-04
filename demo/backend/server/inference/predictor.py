@@ -2,7 +2,7 @@
 # All rights reserved.
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
-# Modified by sam-ui: clicks are recorded as seeds, track jobs run through tracks/, and a correction refines the cached track mask.
+# Modified by sam-ui: clicks are recorded as seeds, track jobs run through tracks/, a correction refines the cached track mask, and a positive inside an absent range ends it there (clicks with no positive there are refused).
 
 import contextlib
 import logging
@@ -216,11 +216,25 @@ class InferenceAPI:
                 raise ValueError(f"{NEEDS_POSITIVE}: SAM 2 needs a positive click to keep part of object {obj_id} "
                                  f"on frame {frame_idx}")
 
+            # sam-ui: the object is marked absent here. Clicks with no positive
+            # have nothing to point at and are refused; the studio says so
+            # before it sends. A positive says the object is back: the absence
+            # ends at this frame (Nate, 2026-10-02), once the click has gone
+            # through, so a failed click leaves the range whole.
+            absent = self.tracks.is_absent(session["video"], obj_id, frame_idx)
+            if absent and 1 not in user_labels:
+                raise ValueError(
+                    f"frame {frame_idx} is inside a range where object {obj_id} is marked absent; "
+                    "unmark that part of the range to click here"
+                )
+
             # sam-ui: a first click on a frame SAM 2 holds no mask for (a frame
             # tracked by a job, not in this state) refines that frame's cached
             # mask, as a correction should, instead of starting from nothing.
+            # Not on a frame that was absent: a cached mask there predates the
+            # range, and is what the user said was not the object.
             primed = False
-            if not self.__has_output(inference_state, obj_id, frame_idx):
+            if not absent and not self.__has_output(inference_state, obj_id, frame_idx):
                 prime = self.tracks.prime_mask(session["video"], obj_id, frame_idx)
                 if prime is not None:
                     self.predictor.add_new_mask(
@@ -248,6 +262,8 @@ class InferenceAPI:
                 raise
 
             masks_binary = (masks > self.score_thresh)[:, 0].cpu().numpy()
+            if absent:  # a seed change, like the click: the track goes stale
+                self.tracks.end_absence_at(session["video"], obj_id, frame_idx)
             self.tracks.record_points(
                 session["video"],
                 obj_id,
@@ -503,6 +519,12 @@ class InferenceAPI:
     def object_tracks(self, session_id: str) -> List[Dict]:
         session = self.__get_session(session_id)
         return self.tracks.objects(session["video"])
+
+    def set_object_range(self, session_id: str, object_id: int, start: int, end: int, state=None) -> Dict:
+        """Mark (state "absent") or clear (None) frames start-end of an object."""
+        with self.inference_lock:  # not while a job reads the seeds
+            session = self.__get_session(session_id)
+            return self.tracks.set_range(session["video"], object_id, start, end, state)
 
     def clear_track(self, session_id: str, object_id: int, engine=None) -> Dict:
         with self.inference_lock:  # not while a job is writing

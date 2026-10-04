@@ -5,31 +5,79 @@ SAM 3 or an external pipeline can fill the same track store.
 An engine is given the video and the seeds of the objects to track, and yields
 every frame's masks for exactly those objects. It never sees the interactive
 session: each track job builds its own state and drops it afterwards.
+
+`windows` (issue #20) confines an object to spans of frames: the frames
+between its absent ranges (tracks/ranges.py). Each window is tracked on its
+own, in a fresh state seeded only from the seeds inside it, so no memory
+crosses a gap, and the engine runs on no frame outside them.
 """
 import contextlib
 from collections import OrderedDict
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterator, List, Optional, Protocol, Tuple
 
 import numpy as np
 
 from tracks import rle
+from tracks.ranges import Window, in_window
 from tracks.seeds import Seeds, cleared
 from tracks.streaming import sam2_prune
 
 FrameMasks = Tuple[int, Dict[int, np.ndarray]]
+Windows = Dict[int, List[Window]]
+WHOLE: Window = (0, None)
 
 
 class Engine(Protocol):
     name: str
     model: str
 
-    def track(self, video_path: str, objects: Dict[int, Seeds],
-              video_handle: Optional[Any] = None) -> Iterator[FrameMasks]:
+    def track(self, video_path: str, objects: Dict[int, Seeds], video_handle: Optional[Any] = None,
+              windows: Optional[Windows] = None) -> Iterator[FrameMasks]:
         """Yield (frame_idx, {obj_id: bool mask HxW}) for every frame, each frame
         once. Stopping the iteration early (a cancel) must release the job's state.
         `video_handle` is the caller's already-loaded video, if it has one (for
-        SAM 2, the interactive session's state), so a job need not decode it again."""
+        SAM 2, the interactive session's state), so a job need not decode it again.
+        With `windows`, an object listed there is tracked only inside its
+        windows, each on its own from its own seeds, and yields nothing
+        elsewhere; an object not listed has the whole clip."""
         ...
+
+
+@dataclass
+class Unit:
+    """One tracking pass: a window of frames and the objects tracked in it,
+    each with only its seeds inside the window."""
+
+    lo: int
+    hi: Optional[int]
+    objects: Dict[int, Seeds]
+
+    @property
+    def start(self) -> int:
+        """The first seeded frame: forward from here to hi, then back to lo."""
+        return min(f for s in self.objects.values() for f in s)
+
+    def n_frames(self, clip_frames: int) -> int:
+        return max(0, (clip_frames if self.hi is None else min(self.hi + 1, clip_frames)) - self.lo)
+
+
+def plan_units(objects: Dict[int, Seeds], windows: Optional[Windows] = None,
+               by_first_seed: bool = True) -> List[Unit]:
+    """Split a job into passes. Every (object, window) with a seed inside the
+    window joins the unit of objects sharing that window (and, with
+    by_first_seed, the same first seeded frame in it: SAM 2 on MPS needs that,
+    see Sam2Engine.track). Without windows every object has the whole clip,
+    which is the plan from before windows existed."""
+    by: Dict[Tuple, Dict[int, Seeds]] = {}
+    for o, s in objects.items():
+        for w in (windows or {}).get(o, [WHOLE]):
+            mine = {f: v for f, v in s.items() if v["points"] and in_window(f, w)}
+            if not mine:
+                continue
+            key = (w[0], min(mine) if by_first_seed else 0, float("inf") if w[1] is None else w[1])
+            by.setdefault(key, {})[o] = mine
+    return [Unit(k[0], None if k[2] == float("inf") else int(k[2]), by[k]) for k in sorted(by)]
 
 
 # init_state's per-object and per-job keys: a job gets fresh ones. Every other
@@ -68,26 +116,38 @@ class Sam2Engine:
         self.autocast = autocast
         self.score_thresh = score_thresh
 
-    def track(self, video_path: str, objects: Dict[int, Seeds],
-              video_handle: Optional[Dict] = None) -> Iterator[FrameMasks]:
+    def track(self, video_path: str, objects: Dict[int, Seeds], video_handle: Optional[Dict] = None,
+              windows: Optional[Windows] = None) -> Iterator[FrameMasks]:
         """Objects whose first seed is on different frames run in separate
         states, one per first-seed frame, one after another: tracked together,
         SAM 2 on MPS aborts the whole process (an MPSNDArrayMatrixMultiplication
         datatype assertion in memory attention). A frame can so be yielded once
         per group, each time with that group's objects. The backbone features
-        are cached per video, so the extra passes do not re-encode frames."""
-        objects, blank = strip_cleared(objects)
-        objects = {o: s for o, s in objects.items() if any(v["points"] for v in s.values())}
-        for group in groups_by_first_seed(objects):
-            for frame, masks in self._track_group(video_path, group, video_handle):
-                yield frame, {o: np.zeros_like(m) if frame in blank[o] else m for o, m in masks.items()}
+        are cached per video, so the extra passes do not re-encode frames.
+        Each window of an object is a unit of its own, grouped the same way
+        within the window. Cleared seeds are stripped before planning (see
+        strip_cleared), so they neither open nor condition a unit, and each
+        object's output is blanked on its cleared frames in every unit, in
+        both directions."""
+        blank = strip_cleared(objects)[1]
+        for unit in self.plan(objects, windows):
+            for frame, masks in self._track_group(video_path, unit, video_handle):
+                yield frame, {o: np.zeros_like(m) if frame in blank.get(o, ()) else m for o, m in masks.items()}
 
-    def passes(self, objects: Dict[int, Seeds]) -> int:
-        """How many times a job over `objects` runs the clip (one per group)."""
-        return max(1, len(groups_by_first_seed(strip_cleared(objects)[0])))
+    def plan(self, objects: Dict[int, Seeds], windows: Optional[Windows] = None) -> List[Unit]:
+        """The passes a job over `objects` makes, in order. Cleared seeds are
+        left out, as track() leaves them out, so a window whose only seed is
+        cleared makes no pass and an object's first seed is its first kept one."""
+        return plan_units(strip_cleared(objects)[0], windows, by_first_seed=True)
 
-    def _track_group(self, video_path: str, objects: Dict[int, Seeds],
-                     video_handle: Optional[Dict] = None) -> Iterator[FrameMasks]:
+    def passes(self, objects: Dict[int, Seeds], windows: Optional[Windows] = None) -> int:
+        """How many times a job over `objects` runs (one per unit)."""
+        return max(1, len(self.plan(objects, windows)))
+
+    def _track_group(self, video_path: str, unit: Unit, video_handle: Optional[Dict] = None) -> Iterator[FrameMasks]:
+        objects, start = unit.objects, unit.start
+        # forward to the window's end, back to its start (None: the clip's ends)
+        limits = {False: None if unit.hi is None else unit.hi - start, True: None if unit.lo == 0 else start - unit.lo}
         with self.autocast():
             if video_handle is not None:
                 state = job_state_like(video_handle)
@@ -95,12 +155,12 @@ class Sam2Engine:
                 state = self.predictor.init_state(video_path, offload_video_to_cpu=self.offload_video_to_cpu)
             try:
                 # frame-major, so each frame's backbone features serve every object
-                for frame, obj_id in sorted((f, o) for o, s in objects.items() for f, v in s.items() if v["points"]):
+                for frame, obj_id in sorted((f, o) for o, s in objects.items() for f in s):
                     seed_into_state(self.predictor, state, obj_id, frame, objects[obj_id][frame])
-                start = min(f for s in objects.values() for f, v in s.items() if v["points"])
                 for reverse in (False, True):
+                    bound = {} if limits[reverse] is None else {"max_frame_num_to_track": limits[reverse]}
                     for frame, obj_ids, masks in self.predictor.propagate_in_video(
-                            state, start_frame_idx=start, reverse=reverse):
+                            state, start_frame_idx=start, reverse=reverse, **bound):
                         # outputs the model will not read again go, so memory stays flat
                         sam2_prune(self.predictor, state, frame, start, reverse)
                         if reverse and frame == start:
@@ -148,7 +208,8 @@ def seed_into_state(predictor, state, obj_id: int, frame: int, seed: Dict) -> No
 
 class FakeEngine:
     """A deterministic engine for tests: object k's mask on frame i is a square
-    at (4k, i). Records which objects each job was asked for."""
+    at (4k, i). Records which objects each job was asked for, the windows it
+    was given, and each unit it ran: (lo, hi, {obj: its seed frames})."""
 
     name = "fake"
 
@@ -157,6 +218,8 @@ class FakeEngine:
         self.shape = shape
         self.model = model
         self.calls: List[List[int]] = []
+        self.windows: List[Optional[Windows]] = []
+        self.units: List[Tuple] = []
 
     @staticmethod
     def mask(obj_id: int, frame: int, shape=(24, 32)) -> np.ndarray:
@@ -165,8 +228,18 @@ class FakeEngine:
         m[y:y + 4, x:x + 4] = True
         return m
 
-    def track(self, video_path: str, objects: Dict[int, Seeds],
-              video_handle: Optional[Any] = None) -> Iterator[FrameMasks]:
+    def plan(self, objects: Dict[int, Seeds], windows: Optional[Windows] = None) -> List[Unit]:
+        return plan_units(objects, windows, by_first_seed=False)
+
+    def track(self, video_path: str, objects: Dict[int, Seeds], video_handle: Optional[Any] = None,
+              windows: Optional[Windows] = None) -> Iterator[FrameMasks]:
         self.calls.append(sorted(objects))
-        for i in range(self.n_frames):
-            yield i, {o: self.mask(o, i, self.shape) for o in objects}
+        self.windows.append(windows)
+        if windows is None:  # as before windows: every object, every frame, seeded or not
+            for i in range(self.n_frames):
+                yield i, {o: self.mask(o, i, self.shape) for o in objects}
+            return
+        for u in self.plan(objects, windows):
+            self.units.append((u.lo, u.hi, {o: sorted(s) for o, s in u.objects.items()}))
+            for i in range(u.lo, u.lo + u.n_frames(self.n_frames)):
+                yield i, {o: self.mask(o, i, self.shape) for o in u.objects}

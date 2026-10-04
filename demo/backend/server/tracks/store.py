@@ -9,6 +9,10 @@ An object's state is derived, never stored:
 - untracked: no track from this engine;
 - stale: a track exists, but its seeds hash or model differs from now;
 - tracked: otherwise.
+
+track.json may also hold "windows" ([{"start", "end", "key"}]): the seeded
+windows the track was made of (tracks/ranges.py), so a re-track can keep the
+ones whose inputs did not change. Tracks from before windows have none.
 """
 import json
 import os
@@ -33,7 +37,7 @@ class TrackStore:
         return self.root / video / str(int(obj_id)) / engine
 
     def save(self, video: str, obj_id: int, engine: str, model: str, seeds_hash: str,
-             frames: Dict[int, Union[np.ndarray, Dict]], elapsed_s: float) -> Dict:
+             frames: Dict[int, Union[np.ndarray, Dict]], elapsed_s: float, extra: Optional[Dict] = None) -> Dict:
         """Write a whole track, atomically: into a temp dir, then swapped in, so
         a crash mid-write leaves the previous track (or none), never half of one."""
         final = self._dir(video, obj_id, engine)
@@ -54,7 +58,8 @@ class TrackStore:
             raise
         meta = {"object_id": int(obj_id), "engine": engine, "model": model, "seeds_hash": seeds_hash,
                 "frames": [min(frames), max(frames)] if frames else None, "n_frames": len(frames),
-                "created": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "elapsed_s": round(float(elapsed_s), 3)}
+                "created": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "elapsed_s": round(float(elapsed_s), 3),
+                **(extra or {})}
         (tmp / "track.json").write_text(json.dumps(meta, indent=1))
         old = None
         if final.exists():

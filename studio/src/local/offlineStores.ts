@@ -5,6 +5,8 @@
 // the video's sha256:
 //   seeds/<video>/<obj>/seeds.json   {"<frame>": {"points", "labels", "mask"?}}
 //   seeds/<video>/<obj>/object.json  {"name"}: metadata, never in the seeds key
+//   seeds/<video>/<obj>/ranges.json  {"ranges": [{start, end, state}]}: absent
+//                                    ranges, which do join the seeds key
 //   tracks/<video>/<obj>/browser-sam2.json   one browser track
 // Removing an object removes its seeds, name and tracks; clearing the last
 // seed frame drops its tracks (a track with no seeds could never be redone).
@@ -12,6 +14,7 @@ import type {RLEObject} from '@/jscocotools/mask';
 import {BROWSER_ENGINE} from '~/state/engines';
 import {cleanObjectName} from '~/state/fileNames';
 import type {NormPoint, ServerObject} from '~/state/objects';
+import {type FrameRange, type RangeState, normalizeRanges, paintRange, rangeAt} from '~/state/ranges';
 import {type Kv, readJson, writeJson} from './kv';
 import {type LocalTrack, localTrackEntry, type LocalTrackStore, seedsKey, withLocalTracks} from './localTracks';
 
@@ -41,11 +44,12 @@ export class SeedStore {
     return new Map(Object.entries(raw ?? {}).map(([f, v]) => [Number(f), v]));
   }
 
-  /** Every object with a seeds file, in id order. */
+  /** Every object with a seeds file (or ranges, marked before any click), in id order. */
   async objects(video: string): Promise<number[]> {
     const ids: number[] = [];
     for (const name of await this._kv.list(`seeds/${video}`)) {
-      if (/^\d+$/.test(name) && (await this._kv.read(`seeds/${video}/${name}/seeds.json`)) != null) {
+      const dir = `seeds/${video}/${name}`;
+      if (/^\d+$/.test(name) && ((await this._kv.read(`${dir}/seeds.json`)) != null || (await this._kv.read(`${dir}/ranges.json`)) != null)) {
         ids.push(Number(name));
       }
     }
@@ -103,6 +107,23 @@ export class SeedStore {
 
   async clearVideo(video: string): Promise<void> {
     await this._kv.remove(`seeds/${video}`);
+  }
+
+  async ranges(video: string, obj: number): Promise<FrameRange[]> {
+    const raw = await readJson<{ranges?: FrameRange[]}>(this._kv, `${this._dir(video, obj)}/ranges.json`);
+    return normalizeRanges(raw?.ranges);
+  }
+
+  /** Frames start-end set to `state`, or cleared (null). None left: the file goes. */
+  async paintRange(video: string, obj: number, start: number, end: number, state: RangeState | null): Promise<FrameRange[]> {
+    const ranges = paintRange(await this.ranges(video, obj), start, end, state);
+    const path = `${this._dir(video, obj)}/ranges.json`;
+    if (ranges.length === 0) {
+      await this._kv.remove(path);
+    } else {
+      await writeJson(this._kv, path, {ranges});
+    }
+    return ranges;
   }
 
   async name(video: string, obj: number): Promise<string | null> {
@@ -182,7 +203,7 @@ export class KvTrackStore implements LocalTrackStore {
 }
 
 /** An object as startSession / objectTracks describe it, from the seed store (tracks added later). */
-export function offlineObject(objectId: number, seeds: Seeds): ServerObject {
+export function offlineObject(objectId: number, seeds: Seeds, ranges: ReadonlyArray<FrameRange> = []): ServerObject {
   return {
     objectId,
     state: 'untracked',
@@ -192,6 +213,7 @@ export function offlineObject(objectId: number, seeds: Seeds): ServerObject {
       .sort((a, b) => a[0] - b[0])
       .map(([frameIndex, s]) => ({frameIndex, points: s.points, labels: s.labels, mask: s.mask ?? null})),
     tracks: [],
+    ranges: [...ranges],
   };
 }
 
@@ -211,6 +233,17 @@ export class OfflineService {
 
   recordPoints(video: string, obj: number, frame: number, points: NormPoint[], mask: RLEObject | null): Promise<Seeds> {
     return this.seeds.addPoints(video, obj, frame, points.map(p => [p[0], p[1]]), points.map(p => p[2]), true, mask);
+  }
+
+  /** Mark frames start-end absent, or clear them (null). The track goes stale, as on the backend. */
+  setRange(video: string, obj: number, start: number, end: number, state: RangeState | null): Promise<FrameRange[]> {
+    return this.seeds.paintRange(video, obj, start, end, state);
+  }
+
+  /** The object is back at `frame`: the absent range holding it ends the frame before (end_absence_at). */
+  async endAbsenceAt(video: string, obj: number, frame: number): Promise<FrameRange[]> {
+    const r = rangeAt(await this.seeds.ranges(video, obj), frame);
+    return r == null ? this.seeds.ranges(video, obj) : this.seeds.paintRange(video, obj, frame, r.end, null);
   }
 
   /** Drop one seed frame; with none left, the object's track goes too. */
@@ -234,12 +267,13 @@ export class OfflineService {
   /** One object as objectTracks gives it: seeds, and the browser track's state. */
   async objectInfo(video: string, obj: number, variant: string, held: ReadonlySet<number>): Promise<ServerObject> {
     const seeds = await this.seeds.seeds(video, obj);
+    const ranges = await this.seeds.ranges(video, obj);
     const entry = localTrackEntry(await this.tracks.get(video, obj), {
-      seedsKey: seedsKey(seedPoints(seeds)),
+      seedsKey: seedsKey(seedPoints(seeds), ranges),
       variant,
       running: held.has(obj),
     });
-    return withLocalTracks([offlineObject(obj, seeds)], new Map([[obj, entry]]))[0];
+    return withLocalTracks([offlineObject(obj, seeds, ranges)], new Map([[obj, entry]]))[0];
   }
 
   async objects(video: string, variant: string, held: ReadonlySet<number> = new Set()): Promise<ServerObject[]> {

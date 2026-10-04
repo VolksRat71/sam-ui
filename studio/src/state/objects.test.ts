@@ -14,8 +14,10 @@ import {
   jobProgress,
   nextObjectId,
   reducer,
+  seedFrames,
   staleIds,
 } from './objects';
+import {absentUntilNextSeed} from './ranges';
 
 function run(actions: Action[], state: StudioState = initialState): StudioState {
   return actions.reduce(reducer, state);
@@ -384,5 +386,37 @@ describe('job progress', () => {
     s = run([{type: 'trackTotal', key: 1, total: 120}], s); // two passes
     expect(jobProgress(s.jobs[0], 60)).toEqual({done: 90, total: 120, fraction: 0.75});
     expect(jobProgress({frames: 5, total: null}, 0)).toEqual({done: 5, total: null, fraction: 0});
+  });
+});
+
+describe('absent ranges', () => {
+  it('come from the backend, and marking one makes the track stale', () => {
+    const tracked = {...server(1, 'tracked'), ranges: [{start: 4, end: 6, state: 'absent'}]};
+    let s = run([{type: 'restore', objects: [tracked, server(2, 'tracked')]}]);
+    expect(byId(s, 1).ranges).toEqual([{start: 4, end: 6, state: 'absent'}]);
+    expect(byId(s, 2).ranges).toEqual([]); // an older backend sends none
+    s = run([{type: 'setRanges', id: 2, ranges: [{start: 1, end: 2, state: 'absent'}]}], s);
+    expect(byId(s, 2).state).toBe('stale');
+    expect(dirtyIds(s)).toEqual([2]);
+    expect(byId(s, 1).state).toBe('tracked');
+  });
+
+  it('leaves the track alone when the ranges did not change', () => {
+    const tracked = {...server(1, 'tracked'), ranges: [{start: 4, end: 6, state: 'absent'}]};
+    let s = run([{type: 'restore', objects: [tracked]}]);
+    s = run([{type: 'setRanges', id: 1, ranges: [{start: 4, end: 5, state: 'absent'}, {start: 6, end: 6, state: 'absent'}]}], s);
+    expect(byId(s, 1).state).toBe('tracked');
+  });
+});
+
+describe('seed frames for "Gone for a while?"', () => {
+  it('counts a cleared seed (negatives only, from SAM 3) as the next seed', () => {
+    const s = run([
+      {type: 'restore', objects: [server(0, 'tracked')]},
+      {type: 'setPoints', id: 0, frame: 30, points: [[0.4, 0.4, 0]]},
+    ]);
+    const o = byId(s, 0);
+    expect(seedFrames(o)).toEqual([0, 30]);
+    expect(absentUntilNextSeed(seedFrames(o), 20, 100)).toEqual([20, 29]);
   });
 });
