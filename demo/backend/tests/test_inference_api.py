@@ -102,12 +102,15 @@ class StubPredictor:
         inference_state["temp_output_dict_per_obj"][i]["cond_frame_outputs"][frame_idx] = {"pred_masks": self._logits(m)}
         return self._out(inference_state, frame_idx)
 
-    def clear_all_prompts_in_frame(self, st, frame_idx, obj_id):
+    def clear_all_prompts_in_frame(self, st, frame_idx, obj_id, need_output=True):
         i = st["obj_id_to_idx"].get(obj_id)
         if i is not None:
             st["temp_output_dict_per_obj"][i]["cond_frame_outputs"].pop(frame_idx, None)
             st["point_inputs_per_obj"][i].pop(frame_idx, None)
-        return self._out(st, frame_idx)
+            out = st["output_dict_per_obj"][i]["cond_frame_outputs"].pop(frame_idx, None)
+            if out is not None:  # SAM 2 keeps a consolidated output, as a non-conditioning one
+                st["output_dict_per_obj"][i]["non_cond_frame_outputs"][frame_idx] = out
+        return self._out(st, frame_idx) if need_output else None
 
     def remove_object(self, st, obj_id):
         return list(st["obj_ids"]), []

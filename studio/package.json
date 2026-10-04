@@ -13,7 +13,9 @@
     "test": "vitest run",
     "preview": "vite preview",
     "merge-schemas": "tsx schemas/merge-schemas.ts",
-    "smoke": "node e2e/smoke.mjs"
+    "smoke": "node e2e/smoke.mjs",
+    "memory": "node e2e/memory.mjs",
+    "test:memory-server": "node --test e2e/static-server.test.mjs"
   },
   "dependencies": {
     "@carbon/icons-react": "^11.89.0",

@@ -133,6 +133,49 @@ describe('names (test_names.py)', () => {
   });
 });
 
+describe('the object layout (test_layout.py)', () => {
+  const cast = {id: 'g1', name: 'Cast', color: '#ff4fa3', members: [2, 1], collapsed: true, hidden: false};
+
+  it('keeps creation order with no layout, and persists one in OPFS next to the objects', async () => {
+    const kv = new MemoryKv();
+    const svc = new OfflineService(kv);
+    for (const o of [3, 1, 2]) {
+      await svc.recordPoints(V, o, 0, [[0.5, 0.5, 1]], null);
+    }
+    expect(await svc.layout(V)).toEqual({order: [1, 2, 3], groups: []});
+    await tracked(svc, 1);
+    await svc.setLayout(V, {order: [3, 2, 1], groups: [cast]});
+    expect(kv.files.has(`seeds/${V}/layout.json`)).toBe(true);
+    expect(await new OfflineService(kv).layout(V)).toEqual({order: [3, 2, 1], groups: [{...cast, members: [2, 1]}]});
+    // metadata only: the track stays tracked, and nothing goes on the undo history
+    expect(await state(svc, 1)).toBe('tracked');
+    expect((await svc.history(V, 1)).undo).toHaveLength(1); // the click only
+    expect(await svc.seeds.objects(V)).toEqual([1, 2, 3]);
+  });
+
+  it('a removed object leaves the order and its group; a cleared video forgets the layout', async () => {
+    const kv = new MemoryKv();
+    const svc = new OfflineService(kv);
+    for (const o of [1, 2, 3]) {
+      await svc.recordPoints(V, o, 0, [[0.5, 0.5, 1]], null);
+    }
+    await svc.setLayout(V, {order: [3, 2, 1], groups: [cast]});
+    await svc.removeObject(V, 2);
+    expect(await svc.layout(V)).toEqual({order: [3, 1], groups: [{...cast, members: [1]}]});
+    await svc.clearVideo(V);
+    await svc.recordPoints(V, 5, 0, [[0.5, 0.5, 1]], null);
+    expect(await svc.layout(V)).toEqual({order: [5], groups: []});
+  });
+
+  it('reads a damaged layout as none', async () => {
+    const kv = new MemoryKv();
+    const svc = new OfflineService(kv);
+    await svc.recordPoints(V, 1, 0, [[0.5, 0.5, 1]], null);
+    await kv.write(`seeds/${V}/layout.json`, 'not json');
+    expect(await svc.layout(V)).toEqual({order: [1], groups: []});
+  });
+});
+
 describe('job claims (test_jobs.py)', () => {
   it('never lets two jobs share an object, and frees them when released', () => {
     const engine = new LocalEngine({frame: async () => null, video: () => null, onModel: () => {}});
@@ -179,5 +222,69 @@ describe('absent ranges (test_ranges.py)', () => {
     await svc.setRange(V, 3, 0, 2, 'absent');
     expect(await svc.seeds.objects(V)).toEqual([3]);
     expect(await svc.select(V, null, VARIANT, new Set())).toEqual([]); // nothing to track
+  });
+});
+
+describe('candidate and present ranges (test_candidates.py)', () => {
+  const DOG = 'text:dog@sam3';
+  const c = (start: number, end: number, score?: number) => ({start, end, state: 'candidate', source: DOG, ...(score == null ? {} : {score})});
+
+  it('are annotations in OPFS: never in the seeds key or the undo history', async () => {
+    const kv = new MemoryKv();
+    const svc = new OfflineService(kv);
+    await svc.recordPoints(V, 1, 0, [[0.5, 0.5, 1]], rle);
+    await tracked(svc, 1);
+    const undo = (await svc.history(V, 1)).undo.length;
+    await svc.writeCandidates(V, 1, [{start: 2, end: 6, source: DOG, score: 0.5}]);
+    expect(await svc.setRange(V, 1, 5, 9, 'present')).toEqual([c(2, 4, 0.5), {start: 5, end: 9, state: 'present'}]);
+    expect(await state(svc, 1)).toBe('tracked');
+    expect((await svc.history(V, 1)).undo.length).toBe(undo);
+    expect(await kv.read(`seeds/${V}/1/ranges.json`)).toBeNull();
+    // a new service on the same store reads them back, as a view
+    expect((await new OfflineService(kv).objectInfo(V, 1, VARIANT, new Set())).ranges).toEqual([c(2, 4, 0.5), {start: 5, end: 9, state: 'present'}]);
+  });
+
+  it('confirming a candidate absent is a seed change; undo shows the candidate again', async () => {
+    const svc = new OfflineService(new MemoryKv());
+    await svc.recordPoints(V, 1, 0, [[0.5, 0.5, 1]], rle);
+    await tracked(svc, 1);
+    await svc.writeCandidates(V, 1, [{start: 3, end: 4, source: DOG}]);
+    expect(await svc.setRange(V, 1, 3, 4, 'absent', VARIANT)).toEqual([{start: 3, end: 4, state: 'absent'}]);
+    expect(await state(svc, 1)).toBe('stale');
+    await svc.undo(V, 1, VARIANT);
+    const o = await svc.objectInfo(V, 1, VARIANT, new Set());
+    expect(o.ranges).toEqual([c(3, 4)]);
+    expect(await state(svc, 1)).toBe('tracked');
+  });
+
+  it('rejects one candidate, and a bad batch writes nothing', async () => {
+    const svc = new OfflineService(new MemoryKv());
+    await svc.writeCandidates(V, 2, [{start: 0, end: 1, source: DOG}, {start: 5, end: 6, source: DOG}]);
+    expect(await svc.seeds.objects(V)).toEqual([2]);
+    expect(await svc.setRange(V, 2, 0, 1, null, null, {clear: ['candidate']})).toEqual([c(5, 6)]);
+    await expect(svc.writeCandidates(V, 2, [{start: 8, end: 9, source: ''}], true)).rejects.toThrow(/source/);
+    expect((await svc.objectInfo(V, 2, VARIANT, new Set())).ranges).toEqual([c(5, 6)]);
+  });
+
+  // a candidate is not an absent range (Task 11 item 3)
+  it('a positive that ends an absence keeps the candidate under it, and undo puts the range back over it', async () => {
+    const svc = new OfflineService(new MemoryKv());
+    await svc.recordPoints(V, 1, 0, [[0.5, 0.5, 1]], rle);
+    await svc.writeCandidates(V, 1, [{start: 5, end: 35, source: DOG, score: 0.5}]);
+    await svc.setRange(V, 1, 10, 40, 'absent', VARIANT);
+    await svc.recordPoints(V, 1, 25, [[0.5, 0.5, 1]], rle, VARIANT, true); // the object is back at 25
+    expect(await svc.seeds.ranges(V, 1)).toEqual([{start: 10, end: 24, state: 'absent'}]);
+    expect(await svc.seeds.marks(V, 1)).toEqual([c(5, 35, 0.5)]); // the candidate layer is whole
+    expect(await svc.seeds.timeline(V, 1)).toEqual([c(5, 9, 0.5), {start: 10, end: 24, state: 'absent'}, c(25, 35, 0.5)]);
+    await svc.undo(V, 1, VARIANT); // one step: the click and the range's end together
+    expect(await svc.seeds.timeline(V, 1)).toEqual([c(5, 9, 0.5), {start: 10, end: 40, state: 'absent'}]);
+  });
+
+  it('a positive inside a candidate neither ends nor trims it', async () => {
+    const svc = new OfflineService(new MemoryKv());
+    await svc.writeCandidates(V, 1, [{start: 2, end: 40, source: DOG, score: 0.7}]);
+    await svc.recordPoints(V, 1, 25, [[0.5, 0.5, 1]], rle, VARIANT, true);
+    expect(await svc.endAbsenceAt(V, 1, 30, VARIANT)).toEqual([]); // no absent range there: nothing changes
+    expect(await svc.seeds.timeline(V, 1)).toEqual([c(2, 40, 0.7)]);
   });
 });

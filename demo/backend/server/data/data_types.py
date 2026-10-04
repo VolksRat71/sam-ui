@@ -4,6 +4,8 @@
 # LICENSE file in the root directory of this source tree.
 # Modified by sam-ui: types for per-object tracks (ObjectTrack, SeedFrame, clearTrack).
 # Modified by sam-ui: frame ranges on an object (ObjectRange, setObjectRange).
+# Modified by sam-ui: track versions and seed undo (SeedHistory, TrackVersion, undoSeeds, moveClicks).
+# Modified by sam-ui: present and candidate ranges (ObjectRange.source/score, setObjectCandidates).
 # Modified by sam-ui: a seed frame's text prompt (SeedFrame.text).
 
 from dataclasses import dataclass
@@ -88,13 +90,17 @@ class SeedFrame:
 
 @strawberry.type
 class ObjectRange:
-    """sam-ui: a span of an object's frames, inclusive, in a range state.
-    "absent" is the only state: the object is not in the shot there, so those
-    frames are empty and never tracked (tracks/ranges.py)."""
+    """sam-ui: a span of an object's frames, inclusive, in a range state
+    (tracks/ranges.py): "absent" (confirmed not in the shot: those frames are
+    empty and never tracked), "present" (confirmed there) or "candidate" (a
+    model or tool thinks it is there; unconfirmed). Frames in no range are
+    unknown. Only a candidate has a source and maybe a score (0-1)."""
 
     start: int
     end: int
     state: str
+    source: Optional[str] = None
+    score: Optional[float] = None
 
 
 @strawberry.type
@@ -106,6 +112,46 @@ class EngineTrack:
     state: str  # untracked | stale | tracked | tracking
     frames: Optional[List[int]]
     n_frames: int
+
+
+@strawberry.type
+class TrackVersion:
+    """sam-ui: one kept track of an object's earlier (or current) seeds."""
+
+    key: str  # the seeds hash it was made from
+    engine: str
+    model: str
+    created: Optional[str]  # when it was tracked
+    elapsed_s: Optional[float]
+    n_frames: Optional[int]
+    clicks: int
+    seed_frames: int
+    bounded: bool  # bounded passes made part of it
+    current: bool  # made from the object's current seeds
+
+
+@strawberry.type
+class SeedHistory:
+    """sam-ui: what an object can undo or redo, and its kept versions, newest first."""
+
+    can_undo: bool
+    can_redo: bool
+    versions: List[TrackVersion]
+
+    @staticmethod
+    def from_info(h: Optional[dict]) -> "SeedHistory":
+        h = h or {}
+        return SeedHistory(
+            can_undo=bool(h.get("can_undo")),
+            can_redo=bool(h.get("can_redo")),
+            versions=[
+                TrackVersion(key=v["key"], engine=v["engine"], model=v.get("model") or "", created=v.get("created"),
+                             elapsed_s=v.get("elapsed_s"), n_frames=v.get("n_frames"), clicks=v.get("clicks") or 0,
+                             seed_frames=v.get("seed_frames") or 0, bounded=bool(v.get("bounded")),
+                             current=bool(v.get("current")))
+                for v in h.get("versions", [])
+            ],
+        )
 
 
 @strawberry.type
@@ -122,6 +168,7 @@ class ObjectTrack:
     seeds: List[SeedFrame]
     tracks: List[EngineTrack]
     ranges: List[ObjectRange]
+    history: SeedHistory
 
     @staticmethod
     def from_info(info: dict) -> "ObjectTrack":
@@ -154,7 +201,9 @@ class ObjectTrack:
                 )
                 for t in info.get("tracks", [])
             ],
-            ranges=[ObjectRange(start=r["start"], end=r["end"], state=r["state"]) for r in info.get("ranges", [])],
+            ranges=[ObjectRange(start=r["start"], end=r["end"], state=r["state"], source=r.get("source"),
+                                score=r.get("score")) for r in info.get("ranges", [])],
+            history=SeedHistory.from_info(info.get("history")),
         )
 
 
@@ -184,13 +233,65 @@ class ClearTrackInput:
 @strawberry.input
 class SetObjectRangeInput:
     """sam-ui: set frames start-end (inclusive) of an object to `state`
-    ("absent"), or clear whatever range covers them (state null)."""
+    ("absent", "present", or "candidate" with its `source` and optional
+    `score`), or clear them (state null): every state, or only those in
+    `clear` (["candidate"] rejects a candidate)."""
 
     session_id: str
     object_id: int
     start: int
     end: int
     state: Optional[str] = None
+    source: Optional[str] = None
+    score: Optional[float] = None
+    clear: Optional[List[str]] = None
+
+
+@strawberry.input
+class CandidateRangeInput:
+    """sam-ui: one candidate range: where a model or tool thinks the object is."""
+
+    start: int
+    end: int
+    source: str
+    score: Optional[float] = None
+
+
+@strawberry.input
+class SetObjectCandidatesInput:
+    """sam-ui: write candidate ranges in bulk (a discovery job's results);
+    `replace` drops the object's old candidates first. All or nothing."""
+
+    session_id: str
+    object_id: int
+    candidates: List[CandidateRangeInput]
+    replace: bool = False
+
+
+@strawberry.input
+class SeedHistoryInput:
+    """sam-ui: undo or redo one object's last seed change."""
+
+    session_id: str
+    object_id: int
+
+
+@strawberry.input
+class RestoreVersionInput:
+    session_id: str
+    object_id: int
+    key: str  # a TrackVersion's key
+
+
+@strawberry.input
+class MoveClicksInput:
+    """sam-ui: move one object's clicks on a frame to another object."""
+
+    session_id: str
+    frame_index: int
+    from_object_id: int
+    to_object_id: int
+    engine: Optional[str] = None  # as on AddPointsInput: the engine the studio shows; null counts as SAM 2
 
 
 @strawberry.type

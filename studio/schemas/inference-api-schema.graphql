@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # Modified by sam-ui: ObjectTrack, EngineTrack, SeedFrame, objectTracks, clearTrack, StartSession.objects,
-# deleteVideo (closeIdleSessions, sessionsClosed), ObjectRange, setObjectRange, SeedFrame.text.
+# deleteVideo (closeIdleSessions, sessionsClosed), ObjectRange, setObjectRange,
+# SeedHistory, TrackVersion, undoSeeds, redoSeeds, restoreVersion, moveClicks,
+# present and candidate ranges (ObjectRange.source/score, setObjectCandidates), SeedFrame.text.
 
 input AddPointsInput {
   sessionId: String!
@@ -69,6 +71,15 @@ type Mutation {
   clearTrack(input: ClearTrackInput!): ObjectTrack!
   # sam-ui: mark frames of an object absent, or clear them (state null)
   setObjectRange(input: SetObjectRangeInput!): ObjectTrack!
+  # sam-ui: write candidate ranges in bulk (a discovery job's results); no track goes stale
+  setObjectCandidates(input: SetObjectCandidatesInput!): ObjectTrack!
+  # sam-ui: undo or redo an object's last seed change; its kept track comes back with no job
+  undoSeeds(input: SeedHistoryInput!): ObjectTrack!
+  redoSeeds(input: SeedHistoryInput!): ObjectTrack!
+  # sam-ui: go back to one of an object's kept versions (undoable)
+  restoreVersion(input: RestoreVersionInput!): ObjectTrack!
+  # sam-ui: move one object's clicks on a frame to another object
+  moveClicks(input: MoveClicksInput!): [ObjectTrack!]!
   # sam-ui: delete an uploaded video (never a gallery one)
   deleteVideo(input: DeleteVideoInput!): DeleteVideo!
 }
@@ -104,16 +115,87 @@ input SetObjectRangeInput {
   objectId: Int!
   start: Int!
   end: Int!
-  # "absent"; null clears whatever range covers the frames
+  # "absent", "present" or "candidate"; null clears the frames (every state, or those in clear)
   state: String
+  # a candidate's provenance, e.g. "text:dog@sam3", and its score (0-1)
+  source: String
+  score: Float
+  clear: [String!]
 }
 
-# sam-ui: a span of an object's frames, inclusive. "absent" is the only state:
-# the object is not in the shot, so the frames are empty and never tracked.
+# sam-ui: one candidate range: where a model or tool thinks the object is
+input CandidateRangeInput {
+  start: Int!
+  end: Int!
+  source: String!
+  score: Float
+}
+
+# sam-ui: candidate ranges in bulk; replace drops the object's old candidates first
+input SetObjectCandidatesInput {
+  sessionId: String!
+  objectId: Int!
+  candidates: [CandidateRangeInput!]!
+  replace: Boolean! = false
+}
+
+# sam-ui: a span of an object's frames, inclusive, in a range state: "absent"
+# (confirmed not in the shot: empty, never tracked), "present" (confirmed there)
+# or "candidate" (a model or tool thinks it is there). Frames in none are unknown.
 type ObjectRange {
   start: Int!
   end: Int!
   state: String!
+  # a candidate's provenance and score; null on confirmed ranges
+  source: String
+  score: Float
+}
+
+# sam-ui: undo or redo one object's last seed change
+input SeedHistoryInput {
+  sessionId: String!
+  objectId: Int!
+}
+
+input RestoreVersionInput {
+  sessionId: String!
+  objectId: Int!
+  # a TrackVersion's key
+  key: String!
+}
+
+input MoveClicksInput {
+  sessionId: String!
+  frameIndex: Int!
+  fromObjectId: Int!
+  toObjectId: Int!
+  # sam-ui: the engine studio shows; null counts as SAM 2
+  engine: String
+}
+
+# sam-ui: one kept track of an object's earlier (or current) seeds
+type TrackVersion {
+  # the seeds hash it was made from
+  key: String!
+  engine: String!
+  model: String!
+  # when it was tracked
+  created: String
+  elapsedS: Float
+  nFrames: Int
+  clicks: Int!
+  seedFrames: Int!
+  # bounded passes made part of it
+  bounded: Boolean!
+  # made from the object's current seeds
+  current: Boolean!
+}
+
+# sam-ui: what an object can undo or redo, and its kept versions
+type SeedHistory {
+  canUndo: Boolean!
+  canRedo: Boolean!
+  versions: [TrackVersion!]!
 }
 
 type EngineTrack {
@@ -148,6 +230,8 @@ type ObjectTrack {
   tracks: [EngineTrack!]!
   # absent ranges, sorted
   ranges: [ObjectRange!]!
+  # undo, redo and the kept track versions
+  history: SeedHistory!
 }
 
 input PingInput {

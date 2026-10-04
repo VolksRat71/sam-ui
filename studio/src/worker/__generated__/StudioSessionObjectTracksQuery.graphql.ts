@@ -1,5 +1,5 @@
 /**
- * @generated SignedSource<<a8abdebe3e9729e8ac347fc8b61dca48>>
+ * @generated SignedSource<<d852445a666047f48c3a62d1c32910d4>>
  * @lightSyntaxTransform
  * @nogrep
  */
@@ -15,10 +15,28 @@ export type StudioSessionObjectTracksQuery$variables = {
 export type StudioSessionObjectTracksQuery$data = {
   readonly objectTracks: ReadonlyArray<{
     readonly frames: ReadonlyArray<number> | null | undefined;
+    readonly history: {
+      readonly canRedo: boolean;
+      readonly canUndo: boolean;
+      readonly versions: ReadonlyArray<{
+        readonly bounded: boolean;
+        readonly clicks: number;
+        readonly created: string | null | undefined;
+        readonly current: boolean;
+        readonly elapsedS: number | null | undefined;
+        readonly engine: string;
+        readonly key: string;
+        readonly model: string;
+        readonly nFrames: number | null | undefined;
+        readonly seedFrames: number;
+      }>;
+    };
     readonly nFrames: number;
     readonly objectId: number;
     readonly ranges: ReadonlyArray<{
       readonly end: number;
+      readonly score: number | null | undefined;
+      readonly source: string | null | undefined;
       readonly start: number;
       readonly state: string;
     }>;
@@ -75,7 +93,14 @@ v3 = {
   "name": "nFrames",
   "storageKey": null
 },
-v4 = [
+v4 = {
+  "alias": null,
+  "args": null,
+  "kind": "ScalarField",
+  "name": "engine",
+  "storageKey": null
+},
+v5 = [
   {
     "alias": null,
     "args": [
@@ -172,13 +197,7 @@ v4 = [
         "name": "tracks",
         "plural": true,
         "selections": [
-          {
-            "alias": null,
-            "args": null,
-            "kind": "ScalarField",
-            "name": "engine",
-            "storageKey": null
-          },
+          (v4/*: any*/),
           (v1/*: any*/),
           (v2/*: any*/),
           (v3/*: any*/)
@@ -207,7 +226,115 @@ v4 = [
             "name": "end",
             "storageKey": null
           },
-          (v1/*: any*/)
+          (v1/*: any*/),
+          {
+            "alias": null,
+            "args": null,
+            "kind": "ScalarField",
+            "name": "source",
+            "storageKey": null
+          },
+          {
+            "alias": null,
+            "args": null,
+            "kind": "ScalarField",
+            "name": "score",
+            "storageKey": null
+          }
+        ],
+        "storageKey": null
+      },
+      {
+        "alias": null,
+        "args": null,
+        "concreteType": "SeedHistory",
+        "kind": "LinkedField",
+        "name": "history",
+        "plural": false,
+        "selections": [
+          {
+            "alias": null,
+            "args": null,
+            "kind": "ScalarField",
+            "name": "canUndo",
+            "storageKey": null
+          },
+          {
+            "alias": null,
+            "args": null,
+            "kind": "ScalarField",
+            "name": "canRedo",
+            "storageKey": null
+          },
+          {
+            "alias": null,
+            "args": null,
+            "concreteType": "TrackVersion",
+            "kind": "LinkedField",
+            "name": "versions",
+            "plural": true,
+            "selections": [
+              {
+                "alias": null,
+                "args": null,
+                "kind": "ScalarField",
+                "name": "key",
+                "storageKey": null
+              },
+              (v4/*: any*/),
+              {
+                "alias": null,
+                "args": null,
+                "kind": "ScalarField",
+                "name": "model",
+                "storageKey": null
+              },
+              {
+                "alias": null,
+                "args": null,
+                "kind": "ScalarField",
+                "name": "created",
+                "storageKey": null
+              },
+              {
+                "alias": null,
+                "args": null,
+                "kind": "ScalarField",
+                "name": "elapsedS",
+                "storageKey": null
+              },
+              (v3/*: any*/),
+              {
+                "alias": null,
+                "args": null,
+                "kind": "ScalarField",
+                "name": "clicks",
+                "storageKey": null
+              },
+              {
+                "alias": null,
+                "args": null,
+                "kind": "ScalarField",
+                "name": "seedFrames",
+                "storageKey": null
+              },
+              {
+                "alias": null,
+                "args": null,
+                "kind": "ScalarField",
+                "name": "bounded",
+                "storageKey": null
+              },
+              {
+                "alias": null,
+                "args": null,
+                "kind": "ScalarField",
+                "name": "current",
+                "storageKey": null
+              }
+            ],
+            "storageKey": null
+          }
         ],
         "storageKey": null
       }
@@ -221,7 +348,7 @@ return {
     "kind": "Fragment",
     "metadata": null,
     "name": "StudioSessionObjectTracksQuery",
-    "selections": (v4/*: any*/),
+    "selections": (v5/*: any*/),
     "type": "Query",
     "abstractKey": null
   },
@@ -230,19 +357,19 @@ return {
     "argumentDefinitions": (v0/*: any*/),
     "kind": "Operation",
     "name": "StudioSessionObjectTracksQuery",
-    "selections": (v4/*: any*/)
+    "selections": (v5/*: any*/)
   },
   "params": {
-    "cacheID": "c1f5addf04ca6665ec82a7a4e8575c4f",
+    "cacheID": "593c46c0976af378ab2dd1141563ee2a",
     "id": null,
     "metadata": {},
     "name": "StudioSessionObjectTracksQuery",
     "operationKind": "query",
-    "text": "query StudioSessionObjectTracksQuery(\n  $sessionId: String!\n) {\n  objectTracks(sessionId: $sessionId) {\n    objectId\n    state\n    frames\n    nFrames\n    seeds {\n      frameIndex\n      points\n      labels\n      text\n      mask {\n        size\n        counts\n      }\n    }\n    tracks {\n      engine\n      state\n      frames\n      nFrames\n    }\n    ranges {\n      start\n      end\n      state\n    }\n  }\n}\n"
+    "text": "query StudioSessionObjectTracksQuery(\n  $sessionId: String!\n) {\n  objectTracks(sessionId: $sessionId) {\n    objectId\n    state\n    frames\n    nFrames\n    seeds {\n      frameIndex\n      points\n      labels\n      text\n      mask {\n        size\n        counts\n      }\n    }\n    tracks {\n      engine\n      state\n      frames\n      nFrames\n    }\n    ranges {\n      start\n      end\n      state\n      source\n      score\n    }\n    history {\n      canUndo\n      canRedo\n      versions {\n        key\n        engine\n        model\n        created\n        elapsedS\n        nFrames\n        clicks\n        seedFrames\n        bounded\n        current\n      }\n    }\n  }\n}\n"
   }
 };
 })();
 
-(node as any).hash = "868a1df54aa2b20cae78326dac590041";
+(node as any).hash = "660f1b3f2043b7c79b03d38a5211a6fd";
 
 export default node;

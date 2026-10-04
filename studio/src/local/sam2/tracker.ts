@@ -101,12 +101,31 @@ type ObjectState = {
 
 /**
  * A seed SAM 2 must never condition on, as the backend's seeds.cleared()
- * decides: no positive click and no approved mask, or an empty one (a frame
- * emptied on SAM 3). A legacy seed trimmed by the removed hidden anchor (no
- * positive, a mask) still conditions.
+ * decides: clicks, none of them positive, and no approved mask, or an empty
+ * one (a frame emptied on SAM 3). A legacy seed trimmed by the removed hidden
+ * anchor (no positive, a mask) still conditions, and a seed with no clicks
+ * (a text seed) is never cleared.
  */
 export function isClearedSeed(seed: TrackSeed): boolean {
-  return !seed.points.some(p => p[2] === 1) && (seed.mask == null || rleArea(seed.mask) === 0);
+  return (
+    seed.points.length > 0 &&
+    !seed.points.some(p => p[2] === 1) &&
+    (seed.mask == null || rleArea(seed.mask) === 0)
+  );
+}
+
+/**
+ * A seed that asserts the object on its frame ("confirmed present"): its
+ * clicks include a positive, or it is a text seed (no clicks, a non-empty
+ * mask). A cleared seed never is, nor is an anchor-trimmed one. The audit
+ * queue takes such a frame inside a candidate as confirmed (state/audit.ts
+ * signals; the backend's tracks/seeds.py confirmed()).
+ */
+export function isConfirmedSeed(seed: TrackSeed): boolean {
+  if (seed.points.length > 0) {
+    return seed.points.some(p => p[2] === 1);
+  }
+  return seed.mask != null && rleArea(seed.mask) > 0;
 }
 
 /**
