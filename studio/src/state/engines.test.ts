@@ -1,7 +1,7 @@
 // sam-ui (Apache-2.0). New file, not from SAM 2.
 import {describe, expect, it} from 'vitest';
 import type {EngineInfo} from '~/worker/protocol';
-import {BROWSER_ENGINE, engineLabel, pickerEngines, RELEASES_URL, unavailableReason} from './engines';
+import {BROWSER_ENGINE, engineLabel, pickerEngines, RELEASES_URL, textPromptNote, textPrompts, unavailableReason} from './engines';
 
 const sam2: EngineInfo = {name: 'sam2', model: 'sam2.1_hiera_large', default: true, available: true, reason: null, loaded: true};
 const sam3: EngineInfo = {name: 'sam3', model: 'sam3', default: false, available: false, reason: 'no weights', loaded: false};
@@ -50,5 +50,45 @@ describe('pickerEngines', () => {
     expect(list[0]).toMatchObject({model: 'sam2.1_hiera_large', reason: 'Requires the desktop app.', href: RELEASES_URL});
     expect(list[1]).toMatchObject({reason: 'Requires the desktop app.', href: RELEASES_URL});
     expect(list[2]).toMatchObject({default: true, hint: undefined});
+  });
+});
+
+describe('textPrompts', () => {
+  const s2 = {...sam2, text: false, textReason: 'this engine takes clicks only; text prompts need SAM 3'};
+  const s3 = {...sam3, available: true, reason: null, text: true, textReason: null};
+  const browser = pickerEngines([], {webgpu: true, backend: true}).find(e => e.name === BROWSER_ENGINE)!;
+
+  it('are on for an engine that reads text', () => {
+    expect(textPrompts([s2, s3], 'sam3')).toEqual({ok: true, why: null});
+  });
+
+  it('point at SAM 3 from an engine that takes clicks only', () => {
+    expect(textPrompts([s2, s3], 'sam2')).toEqual({ok: false, why: 'SAM 2 takes clicks only. Switch the engine to SAM 3 to find an object by text.'});
+    expect(textPrompts([s2, s3, browser], BROWSER_ENGINE).why).toBe(
+      'Browser · SAM 2.1 tiny takes clicks only. Switch the engine to SAM 3 to find an object by text.',
+    );
+  });
+
+  it('say why when no engine here reads text', () => {
+    const off = {...s3, available: false, text: false, textReason: 'no SAM 3 weights at /x'};
+    expect(textPrompts([s2, off], 'sam2')).toEqual({ok: false, why: 'Text prompts need SAM 3, which cannot run here: no SAM 3 weights at /x.'});
+    // an older backend reports no text at all; the browser-only build has only the desktop entries
+    expect(textPrompts([sam2, sam3], 'sam2').why).toBe('Text prompts need SAM 3 in the desktop app.');
+    expect(textPrompts(pickerEngines([], {webgpu: true, backend: false}), BROWSER_ENGINE).why).toBe(
+      'Text prompts need SAM 3 in the desktop app.',
+    );
+  });
+});
+
+describe('textPromptNote', () => {
+  const r = {objectId: 1, frameIndex: 11, text: 'dog', engine: 'sam3', matched: true, score: 0.914, instances: 1};
+  it('says what a prompt found, and that clicks refine it', () => {
+    expect(textPromptNote(r)).toBe('Found "dog" on frame 12 (score 0.91). Click to correct it.');
+    expect(textPromptNote({...r, instances: 3})).toBe(
+      'Found 3 matches for "dog" on frame 12 and took the best (score 0.91). Click to correct it, or to pick another.',
+    );
+  });
+  it('says when nothing matched', () => {
+    expect(textPromptNote({...r, matched: false, instances: 0, score: 0.02})).toBe('No "dog" found on frame 12. Try other words, or click the object.');
   });
 });

@@ -23,3 +23,8 @@ export function maskSegments(
   }
   return out;
 }
+
+/** Whether `frame` is in one of `segments` (the frame shows a mask). */
+export function maskedAt(segments: ReadonlyArray<[number, number]> | undefined, frame: number): boolean {
+  return segments?.some(([a, b]) => a <= frame && frame <= b) ?? false;
+}

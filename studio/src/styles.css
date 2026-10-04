@@ -694,6 +694,177 @@ button {
   margin-top: 2px;
 }
 
+/* reordering and groups (issue #21) */
+.objects-buttons {
+  display: flex;
+  gap: 6px;
+}
+.drag-handle {
+  width: 20px;
+  height: 56px;
+  flex: none;
+  cursor: grab;
+  color: var(--gray-400);
+}
+.object-row.dragging,
+.object-group.dragging {
+  opacity: 0.5;
+}
+.object-row.drop-before,
+.group-header.drop-before {
+  box-shadow: inset 0 2px 0 #fff !important;
+}
+.object-row.drop-after {
+  box-shadow: inset 0 -2px 0 #fff !important;
+}
+.group-header.drop-into {
+  outline: 1px dashed #fff;
+}
+.object-group {
+  list-style: none;
+  border: 1px solid;
+  border-radius: 10px;
+  padding: 6px;
+  display: grid;
+  gap: 6px;
+}
+.object-group.hidden-group .group-members {
+  opacity: 0.55;
+}
+.group-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-radius: 8px;
+  cursor: grab;
+}
+.group-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+  min-width: 0;
+}
+.group-title .object-name {
+  flex: 1;
+}
+.group-actions {
+  flex-wrap: wrap;
+  gap: 10px;
+  padding-left: 4px;
+}
+.group-color {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+.group-select {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--gray-700);
+  border-radius: var(--radius);
+  padding: 1px 4px;
+  font: inherit;
+  font-size: 12px;
+  max-width: 140px;
+}
+.layout-actions {
+  align-items: center;
+  gap: 10px;
+}
+.group-members {
+  padding-left: 4px;
+}
+.object-group:hover .rename-button {
+  opacity: 1;
+}
+.drop-end {
+  margin-top: 6px;
+  padding: 10px;
+  border: 1px dashed var(--gray-500);
+  border-radius: 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: center;
+}
+.lane-group-mark {
+  display: inline-block;
+  width: 3px;
+  height: 0.9em;
+  margin-right: 4px;
+  vertical-align: middle;
+  border-radius: 1px;
+}
+
+/* the selected object's undo, versions and moving clicks (issue #18) */
+.object-history {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  cursor: default;
+}
+.move-clicks {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.move-clicks select {
+  min-width: 0;
+  flex: 1;
+  max-width: 180px;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--gray-700);
+  border-radius: var(--radius);
+  padding: 3px 6px;
+  font: inherit;
+}
+.version-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.version {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--gray-200);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.version span:first-child {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.version:hover:not(:disabled) {
+  border-color: var(--gray-600);
+  background: var(--panel);
+}
+.version:disabled {
+  cursor: default;
+}
+.version.current {
+  color: var(--text);
+}
+
 .badge {
   display: inline-flex;
   align-items: center;
@@ -1136,6 +1307,177 @@ code {
   background: #e6193b;
   cursor: pointer;
 }
+/* a review flag (F): a frame to correct later */
+.swimlane-mark {
+  position: absolute;
+  top: 1px;
+  bottom: 1px;
+  width: 3px;
+  padding: 0;
+  border: none;
+  border-radius: 1px;
+  background: #f1c21b;
+  cursor: pointer;
+}
+/* an absent range: the object is not in the shot, so nothing is tracked or shown */
+.swimlane-absent {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  padding: 0;
+  border: 1px solid var(--gray-500);
+  border-radius: 2px;
+  background: var(--gray-900) repeating-linear-gradient(135deg, #ffffff38 0 2px, transparent 2px 6px);
+  cursor: pointer;
+}
+.swimlane-absent:hover {
+  border-color: var(--gray-200);
+}
+/* a confirmed present range: a solid bracket along the lane's foot */
+.swimlane-present {
+  position: absolute;
+  bottom: 1px;
+  height: 7px;
+  padding: 0;
+  border: 2px solid var(--gray-100);
+  border-top: none;
+  border-radius: 0 0 2px 2px;
+  background: transparent;
+  cursor: pointer;
+}
+.swimlane-present:hover {
+  border-color: #fff;
+}
+/* a candidate range: a dotted outline, a guess nobody has confirmed */
+.swimlane-candidate {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  padding: 0;
+  border: 2px dotted var(--gray-200);
+  border-radius: 3px;
+  background: transparent;
+  cursor: pointer;
+}
+.swimlane-candidate:hover,
+.swimlane-candidate.picked {
+  border-color: #fff;
+  background: #ffffff1f;
+}
+.swimlane-candidate.picked {
+  box-shadow: 0 0 0 1px #000, 0 0 0 3px #ffffffb0;
+}
+.swimlane-absent:focus-visible,
+.swimlane-present:focus-visible,
+.swimlane-candidate:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 1px;
+}
+.candidate-bar kbd {
+  margin-left: 4px;
+  padding: 0 3px;
+  border: 1px solid var(--gray-600);
+  border-radius: 3px;
+  font-size: 10px;
+  font-family: inherit;
+  color: var(--gray-300);
+}
+.lane-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+  margin: 0;
+  padding: 0 0 0 76px;
+  list-style: none;
+  font-size: 10px;
+  color: var(--gray-300);
+}
+.lane-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.legend-swatch {
+  position: relative;
+  display: inline-block;
+  width: 22px;
+  height: 12px;
+}
+.legend-swatch.swimlane-absent,
+.legend-swatch.swimlane-candidate,
+.legend-swatch.swimlane-present {
+  position: relative;
+  top: auto;
+  bottom: auto;
+  cursor: default;
+}
+.legend-swatch.swimlane-present {
+  height: 7px;
+  align-self: flex-end;
+  margin-bottom: 2px;
+}
+.legend-tracked::before,
+.legend-unknown::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+}
+.legend-tracked::before {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--gray-200);
+}
+.legend-unknown::before {
+  height: 1px;
+  background: var(--gray-500);
+}
+/* a window between gaps with no clicks: it stays empty until the object is clicked there */
+.swimlane-hint {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  font-size: 10px;
+  font-style: italic;
+  color: var(--gray-400);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.swimlane-selection {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border: 1px solid #ffffffb0;
+  border-radius: 2px;
+  background: #ffffff24;
+  pointer-events: none;
+}
+.swimlane {
+  touch-action: pan-y;
+}
+.range-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.button.compact {
+  height: 26px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+.absent-note {
+  color: var(--gray-300);
+}
 
 /* -- overlays ----------------------------------------------------------------- */
 
@@ -1390,6 +1732,38 @@ code {
   font: inherit;
 }
 
+/* the selected object's text prompt (ObjectsSection.tsx, SAM 3 only) */
+.text-prompt {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 6px 0 2px;
+}
+.text-prompt-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.text-prompt-input {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--gray-500);
+  border-radius: 4px;
+  background: var(--gray-900);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+.text-prompt-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.text-prompt .object-meta {
+  white-space: normal;
+}
+
 /* the Export menu (ExportMenu.tsx); it reuses the engine popover's panel */
 .export-menu {
   position: relative;
@@ -1498,6 +1872,14 @@ code {
   border-color: #fa871999;
   color: #ffb870;
 }
+/* the desktop app found a newer release (UpdateBanner.tsx) */
+.demo-banner.update-banner {
+  border-color: #6ea8fe66;
+  background: #6ea8fe1a;
+}
+.update-banner a {
+  color: #8ab4ff;
+}
 
 /* an upload's notice (a long clip is trimmed to the backend's limit) */
 .media-notice {
@@ -1525,6 +1907,151 @@ code {
 .points-toggle .toggle:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+/* the mask export modal's union option (issue #21) */
+.export-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+/* -- the review queue (draft 7) ------------------------------------------------ */
+/* a stop: a downward triangle above the lane (a check once reviewed), apart from
+   the flag bars, the candidate outline and the seed dots by its shape */
+.swimlane-review {
+  position: absolute;
+  top: -3px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 11px;
+  height: 11px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #6fdcff;
+  cursor: pointer;
+  filter: drop-shadow(0 0 1px #000);
+}
+.swimlane-review.reviewed {
+  color: var(--gray-300);
+}
+.swimlane-review.current,
+.swimlane-review:hover {
+  color: #fff;
+}
+.swimlane-review:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 1px;
+}
+.review-glyph {
+  display: block;
+  flex: none;
+}
+.legend-glyph {
+  display: inline-flex;
+  color: #6fdcff;
+}
+.legend-glyph.reviewed {
+  color: var(--gray-300);
+}
+.review-bar {
+  color: var(--gray-100);
+}
+.review-bar > .review-glyph {
+  color: #6fdcff;
+}
+.review-bar kbd,
+.review-keys kbd {
+  margin-left: 4px;
+  padding: 0 3px;
+  border: 1px solid var(--gray-600);
+  border-radius: 3px;
+  font-size: 10px;
+  font-family: inherit;
+  color: var(--gray-300);
+}
+.review {
+  display: grid;
+  gap: 8px;
+}
+.review-summary {
+  display: grid;
+  gap: 2px;
+  font-size: 13px;
+}
+.review-keys {
+  font-size: 11px;
+}
+.review-list {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.review-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px 4px 4px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: var(--panel-raised);
+}
+.review-item.current {
+  border-color: #fff;
+}
+.review-item.reviewed .review-where {
+  color: var(--gray-300);
+}
+.review-go {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  grid-template-columns: auto auto 1fr auto;
+  align-items: center;
+  gap: 2px 6px;
+  padding: 2px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.review-mark-icon {
+  color: #6fdcff;
+}
+.review-item.reviewed .review-mark-icon {
+  color: var(--gray-300);
+}
+.review-where {
+  overflow: hidden;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.review-score {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.review-why {
+  display: flex;
+  flex-wrap: wrap;
+  grid-column: 3 / -1;
+  gap: 3px;
+}
+.review-reason {
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--gray-700);
+  font-size: 10px;
+  color: var(--gray-200);
 }
 
 /* After Effects: Media > Open from After Effects (AeOpenModal.tsx) and its export (AeExportModal.tsx) */

@@ -7,13 +7,18 @@
 // wheel, or the buttons) and pans (wheel, middle drag, or Alt + drag). Only
 // the video and its masks are pixels, scaled by the zoom; the point markers
 // are an SVG overlay outside the zoomed box, placed in video coordinates, so
-// they stay crisp, keep their size, and never cover what they mark.
+// they stay crisp, keep their size, and never cover what they mark. On a
+// touch screen a tap adds a point of the selected kind, a long press the
+// other kind, one finger pans a zoomed view and two fingers pinch
+// (lib/gestures.ts).
 import {AddFilled, SubtractFilled, ZoomIn, ZoomOut} from '@carbon/icons-react';
 import {useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type PointerEvent} from 'react';
+import {labelFor, longPressStartsOn} from '~/lib/gestures';
 import {objectName} from '~/state/fileNames';
-import {needsPositiveClick} from '~/state/objects';
 import {FIT, panBy, toScreen, zoomAt, type View} from '~/state/view';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
+import useTouchGestures from '~/workspace/useTouchGestures';
+import CorrectionNudge from './CorrectionNudge';
 
 export type LabelMode = 'positive' | 'negative';
 
@@ -80,7 +85,6 @@ export default function Preview({session, mode, onModeChange}: Props) {
 
   const active = state.objects.find(o => o.id === state.activeId);
   const points = active?.points[frame] ?? [];
-  const hint = needsPositiveClick(active, frame);
 
   // zoom and pan
   const [view, setView] = useState<View>(FIT);
@@ -151,6 +155,36 @@ export default function Preview({session, mode, onModeChange}: Props) {
   }
 
   const primary: 0 | 1 = mode === 'positive' ? 1 : 0;
+
+  // touch: a tap is the click layer's click; the rest is gestures
+  const layerRef = useRef<HTMLDivElement>(null);
+  const touch = useTouchGestures({
+    zoomed: () => view.zoom > 1,
+    canLongPress: longPressStartsOn,
+    onLongPress: (x, y) => {
+      const rect = layerRef.current?.getBoundingClientRect();
+      const label = labelFor('long-press', primary);
+      if (rect == null || rect.width <= 0 || label == null) {
+        return;
+      }
+      const nx = (x - rect.left) / rect.width;
+      const ny = (y - rect.top) / rect.height;
+      if (nx >= 0 && nx <= 1 && ny >= 0 && ny <= 1) {
+        session.addPoint(nx, ny, label);
+      }
+    },
+    onPan: (dx, dy) => setView(v => panBy(v, dx, dy, box.width, box.height)),
+    onPinch: ({factor, midX, midY, dx, dy}) => {
+      const rect = ref.current?.getBoundingClientRect();
+      if (rect == null) {
+        return;
+      }
+      // Scale about the old midpoint, then move it with the fingers.
+      const px = midX - dx - (rect.left + rect.width / 2);
+      const py = midY - dy - (rect.top + rect.height / 2);
+      setView(v => panBy(zoomAt(v, factor, px, py, box.width, box.height), dx, dy, box.width, box.height));
+    },
+  });
   const r = 8; // screen pixels, at any zoom
   const stroke = 2;
 
@@ -203,7 +237,8 @@ export default function Preview({session, mode, onModeChange}: Props) {
         onPointerDown={onPanStart}
         onPointerMove={onPanMove}
         onPointerUp={onPanEnd}
-        onAuxClick={e => e.preventDefault()}>
+        onAuxClick={e => e.preventDefault()}
+        {...touch.handlers}>
         <div className="stage-frame" style={{width: box.width, height: box.height}}>
         <div
           className={view.zoom >= 2 ? 'stage-box pixelated' : 'stage-box'}
@@ -213,11 +248,12 @@ export default function Preview({session, mode, onModeChange}: Props) {
             <canvas ref={canvasRef} className="stage-canvas" width={size.width} height={size.height} />
           )}
           <div
+            ref={layerRef}
             className={session.busy ? 'click-layer busy' : 'click-layer'}
-            onClick={e => clickOk() && session.addPoint(...toPoint(e), primary)}
+            onClick={e => touch.allowsClick() && clickOk() && session.addPoint(...toPoint(e), primary)}
             onContextMenu={e => {
               e.preventDefault();
-              if (clickOk()) {
+              if (touch.allowsContextMenu() && clickOk()) {
                 session.addPoint(...toPoint(e), primary === 1 ? 0 : 1);
               }
             }}
@@ -233,8 +269,12 @@ export default function Preview({session, mode, onModeChange}: Props) {
                   className="point"
                   onClick={e => {
                     e.stopPropagation();
-                    session.removePoint(i);
+                    if (touch.allowsClick() && clickOk()) {
+                      session.removePoint(i);
+                    }
                   }}>
+                  {/* a finger-sized target, on touch screens only (responsive.css) */}
+                  <circle className="point-hit" cx={cx} cy={cy} r={22} />
                   <circle cx={cx} cy={cy} r={r} fill={positive ? '#000000' : '#E6193B'} strokeWidth={stroke} />
                   <line x1={cx - r / 2} y1={cy} x2={cx + r / 2} y2={cy} strokeWidth={stroke} />
                   {positive && <line x1={cx} y1={cy - r / 2} x2={cx} y2={cy + r / 2} strokeWidth={stroke} />}
@@ -243,11 +283,7 @@ export default function Preview({session, mode, onModeChange}: Props) {
             })}
           </svg>
         </div>
-        {hint && (
-          <div className="stage-hint" role="status">
-            Add a positive click to keep part of the object
-          </div>
-        )}
+        <CorrectionNudge nudge={session.nudge} hint={session.hint} sam3Available={session.sam3Available} onTrim={() => session.nudgeTrim(() => onModeChange('positive'))} onSam3={session.nudgeSam3} onGone={session.markGone} />
         {status !== 'ready' && (
           <div className="stage-overlay">
             {status === 'failed' ? (
