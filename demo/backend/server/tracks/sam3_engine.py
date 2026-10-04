@@ -86,6 +86,7 @@ def text_available() -> Optional[str]:
 class Sam3Engine:
     name = "sam3"
     model = "sam3-tracker"
+    skips_cleared = False  # SAM 3 conditions on a cleared seed safely (engine.strip_cleared)
 
     def __init__(self, device: Optional[str] = None):
         self.device = device

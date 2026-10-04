@@ -106,7 +106,9 @@ python3 -m http.server 7390 --bind 127.0.0.1 --directory /tmp/pages   # http://1
   yellow marker on the object's lane that seeks there when clicked; clicks on
   that frame clear it. After a correction the object's track is stale: studio
   keeps showing it, faded, until the re-track, so the other flagged frames can
-  be corrected against it.
+  be corrected against it. On SAM 2 the re-track runs only a stretch around
+  each correction and keeps the rest of the cached track; its job chip says
+  *near corrections* while it does.
 - **Absent ranges.** Drag across an object's lane to select frames, then
   *Mark absent* in the transport when the object is not in the shot there. The
   range shows as a hatched block on the lane; its frames are empty in the
@@ -115,6 +117,45 @@ python3 -m http.server 7390 --bind 127.0.0.1 --directory /tmp/pages   # http://1
   the object after the gap" hint on the lane. A click inside an absent range is
   refused, with a note saying so: click the block to select it and *Unmark* it
   (all of it, or a dragged part) first. Escape drops a selection.
+- **Candidate and present ranges.** A lane draws four kinds of frame by shape,
+  not colour, with a legend under the lanes: *unknown* is the plain thin line, a
+  *candidate* (a model or tool thinks the object is there, nobody has said) a
+  dotted outline, *present* a solid bracket along the lane's foot, and *absent*
+  the hatched block. The solid line in the object's colour is still the tracked
+  mask, drawn apart from all four. Drag a span and *Mark present* to confirm the
+  object is there; *Unmark* makes a span unknown again. Click a candidate (or
+  press ] and [ to step through the selected object's) to see its source and
+  score, then *Present* (P), *Absent* (A) or *Reject* (R); the next candidate is
+  picked for you. Present and candidate ranges never change a mask or make a
+  track stale; confirming absent does, and Cmd-Z takes it back. Exports list
+  every range with its state in README.txt and the roto folder's JSON;
+  candidates never blank a mask.
+- **Review.** The Review section lists the few stops worth a look on the
+  engine on screen, best first, each with why (engines disagree, track stops,
+  reappears, area jump, jumps, pieces change, re-tracked, candidate starts,
+  flagged) and a score, and its badge counts the ones left. Click a stop, or
+  press . and , to step through them; *Looks right* (Y) marks the one on screen
+  reviewed and goes to the next. If it is wrong, correct it with clicks as
+  usual and track again: only the stops the re-track remade open again. On the
+  timeline a stop is a downward triangle above its lane, a check mark once
+  reviewed. Without a backend the browser engine's queue is built in the tab
+  and its marks kept in this browser. The roto folder's `data/review.json`
+  carries the queue, reviewed or not.
+- **Undo.** Cmd-Z undoes the selected object's last click, cleared frame or
+  range edit, and Shift-Cmd-Z redoes it (Ctrl-Z and Ctrl-Y elsewhere; Undo and
+  Redo on the object's row do the same). Neither fires while you type in a
+  field. When a track of the clicks you go back to is kept, it shows at once,
+  tracked, with no re-track; otherwise the object is stale, as after any click.
+  Undo waits while a job tracks the object. *Versions* on the selected object
+  lists its kept tracks with when they were tracked, the engine and the number
+  of clicks; click one to go back to it (that is undoable too). With a backend
+  the list is the backend's; browser-engine tracks come back with undo.
+- **Wrong object?** When the selected object has clicks on the frame on
+  screen, *Move these clicks to* hands them to another object, which segments
+  them as if you had clicked it. Each object can undo its side. An object
+  marked absent on that frame, or being tracked, is not offered.
+- **Which object is selected.** Its mask has a wider outline ringed in white,
+  and the other objects dim while it is selected.
 - **Text prompts.** With SAM 3 on screen, the selected object's row has a
   *Find by text* field: type a phrase ("dog", "the red cup") and *Find*. The
   phrase's best match on the frame on screen becomes that frame's mask,
@@ -130,6 +171,20 @@ python3 -m http.server 7390 --bind 127.0.0.1 --directory /tmp/pages   # http://1
   double-click the name (or the pencil) to rename it in place. Names are
   stored with the seeds (`POST /rename_object`) and never make a track stale;
   numbers are never reused after a delete.
+- **Order and groups.** Drag an object by its handle to reorder it, or onto a
+  group's header to put it in that group; Alt-Up / Alt-Down on the handle,
+  the arrow buttons and each object's *Group* menu do the same from the
+  keyboard. *New group* makes a group holding the selected object (or an
+  empty one). A group has a name, a colour, and collapses; its header can
+  Track only its stale or untracked members, clear their tracks, give them
+  all one effect, hide them in the preview (exports keep them) and Ungroup
+  (the objects stay, ungrouped). The order is also the timeline lanes' and
+  every export's: each group gets a folder in the zips (and
+  `data/groups/<group>/` in the roto folder), with an optional union mask per
+  group, and README.txt and the JSON name each object's group. The layout is
+  stored per video (`tracks/<video>/layout.json`, or OPFS with no backend),
+  outside the seeds hash: reordering never makes a track stale and is not an
+  undo step. Videos from before keep creation order.
 - **Track** runs the objects that are untracked or stale. Tracked objects never
   re-run, and their masks stay on screen. Jobs run beside you: you can keep
   clicking, adding objects and correcting while one runs, and pressing Track
@@ -194,7 +249,9 @@ python3 -m http.server 7390 --bind 127.0.0.1 --directory /tmp/pages   # http://1
   and keep their size on screen at any zoom. At 200% and above the video
   shows real pixels.
 - **Keys**: Space plays and pauses, the arrow keys step one frame, F flags
-  the frame for a correction, and Escape drops a lane selection.
+  the frame for a correction, Cmd-Z / Shift-Cmd-Z undo and redo the selected
+  object's clicks, . and , step through the review queue, Y says its stop looks
+  right, and Escape drops a lane selection.
 
 ## Features
 
@@ -227,7 +284,7 @@ Compared with Meta's demo UI, which studio replaced:
 | Close the session on unload | missing: the backend expires idle sessions (30 min). A visible tab touches its session every 5 minutes to keep it |
 | Stats overlay (debug) | missing |
 
-Studio only: SAM 3 engine, the in-browser SAM 2.1 tiny engine, per-engine badges and disagreement flags, objects restored on reload (with their seed masks), track-state badges, Clear track, absent ranges, text prompts (SAM 3),
+Studio only: SAM 3 engine, the in-browser SAM 2.1 tiny engine, per-engine badges and disagreement flags, objects restored on reload (with their seed masks), track-state badges, Clear track, absent ranges, candidate and present ranges, undo with kept track versions, text prompts (SAM 3),
 concurrent jobs, jobs from other tabs shown, zoom and pan, export for
 rotoscoping, and keyboard shortcuts.
 
@@ -254,6 +311,11 @@ a copy in the gitignored `studio/.models/<repo>/` is used instead
   stores and a TrackService for the browser engine, ported from
   `demo/backend/server/tracks`, with their tests) and `localMedia.ts` (the
   videos). `src/media/` is the MediaApi the Media list uses either way.
+- Undo and versions run here too. Both track stores keep the last 10 tracks of
+  each object and bring one back when its clicks return; with no backend they
+  live in OPFS (`tracks/<video>/<obj>/versions/`, a full copy each, since OPFS
+  has no hard links), next to an undo history in `seeds/<video>/<obj>/history.json`.
+  With a backend the browser tracks and their versions stay in this tab.
 
 Where it differs from Python SAM 2:
 
@@ -267,7 +329,8 @@ Where it differs from Python SAM 2:
   frame's output and its memory, as in SAM 2. But its object pointer comes
   from the decoder run on the frame's clicks, since the exported decoder has
   no mask input (SAM 2 runs it with the mask as its dense prompt).
-- Frames are resized to the model size by the browser, not by decord.
+- Frames are resized to the model size by the browser, not by FFmpeg's
+  bicubic scaler as the backend resizes them.
 
 Parity with Python SAM 2.1 tiny runs in headed Chrome (WebGPU needs a GPU):
 

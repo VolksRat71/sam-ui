@@ -40,17 +40,27 @@ import {
   parseObjectsHeader,
   readTrackStream,
 } from '~/api/trackStream';
-import {OpfsKv} from '~/local/kv';
+import {MemoryKv, OpfsKv} from '~/local/kv';
+import {KvReviewStore} from '~/local/reviewMarks';
+import {
+  type QueueEntry,
+  type ReasonKind,
+  type ReviewQueue,
+  buildQueue,
+  reviewNow,
+} from '~/state/audit';
 import {LocalEngine, type LocalOptions} from '~/local/LocalEngine';
-import {OfflineService} from '~/local/offlineStores';
+import {OfflineService, SeedStore} from '~/local/offlineStores';
 import {localTrackEntry, seedsKey, variantModel, withLocalTracks, type LocalTrackEntry} from '~/local/localTracks';
-import type {ExportedObject, ExportKind} from '~/state/maskExport';
+import type {Layout} from '~/state/layout';
+import {layoutFromResponse} from '~/state/layoutSync';
+import type {ExportedObject, ExportGroup, ExportKind} from '~/state/maskExport';
 import {buildExport} from './maskExports';
-import type {TrackObject} from '~/local/sam2/tracker';
+import {isClearedSeed, isConfirmedSeed, type TrackObject} from '~/local/sam2/tracker';
 import {BROWSER_ENGINE, engineLabel} from '~/state/engines';
 import {maskSegments} from '~/state/segments';
 import {refusedAsAbsent} from '~/state/corrections';
-import {type FrameRange, absentAt, endAbsenceAt, normalizeRanges, planUnits} from '~/state/ranges';
+import {type FrameRange, type Mark, type PaintOptions, type RangeState, absentAt, endAbsenceAt, normalizeRanges, planUnits, rangesKey} from '~/state/ranges';
 import {colorFor, DEFAULT_ENGINE, type NormPoint, type ServerObject} from '~/state/objects';
 import type MaskOverlayEffect from './MaskOverlayEffect';
 import {paintAlpha} from './maskPixels';
@@ -73,8 +83,13 @@ import type {StudioSessionClearVideoMutation} from './__generated__/StudioSessio
 import type {StudioSessionCloseMutation} from './__generated__/StudioSessionCloseMutation.graphql';
 import type {StudioSessionObjectTracksQuery} from './__generated__/StudioSessionObjectTracksQuery.graphql';
 import type {StudioSessionRemoveObjectMutation} from './__generated__/StudioSessionRemoveObjectMutation.graphql';
+import type {StudioSessionSetCandidatesMutation} from './__generated__/StudioSessionSetCandidatesMutation.graphql';
 import type {StudioSessionSetRangeMutation} from './__generated__/StudioSessionSetRangeMutation.graphql';
 import type {StudioSessionStartMutation} from './__generated__/StudioSessionStartMutation.graphql';
+import type {StudioSessionUndoMutation} from './__generated__/StudioSessionUndoMutation.graphql';
+import type {StudioSessionRedoMutation} from './__generated__/StudioSessionRedoMutation.graphql';
+import type {StudioSessionRestoreVersionMutation} from './__generated__/StudioSessionRestoreVersionMutation.graphql';
+import type {StudioSessionMoveClicksMutation} from './__generated__/StudioSessionMoveClicksMutation.graphql';
 
 type RleList = ReadonlyArray<{
   readonly objectId: number;
@@ -112,6 +127,24 @@ const START = graphql`
           start
           end
           state
+          source
+          score
+        }
+        history {
+          canUndo
+          canRedo
+          versions {
+            key
+            engine
+            model
+            created
+            elapsedS
+            nFrames
+            clicks
+            seedFrames
+            bounded
+            current
+          }
         }
       }
     }
@@ -191,6 +224,24 @@ const CLEAR_TRACK = graphql`
         start
         end
         state
+        source
+        score
+      }
+      history {
+        canUndo
+        canRedo
+        versions {
+          key
+          engine
+          model
+          created
+          elapsedS
+          nFrames
+          clicks
+          seedFrames
+          bounded
+          current
+        }
       }
     }
   }
@@ -223,6 +274,269 @@ const SET_RANGE = graphql`
         start
         end
         state
+        source
+        score
+      }
+      history {
+        canUndo
+        canRedo
+        versions {
+          key
+          engine
+          model
+          created
+          elapsedS
+          nFrames
+          clicks
+          seedFrames
+          bounded
+          current
+        }
+      }
+    }
+  }
+`;
+
+const SET_CANDIDATES = graphql`
+  mutation StudioSessionSetCandidatesMutation($input: SetObjectCandidatesInput!) {
+    setObjectCandidates(input: $input) {
+      objectId
+      state
+      frames
+      nFrames
+      seeds {
+        frameIndex
+        points
+        labels
+        mask {
+          size
+          counts
+        }
+      }
+      tracks {
+        engine
+        state
+        frames
+        nFrames
+      }
+      ranges {
+        start
+        end
+        state
+        source
+        score
+      }
+      history {
+        canUndo
+        canRedo
+        versions {
+          key
+          engine
+          model
+          created
+          elapsedS
+          nFrames
+          clicks
+          seedFrames
+          bounded
+          current
+        }
+      }
+    }
+  }
+`;
+
+const UNDO = graphql`
+  mutation StudioSessionUndoMutation($input: SeedHistoryInput!) {
+    undoSeeds(input: $input) {
+      objectId
+      state
+      frames
+      nFrames
+      seeds {
+        frameIndex
+        points
+        labels
+        mask {
+          size
+          counts
+        }
+      }
+      tracks {
+        engine
+        state
+        frames
+        nFrames
+      }
+      ranges {
+        start
+        end
+        state
+        source
+        score
+      }
+      history {
+        canUndo
+        canRedo
+        versions {
+          key
+          engine
+          model
+          created
+          elapsedS
+          nFrames
+          clicks
+          seedFrames
+          bounded
+          current
+        }
+      }
+    }
+  }
+`;
+
+const REDO = graphql`
+  mutation StudioSessionRedoMutation($input: SeedHistoryInput!) {
+    redoSeeds(input: $input) {
+      objectId
+      state
+      frames
+      nFrames
+      seeds {
+        frameIndex
+        points
+        labels
+        mask {
+          size
+          counts
+        }
+      }
+      tracks {
+        engine
+        state
+        frames
+        nFrames
+      }
+      ranges {
+        start
+        end
+        state
+        source
+        score
+      }
+      history {
+        canUndo
+        canRedo
+        versions {
+          key
+          engine
+          model
+          created
+          elapsedS
+          nFrames
+          clicks
+          seedFrames
+          bounded
+          current
+        }
+      }
+    }
+  }
+`;
+
+const RESTORE_VERSION = graphql`
+  mutation StudioSessionRestoreVersionMutation($input: RestoreVersionInput!) {
+    restoreVersion(input: $input) {
+      objectId
+      state
+      frames
+      nFrames
+      seeds {
+        frameIndex
+        points
+        labels
+        mask {
+          size
+          counts
+        }
+      }
+      tracks {
+        engine
+        state
+        frames
+        nFrames
+      }
+      ranges {
+        start
+        end
+        state
+        source
+        score
+      }
+      history {
+        canUndo
+        canRedo
+        versions {
+          key
+          engine
+          model
+          created
+          elapsedS
+          nFrames
+          clicks
+          seedFrames
+          bounded
+          current
+        }
+      }
+    }
+  }
+`;
+
+const MOVE_CLICKS = graphql`
+  mutation StudioSessionMoveClicksMutation($input: MoveClicksInput!) {
+    moveClicks(input: $input) {
+      objectId
+      state
+      frames
+      nFrames
+      seeds {
+        frameIndex
+        points
+        labels
+        mask {
+          size
+          counts
+        }
+      }
+      tracks {
+        engine
+        state
+        frames
+        nFrames
+      }
+      ranges {
+        start
+        end
+        state
+        source
+        score
+      }
+      history {
+        canUndo
+        canRedo
+        versions {
+          key
+          engine
+          model
+          created
+          elapsedS
+          nFrames
+          clicks
+          seedFrames
+          bounded
+          current
+        }
       }
     }
   }
@@ -271,6 +585,24 @@ const OBJECT_TRACKS = graphql`
         start
         end
         state
+        source
+        score
+      }
+      history {
+        canUndo
+        canRedo
+        versions {
+          key
+          engine
+          model
+          created
+          elapsedS
+          nFrames
+          clicks
+          seedFrames
+          bounded
+          current
+        }
       }
     }
   }
@@ -350,6 +682,8 @@ export default class StudioSession {
   private _storeKey: string | null = null;
   /** Set with no backend: seeds, names and tracks live in this browser (OPFS). */
   private _offline: OfflineService | null = null;
+  /** "Looks right" marks on the browser engine's queue: in OPFS with no backend, else in this tab. */
+  private _reviews = new KvReviewStore(new MemoryKv());
   private readonly _local: LocalEngine;
 
   constructor(
@@ -382,7 +716,10 @@ export default class StudioSession {
       if (!OpfsKv.available()) {
         throw new Error('this browser has no Origin Private File System, which studio needs without a backend');
       }
-      this._offline = new OfflineService(new OpfsKv());
+      // a job's objects are never swapped under it by an undo
+      const kv = new OpfsKv();
+      this._offline = new OfflineService(kv, () => this._local.heldIds());
+      this._reviews = new KvReviewStore(kv);
       this._local.useStore(this._offline.tracks);
     } else {
       this._env = createEnvironment(endpoint);
@@ -477,15 +814,13 @@ export default class StudioSession {
       // no backend: the browser engine answers, and its mask is the approved one
       const video = this._storeKey!;
       if (points.length === 0) {
-        await this._offline.clearFrame(video, objectId, frameIndex);
+        await this._offline.clearFrame(video, objectId, frameIndex, this._variant);
         this._seedMasks.get(objectId)?.delete(frameIndex);
         list = [];
       } else {
         const {rle} = await this._local.click(frameIndex, points);
-        if (absent) {
-          await this._offline.endAbsenceAt(video, objectId, frameIndex);
-        }
-        await this._offline.recordPoints(video, objectId, frameIndex, points, rle);
+        // a positive inside an absent range ends it, in the same undo step as the click
+        await this._offline.recordPoints(video, objectId, frameIndex, points, rle, this._variant, absent);
         list = [{objectId, rleMask: rle}];
       }
     } else if (points.length === 0) {
@@ -522,6 +857,10 @@ export default class StudioSession {
       this._ranges.set(objectId, endAbsenceAt(this._ranges.get(objectId), frameIndex));
     }
     this._setSeedPoints(t, frameIndex, points);
+    if (this._offline == null && this._storeKey != null && points.length > 0 && !this._local.heldIds().has(objectId)) {
+      // back on clicks a kept browser track was made from (a click taken off): it is current again
+      await this._local.store.adopt(this._storeKey, objectId, seedsKey(this._seedPoints.get(objectId) ?? new Map(), this._ranges.get(objectId) ?? []), this._variant);
+    }
     // addPoints answers with every object on this frame; only the clicked
     // object's mask is new. The others' (from tracks) stay as they are.
     const mine = list.find(m => m.objectId === objectId);
@@ -642,39 +981,221 @@ export default class StudioSession {
   }
 
   /**
-   * Mark frames start-end of an object absent, or clear them (state null).
-   * Marking empties those frames on screen at once; unmarking repaints the
-   * object from its cached track, which the backend blanks only where a
-   * range still stands.
+   * Set frames start-end of an object to a range state, or clear them (state
+   * null; opts.clear limits which states). Only absent frames touch the
+   * preview: marking empties them at once, unmarking repaints the object from
+   * its cached track, which the backend blanks only where a range still
+   * stands. Present and candidate ranges never change a mask.
    */
-  async setRange(objectId: number, start: number, end: number, state: 'absent' | null): Promise<ServerObject> {
+  async setRange(objectId: number, start: number, end: number, state: RangeState | null, opts: PaintOptions = {}): Promise<ServerObject> {
+    const [a, b] = [Math.min(start, end), Math.max(start, end)];
+    // taken first: objectTracks() below already stores the new ranges
+    const before = this._ranges.get(objectId) ?? [];
     let result: ServerObject | undefined;
     if (this._offline != null) {
-      await this._offline.setRange(this._storeKey!, objectId, start, end, state);
+      await this._offline.setRange(this._storeKey!, objectId, a, b, state, this._variant, opts);
       result = (await this.objectTracks()).find(o => o.objectId === objectId);
     } else {
+      // only the fields in use, so an absent mark still reaches a backend from before candidates
+      const extra = {
+        ...(opts.source != null ? {source: opts.source} : {}),
+        ...(opts.score != null ? {score: opts.score} : {}),
+        ...(opts.clear != null ? {clear: [...opts.clear]} : {}),
+      };
       const res = await mutate<StudioSessionSetRangeMutation>(this.env, SET_RANGE, {
-        input: {sessionId: this.sessionId, objectId, start: Math.min(start, end), end: Math.max(start, end), state},
+        input: {sessionId: this.sessionId, objectId, start: a, end: b, state, ...extra},
       });
       result = (await this._withLocal([plain(res.setObjectRange) as ServerObject]))[0];
     }
     if (result == null) {
       throw new Error(`object ${objectId} is not known`);
     }
-    const ranges = normalizeRanges(result.ranges);
-    this._ranges.set(objectId, ranges);
-    const t = this._tracklet(objectId);
-    if (state != null) {
-      for (let f = Math.min(start, end); f <= Math.max(start, end); f++) {
-        this._setMask(t, f, undefined);
-      }
-      this._render(true);
+    await this._rangesChanged(objectId, before, normalizeRanges(result.ranges), a, b);
+    return result;
+  }
+
+  /** Write candidate ranges in bulk (what a discovery job makes); no mask changes. */
+  async writeCandidates(
+    objectId: number,
+    candidates: ReadonlyArray<{start: number; end: number; source: string; score?: number | null}>,
+    replace = false,
+  ): Promise<ServerObject> {
+    let result: ServerObject | undefined;
+    if (this._offline != null) {
+      await this._offline.writeCandidates(this._storeKey!, objectId, candidates, replace);
+      result = (await this.objectTracks()).find(o => o.objectId === objectId);
     } else {
+      const res = await mutate<StudioSessionSetCandidatesMutation>(this.env, SET_CANDIDATES, {
+        input: {
+          sessionId: this.sessionId,
+          objectId,
+          replace,
+          candidates: candidates.map(c => ({start: c.start, end: c.end, source: c.source, ...(c.score != null ? {score: c.score} : {})})),
+        },
+      });
+      result = (await this._withLocal([plain(res.setObjectCandidates) as ServerObject]))[0];
+    }
+    if (result == null) {
+      throw new Error(`object ${objectId} is not known`);
+    }
+    return result;
+  }
+
+  /** The object's absent ranges went from `before` to `ranges` (a change inside frames a-b): show it. */
+  private async _rangesChanged(objectId: number, before: FrameRange[], ranges: FrameRange[], a: number, b: number): Promise<void> {
+    this._ranges.set(objectId, ranges);
+    if (rangesKey(before) === rangesKey(ranges)) {
+      return; // annotations only: no mask changes
+    }
+    const t = this._tracklet(objectId);
+    let unmarked = false;
+    for (let f = a; f <= b; f++) {
+      if (absentAt(ranges, f) && !absentAt(before, f)) {
+        this._setMask(t, f, undefined);
+      } else if (!absentAt(ranges, f) && absentAt(before, f)) {
+        unmarked = true;
+      }
+    }
+    if (unmarked) {
       // the frames just unmarked show what the cache holds there again
       this._keepSeedMasksOnly(t);
       await this.repaint([objectId]);
+    } else {
+      this._render(true);
     }
-    return result;
+  }
+
+  // -- undo, versions and moving clicks (issue #18) -----------------------------
+
+  /**
+   * Undo the object's last seed change. Its earlier track comes back from its
+   * kept version with no job when it has one (the backend's tracks/versions.py,
+   * or this browser's store), and the preview shows it at once.
+   */
+  async undo(objectId: number): Promise<ServerObject> {
+    return this._seedStep(objectId, 'undo');
+  }
+
+  async redo(objectId: number): Promise<ServerObject> {
+    return this._seedStep(objectId, 'redo');
+  }
+
+  private async _seedStep(objectId: number, which: 'undo' | 'redo'): Promise<ServerObject> {
+    let o: ServerObject;
+    if (this._offline != null) {
+      const video = this._storeKey!;
+      o = which === 'undo' ? await this._offline.undo(video, objectId, this._variant) : await this._offline.redo(video, objectId, this._variant);
+    } else {
+      const input = {sessionId: this.sessionId, objectId};
+      o =
+        which === 'undo'
+          ? (plain((await mutate<StudioSessionUndoMutation>(this.env, UNDO, {input})).undoSeeds) as ServerObject)
+          : (plain((await mutate<StudioSessionRedoMutation>(this.env, REDO, {input})).redoSeeds) as ServerObject);
+      o = await this._afterSeedChange(o);
+    }
+    await this._showChanged([o]);
+    return o;
+  }
+
+  /** Go back to one of the object's kept versions from its list (undoable). */
+  async restoreVersion(objectId: number, key: string, engine: string): Promise<ServerObject> {
+    let o: ServerObject;
+    if (this._offline != null) {
+      o = await this._offline.restoreVersion(this._storeKey!, objectId, key, this._variant);
+    } else {
+      if (engine === BROWSER_ENGINE) {
+        throw new Error(`${engineLabel(BROWSER_ENGINE)} versions come back with undo here; the list restores the backend's`);
+      }
+      const res = await mutate<StudioSessionRestoreVersionMutation>(this.env, RESTORE_VERSION, {
+        input: {sessionId: this.sessionId, objectId, key},
+      });
+      o = await this._afterSeedChange(plain(res.restoreVersion) as ServerObject);
+    }
+    await this._showChanged([o]);
+    return o;
+  }
+
+  /**
+   * Move one object's clicks on a frame to another object (clicks that landed
+   * on the wrong one): one undo step for each. Needs the backend, whose SAM 2
+   * segments them for the target; with no backend the browser engine does.
+   */
+  async moveClicks(frameIndex: number, fromId: number, toId: number, engine?: string): Promise<ServerObject[]> {
+    if (absentAt(this._ranges.get(toId), frameIndex)) {
+      throw new Error(`frame ${frameIndex + 1} is marked absent for that object: unmark it to move clicks there`);
+    }
+    let out: ServerObject[];
+    if (this._offline != null) {
+      const video = this._storeKey!;
+      const moving = this._seedPoints.get(fromId)?.get(frameIndex) ?? [];
+      if (moving.length === 0) {
+        throw new Error(`no clicks on frame ${frameIndex + 1} to move`);
+      }
+      const held = this._local.heldIds();
+      if (held.has(fromId) || held.has(toId)) {
+        throw new Error('one of these objects is being tracked: wait for its job, or cancel it');
+      }
+      const points = [...(this._seedPoints.get(toId)?.get(frameIndex) ?? []), ...moving];
+      const {rle} = await this._local.click(frameIndex, points);
+      await this._offline.clearFrame(video, fromId, frameIndex, this._variant);
+      await this._offline.recordPoints(video, toId, frameIndex, points, rle, this._variant);
+      out = [
+        await this._offline.objectInfo(video, fromId, this._variant, held),
+        await this._offline.objectInfo(video, toId, this._variant, held),
+      ];
+    } else {
+      const res = await mutate<StudioSessionMoveClicksMutation>(this.env, MOVE_CLICKS, {
+        input: {sessionId: this.sessionId, frameIndex, fromObjectId: fromId, toObjectId: toId, engine: engine ?? null},
+      });
+      out = [];
+      for (const o of plain(res.moveClicks) as ServerObject[]) {
+        out.push(await this._afterSeedChange(o));
+      }
+    }
+    await this._showChanged(out);
+    return out;
+  }
+
+  /**
+   * With a backend: a browser track kept for the object's clicks as they now
+   * are becomes current again (this tab's store), and the object gets its
+   * browser track state.
+   */
+  private async _afterSeedChange(o: ServerObject): Promise<ServerObject> {
+    if (this._storeKey != null && !this._local.heldIds().has(o.objectId) && o.seeds.some(s => s.points.length > 0)) {
+      await this._local.store.adopt(this._storeKey, o.objectId, seedsKey(seedPointsOf(o), normalizeRanges(o.ranges)), this._variant);
+    }
+    return (await this._withLocal([o]))[0];
+  }
+
+  /** Show objects whose seeds changed under the preview: their clicks, seed masks, and cached track. */
+  private async _showChanged(objects: ServerObject[]): Promise<void> {
+    for (const o of objects) {
+      this._ranges.set(o.objectId, normalizeRanges(o.ranges));
+      const t = this._tracklet(o.objectId);
+      const now = seedPointsOf(o);
+      for (const f of [...(this._seedPoints.get(o.objectId)?.keys() ?? [])]) {
+        if (!now.has(f)) {
+          this._setSeedPoints(t, f, []);
+        }
+      }
+      for (const [f, pts] of now) {
+        this._setSeedPoints(t, f, pts);
+      }
+      const masks = new Map<number, Mask>();
+      for (const s of o.seeds) {
+        const m = s.mask == null ? undefined : toMask(s.mask);
+        if (m != null) {
+          masks.set(s.frameIndex, m);
+        }
+      }
+      this._seedMasks.set(o.objectId, masks);
+      this._keepSeedMasksOnly(t);
+    }
+    this._render(true);
+    if (this._sessionId != null) {
+      await this.repaint(objects.map(o => o.objectId));
+    }
   }
 
   /** The objects with their seeds, from the backend (or, with none, from this browser). */
@@ -852,7 +1373,8 @@ export default class StudioSession {
     }
     const selected = parseObjectsHeader(response.headers.get('Objects-Tracked'));
     const jobId = response.headers.get('Job-Id');
-    this._emit({type: 'jobStarted', key, jobId, selected});
+    const bounded = parseObjectsHeader(response.headers.get('Objects-Bounded'));
+    this._emit({type: 'jobStarted', key, jobId, selected, bounded});
     // a job's masks are drawn only while its engine is the one on screen
     const shown = () => engine === this._engine;
     if (shown()) {
@@ -949,6 +1471,7 @@ export default class StudioSession {
     }
     // taken at the start, as the backend does: clicks edited mid-job leave the track stale
     const keys = new Map<number, string>();
+    const records = new Map<number, Record<string, unknown> | null>();
     const variant = this._local.variant;
     const jobObjects = selected.map(id => {
       const o = byId.get(id)!;
@@ -965,6 +1488,14 @@ export default class StudioSession {
     // one pass per window between absent ranges, each from its own seeds; with
     // no ranges that is one pass over the whole clip, as before ranges existed.
     // Frames outside every seeded window get no mask: empty.
+    if (this._offline != null) {
+      for (const id of selected) {
+        // so the list can restore its version; a click that came in since makes
+        // the record another set of clicks, which the version must not claim
+        const record = await this._offline.seeds.record(video, id);
+        records.set(id, SeedStore.recordKey(record) === keys.get(id) ? record : null);
+      }
+    }
     const units = planUnits(jobObjects).map(u => ({
       objects: u.objects.map((o): TrackObject => ({id: o.id, seeds: o.seeds})),
       window: u.window.lo === 0 && u.window.hi == null ? undefined : u.window,
@@ -1004,7 +1535,15 @@ export default class StudioSession {
     if (error == null && !canceled) {
       for (const id of selected) {
         const m = masks.get(id)!;
-        await this._local.store.put(video, {objectId: id, seedsKey: keys.get(id)!, variant, masks: m, nFrames: m.size});
+        await this._local.store.put(video, {
+          objectId: id,
+          seedsKey: keys.get(id)!,
+          variant,
+          masks: m,
+          nFrames: m.size,
+          record: records.get(id) ?? null,
+          created: new Date().toISOString(),
+        });
       }
     }
     const outcome =
@@ -1038,6 +1577,9 @@ export default class StudioSession {
     engine: string;
     engineLabel: string;
     model: string;
+    groups?: ExportGroup[];
+    union?: boolean;
+    review?: QueueEntry[];
   }): Promise<ArrayBuffer> {
     const decoded = this._context['_decodedVideo'];
     if (decoded == null || this._videoPath == null || this._storeKey == null) {
@@ -1078,8 +1620,48 @@ export default class StudioSession {
         seedsOf: id => this._seedPoints.get(id) ?? new Map(),
       },
       done => this._emit({type: 'exportProgress', done}),
+      {groups: args.groups, union: args.union, review: args.review},
     );
     return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+  }
+
+  /**
+   * POST /object_layout. Only a missing route (a backend from before layouts)
+   * is "unsupported"; a network or server error throws, because the stored
+   * layout is then unknown, not empty (state/layoutSync.ts).
+   */
+  async objectLayout(): Promise<{layout: Layout; supported: boolean}> {
+    if (this._offline != null) {
+      return {layout: await this._offline.layout(this._storeKey!), supported: true};
+    }
+    const response = await fetch(`${this._endpoint}/object_layout`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({session_id: this.sessionId}),
+    }).catch(() => null);
+    const body = response?.ok ? await response.json().catch(() => null) : null;
+    return layoutFromResponse(response?.status ?? null, body);
+  }
+
+  /** POST /set_object_layout. A backend from before layouts answers 404: not saved, no error. */
+  async setObjectLayout(layout: Layout): Promise<{saved: boolean}> {
+    if (this._offline != null) {
+      await this._offline.setLayout(this._storeKey!, layout);
+      return {saved: true};
+    }
+    const response = await fetch(`${this._endpoint}/set_object_layout`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({session_id: this.sessionId, layout}),
+    }).catch(() => null);
+    if (response == null || response.status === 404 || response.status === 405) {
+      return {saved: false};
+    }
+    if (!response.ok) {
+      const body = (await response.json().catch(() => null)) as {error?: string} | null;
+      throw new Error(body?.error ?? `set_object_layout: HTTP ${response.status}`);
+    }
+    return {saved: true};
   }
 
   /** POST /rename_object. A backend from before names answers 404: not saved, no error. */
@@ -1230,6 +1812,117 @@ export default class StudioSession {
       throw new Error(body?.error ?? `track_disagreement: HTTP ${response.status}`);
     }
     return body;
+  }
+
+  // -- the audit queue (draft 7) ----------------------------------------------
+
+  /** The browser engine's queue (and every queue with no backend) is built here; the backend builds its engines'. */
+  private _reviewsLocally(engine: string): boolean {
+    return this._offline != null || engine === BROWSER_ENGINE;
+  }
+
+  /** POST /review_queue, or the browser engine's queue (state/audit.ts buildQueue). */
+  async reviewQueue(engine: string, flags: Record<number, number[]>, candidates: Record<number, Mark[]>): Promise<ReviewQueue> {
+    if (this._reviewsLocally(engine)) {
+      return this._localQueue(engine, flags, candidates);
+    }
+    const response = await fetch(`${this._endpoint}/review_queue`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({session_id: this.sessionId, engine, flags}),
+    });
+    if (response.status === 404) {
+      // a backend from before the audit queue
+      return {engine, compare: null, objects: {}, queue: [], skipped: {}, supported: false};
+    }
+    type Wire = {
+      engine: string;
+      compare: string | null;
+      objects: Record<string, {state: string; n_frames: number; unreviewed: number}>;
+      queue: Array<Omit<QueueEntry, 'objectId' | 'reviewedAt'> & {object_id: number; reviewed_at: string | null}>;
+      skipped: Record<string, string>;
+      error?: string;
+    };
+    const body = (await response.json().catch(() => null)) as Wire | null;
+    if (!response.ok || body == null) {
+      throw new Error(body?.error ?? `review_queue: HTTP ${response.status}`);
+    }
+    return {
+      engine: body.engine,
+      compare: body.compare,
+      objects: Object.fromEntries(
+        Object.entries(body.objects).map(([id, o]) => [Number(id), {state: o.state, nFrames: o.n_frames, unreviewed: o.unreviewed}]),
+      ),
+      queue: body.queue.map(({object_id, reviewed_at, ...e}) => ({...e, objectId: object_id, reviewedAt: reviewed_at})),
+      skipped: Object.fromEntries(Object.entries(body.skipped).map(([id, st]) => [Number(id), st])),
+      supported: true,
+    };
+  }
+
+  private async _localQueue(engine: string, flags: Record<number, number[]>, candidates: Record<number, Mark[]>): Promise<ReviewQueue> {
+    const decoded = this._context['_decodedVideo'];
+    const video = this._storeKey;
+    if (decoded == null || video == null) {
+      return {engine, compare: null, objects: {}, queue: [], skipped: {}, supported: true};
+    }
+    const held = this._local.heldIds();
+    const objects = [];
+    for (const id of [...this._tracklets.keys()].sort((a, b) => a - b)) {
+      const track = await this._local.store.get(video, id);
+      const ranges = this._ranges.get(id) ?? [];
+      const seeds = this._seedPoints.get(id) ?? new Map<number, NormPoint[]>();
+      const approved = this._seedMasks.get(id);
+      // "not on this frame" seeds, as the tracker decides them: never a disappearance, and a candidate's item skips them
+      const seedOf = (frame: number, points: NormPoint[]) => ({frame, points, mask: (approved?.get(frame)?.data as RLEObject | undefined) ?? null});
+      const cleared = [...seeds].filter(([frame, points]) => isClearedSeed(seedOf(frame, points))).map(([frame]) => frame);
+      // a positive or text seed inside a candidate: that frame is confirmed present
+      const confirmed = [...seeds].filter(([frame, points]) => isConfirmedSeed(seedOf(frame, points))).map(([frame]) => frame);
+      const {state} = localTrackEntry(track, {seedsKey: seedsKey(seeds, ranges), variant: this._local.variant, running: held.has(id)});
+      objects.push({
+        id,
+        state,
+        masks: track?.masks ?? null,
+        marks: await this._reviews.marks(video, id),
+        ranges,
+        candidates: candidates[id] ?? [],
+        seeds: [...seeds.keys()],
+        cleared,
+        confirmed,
+        flags: flags[id] ?? [],
+      });
+    }
+    return buildQueue(objects, decoded.numFrames, BROWSER_ENGINE);
+  }
+
+  /** Mark a stop reviewed (on the mask its frame holds now), or unmark the stops over `span`. */
+  async setReviewed(args: {objectId: number; frame: number; engine: string; reviewed: boolean; span: [number, number]; reasons: ReasonKind[]}): Promise<void> {
+    const {objectId, frame, engine, reviewed, span, reasons} = args;
+    if (!this._reviewsLocally(engine)) {
+      const response = await fetch(`${this._endpoint}/set_reviewed`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({session_id: this.sessionId, object_id: objectId, frame, engine, reviewed, span, reasons}),
+      });
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as {error?: string} | null;
+        throw new Error(body?.error ?? `set_reviewed: HTTP ${response.status}`);
+      }
+      return;
+    }
+    const video = this._storeKey;
+    if (video == null) {
+      throw new Error('no video is open');
+    }
+    if (!reviewed) {
+      await this._reviews.unmark(video, objectId, BROWSER_ENGINE, span[0], span[1]);
+      return;
+    }
+    const track = await this._local.store.get(video, objectId);
+    const now = reviewNow(track?.masks ?? null, frame, span, this._context['_decodedVideo']?.numFrames ?? 0);
+    if (now == null) {
+      throw new Error(`there is no ${engineLabel(BROWSER_ENGINE)} track on frame ${frame + 1} to mark reviewed`);
+    }
+    await this._reviews.mark(video, objectId, {frame, span, engine: BROWSER_ENGINE, at: new Date().toISOString(), reasons, ...now});
   }
 
   setActiveObject(objectId: number | null): void {

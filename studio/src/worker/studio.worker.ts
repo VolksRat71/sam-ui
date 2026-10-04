@@ -53,6 +53,8 @@ const context = new VideoWorkerContext();
 /** The effects the preview shows; an export swaps in its own, then restores these. */
 let previewEffects: Record<number, {name: string; variant: number}> = {};
 let exporting = false;
+/** The preview's hidden objects (a hidden group's members); an export draws them all. */
+let previewHidden: (id: number) => boolean = () => false;
 
 async function exportVideo(effects: Record<number, {name: string; variant: number}>): Promise<ArrayBuffer> {
   // Meta's context keeps its decoded frames and its frame renderer private;
@@ -69,6 +71,7 @@ async function exportVideo(effects: Record<number, {name: string; variant: numbe
   const faded = overlay.faded;
   overlay.activeObjectId = null; // no editing aids in the file
   overlay.faded = () => false;
+  highlight.hidden = () => false; // hiding a group is for the preview only
   try {
     await highlight.setEffects(effects);
     return await encodeMp4({
@@ -83,6 +86,7 @@ async function exportVideo(effects: Record<number, {name: string; variant: numbe
   } finally {
     overlay.activeObjectId = active;
     overlay.faded = faded;
+    highlight.hidden = previewHidden;
     await highlight.setEffects(previewEffects);
     exporting = false;
     context.goToFrame(context.frameIndex);
@@ -110,8 +114,13 @@ const handlers: Handlers = {
   textPrompt: ({objectId, frameIndex, text, engine}) => session.textPrompt(objectId, frameIndex, text, engine),
   removeObject: ({objectId}) => session.removeObject(objectId),
   clearTrack: ({objectId, engine}) => session.clearTrack(objectId, engine),
-  setRange: ({objectId, start, end, state}) => session.setRange(objectId, start, end, state),
+  setRange: ({objectId, start, end, state, source, score, clear}) => session.setRange(objectId, start, end, state, {source, score, clear}),
+  writeCandidates: ({objectId, candidates, replace}) => session.writeCandidates(objectId, candidates, replace),
   objectTracks: () => session.objectTracks(),
+  undo: ({objectId}) => session.undo(objectId),
+  redo: ({objectId}) => session.redo(objectId),
+  restoreVersion: ({objectId, key, engine}) => session.restoreVersion(objectId, key, engine),
+  moveClicks: ({frameIndex, fromId, toId, engine}) => session.moveClicks(frameIndex, fromId, toId, engine),
   track: ({objectIds, key, engine}) => session.track(objectIds, key, engine),
   cancelTrack: ({jobId}) => session.cancelTrack(jobId),
   trackJobs: () => session.trackJobs(),
@@ -123,6 +132,8 @@ const handlers: Handlers = {
   setEngine: ({engine}) => session.setEngine(engine),
   engines: () => session.engines(),
   disagreement: ({a, b, objectIds}) => session.disagreement(a, b, objectIds),
+  reviewQueue: ({engine, flags, candidates}) => session.reviewQueue(engine, flags, candidates),
+  setReviewed: args => session.setReviewed(args),
   setObjectEffects: async ({effects}) => {
     previewEffects = effects;
     if (!exporting) {
@@ -136,6 +147,16 @@ const handlers: Handlers = {
   renameObject: ({objectId, name}) => session.renameObject(objectId, name),
   exportMasks: args => session.exportMasks(args),
   objectNames: () => session.objectNames(),
+  objectLayout: () => session.objectLayout(),
+  setObjectLayout: ({layout}) => session.setObjectLayout(layout),
+  setHiddenObjects: ({objectIds}) => {
+    const hidden = new Set(objectIds);
+    previewHidden = id => hidden.has(id);
+    if (!exporting) {
+      highlight.hidden = previewHidden;
+      context.goToFrame(context.frameIndex);
+    }
+  },
 };
 
 async function handleCall(call: StudioCall): Promise<void> {

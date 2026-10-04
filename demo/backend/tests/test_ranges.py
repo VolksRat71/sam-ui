@@ -214,9 +214,10 @@ def test_a_seed_past_the_gap_only_affects_its_own_side(h):
     h.click(1, frame=9, points=[[0.7, 0.7]])  # a new seed after the gap
     assert h.state(1) == STALE
     _, frames = h.track()
-    # only the far side ran again; the near side's frames came from the cache
-    assert h.engine.units[-1] == (7, None, {1: [8, 9]})
-    assert [u for u in h.engine.units[2:]] == [(7, None, {1: [8, 9]})]
+    # only the far side ran again (a bounded pass from the new seed, issue
+    # #19, in the far window only); the near side's frames came from the cache
+    assert h.engine.units[2:] == []
+    assert h.engine.stretches == [(1, 8, 7, 9, [8, 9, 7])]  # from the window's first seed, and back
     assert sorted(f for f, _ in frames) == list(range(10)) and h.state(1) == TRACKED
 
 
@@ -292,7 +293,7 @@ def test_set_range_marks_unmarks_and_refuses_a_bad_span(h):
     with pytest.raises(ValueError):
         mark(h, 1, 4, 2)
     with pytest.raises(ValueError):
-        mark(h, 1, 1, 2, "candidate")  # not a state yet
+        mark(h, 1, 1, 2, "candidate")  # a candidate needs a source (test_candidates.py)
 
 
 # -- the interactive session ---------------------------------------------------------
