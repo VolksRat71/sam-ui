@@ -6,7 +6,6 @@
 import {Close, Renew} from '@carbon/icons-react';
 import {useEffect, useState, type ReactNode} from 'react';
 import {Panel, PanelGroup, PanelResizeHandle} from 'react-resizable-panels';
-import {OBJECT_LIMIT} from '~/config';
 import {panelStorage} from '~/lib/storage';
 import {videoDisplayName} from '~/lib/uploadNames';
 import {BROWSER_ENGINE, engineLabel} from '~/state/engines';
@@ -24,12 +23,12 @@ import ExportMenu, {type ExportChoice} from './ExportMenu';
 import ExportPanel from './ExportPanel';
 import MaskExportModal from './MaskExportModal';
 import ExportVideoModal from './ExportVideoModal';
-import ObjectsSection from './ObjectsSection';
 import Preview, {type LabelMode} from './Preview';
 import ReviewSection from './ReviewSection';
 import Sidebar from './Sidebar';
 import Timeline from './Timeline';
 import UpdateBanner from './UpdateBanner';
+import ShortcutSheet from './ShortcutSheet';
 
 type Props = {
   video: VideoItem;
@@ -39,11 +38,14 @@ type Props = {
 export default function Workspace({video, renderMedia}: Props) {
   const session = useStudioSession(video);
   const {state, dirty, meta} = session;
+  const [inspector, setInspector] = useState<HTMLDivElement | null>(null);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [mode, setMode] = useState<LabelMode>('positive');
   const [confirmStartOver, setConfirmStartOver] = useState(false);
   const [exporting, setExporting] = useState<ExportChoice | null>(null);
   const videoName = videoDisplayName(video.path);
   const jobs = state.jobs;
+  const selectedLayer = state.objects.find(o => o.id === state.activeId);
   // no backend, or none of its engines can run: the browser engine is all there is
   const browserOnly = session.engines.length > 0 && session.engines.every(e => e.local || !e.available);
   const notice = pageNotice({backend: session.backend, webgpu: session.webgpu, browserOnly});
@@ -56,6 +58,7 @@ export default function Workspace({video, renderMedia}: Props) {
   // the review keys also work with a button focused, as after clicking a stop)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (document.querySelector('.shortcut-sheet[open]') != null) return;
       const step = historyShortcut(e);
       if (step != null) {
         e.preventDefault();
@@ -70,6 +73,13 @@ export default function Workspace({video, renderMedia}: Props) {
       }
       const plain = !e.metaKey && !e.ctrlKey && !e.altKey;
       if (plain && document.querySelector('.modal-backdrop') == null) {
+        if (e.key === '?') { e.preventDefault(); setShortcutsOpen(true); return; }
+        if (e.key.toLowerCase() === 'o' && session.ordered.length > 0) {
+          e.preventDefault();
+          const at = session.ordered.findIndex(o => o.id === state.activeId);
+          const next = (at + (e.shiftKey ? -1 : 1) + session.ordered.length) % session.ordered.length;
+          session.selectObject(session.ordered[next].id); return;
+        }
         if (e.key === '.' || e.key === ',') {
           e.preventDefault();
           session.stepReview(e.key === '.' ? 1 : -1);
@@ -97,12 +107,12 @@ export default function Workspace({video, renderMedia}: Props) {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [session]);
+  }, [session, state.activeId]);
 
   const trackLabel =
     dirty.length === 0
       ? 'Nothing to track'
-      : `Track ${dirty.length} ${dirty.length === 1 ? 'object' : 'objects'}`;
+      : `Track ${dirty.length} ${dirty.length === 1 ? 'layer' : 'layers'}`;
 
   return (
     <div className="app">
@@ -111,7 +121,7 @@ export default function Workspace({video, renderMedia}: Props) {
           <span className="brand-mark" />
           sam-ui <span className="muted">studio</span>
         </div>
-        <div className="topbar-status">
+        <div className="topbar-status" role="status" aria-live="polite" aria-atomic="true">
           {jobs.map(job => (
             <span key={job.key} className="job-chip">
               <span className="spinner small" />
@@ -121,7 +131,7 @@ export default function Workspace({video, renderMedia}: Props) {
                 <span
                   className="muted"
                   title={`Re-tracking ${job.bounded.map(nameOf).join(', ')} only around the corrections, keeping the cached frames beyond`}>
-                  near corrections
+                  around changed keyframes
                 </span>
               )}
               {job.frames === 0 && session.engines.find(e => e.name === job.engine)?.loading && (
@@ -168,22 +178,13 @@ export default function Workspace({video, renderMedia}: Props) {
           )}
         </div>
         <div className="topbar-actions">
+          <button className="button subtle" onClick={() => setShortcutsOpen(true)} aria-label="Keyboard shortcuts (?)">Shortcuts <kbd>?</kbd></button>
           {jobs.length > 1 && (
             <button className="button" onClick={() => session.cancelTrack()} title="Cancel every job of this session">
               <Close size={16} /> Cancel all
             </button>
           )}
           {state.engine === BROWSER_ENGINE && !session.noEngine && <DemoTag />}
-          <EnginePicker session={session} />
-          <div className="gradient-border">
-            <button
-              className="button cta"
-              onClick={session.track}
-              disabled={dirty.length === 0 || session.busy}
-              title="Track the objects that are untracked or stale; running jobs keep theirs">
-              {trackLabel}
-            </button>
-          </div>
           <ExportMenu session={session} videoPath={video.path} onChoose={setExporting} />
           <button
             className="button subtle"
@@ -207,23 +208,16 @@ export default function Workspace({video, renderMedia}: Props) {
         </div>
       )}
 
-      <PanelGroup direction="vertical" autoSaveId="sam-ui-studio:rows" storage={panelStorage} className="main">
-        <Panel id="top" order={0} defaultSize={74} minSize={35}>
+      <PanelGroup direction="vertical" autoSaveId="sam-ui-suite:rows" storage={panelStorage} className="main">
+        <Panel id="top" order={0} defaultSize={40} minSize={25}>
           <PanelGroup direction="horizontal" autoSaveId="sam-ui-studio:cols" storage={panelStorage}>
-            <Panel id="preview" order={0} defaultSize={70} minSize={30}>
+            <Panel id="preview" order={0} defaultSize={65} minSize={30}>
               <Preview session={session} mode={mode} onModeChange={setMode} />
             </Panel>
             <PanelResizeHandle className="resize-handle vertical" />
-            <Panel id="sidebar" order={1} defaultSize={30} minSize={16} collapsible collapsedSize={0}>
+            <Panel id="sidebar" order={1} defaultSize={35} minSize={24} collapsible collapsedSize={0}>
               <Sidebar
                 sections={[
-                  {id: 'media', title: 'Media', content: renderMedia(jobs.length > 0)},
-                  {
-                    id: 'objects',
-                    title: 'Objects',
-                    badge: `${state.objects.length}/${OBJECT_LIMIT}`,
-                    content: <ObjectsSection session={session} />,
-                  },
                   {
                     id: 'review',
                     title: 'Review',
@@ -234,22 +228,43 @@ export default function Workspace({video, renderMedia}: Props) {
                     content: <ReviewSection session={session} />,
                   },
                   {
+                    id: 'info', title: 'Layer info',
+                    content: <>
+                      {selectedLayer == null && <p className="empty">Select a layer in the timeline.</p>}
+                      <div ref={setInspector} />
+                    </>,
+                  },
+                  {
                     id: 'effects',
                     title: 'Effects',
                     content: (
                       <EffectsSection session={session} />
                     ),
                   },
+                  {id: 'media', title: 'Media', content: renderMedia(jobs.length > 0)},
                 ]}
               />
             </Panel>
           </PanelGroup>
         </Panel>
         <PanelResizeHandle className="resize-handle horizontal" />
-        <Panel id="timeline" order={1} defaultSize={26} minSize={12}>
-          <Timeline session={session} />
+        <Panel id="timeline" order={1} defaultSize={60} minSize={30}>
+          <Timeline session={session} inspector={inspector} actions={<>
+          <EnginePicker session={session} />
+          <div className="track-action">
+            <button
+              className="button cta"
+              onClick={session.track}
+              disabled={dirty.length === 0 || session.busy}
+              title="Track the objects that are untracked or changed; running jobs keep theirs">
+              {trackLabel}
+            </button>
+          </div>
+          </>} />
         </Panel>
       </PanelGroup>
+
+      {shortcutsOpen && <ShortcutSheet onClose={() => setShortcutsOpen(false)} />}
 
       {exporting === 'effects' && (
         <ExportVideoModal session={session} videoName={videoName} onClose={() => setExporting(null)} />

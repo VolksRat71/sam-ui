@@ -7,7 +7,7 @@
 // file) are listed with the reason. The desktop app's main process does the
 // talking; this page never reaches After Effects itself.
 import {Renew} from '@carbon/icons-react';
-import {useCallback, useEffect, useState} from 'react';
+import {useCallback, useEffect, useRef, useState} from 'react';
 import {createPortal} from 'react-dom';
 import {type AeError, type AeMedia, type AeMediaItem, aeBridge} from '~/lib/desktop';
 import {rememberUploadName} from '~/lib/uploadNames';
@@ -68,6 +68,10 @@ export default function AeOpenModal({onClose, onOpened}: Props) {
   useEffect(() => {
     void list();
   }, [list]);
+
+  // focus starts on Cancel, as in the other dialogs (ConfirmModal)
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => cancelRef.current?.focus(), []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && opening == null && onClose();
@@ -149,7 +153,7 @@ export default function AeOpenModal({onClose, onOpened}: Props) {
           <button className="button subtle" onClick={() => void list()} disabled={loading || opening != null}>
             <Renew size={16} /> List again
           </button>
-          <button className="button" onClick={onClose} disabled={opening != null}>
+          <button ref={cancelRef} className="button" onClick={onClose} disabled={opening != null}>
             Cancel
           </button>
         </div>

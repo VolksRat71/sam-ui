@@ -29,8 +29,8 @@ import {
   PauseFilled,
   PlayFilledAlt,
 } from '@carbon/icons-react';
-import {useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent} from 'react';
-import {KIND_LABELS, stopLabel} from '~/state/audit';
+import {useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent, type ReactNode, type CSSProperties} from 'react';
+import {stopLabel} from '~/state/audit';
 import {objectName} from '~/state/fileNames';
 import {flagsOf} from '~/state/flags';
 import {seedFrames} from '~/state/objects';
@@ -49,11 +49,14 @@ import {
 } from '~/state/ranges';
 import type {StudioObject} from '~/state/objects';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
+import ObjectsSection from './ObjectsSection';
+import LaneActions from './LaneActions';
+import {reviewSpans} from './reviewPresentation';
 import {ReviewGlyph} from './ReviewSection';
 
 const FILMSTRIP_HEIGHT = 44;
 
-type Props = {session: StudioSessionApi};
+type Props = {session: StudioSessionApi; actions?: ReactNode; inspector?: HTMLElement | null};
 
 function useWidth() {
   const ref = useRef<HTMLDivElement>(null);
@@ -80,7 +83,7 @@ function candidatesOf(o: StudioObject | undefined): Mark[] {
   return o?.marks.filter(m => m.state === CANDIDATE) ?? [];
 }
 
-export default function Timeline({session}: Props) {
+export default function Timeline({session, actions, inspector}: Props) {
   const {bridge, meta, frame, playing, state, tracklets, seek, togglePlay} = session;
   const n = meta.numFrames;
   const {ref: trackRef, width} = useWidth();
@@ -88,6 +91,9 @@ export default function Timeline({session}: Props) {
   const dragging = useRef(false);
   const [selection, setSelectionState] = useState<Selection | null>(null);
   const [picked, setPicked] = useState<Picked | null>(null);
+  // the legend folds behind a toggle on a phone, where it would crowd out the lanes
+  const [labelWidth, setLabelWidth] = useState(320);
+  const [legendOpen, setLegendOpen] = useState(false);
   const laneDrag = useRef<{id: number; from: number; x: number; moved: boolean} | null>(null);
   // a drag selection and a picked candidate are never both open
   const setSelection = useCallback((s: Selection | null) => {
@@ -147,7 +153,7 @@ export default function Timeline({session}: Props) {
       if (e.metaKey || e.ctrlKey || e.altKey || (target != null && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))) {
         return;
       }
-      if (document.querySelector('.modal-backdrop') != null) {
+      if (document.querySelector('.modal-backdrop, .shortcut-sheet[open]') != null) {
         return; // a dialog is open: its keys are its own
       }
       if (e.key === 'Escape') {
@@ -228,6 +234,12 @@ export default function Timeline({session}: Props) {
 
   return (
     <div className="timeline">
+      <div className="timeline-tools">
+      <div className="suite-timeline-header">
+        <strong>Layers</strong><span className="muted">{state.objects.length}</span>
+        {actions}
+        <label className="label-width">Label width <input type="range" min="200" max="480" step="20" value={labelWidth} onChange={e => setLabelWidth(Number(e.target.value))} /></label>
+      </div>
       <div className="transport">
         <button className="icon-button" onClick={() => seek(frame - 1)} title="Previous frame (Left)">
           <ChevronLeft size={18} />
@@ -253,7 +265,10 @@ export default function Timeline({session}: Props) {
         <span className="frame-counter">
           Frame <strong>{n > 0 ? frame + 1 : 0}</strong> / {n}
           {meta.fps > 0 && (
-            <span className="muted"> · {(frame / meta.fps).toFixed(2)} s · {Math.round(meta.fps)} fps</span>
+            <span className="muted">
+              {' · '}
+              {(frame / meta.fps).toFixed(2)} s<span className="frame-fps"> · {Math.round(meta.fps)} fps</span>
+            </span>
           )}
           {!meta.decoded && n > 0 && <span className="muted"> · decoding…</span>}
           {active != null && selection == null && picked == null && kindHere !== 'unknown' && (
@@ -264,43 +279,14 @@ export default function Timeline({session}: Props) {
                 ? ' is marked absent here'
                 : kindHere === 'present'
                   ? ' is confirmed present here'
-                  : ` may be here: candidate (${markHere != null && markHere.state === CANDIDATE ? provenanceLabel(markHere) : ''}), ] to review`}
+                  : ` may be here: unconfirmed span (${markHere != null && markHere.state === CANDIDATE ? provenanceLabel(markHere) : ''}), ] to review`}
             </span>
           )}
         </span>
-        {session.currentStop != null && picked == null && selection == null && (() => {
-          const stop = session.currentStop;
-          const queue = session.review?.queue ?? [];
-          const at = queue.findIndex(e => e.objectId === stop.objectId && e.frame === stop.frame);
-          const o = state.objects.find(x => x.id === stop.objectId);
-          return (
-            <span className="range-bar review-bar" role="group" aria-label="Review stop">
-              <ReviewGlyph reviewed={stop.reviewed} />
-              <span title={stop.reasons.map(r => `Frame ${r.frame + 1}: ${r.detail}`).join('\n')}>
-                Review {at + 1}/{queue.length}: {o != null ? objectName(o) : `Object ${stop.objectId}`}
-                <span className="muted"> · {stop.reasons.map(r => KIND_LABELS[r.kind]).join(', ')}</span>
-                {stop.reviewed && <span className="muted"> · reviewed</span>}
-              </span>
-              <button
-                className="button compact"
-                onClick={() => session.markReviewed(stop, !stop.reviewed, true)}
-                title={stop.reviewed ? 'Open this stop again' : 'The masks here look right (Y): mark the stop reviewed and go to the next one. To fix them, click on the preview instead'}>
-                {stop.reviewed ? 'Reopen' : (
-                  <>
-                    Looks right <kbd>Y</kbd>
-                  </>
-                )}
-              </button>
-              <button className="button subtle compact" onClick={() => session.stepReview(1)} title="The next stop in the queue (.); , goes back">
-                Next <kbd>.</kbd>
-              </button>
-            </span>
-          );
-        })()}
         {pickedObject != null && pickedMark != null && (
-          <span className="range-bar candidate-bar" role="group" aria-label="Candidate to review">
+          <span className="range-bar candidate-bar" role="group" aria-label="Unconfirmed span to review">
             <span>
-              {objectName(pickedObject)}: candidate, frames {pickedMark.start + 1}–{pickedMark.end + 1}
+              {objectName(pickedObject)}: unconfirmed span, frames {pickedMark.start + 1}–{pickedMark.end + 1}
               <span className="muted"> · {provenanceLabel(pickedMark)}</span>
             </span>
             <button
@@ -367,23 +353,15 @@ export default function Timeline({session}: Props) {
           </span>
         )}
       </div>
-      <div className="lanes">
-        <div className="lane-labels">
-          <div className="lane-label scrub-label">Video</div>
-          {session.ordered.map(o => {
-            const group = state.layout.groups.find(g => g.members.includes(o.id));
-            return (
-              <div key={o.id} className="lane-label" style={{color: o.id === state.activeId ? '#fff' : undefined}}>
-                {group != null && <span className="lane-group-mark" style={{background: group.color}} title={group.name} />}
-                {objectName(o)}
-              </div>
-            );
-          })}
-        </div>
-        <div className="lane-tracks" ref={trackRef}>
+      </div>
+      <div className="lanes suite-lanes" style={{'--label-width': `${labelWidth}px`} as CSSProperties}>
+        <div className="suite-ruler">
+          <div className="lane-label scrub-label">Layer / keyframes</div>
+          <div className="lane-tracks" ref={trackRef}>
           <div
             className="scrubber"
             onPointerDown={e => {
+              if ((e.target as HTMLElement).closest('button')) return;
               dragging.current = true;
               e.currentTarget.setPointerCapture(e.pointerId);
               seek(frameAt(e));
@@ -393,11 +371,29 @@ export default function Timeline({session}: Props) {
                 seek(frameAt(e));
               }
             }}
+            onPointerCancel={() => { dragging.current = false; }}
+            onLostPointerCapture={() => { dragging.current = false; }}
             onPointerUp={e => {
               dragging.current = false;
               e.currentTarget.releasePointerCapture(e.pointerId);
             }}>
             <canvas ref={filmstripRef} className="filmstrip" />
+                {reviewSpans(session.review?.queue ?? [])
+                  .map(span => { const e = span.peak; return (
+                    <button
+                      tabIndex={-1}
+                      key={`review-${e.objectId}-${span.start}-${span.reviewed}`}
+                      className={`swimlane-review${e.reviewed ? ' reviewed' : ''}${session.currentStop === e ? ' current' : ''}`}
+                      title={stopLabel(e, objectName(state.objects.find(o => o.id === e.objectId) ?? {id: e.objectId}))}
+                      aria-label={stopLabel(e, objectName(state.objects.find(o => o.id === e.objectId) ?? {id: e.objectId}))}
+                      style={{left: pos(e.frame) - 5}}
+                      onClick={ev => {
+                        ev.stopPropagation();
+                        session.goToStop(e);
+                      }}>
+                      <ReviewGlyph reviewed={e.reviewed} size={9} />
+                    </button>
+                  ); })}
             <div className="ticks">
               {ticks.map(t => (
                 <span key={t} className="tick" style={{left: pos(t)}}>
@@ -406,13 +402,36 @@ export default function Timeline({session}: Props) {
               ))}
             </div>
           </div>
-          {session.ordered.map(o => {
+          </div>
+        </div>
+          <ObjectsSection session={session} inspector={inspector} renderLane={o => {
             const lane = tracklets.get(o.id);
             const sel = selection?.id === o.id && span != null ? span : null;
             return (
               <div
                 key={o.id}
-                className="swimlane"
+                className={`swimlane${o.id === state.activeId ? ' active' : ''}${o.state === 'stale' ? ' changed' : ''}${o.running || o.state === 'tracking' ? ' updating' : ''}`}
+                tabIndex={0}
+                role="group"
+                aria-label={`${objectName(o)} frame lane. Left and Right step frames, Shift selects a span; K and Shift K step keyframes.`}
+                onKeyDown={e => {
+                  if (e.target !== e.currentTarget || e.altKey || e.ctrlKey || e.metaKey) return;
+                  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+                    e.preventDefault(); e.stopPropagation();
+                    const next = Math.max(0, Math.min(n - 1, frame + (e.key === 'ArrowRight' ? 1 : -1)));
+                    session.selectObject(o.id);
+                    if (e.shiftKey) setSelection({id: o.id, start: selection?.id === o.id ? selection.start : frame, end: next});
+                    seek(next);
+                  } else if (e.key.toLowerCase() === 'k') {
+                    e.preventDefault(); e.stopPropagation();
+                    const keys = seedFrames(o).sort((a, b) => a - b);
+                    const next = e.shiftKey ? keys.filter(f => f < frame).at(-1) : keys.find(f => f > frame);
+                    if (next != null) seek(next);
+                    session.selectObject(o.id);
+                  }
+                }}
+                onPointerCancel={() => { laneDrag.current = null; }}
+                onLostPointerCapture={() => { laneDrag.current = null; }}
                 onPointerDown={e => {
                   if (e.button !== 0 || (e.target as HTMLElement).closest('button') != null || n === 0) {
                     return;
@@ -441,7 +460,9 @@ export default function Timeline({session}: Props) {
                     setSelection(null); // a plain click on a lane drops the selection
                   }
                 }}
-                onClick={() => session.selectObject(o.id)}>
+                onClick={e => { e.stopPropagation(); session.selectObject(o.id); }}>
+                <LaneActions name={objectName(o)} disabled={n <= 0 || session.busy || session.status !== 'ready' || o.running || o.state === 'tracking'} onAbsent={() => session.markAbsentUntilNextSeed(o.id, frame)} />
+                {n > 0 && <div className="playhead" style={{left: pos(frame)}} />}
                 <div className="swimlane-line" style={{background: o.color}} />
                 {lane?.segments.map(([a, b]) => (
                   <div
@@ -452,6 +473,7 @@ export default function Timeline({session}: Props) {
                 ))}
                 {[...o.ranges, ...o.marks.filter(m => m.state === PRESENT)].map(r => (
                   <button
+                    tabIndex={-1}
                     key={`${r.state}-${r.start}`}
                     className={r.state === ABSENT ? 'swimlane-absent' : 'swimlane-present'}
                     title={`${describeRange(r)}. Click to select, then Unmark.`}
@@ -468,6 +490,7 @@ export default function Timeline({session}: Props) {
                   const on = picked?.id === o.id && picked.start === c.start && picked.end === c.end;
                   return (
                     <button
+                    tabIndex={-1}
                       key={`candidate-${c.start}`}
                       className={`swimlane-candidate${on ? ' picked' : ''}`}
                       title={`${describeRange(c)}. Click to review (] and [ step through candidates).`}
@@ -495,6 +518,7 @@ export default function Timeline({session}: Props) {
                 )}
                 {session.disagreement.get(o.id)?.flagged.map(f => (
                   <button
+                    tabIndex={-1}
                     key={`flag-${f}`}
                     className="swimlane-flag"
                     title={`Frame ${f + 1}: SAM 2 and SAM 3 disagree`}
@@ -508,6 +532,7 @@ export default function Timeline({session}: Props) {
                 ))}
                 {flagsOf(session.flags, o.id).map(f => (
                   <button
+                    tabIndex={-1}
                     key={`mark-${f}`}
                     className="swimlane-mark"
                     title={`Frame ${f + 1}: flagged for a correction (F on it unflags; clicks there clear it)`}
@@ -519,24 +544,9 @@ export default function Timeline({session}: Props) {
                     }}
                   />
                 ))}
-                {(session.review?.queue ?? [])
-                  .filter(e => e.objectId === o.id)
-                  .map(e => (
-                    <button
-                      key={`review-${e.frame}`}
-                      className={`swimlane-review${e.reviewed ? ' reviewed' : ''}${session.currentStop === e ? ' current' : ''}`}
-                      title={stopLabel(e, objectName(o))}
-                      aria-label={stopLabel(e, objectName(o))}
-                      style={{left: pos(e.frame) - 5}}
-                      onClick={ev => {
-                        ev.stopPropagation();
-                        session.goToStop(e);
-                      }}>
-                      <ReviewGlyph reviewed={e.reviewed} size={9} />
-                    </button>
-                  ))}
                 {seedFrames(o).map(f => (
                   <button
+                    tabIndex={-1}
                     key={f}
                     className="swimlane-seed"
                     title={o.texts[f] != null ? `"${o.texts[f]}" on frame ${f + 1}` : `Clicks on frame ${f + 1}`}
@@ -550,46 +560,66 @@ export default function Timeline({session}: Props) {
                 ))}
               </div>
             );
-          })}
-          {n > 0 && <div className="playhead" style={{left: pos(frame)}} />}
-        </div>
+          }} />
       </div>
       {session.ordered.length > 0 && (
-        <ul className="lane-legend" aria-label="Timeline legend">
-          <li>
-            <span className="legend-swatch legend-tracked" />
-            tracked
-          </li>
-          <li>
-            <span className="legend-swatch legend-unknown" />
-            unknown
-          </li>
-          <li>
-            <span className="legend-swatch swimlane-candidate" />
-            candidate (unconfirmed)
-          </li>
-          <li>
-            <span className="legend-swatch swimlane-present" />
-            present
-          </li>
-          <li>
-            <span className="legend-swatch swimlane-absent" />
-            absent
-          </li>
-          <li>
-            <span className="legend-glyph">
-              <ReviewGlyph reviewed={false} />
-            </span>
-            review stop
-          </li>
-          <li>
-            <span className="legend-glyph reviewed">
-              <ReviewGlyph reviewed />
-            </span>
-            reviewed
-          </li>
-          <li className="muted">drag a lane to mark · ] [ review candidates · . , review stops</li>
-        </ul>
+        <div className={`lane-footer${legendOpen ? ' open' : ''}`}>
+          <button
+            type="button"
+            className="legend-toggle"
+            aria-expanded={legendOpen}
+            aria-controls="lane-legend lane-keys"
+            onClick={() => setLegendOpen(v => !v)}>
+            {legendOpen ? 'Hide legend' : 'Legend'}
+          </button>
+          <ul className="lane-legend" id="lane-legend" aria-label="Timeline legend">
+            <li>
+              <span className="legend-swatch legend-tracked" />
+              tracked
+            </li>
+            <li>
+              <span className="legend-swatch legend-unknown" />
+              unknown
+            </li>
+            <li>
+              <span className="legend-swatch swimlane-candidate" />
+              unconfirmed span
+            </li>
+            <li>
+              <span className="legend-swatch swimlane-present" />
+              present
+            </li>
+            <li>
+              <span className="legend-swatch swimlane-absent" />
+              absent
+            </li>
+            <li>
+              <span className="legend-glyph">
+                <ReviewGlyph reviewed={false} />
+              </span>
+              review stop
+            </li>
+            <li>
+              <span className="legend-glyph reviewed">
+                <ReviewGlyph reviewed />
+              </span>
+              reviewed
+            </li>
+          </ul>
+          <ul className="lane-keys" id="lane-keys" aria-label="Timeline shortcuts">
+            <li>drag a lane to mark</li>
+            <li>
+              <kbd>]</kbd>
+              <kbd>[</kbd>
+              review unconfirmed spans
+            </li>
+            <li>
+              <kbd>.</kbd>
+              <kbd>,</kbd>
+              review stops
+            </li>
+          </ul>
+        </div>
       )}
     </div>
   );

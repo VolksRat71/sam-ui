@@ -63,7 +63,7 @@ from tracks.seeds import Seeds, SeedStore, cleared, confirmed, seeds_hash, video
 from tracks.store import STALE, TRACKED, TrackStore
 from tracks import versions as ver
 from tracks.versions import VersionStore
-from tracks.text import normalize as normalize_text
+from tracks.text import has_prompt, normalize as normalize_text
 
 FrameRle = Tuple[int, Dict[int, Dict]]
 logger = logging.getLogger(__name__)
@@ -372,29 +372,32 @@ class TrackService:
     # -- versions and undo (issue #18) ----------------------------------------------
     def _record(self, video: str, obj_id: int) -> Tuple[str, Dict]:
         files = self.seeds.record(video, obj_id)
-        return self.seeds.record_key(files), files
+        return self.seeds.snapshot_key(files), files
 
     def _remember(self, video: str, obj_id: int, key: str, files: Dict) -> None:
         """Keep the seed record `files` (key `key`) so it can be restored, and
         keep as a version any current track made from it that has none (one
         written before versions existed, or one a crash kept from its version)."""
         self.versions.put_snapshot(video, obj_id, key, files)
+        key = self.seeds.record_key(files)
         for name in self.engine_names():
             meta = self.tracks.meta(video, obj_id, name)
             if meta is not None and meta["seeds_hash"] == key and not self.versions.has(video, obj_id, name, key):
                 self._keep_version(video, obj_id, name, key, files, meta)
 
     def _keep_version(self, video: str, obj_id: int, engine: str, key: str, files: Dict, meta: Dict) -> None:
-        seeds = (files.get("seeds.json") or {}).values()
-        self.versions.put_snapshot(video, obj_id, key, files)
+        seeds = (self.seeds.tracking_record(files).get("seeds.json") or {}).values()
+        snapshot_key = self.seeds.snapshot_key(files)
+        self.versions.put_snapshot(video, obj_id, snapshot_key, files)
         self.versions.record(video, obj_id, engine, key, self.tracks.track_dir(video, obj_id, engine), {
             "model": meta["model"], "created": meta.get("created"), "elapsed_s": meta.get("elapsed_s"),
             "n_frames": meta.get("n_frames"), "clicks": sum(len(v.get("points") or []) for v in seeds),
-            "seed_frames": len(seeds), "bounded": bool(bnd.spans(meta))})
+            "seed_frames": len(seeds), "bounded": bool(bnd.spans(meta)),
+            **({"snapshot_key": snapshot_key} if snapshot_key != key else {})})
         self.versions.evict(video, obj_id, engine, protect=[key])
 
     @contextlib.contextmanager
-    def _seed_change(self, video: str, obj_id: int):
+    def _seed_change(self, video: str, obj_id: int, *, record_history: bool = True):
         """Around a change of the object's seed record: the record before it
         goes on the undo history (if the change changed anything), and redo
         is cleared, as in any editor. Seeds a version keeps get its track."""
@@ -402,12 +405,17 @@ class TrackService:
         self._remember(video, obj_id, key, files)
         yield
         after, now_files = self._record(video, obj_id)
+        if not record_history:
+            self._remember(video, obj_id, after, now_files)
+            return
+        tracking_key = self.seeds.record_key(now_files)
         if after != key:
             # back on seeds a version keeps (a click taken off by hand): their
             # track comes back too. Never under a running job, which would save
             # over it; the object is then stale until its job ends, as before.
-            if (now_files.get("seeds.json") or {}) and obj_id not in self.jobs.held(video):
-                self._adopt_versions(video, obj_id, after)
+            if (tracking_key != self.seeds.record_key(files) and self.seeds.seeds(video, obj_id)
+                    and obj_id not in self.jobs.held(video)):
+                self._adopt_versions(video, obj_id, tracking_key)
             h = self.versions.history(video, obj_id)
             h["undo"].append({"key": key, "at": ver.now()})
             h["redo"] = []
@@ -423,8 +431,12 @@ class TrackService:
         """Make `files` the object's seed record, and for each engine with a
         version of it, make that version the current track (no job). An engine
         without one keeps its current track, which is now stale."""
+        before = self.seeds.record(video, obj_id)
         self.seeds.put_record(video, obj_id, files)
-        if not (files.get("seeds.json") or {}):
+        if (self.seeds.record_key(before) == self.seeds.record_key(files)
+                and self.seeds.snapshot_key(before) != self.seeds.snapshot_key(files)):
+            return
+        if not self.seeds.seeds(video, obj_id):
             self.tracks.clear(video, obj_id)  # no seeds, no track (as clear_frame does); versions stay
             return
         self._adopt_versions(video, obj_id, self.seeds.record_key(files))
@@ -478,7 +490,12 @@ class TrackService:
         key, cur = self._record(video, obj_id)
         self._remember(video, obj_id, key, cur)
         try:
-            self._apply(video, obj_id, files)
+            if (self.seeds.record_key(cur) == self.seeds.record_key(files)
+                    and self.seeds.snapshot_key(cur) != self.seeds.snapshot_key(files)):
+                with self._seed_change(video, obj_id, record_history=False):
+                    self._apply(video, obj_id, files)
+            else:
+                self._apply(video, obj_id, files)
         except BaseException:
             self.seeds.put_record(video, obj_id, cur)  # as it was: the history still says so
             raise
@@ -515,7 +532,8 @@ class TrackService:
         h = self.versions.history(video, obj_id)
         keep = ("key", "engine", "model", "created", "elapsed_s", "n_frames", "clicks", "seed_frames", "bounded")
         return {"can_undo": bool(h["undo"]), "can_redo": bool(h["redo"]),
-                "versions": [{**{k: e.get(k) for k in keep}, "current": e["key"] == current}
+                "versions": [{**{k: e.get(k) for k in keep}, "current": e["key"] == current,
+                              "key": e.get("snapshot_key", e["key"])}
                              for e in self.versions.entries(video, obj_id)]}
 
     # -- state -----------------------------------------------------------------
@@ -857,7 +875,38 @@ class TrackService:
         except (TypeError, KeyError, ValueError):
             return None
 
-    def cached(self, video: str, obj_ids: Optional[List[int]] = None,
+    def effective_mask(self, video: str, obj_id: int, frame: int, base):
+        from tracks.detail import effective_mask, enabled
+        if not enabled():
+            return base
+        details = self.seeds.details(video, obj_id).get(frame, [])
+        if not details or absent_at(self.seeds.ranges(video, obj_id), frame):
+            return base
+        return effective_mask(base, details)
+
+    def output_masks(self, video: str, obj_id: int, engine: str):
+        """Display/export only. Tracking and conditioning read TrackStore directly."""
+        from tracks.detail import enabled
+        if not enabled():
+            yield from self.tracks.masks(video, obj_id, engine)
+            return
+        seeds = self.seeds.raw_seeds(video, obj_id)
+        ranges = self.seeds.ranges(video, obj_id)
+        yield from self._detail_output_masks(video, obj_id, engine, seeds, ranges)
+
+    def _detail_output_masks(self, video, obj_id, engine, seeds, ranges):
+        """Compose one stream against one immutable seed/range read, not per frame."""
+        from tracks.detail import effective_mask
+        details = {f: seed['details'] for f, seed in seeds.items() if seed.get('details')}
+        if details and not any(has_prompt(seed) for seed in seeds.values()):
+            return
+        for frame, mask in self.tracks.masks(video, obj_id, engine):
+            records = details.get(frame)
+            if records and not absent_at(ranges, frame):
+                mask = effective_mask(mask, records)
+            yield frame, mask
+
+    def cached_base(self, video: str, obj_ids: Optional[List[int]] = None,
                engine: Optional[str] = None) -> Iterator[FrameRle]:
         """Stream stored tracks, merged per frame, to repaint them after a reload.
         Stale tracks are sent too; the UI marks them. Frames inside an absent
@@ -870,6 +919,30 @@ class TrackService:
             ranges = self.seeds.ranges(video, o)
             for frame, r in self.tracks.masks(video, o, name):
                 if ranges and absent_at(ranges, frame):  # a stale track, marked since: never shown
+                    r = rle.encode(np.zeros(r["size"], bool))
+                by_frame.setdefault(frame, {})[o] = r
+        for frame in sorted(by_frame):
+            yield frame, by_frame[frame]
+
+    def cached(self, video: str, obj_ids: Optional[List[int]] = None,
+               engine: Optional[str] = None) -> Iterator[FrameRle]:
+        """Stream stored tracks, merged per frame, to repaint them after a reload.
+        Stale tracks are sent too; the UI marks them. Frames inside an absent
+        range go out empty, even from a track made before the range was marked."""
+        from tracks.detail import enabled
+        if not enabled():
+            yield from self.cached_base(video, obj_ids, engine)
+            return
+        name = self._engine_model(engine or self.default)[0]
+        ids = self.seeds.objects(video) if obj_ids is None else [int(o) for o in obj_ids]
+        by_frame: Dict[int, Dict[int, Dict]] = {}
+        for o in ids:
+            seeds = self.seeds.raw_seeds(video, o)
+            if not any(has_prompt(seed) for seed in seeds.values()):
+                continue
+            ranges = self.seeds.ranges(video, o)
+            for frame, r in self._detail_output_masks(video, o, name, seeds, ranges):
+                if ranges and absent_at(ranges, frame):
                     r = rle.encode(np.zeros(r["size"], bool))
                 by_frame.setdefault(frame, {})[o] = r
         for frame in sorted(by_frame):

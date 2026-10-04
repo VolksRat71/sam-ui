@@ -11,11 +11,11 @@
 // (SAM 3 only; with another engine the field is disabled and says why).
 import {
   Add,
+  OverflowMenuHorizontal,
   ArrowDown,
   ArrowUp,
   ChevronDown,
   ChevronRight,
-  Draggable,
   Edit,
   FolderAdd,
   Redo,
@@ -26,8 +26,10 @@ import {
   View,
   ViewOff,
 } from '@carbon/icons-react';
+import {trackPresentation} from './trackPresentation';
+import {createPortal} from 'react-dom';
 import {highlightEffects, moreEffects} from '@/common/components/effects/EffectsUtils';
-import {useEffect, useRef, useState, type DragEvent, type KeyboardEvent} from 'react';
+import {useEffect, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent, type ReactNode} from 'react';
 import {OBJECT_LIMIT} from '~/config';
 import {BROWSER_ENGINE, engineLabel, textPromptNote} from '~/state/engines';
 import {NAME_MAX, objectName} from '~/state/fileNames';
@@ -43,20 +45,20 @@ import {
   type LayoutAction,
   type ObjectGroup,
 } from '~/state/layout';
-import {clearTarget, groupDirtyIds, isTracking, seedFrames, type StudioObject} from '~/state/objects';
+import {
+  clearTarget,
+  groupDirtyIds,
+  isTracking,
+  seedFrames,
+  type StudioObject,
+} from '~/state/objects';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
 
-type Props = {session: StudioSessionApi};
+type Props = {session: StudioSessionApi; renderLane?: (o: StudioObject) => ReactNode; inspector?: HTMLElement | null};
 
 function StateBadge({o}: {o: StudioObject}) {
-  if (isTracking(o)) {
-    return (
-      <span className="badge running">
-        <span className="spinner small" /> tracking
-      </span>
-    );
-  }
-  return <span className={`badge ${o.state}`}>{o.state}</span>;
+  const track = trackPresentation(o.state, o.running);
+  return <span className={`badge ${track.kind}`} title={track.detail}>{track.label}</span>;
 }
 
 /** The object's name; double-click it, or the pencil, to rename in place. */
@@ -210,7 +212,7 @@ function HistoryControls({o, session}: {o: StudioObject; session: StudioSessionA
                       : `Go back to these clicks and this track${parseCreated(v.created) != null ? `, tracked ${parseCreated(v.created)!.toLocaleString()}` : ''} (undoable)`
                 }>
                 <span>{versionLabel(v)}</span>
-                {v.bounded && <span className="muted">near corrections</span>}
+                {v.bounded && <span className="muted">around changed keyframes</span>}
                 {v.current && <span className="badge tracked">current</span>}
               </button>
             </li>
@@ -229,7 +231,7 @@ function describe(o: StudioObject): string {
       ? texts.length === 0
         ? 'no clicks yet'
         : ''
-      : `clicks on ${clicked.length === 1 ? 'frame' : 'frames'} ${clicked.map(f => f + 1).join(', ')}`;
+      : `keyframes on ${clicked.length === 1 ? 'frame' : 'frames'} ${clicked.map(f => f + 1).join(', ')}`;
   const track = o.frames != null ? `track ${o.frames[0] + 1}–${o.frames[1] + 1}` : '';
   return [clicks, texts.join(', '), track].filter(x => x !== '').join(' · ');
 }
@@ -329,17 +331,18 @@ function ObjectRow({
   layout,
   dragged,
   setDragged,
+  renderLane,
+  inspector,
 }: {
   o: StudioObject;
   session: StudioSessionApi;
   layout: Layout;
   dragged: Dragged | null;
   setDragged: (d: Dragged | null) => void;
+  renderLane?: (o: StudioObject) => ReactNode; inspector?: HTMLElement | null;
 }) {
-  const {state, tracklets, busy} = session;
+  const {state, busy} = session;
   const [drop, setDrop] = useState<'before' | 'after' | null>(null);
-  const badgeEngines = session.engines.filter(e => e.href == null);
-  const t = tracklets.get(o.id);
   const active = o.id === state.activeId;
   const group = layout.groups.find(g => g.members.includes(o.id)) ?? null;
   const stepAction = (dir: -1 | 1): LayoutAction => ({type: 'stepObject', id: o.id, dir});
@@ -347,8 +350,9 @@ function ObjectRow({
   const name = objectName(o);
   return (
     <li
+      role="presentation"
       className={`object-row${active ? ' active' : ''}${drop != null ? ` drop-${drop}` : ''}${dragged?.kind === 'object' && dragged.id === o.id ? ' dragging' : ''}`}
-      style={group != null ? {boxShadow: `inset 3px 0 0 ${group.color}`} : undefined}
+      style={{'--lane-ink': o.color} as CSSProperties}
       draggable
       onDragStart={e => {
         e.dataTransfer.setData(DRAG_TYPE, JSON.stringify({kind: 'object', id: o.id}));
@@ -384,44 +388,37 @@ function ObjectRow({
         }
       }}
       onClick={() => session.selectObject(active ? null : o.id)}>
-      <button
-        className="icon-button small drag-handle"
-        title="Drag to reorder, or Alt-Up / Alt-Down"
-        aria-label={`Reorder ${name}: Alt-Up or Alt-Down`}
-        onClick={e => e.stopPropagation()}
-        onKeyDown={e => {
-          const dir = stepKey(e);
-          if (dir != null) {
-            step(dir);
-          }
-        }}>
-        <Draggable size={16} />
-      </button>
-      <div className="thumb" style={{backgroundColor: o.color}}>
-        {t?.thumbnail != null && <div className="thumb-image" style={{backgroundImage: `url(${t.thumbnail})`}} />}
-      </div>
-      <div className="object-body">
-        <div className="object-title">
-          <ObjectName o={o} onRename={n => session.renameObject(o.id, n)} />
+      <div className="layer-controls">
+        <div className="layer-summary" role="option" aria-selected={active} aria-label={`${name}, ${trackPresentation(o.state, o.running).label}`} data-layer-option={o.id} tabIndex={active ? 0 : -1}
+          onKeyDown={e => {
+            const dir = stepKey(e);
+            if (dir != null) { step(dir); return; }
+            if (e.key === 'Enter' && inspector != null) {
+              e.preventDefault(); e.stopPropagation();
+              session.selectObject(o.id);
+              document.getElementById('tab-info')?.click();
+              const header = document.querySelector<HTMLButtonElement>('[data-section="info"] .section-header');
+              if (header?.getAttribute('aria-expanded') === 'false') header.click();
+              requestAnimationFrame(() => {
+                const controls = inspector.querySelectorAll<HTMLElement>('input:not(:disabled), button:not(:disabled), summary, select:not(:disabled)');
+                controls[0]?.focus();
+              });
+            }
+          }}>
+          <span className="layer-swatch" aria-hidden="true" />
+          <span className="layer-name" title={name}>{name}</span>
           <StateBadge o={o} />
+          {active ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}
         </div>
-        <div className="object-meta">{describe(o)}</div>
-        {badgeEngines.length > 1 && (
-          <div className="engine-badges">
-            {badgeEngines.map(e => {
-              const et = o.engines[e.name];
-              const st = et?.state ?? 'untracked';
-              return (
-                <span
-                  key={e.name}
-                  className={`engine-badge ${st}${e.name === state.engine ? ' current' : ''}`}
-                  title={`${engineLabel(e.name)}: ${st}${et?.frames ? `, frames ${et.frames[0] + 1}-${et.frames[1] + 1}` : ''}`}>
-                  {engineLabel(e.name)} {st}
-                </span>
-              );
-            })}
+        {active && <div className="layer-detail-summary">{describe(o)}</div>}
+        {active && inspector != null && createPortal(<div className="object-body layer-details" onClick={e => e.stopPropagation()}>
+          <div className="object-title"><ObjectName o={o} onRename={n => session.renameObject(o.id, n)} /></div>
+          <div className="layer-color-control">
+            <label>Mask color <input type="color" aria-label={`Mask color for ${name}`} value={o.color} onChange={e => session.setObjectColor(o.id, e.target.value)} /></label>
+            <button className="button subtle compact" disabled={session.objectColors[o.id] == null} onClick={() => session.setObjectColor(o.id, null)}>Reset color</button>
+            <span className="muted small">Saved for this clip in this browser.</span>
           </div>
-        )}
+        <div className="object-meta">{describe(o)}</div>
         {session.disagreement.get(o.id) != null && (
           <div
             className={session.disagreement.get(o.id)!.flagged.length > 0 ? 'object-hint' : 'object-meta'}
@@ -434,7 +431,7 @@ function ObjectRow({
         )}
         {active && <TextPrompt o={o} session={session} />}
         {o.error != null && <div className="object-error">Track failed: {o.error}</div>}
-        {active && <HistoryControls o={o} session={session} />}
+        <details className="layer-history"><summary>Keyframe history and versions</summary><HistoryControls o={o} session={session} /></details>
         <div className="object-actions" onClick={e => e.stopPropagation()}>
           {(() => {
             const target = clearTarget(o, state.engine);
@@ -469,41 +466,43 @@ function ObjectRow({
             title="Remove the object, its clicks and its track">
             <TrashCan size={14} /> Remove
           </button>
+          <span className="layout-actions">
+            <button
+              className="link-button"
+              disabled={!moves(layout, stepAction(-1))}
+              onClick={() => step(-1)}
+              title="Move up (Alt-Up)"
+              aria-label={`Move ${name} up`}>
+              <ArrowUp size={14} />
+            </button>
+            <button
+              className="link-button"
+              disabled={!moves(layout, stepAction(1))}
+              onClick={() => step(1)}
+              title="Move down (Alt-Down)"
+              aria-label={`Move ${name} down`}>
+              <ArrowDown size={14} />
+            </button>
+            {layout.groups.length > 0 && (
+              <select
+                className="group-select"
+                value={group?.id ?? ''}
+                aria-label={`Group of ${name}`}
+                title="The group this object is in"
+                onChange={e => session.layoutAction({type: 'setGroup', id: o.id, groupId: e.target.value === '' ? null : e.target.value})}>
+                <option value="">No group</option>
+                {layout.groups.map(g => (
+                  <option key={g.id} value={g.id}>
+                    {g.name}
+                  </option>
+                ))}
+              </select>
+            )}
+          </span>
         </div>
-        <div className="object-actions layout-actions" onClick={e => e.stopPropagation()}>
-          <button
-            className="link-button"
-            disabled={!moves(layout, stepAction(-1))}
-            onClick={() => step(-1)}
-            title="Move up (Alt-Up)"
-            aria-label={`Move ${name} up`}>
-            <ArrowUp size={14} />
-          </button>
-          <button
-            className="link-button"
-            disabled={!moves(layout, stepAction(1))}
-            onClick={() => step(1)}
-            title="Move down (Alt-Down)"
-            aria-label={`Move ${name} down`}>
-            <ArrowDown size={14} />
-          </button>
-          {layout.groups.length > 0 && (
-            <select
-              className="group-select"
-              value={group?.id ?? ''}
-              aria-label={`Group of ${name}`}
-              title="The group this object is in"
-              onChange={e => session.layoutAction({type: 'setGroup', id: o.id, groupId: e.target.value === '' ? null : e.target.value})}>
-              <option value="">No group</option>
-              {layout.groups.map(g => (
-                <option key={g.id} value={g.id}>
-                  {g.name}
-                </option>
-              ))}
-            </select>
-          )}
-        </div>
+      </div>, inspector)}
       </div>
+      {renderLane?.(o)}
     </li>
   );
 }
@@ -575,12 +574,15 @@ function GroupBlock({
   layout,
   dragged,
   setDragged,
+  renderLane,
+  inspector,
 }: {
   group: ObjectGroup;
   session: StudioSessionApi;
   layout: Layout;
   dragged: Dragged | null;
   setDragged: (d: Dragged | null) => void;
+  renderLane?: (o: StudioObject) => ReactNode; inspector?: HTMLElement | null;
 }) {
   const {state, busy} = session;
   const [drop, setDrop] = useState<'into' | 'before' | null>(null);
@@ -590,9 +592,9 @@ function GroupBlock({
   const anyHeld = members.some(isTracking);
   const stepAction = (dir: -1 | 1): LayoutAction => ({type: 'stepGroup', groupId: group.id, dir});
   const step = (dir: -1 | 1) => session.layoutAction(stepAction(dir));
-  const count = `${members.length} ${members.length === 1 ? 'object' : 'objects'}`;
+  const count = `${members.length} ${members.length === 1 ? 'layer' : 'layers'}`;
   return (
-    <li className={`object-group${group.hidden ? ' hidden-group' : ''}`} style={{borderColor: group.color}}>
+    <li role="group" aria-label={group.name} className={`object-group${group.hidden ? ' hidden-group' : ''}`} style={{borderColor: group.color}}>
       <div
         className={`group-header${drop != null ? ` drop-${drop}` : ''}`}
         draggable
@@ -638,14 +640,7 @@ function GroupBlock({
             }}>
             {group.collapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
           </button>
-          <input
-            type="color"
-            className="group-color"
-            value={group.color}
-            aria-label={`Colour of group ${group.name}`}
-            title="Group colour"
-            onChange={e => session.updateGroup(group.id, {color: e.target.value})}
-          />
+          <span className="layer-swatch" style={{background: group.color}} aria-hidden="true" />
           <GroupName group={group} onRename={name => session.updateGroup(group.id, {name})} />
           <span className="muted small">{count}</span>
           <button
@@ -657,12 +652,21 @@ function GroupBlock({
             {group.hidden ? <ViewOff size={16} /> : <View size={16} />}
           </button>
         </div>
-        <div className="object-actions group-actions">
+        <details className="group-options"><summary aria-label={`Actions for ${group.name}`} title="Group actions"><OverflowMenuHorizontal size={16} /></summary><div className="object-actions group-actions">
+          <input
+            type="color"
+            className="group-color"
+            value={group.color}
+            aria-label={`Colour of group ${group.name}`}
+            title="Group colour"
+            onChange={e => session.updateGroup(group.id, {color: e.target.value})}
+          />
+
           <button
             className="link-button"
             disabled={busy || toTrack.length === 0}
             onClick={() => session.trackGroup(group.id)}
-            title={toTrack.length === 0 ? 'No member is stale or untracked' : `Track the ${toTrack.length} stale or untracked ${toTrack.length === 1 ? 'member' : 'members'}`}>
+            title={toTrack.length === 0 ? 'No member is changed or untracked' : `Track the ${toTrack.length} changed or untracked ${toTrack.length === 1 ? 'member' : 'members'}`}>
             Track ({toTrack.length})
           </button>
           <button
@@ -711,12 +715,12 @@ function GroupBlock({
             title="Delete the group; its objects stay, ungrouped">
             <TrashCan size={14} /> Ungroup
           </button>
-        </div>
+        </div></details>
       </div>
       {!group.collapsed && (
-        <ul className="object-list group-members">
+        <ul className="object-list group-members" role="presentation">
           {members.map(o => (
-            <ObjectRow key={o.id} o={o} session={session} layout={layout} dragged={dragged} setDragged={setDragged} />
+            <ObjectRow key={o.id} o={o} session={session} layout={layout} dragged={dragged} setDragged={setDragged} renderLane={renderLane} inspector={inspector} />
           ))}
           {members.length === 0 && <li className="empty small">Drag objects here, or pick this group in an object's Group menu.</li>}
         </ul>
@@ -725,17 +729,27 @@ function GroupBlock({
   );
 }
 
-export default function ObjectsSection({session}: Props) {
+export default function ObjectsSection({session, renderLane, inspector}: Props) {
   const {state, canAdd} = session;
+  const [groupFilter, setGroupFilter] = useState('');
   const [dragged, setDragged] = useState<Dragged | null>(null);
   const layout = arrange(state.layout, state.objects.map(o => o.id));
   const byId = new Map(state.objects.map(o => [o.id, o]));
   return (
     <div className="objects">
       <div className="objects-actions">
+        <label className="group-filter">Show <select aria-label="Filter layers by group" value={groupFilter} onChange={e => setGroupFilter(e.target.value)}>
+          <option value="">All layers</option>
+          <option value="ungrouped">Ungrouped</option>
+          {state.layout.groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+        </select></label>
         <span className="objects-buttons">
-          <button className="button" onClick={session.addObject} disabled={!canAdd}>
-            <Add size={16} /> Add object
+          <button
+            className="button"
+            onClick={session.addObject}
+            disabled={!canAdd}
+            title={state.objects.length >= OBJECT_LIMIT ? `A video holds at most ${OBJECT_LIMIT} objects` : undefined}>
+            <Add size={16} /> Add layer
           </button>
           <button
             className="button subtle"
@@ -751,23 +765,33 @@ export default function ObjectsSection({session}: Props) {
             <FolderAdd size={16} /> New group
           </button>
         </span>
-        <span className="muted small">
-          {state.objects.length} / {OBJECT_LIMIT}
-        </span>
       </div>
       {state.objects.length === 0 && (
         <p className="empty">
-          No objects yet. Click something in the video to add one, or press Add object first.
+          {session.status !== 'ready' || session.repainting ? 'Loading layers…' : 'No layers yet. Click the footage to add one, or choose Add layer.'}
         </p>
       )}
-      <ul className="object-list">
-        {listItems(layout).map(item =>
+      <ul className="object-list" role="listbox" aria-label="Layers" onKeyDown={e => {
+        if (!(e.target instanceof HTMLElement) || !e.target.hasAttribute('data-layer-option') || e.altKey || e.ctrlKey || e.metaKey) return;
+        const options = [...e.currentTarget.querySelectorAll<HTMLElement>('[data-layer-option]')];
+        const at = options.indexOf(e.target);
+        const next = e.key === 'Home' ? 0 : e.key === 'End' ? options.length - 1 : e.key === 'ArrowDown' ? Math.min(options.length - 1, at + 1) : e.key === 'ArrowUp' ? Math.max(0, at - 1) : -1;
+        if (next >= 0) { e.preventDefault(); e.stopPropagation(); session.selectObject(Number(options[next].dataset.layerOption)); options[next].focus(); }
+        if (e.key === ' ') { e.preventDefault(); e.stopPropagation(); session.selectObject(Number(e.target.dataset.layerOption)); }
+      }} ref={el => {
+        if (el != null) {
+          const options = [...el.querySelectorAll<HTMLElement>('[data-layer-option]')];
+          const selected = options.find(o => o.getAttribute('aria-selected') === 'true') ?? options[0];
+          options.forEach(o => { o.tabIndex = o === selected ? 0 : -1; });
+        }
+      }}>
+        {listItems(layout).filter(item => groupFilter === '' || (item.kind === 'group' ? item.group.id === groupFilter : groupFilter === 'ungrouped')).map(item =>
           item.kind === 'object' ? (
             byId.get(item.id) != null && (
-              <ObjectRow key={item.id} o={byId.get(item.id)!} session={session} layout={layout} dragged={dragged} setDragged={setDragged} />
+              <ObjectRow key={item.id} o={byId.get(item.id)!} session={session} layout={layout} dragged={dragged} setDragged={setDragged} renderLane={renderLane} inspector={inspector} />
             )
           ) : (
-            <GroupBlock key={item.group.id} group={item.group} session={session} layout={layout} dragged={dragged} setDragged={setDragged} />
+            <GroupBlock key={item.group.id} group={item.group} session={session} layout={layout} dragged={dragged} setDragged={setDragged} renderLane={renderLane} inspector={inspector} />
           ),
         )}
       </ul>

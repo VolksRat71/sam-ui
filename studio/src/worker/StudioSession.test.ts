@@ -136,3 +136,80 @@ describe('StudioSession review queue: a positive inside a candidate confirms tha
     expect(await candidateQueue([], 'mask')).toEqual([11]);
   });
 });
+
+describe('Refine Detail base separation', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('requests raw masks before capability discovery and removes details without a reload', async () => {
+    const {DataArray, encode, decode} = await import('@/jscocotools/mask');
+    const base = encode(new DataArray(new Uint8Array([1, 0, 0, 0]), [2, 2, 1]))[0];
+    const detail = {id: 'a'.repeat(64), rect: [1, 1, 2, 2], points: [[.5, .5, 1]],
+      geometry: {version: 'working-copy-v1', width: 2, height: 2},
+      mask: encode(new DataArray(new Uint8Array([1]), [1, 1, 1]))[0]};
+    let records = [detail];
+    const requests: Array<{url: string; body: Record<string, unknown>}> = [];
+    vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)); requests.push({url, body});
+      if (url.endsWith('/track_masks')) {
+        expect(body.base_only).toBe(true);
+        const json = JSON.stringify({frame_index: 0, results: [{object_id: 1, mask: base}]});
+        return new Response(`--frame\r\nContent-Type: application/json\r\nContent-Length: ${json.length}\r\n\r\n${json}`, {headers: {'Content-Type': 'multipart/x-savi-stream; boundary=frame'}});
+      }
+      if (url.endsWith('/remove_detail_crop')) records = [];
+      return new Response(JSON.stringify(url.endsWith('/detail_state') ? {enabled: true, objects: {1: {0: records}}} : {removed: true}));
+    });
+    const s = new StudioSession({} as never, {} as never, () => {});
+    s.init('http://backend.test');
+    const internals = s as unknown as {_sessionId: string; _render: () => void; _thumbnails: () => Promise<void>;
+      _tracklets: Map<number, {masks: Array<{data: typeof base}>}>; _baseMasks: Map<number, Map<number, {data: typeof base}>>;
+      _seedPoints: Map<number, unknown>; _seedMasks: Map<number, unknown>};
+    internals._sessionId = 's'; internals._render = () => {}; internals._thumbnails = async () => {};
+    await s.repaint();
+    const tracklet = internals._tracklets.get(1)!;
+    expect(tracklet.masks[0].data).toEqual(base);
+    await s.detailRequest('detail_state');
+    expect(Array.from(decode([tracklet.masks[0].data]).data)).toEqual([1, 0, 0, 1]);
+    expect(internals._baseMasks.get(1)!.get(0)!.data).toEqual(base);
+    await s.detailRequest('remove_detail_crop', {detail_id: detail.id});
+    expect(tracklet.masks[0].data).toEqual(base);
+    expect(internals._seedPoints.size).toBe(0); expect(internals._seedMasks.size).toBe(0);
+    expect(requests.filter(r => r.url.endsWith('/track_masks'))).toHaveLength(2);
+  });
+
+  it('drops tracked bases when a track is cleared, without turning details into seeds', async () => {
+    const {DataArray, encode} = await import('@/jscocotools/mask');
+    const base = encode(new DataArray(new Uint8Array([1, 0, 0, 0]), [2, 2, 1]))[0];
+    const t = {id: 1, masks: [{data: base}], points: []};
+    const s = new StudioSession({} as never, {} as never, () => {});
+    const inside = s as unknown as {_baseMasks: Map<number, Map<number, {data: typeof base}>>;
+      _seedMasks: Map<number, Map<number, {data: typeof base}>>; _keepSeedMasksOnly: (t: unknown) => void};
+    inside._baseMasks.set(1, new Map([[0, {data: base}]]));
+    inside._keepSeedMasksOnly(t);
+    expect(t.masks).toEqual([]); expect(inside._baseMasks.has(1)).toBe(false);
+    expect(inside._seedMasks.size).toBe(0);
+  });
+});
+
+it('keeps a newer click mask when another object refreshes or applies a detail', async () => {
+  const {DataArray, encode} = await import('@/jscocotools/mask');
+  const old = {data: encode(new DataArray(new Uint8Array([1, 0, 0, 0]), [2, 2, 1]))[0]};
+  const clicked = {data: encode(new DataArray(new Uint8Array([0, 1, 0, 0]), [2, 2, 1]))[0]};
+  const t = {id: 1, masks: [] as Array<typeof old>, points: []};
+  const s = new StudioSession({} as never, {} as never, () => {});
+  s.init('http://backend.test');
+  const inside = s as unknown as {_sessionId: string; _render: () => void; _tracklets: Map<number, typeof t>;
+    _setMask: (tracklet: typeof t, frame: number, mask: typeof old, fromTrack?: boolean) => void};
+  inside._sessionId = 's'; inside._render = () => {}; inside._tracklets.set(1, t);
+  const repaint = vi.spyOn(s, 'repaint').mockResolvedValue();
+  vi.stubGlobal('fetch', async (url: string) => new Response(JSON.stringify(url.endsWith('/detail_state')
+    ? {enabled: true, objects: {}} : {object_id: 2})));
+  try {
+    inside._setMask(t, 0, old, true);
+    inside._setMask(t, 0, clicked);
+    await s.detailRequest('detail_state');
+    expect(t.masks[0]).toBe(clicked);
+    await s.detailRequest('apply_detail_crop', {preview_id: 'other-object'});
+    expect(t.masks[0]).toBe(clicked);
+    expect(repaint).toHaveBeenCalledWith([2]);
+  } finally {vi.unstubAllGlobals();}
+});

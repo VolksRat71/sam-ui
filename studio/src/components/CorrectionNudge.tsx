@@ -23,19 +23,19 @@ const clickable = {pointerEvents: 'auto'} as const;
 export default function CorrectionNudge({nudge, hint, sam3Available, onTrim, onSam3, onGone}: Props) {
   if (nudge != null) {
     return (
-      <div className="stage-hint" role="status">
+      <div className="stage-hint correction-nudge" role="status" onPointerDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()}>
         SAM 2 needs a positive to keep something.
-        <button type="button" style={clickable} onClick={onTrim}>Add a positive to trim</button>
-        {sam3Available && <button type="button" style={clickable} onClick={onSam3}>Switch to SAM 3</button>}
-        <button type="button" style={clickable} onClick={onGone}>Gone for a while?</button>
+        <button type="button" className="button compact" style={clickable} onClick={onTrim}>Add a positive to trim</button>
+        {sam3Available && <button type="button" className="button compact" style={clickable} onClick={onSam3}>Switch to SAM 3</button>}
+        <button type="button" className="button compact" style={clickable} onClick={onGone}>Gone for a while?</button>
       </div>
     );
   }
   if (hint?.kind === 'gone') {
     return (
-      <div className="stage-hint" role="status">
+      <div className="stage-hint correction-nudge" role="status" onPointerDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()}>
         {/* the hint's own question is the action, the same button as the nudge's */}
-        <button type="button" style={clickable} onClick={onGone}>Gone for a while?</button> Mark it absent until it comes back.
+        <button type="button" className="button compact" style={clickable} onClick={onGone}>Gone for a while?</button> Mark it absent until it comes back.
       </div>
     );
   }

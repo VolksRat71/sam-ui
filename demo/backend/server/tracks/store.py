@@ -28,6 +28,7 @@ from typing import Dict, Iterator, Optional, Tuple, Union
 import numpy as np
 
 from tracks import rle
+from tracks.versions import _segment
 
 UNTRACKED, STALE, TRACKED = "untracked", "stale", "tracked"
 
@@ -37,7 +38,7 @@ class TrackStore:
         self.root = Path(root)
 
     def _dir(self, video: str, obj_id: int, engine: str) -> Path:
-        return self.root / video / str(int(obj_id)) / engine
+        return self.root / _segment("video key", video) / str(int(obj_id)) / _segment("engine name", engine)
 
     def save(self, video: str, obj_id: int, engine: str, model: str, seeds_hash: str,
              frames: Dict[int, Union[np.ndarray, Dict]], elapsed_s: float, extra: Optional[Dict] = None) -> Dict:
@@ -139,9 +140,9 @@ class TrackStore:
 
     def clear(self, video: str, obj_id: int, engine: Optional[str] = None) -> None:
         """Drop an object's track from one engine, or from every engine. Its seeds stay."""
-        obj_dir = self.root / video / str(int(obj_id))
+        obj_dir = self.root / _segment("video key", video) / str(int(obj_id))
         if engine is not None:
-            shutil.rmtree(obj_dir / engine, ignore_errors=True)
+            shutil.rmtree(self._dir(video, obj_id, engine), ignore_errors=True)
             for stray in obj_dir.glob(f".{engine}.*-*"):  # or _recover would bring an old track back
                 shutil.rmtree(stray, ignore_errors=True)
         elif obj_dir.is_dir():

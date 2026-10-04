@@ -30,3 +30,18 @@ shots.json
 !docs/images/studio.jpg
 # browser-engine parity fixtures (synthetic clips from tools/make_parity_fixtures.py)
 !studio/e2e/fixtures/parity/*.mp4
+
+# Agent execution state and local review evidence are not product source
+.superpowers/sdd/
+.impeccable/build/
+.impeccable/review/
+
+# Local design handoffs, generated comps, capture helpers and Vite cache
+.impeccable/HANDOFF-codex.md
+.impeccable/critique/
+.impeccable/mocks/
+.impeccable/**/capture.mjs
+.impeccable/**/checks.json
+/capture.mjs
+/checks.json
+.vite/

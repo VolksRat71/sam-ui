@@ -1,9 +1,11 @@
+import RefineDetail from './RefineDetail';
+import CorrectionNudge from './CorrectionNudge';
 // sam-ui (Apache-2.0). New file, not from SAM 2.
 //
 // The video preview: the worker-drawn canvas, fitted to its pane, with the
 // click layer and the active object's points on top. Clicks follow Meta's
 // demo: left click adds a point of the selected kind, right click the other
-// kind, clicking a point removes it. The view zooms (pinch, or Ctrl/Cmd +
+// kind, clicking a point removes it. The view zooms (pinch, Shift + wheel, or Ctrl/Cmd +
 // wheel, or the buttons) and pans (wheel, middle drag, or Alt + drag). Only
 // the video and its masks are pixels, scaled by the zoom; the point markers
 // are an SVG overlay outside the zoomed box, placed in video coordinates, so
@@ -11,14 +13,14 @@
 // touch screen a tap adds a point of the selected kind, a long press the
 // other kind, one finger pans a zoomed view and two fingers pinch
 // (lib/gestures.ts).
+import {trackPresentation} from './trackPresentation';
 import {AddFilled, SubtractFilled, ZoomIn, ZoomOut} from '@carbon/icons-react';
 import {useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type PointerEvent} from 'react';
 import {labelFor, longPressStartsOn} from '~/lib/gestures';
 import {objectName} from '~/state/fileNames';
-import {FIT, panBy, toScreen, zoomAt, type View} from '~/state/view';
+import {FIT, panBy, toScreen, zoomAt, zoomWheelDelta, type View} from '~/state/view';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
 import useTouchGestures from '~/workspace/useTouchGestures';
-import CorrectionNudge from './CorrectionNudge';
 
 export type LabelMode = 'positive' | 'negative';
 
@@ -85,6 +87,8 @@ export default function Preview({session, mode, onModeChange}: Props) {
 
   const active = state.objects.find(o => o.id === state.activeId);
   const points = active?.points[frame] ?? [];
+  const track = active == null ? null : trackPresentation(active.state, active.running);
+  const changedCount = state.objects.filter(o => o.state === 'stale').length;
 
   // zoom and pan
   const [view, setView] = useState<View>(FIT);
@@ -100,11 +104,12 @@ export default function Preview({session, mode, onModeChange}: Props) {
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
       const {width, height} = boxRef.current;
-      if (e.ctrlKey || e.metaKey) {
+      const delta = zoomWheelDelta(e, height);
+      if (delta != null) {
         const rect = el.getBoundingClientRect();
         const px = e.clientX - (rect.left + rect.width / 2);
         const py = e.clientY - (rect.top + rect.height / 2);
-        setView(v => zoomAt(v, Math.exp(-e.deltaY * 0.01), px, py, width, height));
+        setView(v => zoomAt(v, Math.exp(-delta * 0.01), px, py, width, height));
       } else {
         setView(v => panBy(v, -e.deltaX, -e.deltaY, width, height));
       }
@@ -215,7 +220,7 @@ export default function Preview({session, mode, onModeChange}: Props) {
             </span>
           ) : (
             <span className="muted">
-              {state.objects.length === 0 ? 'Click the video to add an object' : 'Select an object, or click to add one'}
+              {state.objects.length === 0 ? 'Click the footage to add a layer' : 'Select a layer, or click to add one'}
             </span>
           )}
         </div>
@@ -226,11 +231,15 @@ export default function Preview({session, mode, onModeChange}: Props) {
           <button className="zoom-level" onClick={() => setView(FIT)} title="Fit (reset zoom)">
             {Math.round(view.zoom * 100)}%
           </button>
-          <button className="icon-button" onClick={() => zoomBy(1.5)} title="Zoom in (or pinch, Ctrl/Cmd + wheel)">
+          <button className="icon-button" onClick={() => zoomBy(1.5)} title="Zoom in (Shift/Ctrl/Cmd + wheel or pinch)">
             <ZoomIn size={18} />
           </button>
         </div>
       </div>
+      {(track?.kind === 'changed' || track?.kind === 'updating' || changedCount > 0) && <div className={`matte-status ${track?.kind ?? 'changed'}`} role="status">
+        <strong>{track?.kind === 'changed' || track?.kind === 'updating' ? `${objectName(active!)} · ${track.label}` : `${changedCount} changed ${changedCount === 1 ? 'layer' : 'layers'}`}</strong>
+        <span>{track?.kind === 'changed' || track?.kind === 'updating' ? track.detail : 'Cached mattes need tracking again.'}</span>
+      </div>}
       <div
         className="stage"
         ref={ref}
@@ -245,7 +254,7 @@ export default function Preview({session, mode, onModeChange}: Props) {
           style={{transform: `translate(${view.x}px, ${view.y}px) scale(${view.zoom})`}}>
           {bridge != null && (
             // width/height are set once: a canvas handed to a worker cannot be resized here
-            <canvas ref={canvasRef} className="stage-canvas" width={size.width} height={size.height} />
+            <canvas ref={canvasRef} role="img" aria-label={`Composition viewer, frame ${frame + 1}${active ? `, selected layer ${objectName(active)}` : ''}. Click to refine the matte; use the toolbar to choose add or subtract.`} className="stage-canvas" width={size.width} height={size.height} />
           )}
           <div
             ref={layerRef}
@@ -283,6 +292,7 @@ export default function Preview({session, mode, onModeChange}: Props) {
             })}
           </svg>
         </div>
+        <RefineDetail session={session} />
         <CorrectionNudge nudge={session.nudge} hint={session.hint} sam3Available={session.sam3Available} onTrim={() => session.nudgeTrim(() => onModeChange('positive'))} onSam3={session.nudgeSam3} onGone={session.markGone} />
         {status !== 'ready' && (
           <div className="stage-overlay">
