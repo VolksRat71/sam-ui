@@ -1,12 +1,14 @@
 <!-- sam-ui (Apache-2.0). New file, not from SAM 2. -->
 # sam-ui studio
 
-sam-ui's web UI, an editor-style frontend for the backend in `demo/backend`:
-resizable panes, the video on the left, collapsible Media, Objects and Effects
-sections on the right, and a timeline along the bottom. It uses Meta's demo
-palette and interactions, and it reuses Meta's demo code: the video decoder and
-renderer (`VideoWorkerContext`), the worker bridge, the effects, the RLE code,
-the multipart parser and the Relay environment, vendored under `src/meta/`.
+sam-ui's web UI, a compositing-suite workspace for the backend in
+`demo/backend` (its design is in [`DESIGN.md`](../DESIGN.md)): the preview at
+the top left, a dock beside it with Review, Layer info, Effects and Media
+sections, and a timeline below with a lane per object, where objects are
+selected, grouped and reordered. It keeps Meta's demo interactions, and it
+reuses Meta's demo code: the video decoder and renderer
+(`VideoWorkerContext`), the worker bridge, the effects, the RLE code, the
+multipart parser and the Relay environment, vendored under `src/meta/`.
 
 It replaces Meta's demo frontend (`demo/frontend`), which was removed.
 
@@ -115,7 +117,7 @@ python3 -m http.server 7390 --bind 127.0.0.1 --directory /tmp/pages   # http://1
 
 - **Objects.** Click the video to add an object and a positive point. Right
   click adds a negative point, and the Add / Remove toggle swaps the two.
-  Click a point to remove it. *Add object* starts the next object. On a
+  Click a point to remove it. *Add layer* starts the next object. On a
   tracked frame a click refines the tracked mask: a negative, sent with a
   positive on the part to keep, cuts away the region it is on. If every click
   on a frame would be negative, SAM 2 needs a positive to keep something:
@@ -264,7 +266,12 @@ python3 -m http.server 7390 --bind 127.0.0.1 --directory /tmp/pages   # http://1
   - *Vector JSON (.zip)*: one JSON per object in the rotoscoping skill's
     `contours.py` format (`add`/`sub` outline slots per frame, plus `engine`,
     `model` and `object`), traced as OpenCV does (`src/state/contours.ts`).
-  - *Export to After Effects*: not yet.
+  - *Export to After Effects* (desktop app only, for a video opened with
+    Media > Open from After Effects): a new comp at the footage's own size,
+    frame rate and duration, with the footage as a guide layer and one layer
+    per object carrying its outlines as mask-path keys. It needs
+    [AE MCP Vision](https://github.com/VolksRat71/after-effects-mcp-vision)
+    v2.2.0; elsewhere the entry is disabled and says why.
   - *Video with effects (.mp4)*: the whole video rendered in the browser,
     every object with its own effect and the background effect. Objects never
     given an effect render as Original by default, or as shown (the Overlay).
@@ -275,10 +282,11 @@ python3 -m http.server 7390 --bind 127.0.0.1 --directory /tmp/pages   # http://1
   point markers are an SVG overlay in video coordinates, so they stay crisp
   and keep their size on screen at any zoom. At 200% and above the video
   shows real pixels.
-- **Keys**: Space plays and pauses, the arrow keys step one frame, F flags
-  the frame for a correction, Cmd-Z / Shift-Cmd-Z undo and redo the selected
-  object's clicks, . and , step through the review queue, Y says its stop looks
-  right, and Escape drops a lane selection.
+- **Keys**: ? opens the full list (`src/components/ShortcutSheet.tsx`).
+  Space plays and pauses, the arrow keys step one frame, F flags the frame for
+  a correction, Cmd-Z / Shift-Cmd-Z undo and redo the selected object's
+  clicks, . and , step through the review queue, Y says its stop looks right,
+  and Escape drops a lane selection.
 
 ## Features
 
@@ -287,7 +295,7 @@ Compared with Meta's demo UI, which studio replaced:
 | Feature | studio |
 | --- | --- |
 | Gallery of videos, pick one | done (Media) |
-| Upload a video (mp4/mov, 70 MB) | done (click or drop); uploads are listed with the gallery |
+| Upload a video (mp4/mov, 70 MB) | done (click or drop), up to 5 minutes and 2 GB; uploads are listed with the gallery |
 | Remove a video | studio only (Meta's demo has none): a delete button on uploads, never on gallery videos, confirmed in an in-app dialog, with an option to keep the tracks. An open video's session closes first, and studio moves to the next video or the empty state |
 | Default video (`defaultVideo`) | partial: the last video you used, else the first in the gallery |
 | Click adds a positive point, right click a negative one | done |
@@ -306,14 +314,15 @@ Compared with Meta's demo UI, which studio replaced:
 | Share section and "try another video" step | missing |
 | First-click onboarding, snackbar tips, tooltips | partial: an empty-state line and the negative-click nudge |
 | Settings modal (API endpoints) | missing: set `VITE_API_ENDPOINT` instead |
-| Mobile layout | missing (desktop only) |
+| Mobile layout | done: phone and tablet layouts with touch (see *Phones and tablets*) |
 | Loading and error screens | partial: session start, backend unreachable, and toasts for failed calls |
 | Close the session on unload | missing: the backend expires idle sessions (30 min). A visible tab touches its session every 5 minutes to keep it |
 | Stats overlay (debug) | missing |
 
-Studio only: SAM 3 engine, the in-browser SAM 2.1 tiny engine, per-engine badges and disagreement flags, objects restored on reload (with their seed masks), track-state badges, Clear track, absent ranges, candidate and present ranges, undo with kept track versions, text prompts (SAM 3),
-concurrent jobs, jobs from other tabs shown, zoom and pan, export for
-rotoscoping, and keyboard shortcuts.
+Studio only: SAM 3 engine, the in-browser SAM 2.1 tiny engine, per-engine badges and disagreement flags, objects restored on reload (with their seed masks), track-state badges, Clear track, absent ranges, candidate and present ranges, the review queue, undo with kept track versions, text prompts (SAM 3),
+object groups, concurrent jobs, jobs from other tabs shown, zoom and pan, export
+for rotoscoping, the After Effects round trip (desktop app), experimental Refine
+Detail, and keyboard shortcuts.
 
 ## Browser engine
 
@@ -372,8 +381,8 @@ half after its frame-10 correction. Results go to `e2e/out/parity.json`.
 
 ## Phones and tablets
 
-Below 1024 px wide studio stacks its panes, and the side panel's sections
-become tabs (Media, Objects, Effects; each keeps its state when hidden). An
+Below 1024 px wide studio stacks its panes, and the dock's sections become
+tabs (Review, Layer info, Effects, Media; each keeps its state when hidden). An
 upload in flight survives a switch between the layouts (an iPad rotated): App
 holds it, not the Media section. At 1024 px and wider the desktop layout is
 unchanged.
