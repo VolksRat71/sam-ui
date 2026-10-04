@@ -75,8 +75,77 @@ Details and progress: [Platform support, #16](https://github.com/VolksRat71/sam-
   four states: untracked, stale (its clicks changed since), tracked, or tracking (a
   job holds it). Track runs only what isn't current.
 - **Corrections that stick.** Click on any frame to fix a mask; the next Track uses
-  your corrected mask on that frame. (As in SAM 2 itself, a frame needs at least one
-  positive click. A lone negative click empties the mask.)
+  your corrected mask on that frame. A correction refines the tracked mask, even
+  after an earlier correction has made the track stale: a negative click, sent with
+  a positive on the part to keep, cuts away only the region it is on, and a lone
+  positive click adds one. SAM 2 needs a positive on the frame.
+- **Re-track only what a correction changes.** On SAM 2, a correction re-tracks a
+  stretch around the corrected frame and keeps the cached track beyond it: the pass
+  starts a little before the frame, from the cached masks there, and stops once ten
+  frames in a row agree with the cache (IoU above 0.98). On the gallery dog clip
+  (289 frames) a fix on frame 148, a positive on the dog and a negative on the red
+  pixel its mask took in, re-tracked 31 frames in 7.5 s, against 130 s for a full
+  re-track, and on every re-tracked frame its masks were within IoU 0.987 of the
+  full re-track's. SAM 2 lets a correction nudge distant frames too
+  (the full re-track moved frame 55 to IoU 0.936 of the old track), and the kept
+  frames stay as they were, so each track records which pass made each frame
+  (`POST /track_provenance`) and the review lists the bounded stretches. A tracked
+  object tracked again, or a job with `full: true`, re-tracks everything. SAM 3 and
+  the browser engine re-track the whole window for now.
+- **Absent ranges.** Mark a span of frames where an object is not in the shot (it
+  left the frame, went behind something, or is gone after a cut). Those frames stay
+  empty in the preview and in every export, the tracker never runs on them, and the
+  range splits the object's track: each side is tracked only from its own clicks,
+  so nothing seen before the gap carries into the frames after it. A side with no
+  clicks stays empty. Marking or unmarking a range makes the track stale, and the
+  re-track runs only the sides that changed. A positive click inside a range means
+  the object is back, so the range ends on the frame before it; clicks there with no
+  positive are refused. *Gone for a while?*, offered after a lone negative, marks the
+  object absent from that frame until its next click.
+- **Candidate and confirmed ranges.** Each frame of an object is *unknown* (nobody
+  has said), a *candidate* (a model or tool thinks the object is there; it carries
+  its source, such as `text:dog@sam3`, and maybe a score), confirmed *present*, or
+  confirmed *absent*. Only absent changes tracking. Present and candidate ranges
+  are annotations kept apart from the clicks (`annotations.json`): they never
+  change a mask or a window, are not in the seeds hash, and so never make a track
+  stale. Confirmed ranges override candidates; marking present clears absent there.
+  A candidate can be confirmed present, confirmed absent (a seed change, so it can
+  be undone, and undo shows the candidate again) or rejected. A discovery job
+  writes candidates in bulk (`setObjectCandidates`, or `TrackService.write_candidates`).
+  Exports record every range with its state; only absent frames are empty.
+- **Undo, and earlier track versions.** Every finished track is kept as a version
+  of its object, under the hash of the clicks that made it, and every click, cleared
+  frame or range edit can be undone (Cmd-Z, Shift-Cmd-Z to redo). Going back to
+  clicks a version was made from brings its track back from disk with no re-track,
+  so undoing an accidental click restores the good track at once. Each object lists
+  its kept versions (when, which engine, how many clicks) to go back to any of them,
+  and clicks that went to the wrong object move to the right one, one undo step
+  each. The last 10 versions per object and engine are kept; the version an object
+  shows shares its track's files, so it costs no extra disk; an older one costs its masks (RLE): on the gallery
+  dog clip (289 frames at 1280x720) 257 KB for one object tracked from one click,
+  483 KB once a stray click grew it, plus about 1 to 3 KB for its seeds. An undo
+  there took 13 ms, against 136 s for the track it brought back.
+- **A review queue instead of every frame.** Each track gets a short, ranked list of
+  stops worth a look, computed from the cached masks with no model run: where SAM 2
+  and SAM 3 disagree, where the track starts, stops or the object comes back, where
+  the mask's area or position jumps or it splits into pieces, the seams of a re-track
+  near a correction, where a candidate range starts, and the frames flagged with F.
+  Each stop carries its reasons and a score (weights in `tracks/audit.py`); nearby
+  frames merge into one stop, absent ranges never hold one, and the queue is capped.
+  *Looks right* marks a stop reviewed (`<object>/review.json`, outside the seeds
+  hash); the mark holds only while the masks it covered are unchanged, so a
+  correction's re-track reopens just the stops it remade, and an undo brings the
+  marks back with the track. On the gallery dog clip (289 frames, one click) the
+  SAM 2 track got 3 stops (where the dog leaves and re-enters at frames 77 and 102,
+  and a split mask at 207), built in 0.11 s; with a SAM 3 track as well, the stop at
+  102 also carried their disagreement. `POST /review_queue`, `POST /set_reviewed`;
+  the roto export writes the queue into `data/review.json`.
+- **Text prompts (SAM 3).** Type what to find ("dog") for the selected object and
+  SAM 3's detector segments it on the frame on screen: the best match becomes that
+  frame's mask, as if clicked, and the object tracks from it with any engine. When
+  several things match it says how many and takes the best; a click there refines
+  the mask. SAM 2 and the browser engine take clicks only, and the field says so.
+  The detector shares SAM 3's backbone with the tracker, so it adds about 2 GB.
 - **Keep working while it tracks.** A track job holds the model one frame at a time,
   so clicks come back in about 0.1 s even while a job runs. Jobs can overlap, and
   each has its own cancel.
@@ -146,7 +215,7 @@ option in studio stays disabled, with the reason shown, until they're found.
 | --- | --- | --- |
 | `SAM_UI_FEATURE_CACHE_GB` | 6 | backbone feature cache budget (0 turns it off) |
 | `SAM_UI_SESSION_TTL_MIN` | 30 | idle sessions are freed after this long (0 keeps them) |
-| `SAM_UI_EXPORT_ROOT` | `~/Movies` | rotoscoping exports may only write under this folder |
+| `SAM_UI_EXPORT_ROOT` | `~/Movies/sam-ui` (the desktop app sets your home folder) | rotoscoping exports may only write under this folder |
 | `SAM_UI_SAM3_WEIGHTS` | `~/.cache/rotoscoping-video-subjects/weights/sam3-hf` | where the SAM 3 weights are |
 
 ## How it fits together
@@ -175,9 +244,9 @@ studio (React, Vite, WebCodecs)                 demo/backend/server (Flask)
 
 | Kind | Endpoints |
 | --- | --- |
-| GraphQL, `POST /graphql` | `startSession` (returns the objects already known for the video), `addPoints` (points normalised 0–1), `clearPointsInFrame`, `removeObject`, `clearPointsInVideo`, `objectTracks`, `clearTrack`, `uploadVideo`, `deleteVideo`, `videos`, `defaultVideo` |
+| GraphQL, `POST /graphql` | `startSession` (returns the objects already known for the video), `addPoints` (points normalised 0–1), `clearPointsInFrame`, `removeObject`, `clearPointsInVideo`, `objectTracks` (with each object's `history`: undo, redo, kept versions, and its `ranges` by state), `clearTrack`, `setObjectRange` (absent, present, or candidate with `source` and `score`; null clears, `clear` limits which states), `setObjectCandidates` (candidates in bulk), `undoSeeds`, `redoSeeds`, `restoreVersion`, `moveClicks`, `uploadVideo`, `deleteVideo`, `videos`, `defaultVideo` |
 | Streams, `multipart/x-savi-stream` | `POST /track_objects {session_id, object_ids?, engine?}` streams one part per frame and ends with a `done` or `error` part. `POST /track_masks` streams cached tracks. |
-| JSON | `GET /engines` (every engine, with why one can't run), `GET /limits` (upload length and size), `POST /cancel_track`, `POST /track_jobs`, `POST /track_disagreement`, `POST /rename_object`, `POST /object_names`, `POST /export` |
+| JSON | `GET /engines` (every engine, with why one can't run), `GET /limits` (upload length and size), `POST /cancel_track`, `POST /track_jobs`, `POST /track_disagreement`, `POST /rename_object`, `POST /object_names`, `POST /object_layout`, `POST /set_object_layout`, `POST /export` |
 
 ## Tests
 
@@ -195,7 +264,8 @@ python tools/track_cache_e2e.py --api http://127.0.0.1:7373   # live backend (us
 ```
 
 `tools/track_cache_e2e.py` uploads its own synthetic clips and deletes them when it
-finishes. It also has `--after-restart`, `--correction` and `--responsive` checks.
+finishes. It also has `--after-restart`, `--correction`, `--responsive`,
+`--absent`, `--bounded` and `--undo` checks.
 
 ## Licences and credits
 

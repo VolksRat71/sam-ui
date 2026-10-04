@@ -1,6 +1,6 @@
 // sam-ui (Apache-2.0). New file, not from SAM 2.
 import {NEEDS_WEBGPU} from '~/lib/webgpu';
-import type {EngineInfo} from '~/worker/protocol';
+import type {EngineInfo, TextPromptResult} from '~/worker/protocol';
 
 /** The in-browser SAM 2.1 tiny engine (studio/src/local). */
 export const BROWSER_ENGINE = 'browser-sam2';
@@ -63,4 +63,43 @@ export function pickerEngines(server: ReadonlyArray<EngineInfo>, opts: PickerOpt
     hint: opts.backend ? 'Lower quality, for quick previews' : undefined,
   });
   return out;
+}
+
+/**
+ * Whether the Objects list offers a text prompt with `current` on screen, and
+ * if not, why. Text prompts need an engine that reads text (SAM 3's
+ * detector); SAM 2 and the browser engine take clicks only, so from them the
+ * note points at SAM 3 when it can run, and says what is missing when not.
+ */
+export function textPrompts(
+  engines: ReadonlyArray<Pick<EngineInfo, 'name' | 'label' | 'text' | 'textReason' | 'href'>>,
+  current: string,
+): {ok: boolean; why: string | null} {
+  const here = engines.find(e => e.name === current);
+  if (here?.text === true) {
+    return {ok: true, why: null};
+  }
+  const reader = engines.find(e => e.text === true);
+  if (reader != null) {
+    const name = here?.label ?? engineLabel(current);
+    return {ok: false, why: `${name} takes clicks only. Switch the engine to ${engineLabel(reader.name)} to find an object by text.`};
+  }
+  const sam3 = engines.find(e => e.name === 'sam3' && e.href == null && e.text === false && e.textReason != null);
+  if (sam3 != null) {
+    const reason = sam3.textReason!.trim();
+    return {ok: false, why: `Text prompts need SAM 3, which cannot run here: ${reason}${/[.!?]$/.test(reason) ? '' : '.'}`};
+  }
+  return {ok: false, why: 'Text prompts need SAM 3 in the desktop app.'};
+}
+
+/** What the Objects list says after a text prompt (frames counted from 1, as on screen). */
+export function textPromptNote(r: Pick<TextPromptResult, 'text' | 'frameIndex' | 'matched' | 'score' | 'instances'>): string {
+  const frame = r.frameIndex + 1;
+  if (!r.matched) {
+    return `No "${r.text}" found on frame ${frame}. Try other words, or click the object.`;
+  }
+  const score = r.score.toFixed(2);
+  return r.instances > 1
+    ? `Found ${r.instances} matches for "${r.text}" on frame ${frame} and took the best (score ${score}). Click to correct it, or to pick another.`
+    : `Found "${r.text}" on frame ${frame} (score ${score}). Click to correct it.`;
 }

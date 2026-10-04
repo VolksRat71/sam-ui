@@ -118,7 +118,7 @@ const handlers: Handlers = {
     const res = await trackerFor(m).click(frame, points);
     return {rle: res.rle, objectScore: res.objectScore, ms: performance.now() - t0};
   },
-  track: async ({job, objects}) => {
+  track: async ({job, objects, window}) => {
     const m = await (loading ?? Promise.resolve(loaded()));
     const ac = new AbortController();
     jobs.set(job, ac);
@@ -127,7 +127,7 @@ const handlers: Handlers = {
     const own = new Sam2Tracker(m, video ?? (() => { throw new Error('configure first'); })());
     let frames = 0;
     try {
-      for await (const f of own.track(objects, ac.signal)) {
+      for await (const f of own.track(objects, ac.signal, window)) {
         frames++;
         post({type: 'event', event: {type: 'trackFrame', job, frame: f.frame, masks: [...f.masks], ms: f.ms}});
       }
