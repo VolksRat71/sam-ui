@@ -264,4 +264,4 @@ Nate’s follow-up feedback explicitly restores mask-color correspondence and gr
 
 ## Landed-stack presentation — 2026-10-04
 
-Correction messages use the neutral panel surface, wrap their exact contractual copy and actions, and stop events before they reach the preview. Each frame lane has an accessible actions menu for marking absence from the playhead. Menus stay inside the viewport and return focus on Escape or activation. Coarse-pointer controls retain 44px targets at desktop widths. The Review dock mounts once. See `.impeccable/review/2026-10-04-integration.md` for isolated-fixture evidence and checks. Nate’s October 1 comp-guidance waiver remains in force.
+Correction messages use the neutral panel surface, wrap their exact contractual copy and actions, and stop events before they reach the preview. Each frame lane has an accessible actions menu for marking absence from the playhead. Menus stay inside the viewport and return focus on Escape or activation. Coarse-pointer controls retain 44px targets at desktop widths. The Review dock mounts once. Nate’s October 1 comp-guidance waiver remains in force.
