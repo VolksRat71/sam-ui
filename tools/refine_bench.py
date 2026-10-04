@@ -37,6 +37,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -241,7 +242,9 @@ def iou(a: np.ndarray, b: np.ndarray) -> float:
 
 
 def _boundary(m: torch.Tensor) -> torch.Tensor:
-    er = -F.max_pool2d(-m[None, None], 3, 1, 1)[0, 0]
+    # Outside the image is background, including for a full-frame mask.
+    padded = F.pad(m[None, None], (1, 1, 1, 1), value=0)
+    er = -F.max_pool2d(-padded, 3, 1)[0, 0]
     return (m > 0) & (er <= 0)
 
 
@@ -519,7 +522,8 @@ def run_child(spec: Dict) -> Dict:
 # --------------------------------------------------------------------------
 
 @contextlib.contextmanager
-def gpu_lock(path: Optional[Path], wait_s: int = 60, max_wait_s: int = 45 * 60):
+def gpu_lock(path: Optional[Path], wait_s: int = 60, max_wait_s: int = 45 * 60,
+             job: str = "refinement benchmark"):
     """mkdir lock shared with other agents; held only around one model batch."""
     if path is None:
         yield
@@ -530,18 +534,28 @@ def gpu_lock(path: Optional[Path], wait_s: int = 60, max_wait_s: int = 45 * 60):
             path.mkdir()
             break
         except FileExistsError:
+            try:
+                holder = (path / "owner").read_text().strip()
+            except FileNotFoundError:
+                holder = "owner file not yet available"
             if waited >= max_wait_s:
-                raise TimeoutError(f"GPU lock {path} held for {waited}s")
-            print(f"  gpu lock held, waiting ({waited}s)", flush=True)
+                raise TimeoutError(f"GPU lock {path} held for {waited}s: {holder}")
+            print(f"  gpu lock held by {holder}, waiting ({waited}s)", flush=True)
             time.sleep(wait_s)
             waited += wait_s
+    started = datetime.now(timezone.utc)
+    owner = path / "owner"
+    identity = json.dumps({"who": "refine_bench", "pid": os.getpid(), "job": job,
+                           "started": started.isoformat(),
+                           "expected_end": (started + timedelta(minutes=45)).isoformat()}, indent=1)
     try:
+        owner.write_text(identity)
         yield
     finally:
-        try:
+        # Never remove a lock that somebody else has taken over.
+        if owner.exists() and owner.read_text() == identity:
+            owner.unlink()
             path.rmdir()
-        except FileNotFoundError:
-            pass
 
 
 def memory_free_pct() -> Optional[int]:
@@ -566,10 +580,13 @@ def wait_for_memory(min_free: int, max_wait_s: int = 30 * 60) -> Optional[int]:
 
 def child(spec: Dict, lock: Optional[Path], min_free: int) -> Dict:
     free = wait_for_memory(min_free)
+    # A failed replacement must not leave old masks looking like a successful
+    # run of the new spec. Metadata is the success marker, written last.
+    Path(spec["out"]).with_suffix(".json").unlink(missing_ok=True)
     spec_path = Path(spec["out"]).with_suffix(".spec.json")
     spec_path.write_text(json.dumps(spec))
     env = {**os.environ, "PYTORCH_ENABLE_MPS_FALLBACK": "1", "TQDM_DISABLE": "1"}
-    with gpu_lock(lock):
+    with gpu_lock(lock, job=f"{spec['kind']}: {spec['out']}"):
         r = subprocess.run([sys.executable, __file__, "--_child", str(spec_path)],
                            capture_output=True, text=True, env=env, cwd=REPO)
     lines = [l for l in r.stdout.splitlines() if l.startswith("{")]
@@ -590,10 +607,16 @@ def plan_object(name: str, a, out: Path, lock: Optional[Path]) -> None:
 
     def run(strategy: str, spec: Dict):
         path = d / f"{strategy}.npz"
-        if path.exists() and (d / f"{strategy}.json").exists():
-            return
+        wanted = {"clip": clip, "seed": seed, "out": str(path), **spec}
+        if path.exists() and path.with_suffix(".json").exists():
+            try:
+                cached = json.loads(path.with_suffix(".spec.json").read_text())
+            except (OSError, ValueError):
+                cached = None
+            if cached == wanted:
+                return
         print(f"{name}: {strategy}", flush=True)
-        meta = child({"clip": clip, "seed": seed, "out": str(path), **spec}, lock, a.min_free)
+        meta = child(wanted, lock, a.min_free)
         print(f"  {json.dumps(meta)}", flush=True)
 
     want = set(a.strategies)
