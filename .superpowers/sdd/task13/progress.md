@@ -9,3 +9,5 @@ Task 1 in progress. Main backend/desktop/local/state/generated files restored; o
 Checks: initial studio 420 passed; lint/build pass. Desktop network tests require network permission (sandbox DNS unavailable); rerunning with access. Backend fast running. No model jobs or shared servers touched.
 
 Tasks 1–3 complete pending commit: backend fast 641 passed/4 skipped/15 deselected; studio421; desktop53; lint/build/pages pass; isolated browser3 layouts pass. Final review Important findings: duplicate Review mount and coarse targets overridden. Fixed both with observed RED→GREEN regression checks (Workspace.test.ts and correction-presentation.mjs). No deferred findings. Ruling: keep main behavior wholesale outside presentation; retain approved render colors, zoom and accessible upload/AE focus. Cost if wrong: display-only mismatch, bounded by main-vs-design audit and test coverage. No dropped branches.
+
+Merge commit: 41f9dd7. Screenshot commit rejected by existing media guard; left screenshots local and documented reproduction rather than changing/bypassing the guard.

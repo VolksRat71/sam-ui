@@ -12,8 +12,4 @@ Checks: backend fast 641 passed, 4 skipped, 15 slow deselected (with vmmap permi
 
 These screenshots are isolated presentation fixtures, with no user footage or backend; they establish control layout and interactions, not model correctness. Earlier live-prototype evidence remains historical. Nate's 2026-10-01 explicit “Waive: comps were guidance” decision remains: no comp-fidelity claim.
 
-![Desktop correction and grouped lanes](2026-10-04/correction-1440.png)
-
-![Phone correction and grouped lanes](2026-10-04/correction-390.png)
-
-![Large-touch correction and grouped lanes](2026-10-04/correction-1200.png)
+Screenshots are retained locally under `.impeccable/review/2026-10-04/correction-{1440,390,1200}.png` and `/tmp/task13-presentation/`. The repository media guard refuses PNG evidence, so these files are not committed; rerun `studio/e2e/correction-presentation.mjs` against the isolated fixture server to reproduce them. The guard was not bypassed.
