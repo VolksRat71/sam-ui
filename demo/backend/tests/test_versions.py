@@ -685,3 +685,56 @@ def test_real_sam2_undo_of_an_accidental_click_brings_the_track_back_with_no_job
         assert out[100:150, x + 50:x + 100].sum() < 0.05 * out[100:150, x:x + 50].sum()
     print(f"\nundo in {undo_ms:.0f} ms; a {len(original)} B track ({len(original) // 20} B a frame at {w}x{h}); "
           f"versions dir {_du(obj_dir / 'versions')} B, object dir {_du(obj_dir)} B; engine runs {ran}")
+
+
+# -- version paths stay inside the object's folder --------------------------------------
+
+def test_restore_refuses_a_key_that_is_not_a_seeds_hash(h):
+    """restoreVersion's key comes from the client: anything but a seeds hash is
+    a version the object does not keep, never a path to read a snapshot from."""
+    h.click(1, frame=0)
+    h.track()
+    evil = h.root / "evil"
+    evil.mkdir()
+    (evil / ver.SNAPSHOT).write_text(json.dumps({"files": {"seeds.json": {"7": {"points": [[0.1, 0.1]],
+                                                                                 "labels": [1]}}}}))
+    seeds, hist = h.service.seeds.seeds(h.video, 1), history(h)
+    for key in ["../x", "../../../evil", str(evil), "/etc", "z" * 64, "A" * 64, "0" * 63, "", ".", ".."]:
+        with pytest.raises(KeyError):
+            h.service.restore_version(h.video, 1, key)
+    assert h.service.seeds.seeds(h.video, 1) == seeds and history(h) == hist
+
+
+def test_version_paths_take_only_plain_engine_names_and_video_keys(tmp_path):
+    store = ver.VersionStore(str(tmp_path))
+    key = "0" * 64
+    for engine in ["../x", "a/b", ".hidden", "", ".."]:
+        with pytest.raises(ValueError):
+            store.has("v", 1, engine, key)
+    for video in ["../x", "a/b", "", "..", "/abs"]:
+        with pytest.raises(ValueError):
+            store.snapshot(video, 1, key)
+
+
+def test_evict_and_gc_leave_nothing_outside_the_objects_folder(h, tmp_path, monkeypatch):
+    """A version (or engine) folder that is a link is never listed, so evict
+    and gc never delete through it."""
+    monkeypatch.setattr(ver, "KEEP", 1)
+    outside = tmp_path / "outside"
+    (outside / "fake").mkdir(parents=True)
+    for name in ver.TRACK_FILES:
+        (outside / "fake" / name).write_text("theirs")
+    (outside / "fake" / ver.SUMMARY).write_text(json.dumps({"saved": 0}))
+    (outside / ".stray").mkdir()
+    h.click(1, frame=0)
+    h.track()
+    vdir = h.root / h.video / "1" / ver.VERSIONS
+    (vdir / ("f" * 64)).symlink_to(outside)  # a whole version folder that is a link
+    key = history(h)["versions"][0]["key"]
+    (vdir / key / "sam2").symlink_to(outside / "fake")  # one engine folder that is a link
+    accident(h)
+    h.track()  # records a second version: evict on KEEP = 1, then gc
+    h.service.undo(h.video, 1)
+    assert sorted(p.name for p in outside.iterdir()) == [".stray", "fake"]
+    assert sorted(p.name for p in (outside / "fake").iterdir()) == sorted([*ver.TRACK_FILES, ver.SUMMARY])
+    assert all(e["key"] != "f" * 64 for e in history(h)["versions"])
