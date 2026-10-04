@@ -11,9 +11,9 @@
 import {AddFilled, SubtractFilled, ZoomIn, ZoomOut} from '@carbon/icons-react';
 import {useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type PointerEvent} from 'react';
 import {objectName} from '~/state/fileNames';
-import {needsPositiveClick} from '~/state/objects';
 import {FIT, panBy, toScreen, zoomAt, type View} from '~/state/view';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
+import CorrectionNudge from './CorrectionNudge';
 
 export type LabelMode = 'positive' | 'negative';
 
@@ -80,7 +80,6 @@ export default function Preview({session, mode, onModeChange}: Props) {
 
   const active = state.objects.find(o => o.id === state.activeId);
   const points = active?.points[frame] ?? [];
-  const hint = needsPositiveClick(active, frame);
 
   // zoom and pan
   const [view, setView] = useState<View>(FIT);
@@ -243,11 +242,7 @@ export default function Preview({session, mode, onModeChange}: Props) {
             })}
           </svg>
         </div>
-        {hint && (
-          <div className="stage-hint" role="status">
-            Add a positive click to keep part of the object
-          </div>
-        )}
+        <CorrectionNudge nudge={session.nudge} hint={session.hint} sam3Available={session.sam3Available} onTrim={() => session.nudgeTrim(() => onModeChange('positive'))} onSam3={session.nudgeSam3} onGone={session.markGone} />
         {status !== 'ready' && (
           <div className="stage-overlay">
             {status === 'failed' ? (

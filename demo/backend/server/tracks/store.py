@@ -9,6 +9,13 @@ An object's state is derived, never stored:
 - untracked: no track from this engine;
 - stale: a track exists, but its seeds hash or model differs from now;
 - tracked: otherwise.
+
+track.json may also hold "windows" ([{"start", "end", "key"}]): the seeded
+windows the track was made of (tracks/ranges.py), so a re-track can keep the
+ones whose inputs did not change. Tracks from before windows have none.
+
+<obj_id>/versions/ holds the object's earlier tracks (tracks/versions.py);
+clearing an object's tracks here leaves it alone.
 """
 import json
 import os
@@ -33,7 +40,7 @@ class TrackStore:
         return self.root / video / str(int(obj_id)) / engine
 
     def save(self, video: str, obj_id: int, engine: str, model: str, seeds_hash: str,
-             frames: Dict[int, Union[np.ndarray, Dict]], elapsed_s: float) -> Dict:
+             frames: Dict[int, Union[np.ndarray, Dict]], elapsed_s: float, extra: Optional[Dict] = None) -> Dict:
         """Write a whole track, atomically: into a temp dir, then swapped in, so
         a crash mid-write leaves the previous track (or none), never half of one."""
         final = self._dir(video, obj_id, engine)
@@ -54,16 +61,48 @@ class TrackStore:
             raise
         meta = {"object_id": int(obj_id), "engine": engine, "model": model, "seeds_hash": seeds_hash,
                 "frames": [min(frames), max(frames)] if frames else None, "n_frames": len(frames),
-                "created": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "elapsed_s": round(float(elapsed_s), 3)}
+                "created": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "elapsed_s": round(float(elapsed_s), 3),
+                **(extra or {})}
         (tmp / "track.json").write_text(json.dumps(meta, indent=1))
+        self._swap(final, tmp)
+        return meta
+
+    def adopt(self, video: str, obj_id: int, engine: str, src: Path, extra: Optional[Dict] = None) -> Dict:
+        """Make the track in `src` (a kept version: track.json, masks.jsonl)
+        the object's track on `engine`, atomically as save() does. The masks
+        are linked, not copied; track.json gains `extra`."""
+        final = self._dir(video, obj_id, engine)
+        final.parent.mkdir(parents=True, exist_ok=True)
+        self._recover(final)
+        for stray in final.parent.glob(f".{engine}.*-*"):
+            shutil.rmtree(stray, ignore_errors=True)
+        tmp = final.with_name(f".{engine}.tmp-{uuid.uuid4().hex}")
+        tmp.mkdir()
+        try:
+            try:
+                os.link(src / "masks.jsonl", tmp / "masks.jsonl")
+            except OSError:
+                shutil.copy2(src / "masks.jsonl", tmp / "masks.jsonl")
+            meta = {**json.loads((src / "track.json").read_text()), **(extra or {})}
+            (tmp / "track.json").write_text(json.dumps(meta, indent=1))
+        except BaseException:
+            shutil.rmtree(tmp, ignore_errors=True)
+            raise
+        self._swap(final, tmp)
+        return meta
+
+    def track_dir(self, video: str, obj_id: int, engine: str) -> Path:
+        return self._dir(video, obj_id, engine)
+
+    @staticmethod
+    def _swap(final: Path, tmp: Path) -> None:
         old = None
         if final.exists():
-            old = final.with_name(f".{engine}.old-{uuid.uuid4().hex}")
+            old = final.with_name(f".{final.name}.old-{uuid.uuid4().hex}")
             os.replace(final, old)
         os.replace(tmp, final)
         if old is not None:
             shutil.rmtree(old, ignore_errors=True)
-        return meta
 
     def _recover(self, final: Path) -> None:
         """Undo a crash between save()'s two renames: the previous track sits
@@ -107,7 +146,7 @@ class TrackStore:
                 shutil.rmtree(stray, ignore_errors=True)
         elif obj_dir.is_dir():
             for p in obj_dir.iterdir():
-                if p.is_dir():
+                if p.is_dir() and p.name != "versions":
                     shutil.rmtree(p, ignore_errors=True)
 
     def state(self, video: str, obj_id: int, engine: str, model: str, seeds_hash: Optional[str]) -> str:
