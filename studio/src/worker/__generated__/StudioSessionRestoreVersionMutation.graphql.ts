@@ -1,5 +1,5 @@
 /**
- * @generated SignedSource<<5238727d69b64ef77088fafdc5eb066b>>
+ * @generated SignedSource<<4b641cbe93ceeedfbe2af6bdfd138379>>
  * @lightSyntaxTransform
  * @nogrep
  */
@@ -40,6 +40,8 @@ export type StudioSessionRestoreVersionMutation$data = {
     readonly objectId: number;
     readonly ranges: ReadonlyArray<{
       readonly end: number;
+      readonly score: number | null | undefined;
+      readonly source: string | null | undefined;
       readonly start: number;
       readonly state: string;
     }>;
@@ -221,7 +223,21 @@ v5 = [
             "name": "end",
             "storageKey": null
           },
-          (v1/*: any*/)
+          (v1/*: any*/),
+          {
+            "alias": null,
+            "args": null,
+            "kind": "ScalarField",
+            "name": "source",
+            "storageKey": null
+          },
+          {
+            "alias": null,
+            "args": null,
+            "kind": "ScalarField",
+            "name": "score",
+            "storageKey": null
+          }
         ],
         "storageKey": null
       },
@@ -341,16 +357,16 @@ return {
     "selections": (v5/*: any*/)
   },
   "params": {
-    "cacheID": "4b9244bd45b97ac4f452fdcaa6b8c955",
+    "cacheID": "fc88932f211e3c323793ed551fccea10",
     "id": null,
     "metadata": {},
     "name": "StudioSessionRestoreVersionMutation",
     "operationKind": "mutation",
-    "text": "mutation StudioSessionRestoreVersionMutation(\n  $input: RestoreVersionInput!\n) {\n  restoreVersion(input: $input) {\n    objectId\n    state\n    frames\n    nFrames\n    seeds {\n      frameIndex\n      points\n      labels\n      mask {\n        size\n        counts\n      }\n    }\n    tracks {\n      engine\n      state\n      frames\n      nFrames\n    }\n    ranges {\n      start\n      end\n      state\n    }\n    history {\n      canUndo\n      canRedo\n      versions {\n        key\n        engine\n        model\n        created\n        elapsedS\n        nFrames\n        clicks\n        seedFrames\n        bounded\n        current\n      }\n    }\n  }\n}\n"
+    "text": "mutation StudioSessionRestoreVersionMutation(\n  $input: RestoreVersionInput!\n) {\n  restoreVersion(input: $input) {\n    objectId\n    state\n    frames\n    nFrames\n    seeds {\n      frameIndex\n      points\n      labels\n      mask {\n        size\n        counts\n      }\n    }\n    tracks {\n      engine\n      state\n      frames\n      nFrames\n    }\n    ranges {\n      start\n      end\n      state\n      source\n      score\n    }\n    history {\n      canUndo\n      canRedo\n      versions {\n        key\n        engine\n        model\n        created\n        elapsedS\n        nFrames\n        clicks\n        seedFrames\n        bounded\n        current\n      }\n    }\n  }\n}\n"
   }
 };
 })();
 
-(node as any).hash = "87c6c388ebc920175348426a497baa5f";
+(node as any).hash = "fecf9b0ac0ebfd1d67ac961c9594f1ba";
 
 export default node;

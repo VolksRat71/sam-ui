@@ -1,5 +1,5 @@
 /**
- * @generated SignedSource<<d870ba6c9d12d44cf1b80b8e6572ae79>>
+ * @generated SignedSource<<17f717bc039da859e083dcfb496dd8cc>>
  * @lightSyntaxTransform
  * @nogrep
  */
@@ -10,9 +10,12 @@
 
 import { ConcreteRequest, Mutation } from 'relay-runtime';
 export type SetObjectRangeInput = {
+  clear?: ReadonlyArray<string> | null | undefined;
   end: number;
   objectId: number;
+  score?: number | null | undefined;
   sessionId: string;
+  source?: string | null | undefined;
   start: number;
   state?: string | null | undefined;
 };
@@ -42,6 +45,8 @@ export type StudioSessionSetRangeMutation$data = {
     readonly objectId: number;
     readonly ranges: ReadonlyArray<{
       readonly end: number;
+      readonly score: number | null | undefined;
+      readonly source: string | null | undefined;
       readonly start: number;
       readonly state: string;
     }>;
@@ -223,7 +228,21 @@ v5 = [
             "name": "end",
             "storageKey": null
           },
-          (v1/*: any*/)
+          (v1/*: any*/),
+          {
+            "alias": null,
+            "args": null,
+            "kind": "ScalarField",
+            "name": "source",
+            "storageKey": null
+          },
+          {
+            "alias": null,
+            "args": null,
+            "kind": "ScalarField",
+            "name": "score",
+            "storageKey": null
+          }
         ],
         "storageKey": null
       },
@@ -343,16 +362,16 @@ return {
     "selections": (v5/*: any*/)
   },
   "params": {
-    "cacheID": "4ae4bb1ea2b72fd788ad792d6a3b2229",
+    "cacheID": "727fc8995b2ad359d2a536f12bf4987a",
     "id": null,
     "metadata": {},
     "name": "StudioSessionSetRangeMutation",
     "operationKind": "mutation",
-    "text": "mutation StudioSessionSetRangeMutation(\n  $input: SetObjectRangeInput!\n) {\n  setObjectRange(input: $input) {\n    objectId\n    state\n    frames\n    nFrames\n    seeds {\n      frameIndex\n      points\n      labels\n      mask {\n        size\n        counts\n      }\n    }\n    tracks {\n      engine\n      state\n      frames\n      nFrames\n    }\n    ranges {\n      start\n      end\n      state\n    }\n    history {\n      canUndo\n      canRedo\n      versions {\n        key\n        engine\n        model\n        created\n        elapsedS\n        nFrames\n        clicks\n        seedFrames\n        bounded\n        current\n      }\n    }\n  }\n}\n"
+    "text": "mutation StudioSessionSetRangeMutation(\n  $input: SetObjectRangeInput!\n) {\n  setObjectRange(input: $input) {\n    objectId\n    state\n    frames\n    nFrames\n    seeds {\n      frameIndex\n      points\n      labels\n      mask {\n        size\n        counts\n      }\n    }\n    tracks {\n      engine\n      state\n      frames\n      nFrames\n    }\n    ranges {\n      start\n      end\n      state\n      source\n      score\n    }\n    history {\n      canUndo\n      canRedo\n      versions {\n        key\n        engine\n        model\n        created\n        elapsedS\n        nFrames\n        clicks\n        seedFrames\n        bounded\n        current\n      }\n    }\n  }\n}\n"
   }
 };
 })();
 
-(node as any).hash = "3faa111cc7664feba5a17bb07e077459";
+(node as any).hash = "38a416a95380e1699f95c3bef3beb100";
 
 export default node;

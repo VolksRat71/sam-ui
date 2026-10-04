@@ -26,9 +26,19 @@ class FakeAPI:
     def object_tracks(self, session_id):
         return [INFO]
 
-    def set_object_range(self, session_id, object_id, start, end, state=None):
+    def set_object_range(self, session_id, object_id, start, end, state=None, source=None, score=None, clear=None):
         self.ranged = (session_id, object_id, start, end, state)
-        return {**INFO, "ranges": [] if state is None else [{"start": start, "end": end, "state": state}]}
+        self.range_extra = (source, score, clear)
+        r = {"start": start, "end": end, "state": state}
+        if source is not None:
+            r["source"] = source
+        if score is not None:
+            r["score"] = score
+        return {**INFO, "ranges": [] if state is None else [r]}
+
+    def write_object_candidates(self, session_id, object_id, candidates, replace=False):
+        self.candidates = (session_id, object_id, candidates, replace)
+        return {**INFO, "ranges": [{**c, "state": "candidate"} for c in candidates]}
 
     def add_points(self, request):
         self.points.append(request)
@@ -90,6 +100,32 @@ def test_object_ranges_are_listed_and_set_by_mutation():
     d = run('mutation { setObjectRange(input: {sessionId: "s1", objectId: 3, start: 4, end: 8}) { ranges { start } } }',
             api)["setObjectRange"]
     assert d == {"ranges": []} and api.ranged[-1] is None
+
+
+
+def test_ranges_are_set_by_state_with_a_candidates_provenance():
+    api = FakeAPI()
+    d = run('mutation { setObjectRange(input: {sessionId: "s1", objectId: 3, start: 1, end: 2, state: "candidate", '
+            'source: "text:dog@sam3", score: 0.75}) { ranges { start end state source score } } }',
+            api)["setObjectRange"]
+    assert d["ranges"] == [{"start": 1, "end": 2, "state": "candidate", "source": "text:dog@sam3", "score": 0.75}]
+    assert api.range_extra == ("text:dog@sam3", 0.75, None)
+    run('mutation { setObjectRange(input: {sessionId: "s1", objectId: 3, start: 1, end: 2, clear: ["candidate"]}) '
+        '{ objectId } }', api)
+    assert api.ranged[-1] is None and api.range_extra == (None, None, ["candidate"])
+    # a confirmed range has no provenance
+    d = run('{ objectTracks(sessionId: "s1") { ranges { state source score } } }', api)["objectTracks"][0]
+    assert d["ranges"] == [{"state": "absent", "source": None, "score": None}]
+
+
+def test_candidates_are_written_in_bulk():
+    api = FakeAPI()
+    d = run('mutation { setObjectCandidates(input: {sessionId: "s1", objectId: 3, replace: true, candidates: ['
+            '{start: 0, end: 4, source: "text:dog@sam3", score: 0.5}, {start: 8, end: 9, source: "tool"}]}) '
+            '{ ranges { start end state source score } } }', api)["setObjectCandidates"]
+    assert api.candidates == ("s1", 3, [{"start": 0, "end": 4, "source": "text:dog@sam3", "score": 0.5},
+                                        {"start": 8, "end": 9, "source": "tool"}], True)
+    assert [r["state"] for r in d["ranges"]] == ["candidate", "candidate"] and d["ranges"][1]["score"] is None
 
 
 HISTORY = {"can_undo": True, "can_redo": False, "versions": [

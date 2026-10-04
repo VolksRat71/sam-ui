@@ -59,7 +59,20 @@ import {
 } from '~/state/objects';
 import {moveTargets, undoBlock} from '~/state/history';
 import {clearFlag, parseFlagMap, pruneFlags, toggleFlag as toggled, type FlagMap} from '~/state/flags';
-import {ABSENT, absentAt, absentUntilNextSeed, normalizeRanges, paintRange, type RangeState} from '~/state/ranges';
+import {
+  ABSENT,
+  CANDIDATE,
+  type Layers,
+  type Mark,
+  type PaintOptions,
+  PRESENT,
+  type RangeState,
+  absentAt,
+  absentUntilNextSeed,
+  normalizeMarks,
+  normalizeRanges,
+  paintTimeline,
+} from '~/state/ranges';
 import type {EngineInfo, RunningJob, TrackletSummary} from '~/worker/protocol';
 
 /** Where two engines disagree on one object: frames under the IoU threshold. */
@@ -756,12 +769,14 @@ export default function useStudioSession(video: VideoItem) {
   }, [bridge, hiddenKey]);
 
   /**
-   * Mark frames start-end of an object absent (the object is not in the
-   * shot), or clear them (state null). The frames go empty on screen at once;
-   * the track goes stale, and a re-track skips them.
+   * Set frames start-end of an object to a range state (state/ranges.ts), or
+   * clear them (state null: every state, or those in opts.clear). Absent
+   * frames go empty on screen at once, the track goes stale, and a re-track
+   * skips them. Present and candidate ranges are annotations: no mask
+   * changes and no track goes stale.
    */
   const setRange = useCallback(
-    (objectId: number, start: number, end: number, rangeState: RangeState | null) => {
+    (objectId: number, start: number, end: number, rangeState: RangeState | null, opts: PaintOptions = {}) => {
       if (bridge == null) {
         return;
       }
@@ -770,22 +785,54 @@ export default function useStudioSession(video: VideoItem) {
         return;
       }
       const [a, b] = start <= end ? [start, end] : [end, start];
-      const before = o.ranges;
-      dispatch({type: 'setRanges', id: objectId, ranges: paintRange(before, a, b, rangeState)});
+      const before = {ranges: o.ranges, marks: o.marks};
+      let next: Layers;
+      try {
+        next = paintTimeline(before, a, b, rangeState, opts);
+      } catch (error) {
+        setWarning(message(error));
+        return;
+      }
+      dispatch({type: 'setRanges', id: objectId, ...next});
       serial(async () => {
         let res;
         try {
-          res = await bridge.call('setRange', {objectId, start: a, end: b, state: rangeState});
+          res = await bridge.call('setRange', {objectId, start: a, end: b, state: rangeState, ...opts, clear: opts.clear ? [...opts.clear] : undefined});
         } catch (error) {
           // the backend never took it: put the lane back as it was
-          dispatch({type: 'setRanges', id: objectId, ranges: before});
+          dispatch({type: 'setRanges', id: objectId, ...before});
           throw error;
         }
-        dispatch({type: 'setRanges', id: objectId, ranges: normalizeRanges(res.ranges)});
+        dispatch({type: 'setRanges', id: objectId, ranges: normalizeRanges(res.ranges), marks: normalizeMarks(res.ranges)});
         await sync();
       });
     },
     [bridge, serial, sync],
+  );
+
+  /** A candidate confirmed: the object is there (present) or not in the shot (absent, a seed change). */
+  const confirmCandidate = useCallback(
+    (objectId: number, c: Mark, as: typeof PRESENT | typeof ABSENT) => setRange(objectId, c.start, c.end, as),
+    [setRange],
+  );
+
+  /** A candidate rejected: its frames go back to unknown (only the candidate layer is cleared). */
+  const rejectCandidate = useCallback(
+    (objectId: number, c: Mark) => setRange(objectId, c.start, c.end, null, {clear: [CANDIDATE]}),
+    [setRange],
+  );
+
+  /** Write candidate ranges in bulk (for a discovery job); `replace` drops the old ones. */
+  const writeObjectCandidates = useCallback(
+    (objectId: number, candidates: Array<{start: number; end: number; source: string; score?: number | null}>, replace = false) =>
+      serial(async () => {
+        if (bridge == null) {
+          return;
+        }
+        const res = await bridge.call('writeCandidates', {objectId, candidates, replace});
+        dispatch({type: 'objectChanged', object: res});
+      }),
+    [bridge, serial],
   );
 
   /**
@@ -859,7 +906,7 @@ export default function useStudioSession(video: VideoItem) {
    * frame before its next click after it (any click, a cleared seed too), or
    * to the clip's end. Goes through setRange, the one path for ranges, so it
    * syncs (and rolls back on failure) like any; overlapping an existing range
-   * merges with it (paintRange / normalizeRanges).
+   * merges with it, and a candidate under it stays, hidden (paintTimeline).
    */
   const markAbsentUntilNextSeed = useCallback(
     (objectId: number, frameIndex: number) => {
@@ -1069,6 +1116,7 @@ export default function useStudioSession(video: VideoItem) {
           prompt: row?.prompt ?? objectName(o),
           color: (row?.color ?? o.color).toLowerCase(),
           ranges: o.ranges,
+          marks: o.marks,
         };
       });
       const {objects, groups} = groupExport(kind, exported, s.layout);
@@ -1276,6 +1324,9 @@ export default function useStudioSession(video: VideoItem) {
     updateGroup,
     setGroupEffect,
     setRange,
+    confirmCandidate,
+    rejectCandidate,
+    writeObjectCandidates,
     undo: () => stepSeeds('undo'),
     redo: () => stepSeeds('redo'),
     stepSeeds,

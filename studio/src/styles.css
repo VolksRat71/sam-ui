@@ -1333,6 +1333,108 @@ code {
 .swimlane-absent:hover {
   border-color: var(--gray-200);
 }
+/* a confirmed present range: a solid bracket along the lane's foot */
+.swimlane-present {
+  position: absolute;
+  bottom: 1px;
+  height: 7px;
+  padding: 0;
+  border: 2px solid var(--gray-100);
+  border-top: none;
+  border-radius: 0 0 2px 2px;
+  background: transparent;
+  cursor: pointer;
+}
+.swimlane-present:hover {
+  border-color: #fff;
+}
+/* a candidate range: a dotted outline, a guess nobody has confirmed */
+.swimlane-candidate {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  padding: 0;
+  border: 2px dotted var(--gray-200);
+  border-radius: 3px;
+  background: transparent;
+  cursor: pointer;
+}
+.swimlane-candidate:hover,
+.swimlane-candidate.picked {
+  border-color: #fff;
+  background: #ffffff1f;
+}
+.swimlane-candidate.picked {
+  box-shadow: 0 0 0 1px #000, 0 0 0 3px #ffffffb0;
+}
+.swimlane-absent:focus-visible,
+.swimlane-present:focus-visible,
+.swimlane-candidate:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 1px;
+}
+.candidate-bar kbd {
+  margin-left: 4px;
+  padding: 0 3px;
+  border: 1px solid var(--gray-600);
+  border-radius: 3px;
+  font-size: 10px;
+  font-family: inherit;
+  color: var(--gray-300);
+}
+.lane-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+  margin: 0;
+  padding: 0 0 0 76px;
+  list-style: none;
+  font-size: 10px;
+  color: var(--gray-300);
+}
+.lane-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.legend-swatch {
+  position: relative;
+  display: inline-block;
+  width: 22px;
+  height: 12px;
+}
+.legend-swatch.swimlane-absent,
+.legend-swatch.swimlane-candidate,
+.legend-swatch.swimlane-present {
+  position: relative;
+  top: auto;
+  bottom: auto;
+  cursor: default;
+}
+.legend-swatch.swimlane-present {
+  height: 7px;
+  align-self: flex-end;
+  margin-bottom: 2px;
+}
+.legend-tracked::before,
+.legend-unknown::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+}
+.legend-tracked::before {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--gray-200);
+}
+.legend-unknown::before {
+  height: 1px;
+  background: var(--gray-500);
+}
 /* a window between gaps with no clicks: it stays empty until the object is clicked there */
 .swimlane-hint {
   position: absolute;

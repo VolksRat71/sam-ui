@@ -102,6 +102,17 @@ Details and progress: [Platform support, #16](https://github.com/VolksRat71/sam-
   the object is back, so the range ends on the frame before it; clicks there with no
   positive are refused. *Gone for a while?*, offered after a lone negative, marks the
   object absent from that frame until its next click.
+- **Candidate and confirmed ranges.** Each frame of an object is *unknown* (nobody
+  has said), a *candidate* (a model or tool thinks the object is there; it carries
+  its source, such as `text:dog@sam3`, and maybe a score), confirmed *present*, or
+  confirmed *absent*. Only absent changes tracking. Present and candidate ranges
+  are annotations kept apart from the clicks (`annotations.json`): they never
+  change a mask or a window, are not in the seeds hash, and so never make a track
+  stale. Confirmed ranges override candidates; marking present clears absent there.
+  A candidate can be confirmed present, confirmed absent (a seed change, so it can
+  be undone, and undo shows the candidate again) or rejected. A discovery job
+  writes candidates in bulk (`setObjectCandidates`, or `TrackService.write_candidates`).
+  Exports record every range with its state; only absent frames are empty.
 - **Undo, and earlier track versions.** Every finished track is kept as a version
   of its object, under the hash of the clicks that made it, and every click, cleared
   frame or range edit can be undone (Cmd-Z, Shift-Cmd-Z to redo). Going back to
@@ -212,7 +223,7 @@ studio (React, Vite, WebCodecs)                 demo/backend/server (Flask)
 
 | Kind | Endpoints |
 | --- | --- |
-| GraphQL, `POST /graphql` | `startSession` (returns the objects already known for the video), `addPoints` (points normalised 0–1), `clearPointsInFrame`, `removeObject`, `clearPointsInVideo`, `objectTracks` (with each object's `history`: undo, redo, kept versions), `clearTrack`, `setObjectRange`, `undoSeeds`, `redoSeeds`, `restoreVersion`, `moveClicks`, `uploadVideo`, `deleteVideo`, `videos`, `defaultVideo` |
+| GraphQL, `POST /graphql` | `startSession` (returns the objects already known for the video), `addPoints` (points normalised 0–1), `clearPointsInFrame`, `removeObject`, `clearPointsInVideo`, `objectTracks` (with each object's `history`: undo, redo, kept versions, and its `ranges` by state), `clearTrack`, `setObjectRange` (absent, present, or candidate with `source` and `score`; null clears, `clear` limits which states), `setObjectCandidates` (candidates in bulk), `undoSeeds`, `redoSeeds`, `restoreVersion`, `moveClicks`, `uploadVideo`, `deleteVideo`, `videos`, `defaultVideo` |
 | Streams, `multipart/x-savi-stream` | `POST /track_objects {session_id, object_ids?, engine?}` streams one part per frame and ends with a `done` or `error` part. `POST /track_masks` streams cached tracks. |
 | JSON | `GET /engines` (every engine, with why one can't run), `GET /limits` (upload length and size), `POST /cancel_track`, `POST /track_jobs`, `POST /track_disagreement`, `POST /rename_object`, `POST /object_names`, `POST /object_layout`, `POST /set_object_layout`, `POST /export` |
 

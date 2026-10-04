@@ -293,7 +293,7 @@ def test_set_range_marks_unmarks_and_refuses_a_bad_span(h):
     with pytest.raises(ValueError):
         mark(h, 1, 4, 2)
     with pytest.raises(ValueError):
-        mark(h, 1, 1, 2, "candidate")  # not a state yet
+        mark(h, 1, 1, 2, "candidate")  # a candidate needs a source (test_candidates.py)
 
 
 # -- the interactive session ---------------------------------------------------------

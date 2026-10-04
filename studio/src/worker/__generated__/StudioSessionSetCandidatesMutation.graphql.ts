@@ -1,5 +1,5 @@
 /**
- * @generated SignedSource<<83a46287bb44657eea6ef2b3593f28cb>>
+ * @generated SignedSource<<0d236763dfb6d3248c4b48b4a238e0fc>>
  * @lightSyntaxTransform
  * @nogrep
  */
@@ -9,16 +9,23 @@
 // @ts-nocheck
 
 import { ConcreteRequest, Mutation } from 'relay-runtime';
-export type ClearTrackInput = {
-  engine?: string | null | undefined;
+export type SetObjectCandidatesInput = {
+  candidates: ReadonlyArray<CandidateRangeInput>;
   objectId: number;
+  replace?: boolean;
   sessionId: string;
 };
-export type StudioSessionClearTrackMutation$variables = {
-  input: ClearTrackInput;
+export type CandidateRangeInput = {
+  end: number;
+  score?: number | null | undefined;
+  source: string;
+  start: number;
 };
-export type StudioSessionClearTrackMutation$data = {
-  readonly clearTrack: {
+export type StudioSessionSetCandidatesMutation$variables = {
+  input: SetObjectCandidatesInput;
+};
+export type StudioSessionSetCandidatesMutation$data = {
+  readonly setObjectCandidates: {
     readonly frames: ReadonlyArray<number> | null | undefined;
     readonly history: {
       readonly canRedo: boolean;
@@ -63,9 +70,9 @@ export type StudioSessionClearTrackMutation$data = {
     }>;
   };
 };
-export type StudioSessionClearTrackMutation = {
-  response: StudioSessionClearTrackMutation$data;
-  variables: StudioSessionClearTrackMutation$variables;
+export type StudioSessionSetCandidatesMutation = {
+  response: StudioSessionSetCandidatesMutation$data;
+  variables: StudioSessionSetCandidatesMutation$variables;
 };
 
 const node: ConcreteRequest = (function(){
@@ -116,7 +123,7 @@ v5 = [
     ],
     "concreteType": "ObjectTrack",
     "kind": "LinkedField",
-    "name": "clearTrack",
+    "name": "setObjectCandidates",
     "plural": false,
     "selections": [
       {
@@ -344,7 +351,7 @@ return {
     "argumentDefinitions": (v0/*: any*/),
     "kind": "Fragment",
     "metadata": null,
-    "name": "StudioSessionClearTrackMutation",
+    "name": "StudioSessionSetCandidatesMutation",
     "selections": (v5/*: any*/),
     "type": "Mutation",
     "abstractKey": null
@@ -353,20 +360,20 @@ return {
   "operation": {
     "argumentDefinitions": (v0/*: any*/),
     "kind": "Operation",
-    "name": "StudioSessionClearTrackMutation",
+    "name": "StudioSessionSetCandidatesMutation",
     "selections": (v5/*: any*/)
   },
   "params": {
-    "cacheID": "8d56b1d435487a5105d9e128a7726097",
+    "cacheID": "86752804e0974a7a3fa3d3db2b0d9829",
     "id": null,
     "metadata": {},
-    "name": "StudioSessionClearTrackMutation",
+    "name": "StudioSessionSetCandidatesMutation",
     "operationKind": "mutation",
-    "text": "mutation StudioSessionClearTrackMutation(\n  $input: ClearTrackInput!\n) {\n  clearTrack(input: $input) {\n    objectId\n    state\n    frames\n    nFrames\n    seeds {\n      frameIndex\n      points\n      labels\n      mask {\n        size\n        counts\n      }\n    }\n    tracks {\n      engine\n      state\n      frames\n      nFrames\n    }\n    ranges {\n      start\n      end\n      state\n      source\n      score\n    }\n    history {\n      canUndo\n      canRedo\n      versions {\n        key\n        engine\n        model\n        created\n        elapsedS\n        nFrames\n        clicks\n        seedFrames\n        bounded\n        current\n      }\n    }\n  }\n}\n"
+    "text": "mutation StudioSessionSetCandidatesMutation(\n  $input: SetObjectCandidatesInput!\n) {\n  setObjectCandidates(input: $input) {\n    objectId\n    state\n    frames\n    nFrames\n    seeds {\n      frameIndex\n      points\n      labels\n      mask {\n        size\n        counts\n      }\n    }\n    tracks {\n      engine\n      state\n      frames\n      nFrames\n    }\n    ranges {\n      start\n      end\n      state\n      source\n      score\n    }\n    history {\n      canUndo\n      canRedo\n      versions {\n        key\n        engine\n        model\n        created\n        elapsedS\n        nFrames\n        clicks\n        seedFrames\n        bounded\n        current\n      }\n    }\n  }\n}\n"
   }
 };
 })();
 
-(node as any).hash = "403ae7efbf905307f44029dc5a8124ff";
+(node as any).hash = "c8e7b6c1afa57ff71a05232322c32686";
 
 export default node;

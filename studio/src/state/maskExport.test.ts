@@ -59,6 +59,44 @@ describe('absent ranges in exports', () => {
   });
 });
 
+describe('candidate and present ranges in exports', () => {
+  const dog = {
+    objectId: 3,
+    label: 'Dog',
+    name: 'dog',
+    state: 'tracked',
+    prompt: 'dog',
+    color: '#00ff00',
+    ranges: [{start: 4, end: 5, state: 'absent' as const}],
+    marks: [
+      {start: 0, end: 3, state: 'present' as const},
+      {start: 6, end: 9, state: 'candidate' as const, source: 'text:dog@sam3', score: 0.25},
+    ],
+  };
+
+  it('never blanks a mask for a candidate or a present range', () => {
+    const maskAt = withoutAbsent((id: number, frame: number) => `${id}@${frame}`, [dog]);
+    expect([0, 4, 5, 6, 9].map(f => maskAt(3, f))).toEqual(['3@0', null, null, '3@6', '3@9']);
+  });
+
+  it('records every range with its state in the roto JSON, and keeps clicks in candidate frames', () => {
+    const files = rotoDecisions(prov, [dog], () => new Map([[1, [[0.5, 0.5, 1]] as const], [7, [[0.5, 0.5, 1]] as const]]), () => 24);
+    expect(JSON.parse(files['notes/sam-ui-export.json']).products.dog.ranges).toEqual([
+      {start: 0, end: 3, state: 'present'},
+      {start: 4, end: 5, state: 'absent'},
+      {start: 6, end: 9, state: 'candidate', source: 'text:dog@sam3', score: 0.25},
+    ]);
+    expect(Object.keys(JSON.parse(files['anchors.json']).dog.points)).toEqual(['2', '8']);
+  });
+
+  it('lists them in the README, frames 1-based as the files are', () => {
+    const text = readme('folder', prov, [dog]);
+    expect(text).toContain('    frames 1-4: present');
+    expect(text).toContain('    frames 5-6: absent (empty mattes)');
+    expect(text).toContain('    frames 7-10: candidate, text:dog@sam3 · score 0.25 (unconfirmed; masks unchanged)');
+  });
+});
+
 describe('groups in exports (issue #21)', () => {
   const obj = (objectId: number, name: string) => ({objectId, label: name, name, state: 'tracked', prompt: name, color: '#ffffff'});
   const cast = {id: 'g1', name: 'The Cast', color: '#ff4fa3', members: [3, 1], collapsed: false, hidden: false};

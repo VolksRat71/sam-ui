@@ -523,11 +523,21 @@ class InferenceAPI:
         session = self.__get_session(session_id)
         return self.tracks.objects(session["video"])
 
-    def set_object_range(self, session_id: str, object_id: int, start: int, end: int, state=None) -> Dict:
-        """Mark (state "absent") or clear (None) frames start-end of an object."""
+    def set_object_range(self, session_id: str, object_id: int, start: int, end: int, state=None,
+                         source=None, score=None, clear=None) -> Dict:
+        """Set frames start-end of an object to a range state ("absent",
+        "present", or "candidate" with its source and score), or clear them
+        (None: every state, or the states in `clear`)."""
         with self.inference_lock:  # not while a job reads the seeds
             session = self.__get_session(session_id)
-            return self.tracks.set_range(session["video"], object_id, start, end, state)
+            return self.tracks.set_range(session["video"], object_id, start, end, state, source, score, clear)
+
+    def write_object_candidates(self, session_id: str, object_id: int, candidates, replace: bool = False) -> Dict:
+        """Write candidate ranges in bulk ({"start", "end", "source", "score"?}
+        each); `replace` drops the old ones. They never make a track stale."""
+        with self.inference_lock:
+            session = self.__get_session(session_id)
+            return self.tracks.write_candidates(session["video"], object_id, list(candidates), replace)
 
     def clear_track(self, session_id: str, object_id: int, engine=None) -> Dict:
         with self.inference_lock:  # not while a job is writing

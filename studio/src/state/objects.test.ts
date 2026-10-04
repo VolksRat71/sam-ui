@@ -422,6 +422,25 @@ describe('absent ranges', () => {
     s = run([{type: 'setRanges', id: 1, ranges: [{start: 4, end: 5, state: 'absent'}, {start: 6, end: 6, state: 'absent'}]}], s);
     expect(byId(s, 1).state).toBe('tracked');
   });
+
+  it('keeps present and candidate ranges as marks, which never make a track stale', () => {
+    const wire = [
+      {start: 0, end: 3, state: 'candidate', source: 'text:dog@sam3', score: 0.5},
+      {start: 4, end: 6, state: 'absent', source: null, score: null},
+      {start: 7, end: 9, state: 'present', source: null, score: null},
+    ];
+    let s = run([{type: 'restore', objects: [{...server(1, 'tracked'), ranges: wire}]}]);
+    expect(byId(s, 1).ranges).toEqual([{start: 4, end: 6, state: 'absent'}]);
+    expect(byId(s, 1).marks).toEqual([
+      {start: 0, end: 3, state: 'candidate', source: 'text:dog@sam3', score: 0.5},
+      {start: 7, end: 9, state: 'present'},
+    ]);
+    s = run([{type: 'setRanges', id: 1, ranges: byId(s, 1).ranges, marks: [{start: 0, end: 9, state: 'present'}]}], s);
+    expect(byId(s, 1).state).toBe('tracked');
+    // the marks shown are a view: absent frames are never shown present
+    expect(byId(s, 1).marks).toEqual([{start: 0, end: 3, state: 'present'}, {start: 7, end: 9, state: 'present'}]);
+    expect(dirtyIds(s)).toEqual([]);
+  });
 });
 
 describe('the object layout (issue #21)', () => {

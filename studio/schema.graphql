@@ -50,6 +50,7 @@ type Mutation {
   ): CancelPropagateInVideo!
   clearTrack(input: ClearTrackInput!): ObjectTrack!
   setObjectRange(input: SetObjectRangeInput!): ObjectTrack!
+  setObjectCandidates(input: SetObjectCandidatesInput!): ObjectTrack!
   undoSeeds(input: SeedHistoryInput!): ObjectTrack!
   redoSeeds(input: SeedHistoryInput!): ObjectTrack!
   restoreVersion(input: RestoreVersionInput!): ObjectTrack!
@@ -91,12 +92,31 @@ input SetObjectRangeInput {
   start: Int!
   end: Int!
   state: String
+  source: String
+  score: Float
+  clear: [String!]
+}
+
+input CandidateRangeInput {
+  start: Int!
+  end: Int!
+  source: String!
+  score: Float
+}
+
+input SetObjectCandidatesInput {
+  sessionId: String!
+  objectId: Int!
+  candidates: [CandidateRangeInput!]!
+  replace: Boolean! = false
 }
 
 type ObjectRange {
   start: Int!
   end: Int!
   state: String!
+  source: String
+  score: Float
 }
 
 input SeedHistoryInput {

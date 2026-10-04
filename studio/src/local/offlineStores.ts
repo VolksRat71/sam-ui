@@ -7,6 +7,9 @@
 //   seeds/<video>/<obj>/object.json  {"name"}: metadata, never in the seeds key
 //   seeds/<video>/<obj>/ranges.json  {"ranges": [{start, end, state}]}: absent
 //                                    ranges, which do join the seeds key
+//   seeds/<video>/<obj>/annotations.json  {"ranges": [...]}: present and candidate
+//                                    ranges (a candidate with source, score), never
+//                                    in the seeds key or the seed record
 //   seeds/<video>/<obj>/history.json {"undo": [{key, at, files}], "redo": [...]}:
 //                                    seed changes to undo (issue #18), each with
 //                                    the seed record (seeds.json, ranges.json) as it was
@@ -26,7 +29,21 @@ import {BROWSER_ENGINE} from '~/state/engines';
 import {cleanObjectName} from '~/state/fileNames';
 import {type Layout, arrange, layoutReducer, parseLayout} from '~/state/layout';
 import type {NormPoint, ServerObject} from '~/state/objects';
-import {type FrameRange, type RangeState, normalizeRanges, paintRange, rangeAt} from '~/state/ranges';
+import {
+  ABSENT,
+  type FrameRange,
+  type Layers,
+  type Mark,
+  type PaintOptions,
+  type RangeState,
+  type TimelineRange,
+  normalizeMarks,
+  normalizeRanges,
+  paintTimeline,
+  rangeAt,
+  timelineView,
+  writeCandidates,
+} from '~/state/ranges';
 import {type Kv, readJson, writeJson} from './kv';
 import type {SeedHistory, TrackVersion} from '~/state/history';
 import {
@@ -72,12 +89,12 @@ export class SeedStore {
     return new Map(Object.entries(raw ?? {}).map(([f, v]) => [Number(f), v]));
   }
 
-  /** Every object with a seeds file (or ranges, marked before any click), in id order. */
+  /** Every object with a seeds file (or ranges or candidates, marked before any click), in id order. */
   async objects(video: string): Promise<number[]> {
     const ids: number[] = [];
     for (const name of await this._kv.list(`seeds/${video}`)) {
       const dir = `seeds/${video}/${name}`;
-      if (/^\d+$/.test(name) && ((await this._kv.read(`${dir}/seeds.json`)) != null || (await this._kv.read(`${dir}/ranges.json`)) != null)) {
+      if (/^\d+$/.test(name) && (await this._anyOf(dir, ['seeds.json', 'ranges.json', 'annotations.json']))) {
         ids.push(Number(name));
       }
     }
@@ -179,16 +196,62 @@ export class SeedStore {
     return normalizeRanges(raw?.ranges);
   }
 
-  /** Frames start-end set to `state`, or cleared (null). None left: the file goes. */
-  async paintRange(video: string, obj: number, start: number, end: number, state: RangeState | null): Promise<FrameRange[]> {
-    const ranges = paintRange(await this.ranges(video, obj), start, end, state);
-    const path = `${this._dir(video, obj)}/ranges.json`;
+  private async _anyOf(dir: string, names: string[]): Promise<boolean> {
+    for (const n of names) {
+      if ((await this._kv.read(`${dir}/${n}`)) != null) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** The object's present and candidate ranges, as stored (layers; timeline() resolves them). */
+  async marks(video: string, obj: number): Promise<Mark[]> {
+    const raw = await readJson<{ranges?: Mark[]}>(this._kv, `${this._dir(video, obj)}/annotations.json`);
+    return normalizeMarks(raw?.ranges);
+  }
+
+  /** Every range the timeline shows, one state a frame. */
+  async timeline(video: string, obj: number): Promise<TimelineRange[]> {
+    return timelineView(await this.ranges(video, obj), await this.marks(video, obj));
+  }
+
+  private async _writeList(path: string, ranges: ReadonlyArray<unknown>): Promise<void> {
     if (ranges.length === 0) {
-      await this._kv.remove(path);
+      await this._kv.remove(path); // none left: the file goes
     } else {
       await writeJson(this._kv, path, {ranges});
     }
-    return ranges;
+  }
+
+  private async _putLayers(video: string, obj: number, before: Layers, next: Layers): Promise<TimelineRange[]> {
+    if (JSON.stringify(next.ranges) !== JSON.stringify(before.ranges)) {
+      await this._writeList(`${this._dir(video, obj)}/ranges.json`, next.ranges);
+    }
+    if (JSON.stringify(next.marks) !== JSON.stringify(before.marks)) {
+      await this._writeList(`${this._dir(video, obj)}/annotations.json`, next.marks);
+    }
+    return timelineView(next.ranges, next.marks);
+  }
+
+  /**
+   * Frames start-end set to `state`, or cleared (null: every state, or those
+   * in opts.clear), as the backend's SeedStore.paint_range. Answers the timeline.
+   */
+  async paintRange(video: string, obj: number, start: number, end: number, state: RangeState | null, opts: PaintOptions = {}): Promise<TimelineRange[]> {
+    const before: Layers = {ranges: await this.ranges(video, obj), marks: await this.marks(video, obj)};
+    return this._putLayers(video, obj, before, paintTimeline(before, start, end, state, opts));
+  }
+
+  /** Candidates in bulk (state/ranges.ts writeCandidates): all or nothing. Answers the timeline. */
+  async writeCandidates(
+    video: string,
+    obj: number,
+    candidates: ReadonlyArray<{start: number; end: number; source: string; score?: number | null}>,
+    replace = false,
+  ): Promise<TimelineRange[]> {
+    const before: Layers = {ranges: await this.ranges(video, obj), marks: await this.marks(video, obj)};
+    return this._putLayers(video, obj, before, writeCandidates(before, candidates, replace));
   }
 
   async name(video: string, obj: number): Promise<string | null> {
@@ -353,7 +416,7 @@ export class KvTrackStore implements LocalTrackStore {
 }
 
 /** An object as startSession / objectTracks describe it, from the seed store (tracks added later). */
-export function offlineObject(objectId: number, seeds: Seeds, ranges: ReadonlyArray<FrameRange> = []): ServerObject {
+export function offlineObject(objectId: number, seeds: Seeds, ranges: ReadonlyArray<FrameRange> = [], marks: ReadonlyArray<Mark> = []): ServerObject {
   return {
     objectId,
     state: 'untracked',
@@ -363,7 +426,7 @@ export function offlineObject(objectId: number, seeds: Seeds, ranges: ReadonlyAr
       .sort((a, b) => a[0] - b[0])
       .map(([frameIndex, s]) => ({frameIndex, points: s.points, labels: s.labels, mask: s.mask ?? null})),
     tracks: [],
-    ranges: [...ranges],
+    ranges: timelineView(ranges, marks),
   };
 }
 
@@ -449,9 +512,31 @@ export class OfflineService {
     });
   }
 
-  /** Mark frames start-end absent, or clear them (null). The track goes stale, as on the backend. */
-  setRange(video: string, obj: number, start: number, end: number, state: RangeState | null, variant: string | null = null): Promise<FrameRange[]> {
-    return this._change(video, obj, variant, () => this.seeds.paintRange(video, obj, start, end, state));
+  /**
+   * Set frames start-end to a range state, or clear them (null; opts.clear
+   * limits which states). Absent frames changing make the track stale, as on
+   * the backend, and go on the undo history; present and candidate ones never do.
+   */
+  setRange(
+    video: string,
+    obj: number,
+    start: number,
+    end: number,
+    state: RangeState | null,
+    variant: string | null = null,
+    opts: PaintOptions = {},
+  ): Promise<TimelineRange[]> {
+    return this._change(video, obj, variant, () => this.seeds.paintRange(video, obj, start, end, state, opts));
+  }
+
+  /** Candidates in bulk (what a discovery job writes); never a seed change. */
+  writeCandidates(
+    video: string,
+    obj: number,
+    candidates: ReadonlyArray<{start: number; end: number; source: string; score?: number | null}>,
+    replace = false,
+  ): Promise<TimelineRange[]> {
+    return this.seeds.writeCandidates(video, obj, candidates, replace);
   }
 
   /** The object is back at `frame`: the absent range holding it ends the frame before (end_absence_at). */
@@ -461,7 +546,11 @@ export class OfflineService {
 
   private async _endAbsence(video: string, obj: number, frame: number): Promise<FrameRange[]> {
     const r = rangeAt(await this.seeds.ranges(video, obj), frame);
-    return r == null ? this.seeds.ranges(video, obj) : this.seeds.paintRange(video, obj, frame, r.end, null);
+    if (r != null) {
+      // the absent layer only: a candidate or present mark under the range is not the user's absence
+      await this.seeds.paintRange(video, obj, frame, r.end, null, {clear: [ABSENT]});
+    }
+    return this.seeds.ranges(video, obj);
   }
 
   /** Drop one seed frame; with none left, the object's track goes too (its versions stay). */
@@ -594,7 +683,7 @@ export class OfflineService {
       variant,
       running: held.has(obj),
     });
-    const o = withLocalTracks([offlineObject(obj, seeds, ranges)], new Map([[obj, entry]]))[0];
+    const o = withLocalTracks([offlineObject(obj, seeds, ranges, await this.seeds.marks(video, obj))], new Map([[obj, entry]]))[0];
     return {...o, history: await this.versionsInfo(video, obj, variant)};
   }
 
