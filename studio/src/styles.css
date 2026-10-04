@@ -1136,6 +1136,18 @@ code {
   background: #e6193b;
   cursor: pointer;
 }
+/* a review flag (F): a frame to correct later */
+.swimlane-mark {
+  position: absolute;
+  top: 1px;
+  bottom: 1px;
+  width: 3px;
+  padding: 0;
+  border: none;
+  border-radius: 1px;
+  background: #f1c21b;
+  cursor: pointer;
+}
 
 /* -- overlays ----------------------------------------------------------------- */
 

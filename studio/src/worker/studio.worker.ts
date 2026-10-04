@@ -66,7 +66,9 @@ async function exportVideo(effects: Record<number, {name: string; variant: numbe
   }
   exporting = true;
   const active = overlay.activeObjectId;
+  const faded = overlay.faded;
   overlay.activeObjectId = null; // no editing aids in the file
+  overlay.faded = () => false;
   try {
     await highlight.setEffects(effects);
     return await encodeMp4({
@@ -80,6 +82,7 @@ async function exportVideo(effects: Record<number, {name: string; variant: numbe
     });
   } finally {
     overlay.activeObjectId = active;
+    overlay.faded = faded;
     await highlight.setEffects(previewEffects);
     exporting = false;
     context.goToFrame(context.frameIndex);
@@ -102,8 +105,8 @@ const handlers: Handlers = {
   init: ({endpoint, offline}) => session.init(endpoint, offline),
   startSession: ({path, key}) => session.startSession(path, key),
   closeSession: () => session.closeSession(),
-  setPoints: ({objectId, frameIndex, points}) =>
-    session.setPoints(objectId, frameIndex, points),
+  setPoints: ({objectId, frameIndex, points, engine}) =>
+    session.setPoints(objectId, frameIndex, points, engine),
   removeObject: ({objectId}) => session.removeObject(objectId),
   clearTrack: ({objectId, engine}) => session.clearTrack(objectId, engine),
   objectTracks: () => session.objectTracks(),
@@ -114,6 +117,7 @@ const handlers: Handlers = {
   startOver: () => session.startOver(),
   export: request => session.exportFolder(request),
   setActiveObject: ({objectId}) => session.setActiveObject(objectId),
+  setStaleObjects: ({objectIds}) => session.setStaleObjects(objectIds),
   setEngine: ({engine}) => session.setEngine(engine),
   engines: () => session.engines(),
   disagreement: ({a, b, objectIds}) => session.disagreement(a, b, objectIds),

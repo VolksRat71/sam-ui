@@ -14,6 +14,7 @@ import {
   jobProgress,
   nextObjectId,
   reducer,
+  staleIds,
 } from './objects';
 
 function run(actions: Action[], state: StudioState = initialState): StudioState {
@@ -230,6 +231,19 @@ describe('state transitions', () => {
     expect(s.activeId).toBe(2);
   });
 
+  it('a removed seedless object the server still lists comes back on sync', () => {
+    // Why removeObject always reaches the backend: a stored object can have
+    // no seeds left, and the next sync restores whatever the server lists.
+    const seedless = server(4, 'untracked', []);
+    const s = run([
+      {type: 'restore', objects: [server(0, 'tracked'), seedless]},
+      {type: 'removed', id: 4},
+    ]);
+    expect(s.objects.map(o => o.id)).toEqual([0]);
+    expect(run([{type: 'sync', objects: [server(0, 'tracked'), seedless]}], s).objects.map(o => o.id)).toEqual([0, 4]);
+    expect(run([{type: 'sync', objects: [server(0, 'tracked')]}], s).objects.map(o => o.id)).toEqual([0]);
+  });
+
   it('start over empties the list', () => {
     const s = run([{type: 'restore', objects: [server(0, 'tracked')]}, {type: 'reset'}]);
     expect(s).toEqual(initialState);
@@ -245,7 +259,7 @@ describe('limits and hints', () => {
     expect(canAddObject(s, 3)).toBe(true);
   });
 
-  it('asks for a positive click when a frame has only negative ones', () => {
+  it('asks for a positive click when a frame has only negative ones and no mask', () => {
     const s = run([
       {type: 'add', id: 0},
       {type: 'setPoints', id: 0, frame: 2, points: [[0.1, 0.1, 0], [0.2, 0.2, 0]]},
@@ -255,6 +269,16 @@ describe('limits and hints', () => {
     expect(needsPositiveClick(byId(s, 0), 3)).toBe(false);
     expect(needsPositiveClick(byId(s, 0), 4)).toBe(false);
     expect(needsPositiveClick(undefined, 2)).toBe(false);
+    // a frame that still shows a mask (a legacy seed trimmed by the removed anchor) needs nothing
+    expect(needsPositiveClick(byId(s, 0), 2, true)).toBe(false);
+  });
+
+  it('lists the objects whose shown track is stale', () => {
+    const s = run([
+      {type: 'restore', objects: [server(0, 'tracked'), server(1, 'stale'), server(2, 'untracked')]},
+      {type: 'setPoints', id: 0, frame: 4, points: [[0.1, 0.1, 0]]},
+    ]);
+    expect(staleIds(s)).toEqual([0, 1]);
   });
 });
 

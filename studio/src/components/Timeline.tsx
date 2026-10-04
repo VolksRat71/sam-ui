@@ -3,15 +3,18 @@
 // The bottom pane: transport controls, a filmstrip scrubber with a playhead,
 // and one swimlane per object in the style of Meta's TrackletSwimlane (a thin
 // line in the object's colour, solid where it has a mask, a dot on each frame
-// that holds clicks).
+// that holds clicks). Review flags (F) mark frames to correct later.
 import {
   ChevronLeft,
   ChevronRight,
+  Flag,
+  FlagFilled,
   PauseFilled,
   PlayFilledAlt,
 } from '@carbon/icons-react';
 import {useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent} from 'react';
 import {objectName} from '~/state/fileNames';
+import {flagsOf} from '~/state/flags';
 import {seedFrames} from '~/state/objects';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
 
@@ -92,6 +95,18 @@ export default function Timeline({session}: Props) {
         <button className="icon-button" onClick={() => seek(frame + 1)} title="Next frame (Right)">
           <ChevronRight size={18} />
         </button>
+        <button
+          className="icon-button"
+          onClick={session.toggleFlag}
+          disabled={state.activeId == null || n === 0}
+          aria-pressed={state.activeId != null && flagsOf(session.flags, state.activeId).includes(frame)}
+          title="Flag this frame of the selected object for a correction (F)">
+          {state.activeId != null && flagsOf(session.flags, state.activeId).includes(frame) ? (
+            <FlagFilled size={16} />
+          ) : (
+            <Flag size={16} />
+          )}
+        </button>
         <span className="frame-counter">
           Frame <strong>{n > 0 ? frame + 1 : 0}</strong> / {n}
           {meta.fps > 0 && (
@@ -152,6 +167,19 @@ export default function Timeline({session}: Props) {
                     key={`flag-${f}`}
                     className="swimlane-flag"
                     title={`Frame ${f + 1}: SAM 2 and SAM 3 disagree`}
+                    style={{left: pos(f) - 1}}
+                    onClick={e => {
+                      e.stopPropagation();
+                      session.selectObject(o.id);
+                      seek(f);
+                    }}
+                  />
+                ))}
+                {flagsOf(session.flags, o.id).map(f => (
+                  <button
+                    key={`mark-${f}`}
+                    className="swimlane-mark"
+                    title={`Frame ${f + 1}: flagged for a correction (F on it unflags; clicks there clear it)`}
                     style={{left: pos(f) - 1}}
                     onClick={e => {
                       e.stopPropagation();

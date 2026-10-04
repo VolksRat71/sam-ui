@@ -15,6 +15,7 @@ INFO = {"object_id": 3, "state": "stale", "engine": "sam2", "model": "large", "f
 class FakeAPI:
     def __init__(self):
         self.cleared = []
+        self.points = []
         self.started = []
 
     def start_session(self, request):
@@ -23,6 +24,12 @@ class FakeAPI:
 
     def object_tracks(self, session_id):
         return [INFO]
+
+    def add_points(self, request):
+        self.points.append(request)
+        if request.labels == [0]:
+            raise ValueError("needs_positive: SAM 2 needs a positive click")
+        return SimpleNamespace(frame_index=request.frame_index, results=[])
 
     def clear_track(self, session_id, object_id, engine=None):
         self.cleared.append((session_id, object_id, engine))
@@ -65,6 +72,22 @@ def test_object_tracks_lists_every_engines_track():
     assert tracks["objectTracks"][0]["tracks"] == [
         {"engine": "sam2", "model": "large", "state": "stale", "nFrames": 10},
         {"engine": "sam3", "model": "sam3-tracker", "state": "tracked", "nFrames": 10}]
+
+
+ADD = ('mutation {{ addPoints(input: {{sessionId: "s1", frameIndex: 4, objectId: 3, clearOldPoints: true, '
+       'points: [[0.5, 0.5]], labels: [{label}]{engine}}}) {{ frameIndex }} }}')
+
+
+def test_add_points_carries_the_engine_and_leaves_it_none_when_unset():
+    api = FakeAPI()
+    run(ADD.format(label=1, engine=', engine: "sam3"'), api)
+    run(ADD.format(label=1, engine=""), api)
+    assert [r.engine for r in api.points] == ["sam3", None]
+
+
+def test_a_needs_positive_refusal_reaches_the_client_with_its_prefix():
+    r = schema.execute_sync(ADD.format(label=0, engine=""), context_value={"inference_api": FakeAPI()})
+    assert r.errors and r.errors[0].message.startswith("needs_positive: ")
 
 
 def _listed(monkeypatch, root, paths):

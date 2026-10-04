@@ -287,12 +287,20 @@ export function canAddObject(state: StudioState, limit: number): boolean {
 }
 
 /**
- * True when every click on this frame is negative. SAM 2 then returns an
- * empty mask: a correction frame needs one positive click on what to keep.
+ * True when every click on this frame is negative and the frame shows no
+ * mask. SAM 2 refuses such clicks before they are stored (the nudge,
+ * state/corrections.ts), so on SAM 2 this holds only for frames stored on
+ * SAM 3 (an emptied frame). `masked`: the frame still shows a mask, as a
+ * legacy seed trimmed by the removed hidden anchor does, and needs nothing.
  */
-export function needsPositiveClick(o: StudioObject | undefined, frame: number): boolean {
+export function needsPositiveClick(o: StudioObject | undefined, frame: number, masked = false): boolean {
   const pts = o?.points[frame];
-  return pts != null && pts.length > 0 && pts.every(p => p[2] === 0);
+  return !masked && pts != null && pts.length > 0 && pts.every(p => p[2] === 0);
+}
+
+/** Objects whose shown track is stale: the preview draws it faded until the re-track. */
+export function staleIds(state: StudioState): number[] {
+  return state.objects.filter(o => o.state === 'stale').map(o => o.id);
 }
 
 function update(

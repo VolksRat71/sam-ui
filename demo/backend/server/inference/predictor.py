@@ -2,7 +2,7 @@
 # All rights reserved.
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
-# Modified by sam-ui: clicks are recorded as seeds, and track jobs run through tracks/.
+# Modified by sam-ui: clicks are recorded as seeds, track jobs run through tracks/, and a correction refines the cached track mask.
 
 import contextlib
 import logging
@@ -42,11 +42,19 @@ from tracks.engine import Sam2Engine, seed_into_state
 from tracks.features import VIDEO_KEY, FeatureCache, default_cache_gb, install as install_feature_cache
 from tracks.streaming import install_sam2_streaming
 from tracks.routes import TrackContext
+from tracks.seeds import cleared
 from tracks import sam3_engine
 from tracks.service import EngineSpec, TrackService
 
 
 logger = logging.getLogger(__name__)
+
+# sam-ui: the refusal a click gets when SAM 2 would be handed a frame with no
+# positive; its message starts with "needs_positive: " for the studio to match.
+NEEDS_POSITIVE = "needs_positive"
+# the engines that take a frame of only negatives as "not here"; every other
+# engine (none named, a typo, one this server doesn't know) is held to SAM 2's rule
+TAKES_NOT_HERE = ("sam3",)
 
 
 class InferenceAPI:
@@ -160,11 +168,12 @@ class InferenceAPI:
             # sam-ui: replay the stored seeds (their approved masks), so a reload
             # keeps its objects and a click on a seed frame refines its mask.
             # Frame-major: each frame's backbone features serve every object.
+            # A cleared ('not on this frame') seed is skipped: SAM 2 never conditions on one.
             video = self.tracks.video_key(request.path)
             inference_state[VIDEO_KEY] = video  # opts the session (and its jobs) into the feature cache
             seeds = {o: self.tracks.seeds.seeds(video, o) for o in self.tracks.seeds.objects(video)}
             for frame_idx, obj_id in sorted(
-                (f, o) for o, s in seeds.items() for f, v in s.items() if v["points"]
+                (f, o) for o, s in seeds.items() for f, v in s.items() if v["points"] and not cleared(v)
             ):
                 seed_into_state(self.predictor, inference_state, obj_id, frame_idx, seeds[obj_id][frame_idx])
             self.session_states[session_id] = {
@@ -192,6 +201,20 @@ class InferenceAPI:
             points = request.points
             labels = request.labels
             clear_old_points = request.clear_old_points
+
+            # sam-ui: SAM 2 was trained on a positive first, then corrections; given
+            # only negatives it empties the frame, and an empty frame saved as a seed
+            # erases the object on the frames around it (measured). So on SAM 2 a frame
+            # whose clicks have no positive is refused; SAM 3 takes it as "not here".
+            # An unknown engine is treated as SAM 2, so a typo can't poison a seed.
+            if clear_old_points:
+                user_labels = [int(l) for l in labels]
+            else:
+                old = self.tracks.seeds.seeds(session["video"], obj_id).get(frame_idx) or {}
+                user_labels = [int(l) for l in old.get("labels", [])] + [int(l) for l in labels]
+            if user_labels and 1 not in user_labels and request.engine not in TAKES_NOT_HERE:
+                raise ValueError(f"{NEEDS_POSITIVE}: SAM 2 needs a positive click to keep part of object {obj_id} "
+                                 f"on frame {frame_idx}")
 
             # sam-ui: a first click on a frame SAM 2 holds no mask for (a frame
             # tracked by a job, not in this state) refines that frame's cached

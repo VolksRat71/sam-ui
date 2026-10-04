@@ -4,7 +4,7 @@
 from typing import Dict
 
 import numpy as np
-from pycocotools.mask import decode as _decode, encode as _encode
+from pycocotools.mask import area as _area, decode as _decode, encode as _encode
 
 
 def encode(mask: np.ndarray) -> Dict:
@@ -14,3 +14,8 @@ def encode(mask: np.ndarray) -> Dict:
 
 def decode(rle: Dict) -> np.ndarray:
     return _decode({"size": rle["size"], "counts": rle["counts"].encode()}) > 0
+
+
+def area(rle: Dict) -> int:
+    """How many pixels the mask covers, without decoding it."""
+    return int(_area({"size": rle["size"], "counts": rle["counts"].encode()}))

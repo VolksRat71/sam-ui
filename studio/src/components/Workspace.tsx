@@ -46,7 +46,7 @@ export default function Workspace({video, renderMedia}: Props) {
   const nameOf = (id: number) => objectName(state.objects.find(o => o.id === id) ?? {id});
   const n = meta.numFrames;
 
-  // keyboard: space plays, arrows step (not while typing in a field)
+  // keyboard: space plays, arrows step, F flags the frame (not while typing in a field)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
@@ -60,6 +60,8 @@ export default function Workspace({video, renderMedia}: Props) {
         session.seek(session.frame - 1);
       } else if (e.key === 'ArrowRight') {
         session.seek(session.frame + 1);
+      } else if ((e.key === 'f' || e.key === 'F') && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        session.toggleFlag();
       }
     };
     window.addEventListener('keydown', onKey);

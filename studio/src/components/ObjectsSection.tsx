@@ -7,7 +7,7 @@ import {useEffect, useRef, useState} from 'react';
 import {OBJECT_LIMIT} from '~/config';
 import {engineLabel} from '~/state/engines';
 import {NAME_MAX, objectName} from '~/state/fileNames';
-import {clearTarget, isTracking, needsPositiveClick, seedFrames, type StudioObject} from '~/state/objects';
+import {clearTarget, isTracking, seedFrames, type StudioObject} from '~/state/objects';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
 
 type Props = {session: StudioSessionApi};
@@ -108,7 +108,7 @@ function describe(o: StudioObject): string {
 }
 
 export default function ObjectsSection({session}: Props) {
-  const {state, tracklets, frame, canAdd, busy} = session;
+  const {state, tracklets, canAdd, busy} = session;
   // a badge per engine that could hold a track here (not the desktop-only entries of a browser-only build)
   const badgeEngines = session.engines.filter(e => e.href == null);
   return (
@@ -171,9 +171,6 @@ export default function ObjectsSection({session}: Props) {
                       ? ` · ${session.disagreement.get(o.id)!.flagged.length} frames disagree`
                       : ' · they agree'}
                   </div>
-                )}
-                {active && needsPositiveClick(o, frame) && (
-                  <div className="object-hint">Add a positive click to keep part of the object</div>
                 )}
                 {o.error != null && <div className="object-error">Track failed: {o.error}</div>}
                 <div className="object-actions" onClick={e => e.stopPropagation()}>
