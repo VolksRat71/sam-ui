@@ -106,6 +106,7 @@ type Handlers = {
 };
 
 const handlers: Handlers = {
+  detailRequest: ({operation, args}) => session.detailRequest(operation, args),
   init: ({endpoint, offline}) => session.init(endpoint, offline),
   startSession: ({path, key}) => session.startSession(path, key),
   closeSession: () => session.closeSession(),

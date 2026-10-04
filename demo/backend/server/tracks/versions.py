@@ -202,6 +202,7 @@ class VersionStore:
             return
         h = self.history(video, obj_id)
         wanted = {e["key"] for e in h["undo"] + h["redo"]}
+        wanted.update(e.get("snapshot_key", e["key"]) for e in self.entries(video, obj_id))
         for kd in d.iterdir():
             if kd.is_symlink() or not kd.is_dir():
                 continue  # never follow a link out of the object's folder

@@ -1,3 +1,4 @@
+import RefineDetail from './RefineDetail';
 import CorrectionNudge from './CorrectionNudge';
 // sam-ui (Apache-2.0). New file, not from SAM 2.
 //
@@ -291,6 +292,7 @@ export default function Preview({session, mode, onModeChange}: Props) {
             })}
           </svg>
         </div>
+        <RefineDetail session={session} />
         <CorrectionNudge nudge={session.nudge} hint={session.hint} sam3Available={session.sam3Available} onTrim={() => session.nudgeTrim(() => onModeChange('positive'))} onSam3={session.nudgeSam3} onGone={session.markGone} />
         {status !== 'ready' && (
           <div className="stage-overlay">

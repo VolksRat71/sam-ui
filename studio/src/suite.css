@@ -245,3 +245,19 @@ input:not([type='checkbox']):not([type='radio']):not([type='range']) { min-heigh
   .timeline .icon-button { width: 28px; min-width: 24px; }
   .suite-lanes .group-header { height: 28px; }
 }
+
+.detail-tool { position: absolute; top: 8px; right: 8px; z-index: 12; font-size: var(--type-label); }
+.detail-entry { background: var(--panel); border: 1px solid var(--line); padding: 4px 8px; }
+.detail-entry summary { cursor: pointer; min-height: 24px; }
+.detail-panel { display: flex; flex-direction: column; gap: 8px; width: min(340px, calc(100vw - 32px)); max-height: min(72vh, 760px); overflow: auto; padding: 12px; background: var(--panel); border: 1px solid var(--line); box-sizing: border-box; }
+.detail-panel p { margin: 0; }
+.detail-controls, .detail-bounds { display: flex; flex-wrap: wrap; gap: 8px; }
+.detail-panel label { display: flex; align-items: center; gap: 4px; }
+.detail-bounds label { flex-direction: column; align-items: flex-start; flex: 1; }
+.detail-bounds input { width: 58px; }
+.detail-overview { position: relative; touch-action: none; cursor: crosshair; }
+.detail-overview img { display: block; width: 100%; }
+.detail-overview > span { position: absolute; border: 1px solid var(--focus); pointer-events: none; box-sizing: border-box; }
+.detail-crop { width: auto; height: auto; max-width: 100%; max-height: 256px; align-self: center; cursor: crosshair; image-rendering: pixelated; }
+@media (pointer: coarse) { .detail-entry summary, .detail-panel input, .detail-panel select, .detail-panel button { min-height: 44px; } }
+@media (max-width: 599.98px) { .detail-tool:has(.detail-panel) { position: fixed; top: auto; bottom: 8px; right: 8px; } .detail-panel { max-height: 65vh; } }
