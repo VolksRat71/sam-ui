@@ -34,5 +34,5 @@ echo "== trim"
 find build/python -name "__pycache__" -type d -prune -exec rm -rf {} +
 rm -rf build/python/lib/python3.11/site-packages/torch/include \
        build/python/lib/python3.11/test build/python/lib/python3.11/idlelib build/python/lib/python3.11/tkinter
-"$PY" -c "import torch, sam2, flask, av, decord, pycocotools, transformers; print('imports ok; torch', torch.__version__, 'mps', torch.backends.mps.is_available())"
+"$PY" -c "import torch, sam2, flask, av, pycocotools, transformers; print('imports ok; torch', torch.__version__, 'mps', torch.backends.mps.is_available())"
 du -sh build/python

@@ -3,6 +3,8 @@
 
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
+# Modified by sam-ui: video files are decoded with PyAV instead of decord
+# (pyav_rgb_converter reproduces decord's resize).
 
 import os
 import warnings
@@ -277,6 +279,36 @@ def load_video_frames_from_jpg_images(
     return images, video_height, video_width
 
 
+def pyav_rgb_converter(stream, width=-1, height=-1):
+    """sam-ui: a function turning a decoded PyAV frame of `stream` into an HxWx3
+    uint8 RGB array, resized to width x height when both are given.
+
+    It runs the filter graph decord ran (scale to size with swscale's default
+    bicubic, then convert to rgb24), which reproduces decord's resized frames to
+    the bit (decord 0.6.1's FFmpeg 5.1 against PyAV 18's FFmpeg 8). PyAV's own
+    frame.reformat (one swscale pass, bicubic) differs by an average of 1.2
+    levels. Unresized (width, height -1), the colour conversion rounds a little
+    differently from decord's (up to 3 levels). The returned array is a view of
+    the frame's buffer.
+    """
+    import av
+
+    graph = av.filter.Graph()
+    chain = [graph.add_buffer(template=stream)]
+    if width > 0 and height > 0:
+        chain.append(graph.add("scale", f"{width}:{height}"))
+    chain += [graph.add("format", "rgb24"), graph.add("buffersink")]
+    for src, dst in zip(chain, chain[1:]):
+        src.link_to(dst)
+    graph.configure()
+
+    def convert(frame):
+        graph.push(frame)
+        return graph.pull().to_ndarray()
+
+    return convert
+
+
 def load_video_frames_from_video_file(
     video_path,
     image_size,
@@ -286,17 +318,23 @@ def load_video_frames_from_video_file(
     compute_device=torch.device("cuda"),
 ):
     """Load the video frames from a video file."""
-    import decord
+    import av
 
     img_mean = torch.tensor(img_mean, dtype=torch.float32)[:, None, None]
     img_std = torch.tensor(img_std, dtype=torch.float32)[:, None, None]
-    # Get the original video height and width
-    decord.bridge.set_bridge("torch")
-    video_height, video_width, _ = decord.VideoReader(video_path).next().shape
-    # Iterate over all frames in the video
+    # Iterate over all frames in the video, noting the original height and width
     images = []
-    for frame in decord.VideoReader(video_path, width=image_size, height=image_size):
-        images.append(frame.permute(2, 0, 1))
+    video_height = video_width = None
+    with av.open(video_path) as container:
+        stream = container.streams.video[0]
+        stream.thread_type = "AUTO"
+        to_rgb = pyav_rgb_converter(stream, image_size, image_size)
+        for frame in container.decode(stream):
+            if video_height is None:
+                video_height, video_width = frame.height, frame.width
+            images.append(torch.from_numpy(to_rgb(frame).copy()).permute(2, 0, 1))
+    if not images:
+        raise RuntimeError(f"no frames decoded from {video_path}")
 
     images = torch.stack(images, dim=0).float() / 255.0
     if not offload_video_to_cpu:

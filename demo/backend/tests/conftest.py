@@ -9,6 +9,9 @@ os.environ.setdefault("DATA_PATH", tempfile.mkdtemp(prefix="sam-ui-test-"))
 
 # The backend imports modules relative to demo/backend/server (app_conf, inference, tracks).
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "server"))
+# This checkout's sam2, not whichever one the venv has installed in editable mode
+# (a worktree shares the main clone's venv).
+sys.path.insert(1, str(Path(__file__).resolve().parents[3]))
 
 
 def pytest_configure(config):

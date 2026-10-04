@@ -5,6 +5,7 @@ input AddPointsInput {
   objectId: Int!
   labels: [Int!]!
   points: [[Float!]!]!
+  engine: String
 }
 
 type CancelPropagateInVideo {
@@ -48,6 +49,12 @@ type Mutation {
     input: CancelPropagateInVideoInput!
   ): CancelPropagateInVideo!
   clearTrack(input: ClearTrackInput!): ObjectTrack!
+  setObjectRange(input: SetObjectRangeInput!): ObjectTrack!
+  setObjectCandidates(input: SetObjectCandidatesInput!): ObjectTrack!
+  undoSeeds(input: SeedHistoryInput!): ObjectTrack!
+  redoSeeds(input: SeedHistoryInput!): ObjectTrack!
+  restoreVersion(input: RestoreVersionInput!): ObjectTrack!
+  moveClicks(input: MoveClicksInput!): [ObjectTrack!]!
   deleteVideo(input: DeleteVideoInput!): DeleteVideo!
   createDeletionId: String!
   acceptTos: Boolean!
@@ -79,6 +86,77 @@ input ClearTrackInput {
   engine: String
 }
 
+input SetObjectRangeInput {
+  sessionId: String!
+  objectId: Int!
+  start: Int!
+  end: Int!
+  state: String
+  source: String
+  score: Float
+  clear: [String!]
+}
+
+input CandidateRangeInput {
+  start: Int!
+  end: Int!
+  source: String!
+  score: Float
+}
+
+input SetObjectCandidatesInput {
+  sessionId: String!
+  objectId: Int!
+  candidates: [CandidateRangeInput!]!
+  replace: Boolean! = false
+}
+
+type ObjectRange {
+  start: Int!
+  end: Int!
+  state: String!
+  source: String
+  score: Float
+}
+
+input SeedHistoryInput {
+  sessionId: String!
+  objectId: Int!
+}
+
+input RestoreVersionInput {
+  sessionId: String!
+  objectId: Int!
+  key: String!
+}
+
+input MoveClicksInput {
+  sessionId: String!
+  frameIndex: Int!
+  fromObjectId: Int!
+  toObjectId: Int!
+  engine: String
+}
+
+type TrackVersion {
+  key: String!
+  engine: String!
+  model: String!
+  created: String
+  elapsedS: Float
+  nFrames: Int
+  clicks: Int!
+  seedFrames: Int!
+  bounded: Boolean!
+  current: Boolean!
+}
+
+type SeedHistory {
+  canUndo: Boolean!
+  canRedo: Boolean!
+  versions: [TrackVersion!]!
+}
+
 type EngineTrack {
   engine: String!
   model: String!
@@ -92,6 +170,7 @@ type SeedFrame {
   points: [[Float!]!]!
   labels: [Int!]!
   mask: RLEMask
+  text: String
 }
 
 type ObjectTrack {
@@ -103,6 +182,8 @@ type ObjectTrack {
   nFrames: Int!
   seeds: [SeedFrame!]!
   tracks: [EngineTrack!]!
+  ranges: [ObjectRange!]!
+  history: SeedHistory!
 }
 
 input PingInput {

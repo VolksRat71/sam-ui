@@ -9,12 +9,17 @@ import {
   comparableIds,
   preferredEngine,
   dirtyIds,
+  groupDirtyIds,
   initialState,
+  orderedObjects,
   needsPositiveClick,
   jobProgress,
   nextObjectId,
   reducer,
+  seedFrames,
+  staleIds,
 } from './objects';
+import {absentUntilNextSeed} from './ranges';
 
 function run(actions: Action[], state: StudioState = initialState): StudioState {
   return actions.reduce(reducer, state);
@@ -150,8 +155,19 @@ describe('track selection', () => {
       {type: 'trackStarted', key: 7, ids: [0, 1]},
       {type: 'trackAttached', key: 7, jobId: 'abc', selected: [1]},
     ]);
-    expect(s.jobs).toEqual([{key: 7, jobId: 'abc', engine: 'sam2', ids: [1], frames: 0, total: null, canceling: false}]);
+    expect(s.jobs).toEqual([
+      {key: 7, jobId: 'abc', engine: 'sam2', ids: [1], frames: 0, total: null, canceling: false, bounded: []},
+    ]);
     expect(dirtyIds(s)).toEqual([0]);
+  });
+
+  it('a job keeps which of its objects the backend re-tracks around their corrections', () => {
+    const s = run([
+      {type: 'restore', objects: [server(0, 'stale'), server(1, 'untracked'), server(2, 'stale')]},
+      {type: 'trackStarted', key: 4, ids: [0, 1, 2]},
+      {type: 'trackAttached', key: 4, jobId: 'j', selected: [0, 1], bounded: [0, 2]},
+    ]);
+    expect(s.jobs[0]).toMatchObject({ids: [0, 1], bounded: [0]}); // 2 was not claimed
   });
 });
 
@@ -179,7 +195,9 @@ describe('state transitions', () => {
       {type: 'trackProgress', key: 3},
       {type: 'trackProgress', key: 3},
     ]);
-    expect(s.jobs).toEqual([{key: 3, jobId: null, engine: 'sam2', ids: [0, 1], frames: 2, total: null, canceling: false}]);
+    expect(s.jobs).toEqual([
+      {key: 3, jobId: null, engine: 'sam2', ids: [0, 1], frames: 2, total: null, canceling: false, bounded: []},
+    ]);
     expect(byId(s, 0).running).toBe(true);
     expect(byId(s, 2).running).toBe(false);
     const done = reducer(s, {type: 'trackFinished', key: 3, tracked: [0], failed: {1: 'OSError'}});
@@ -230,6 +248,19 @@ describe('state transitions', () => {
     expect(s.activeId).toBe(2);
   });
 
+  it('a removed seedless object the server still lists comes back on sync', () => {
+    // Why removeObject always reaches the backend: a stored object can have
+    // no seeds left, and the next sync restores whatever the server lists.
+    const seedless = server(4, 'untracked', []);
+    const s = run([
+      {type: 'restore', objects: [server(0, 'tracked'), seedless]},
+      {type: 'removed', id: 4},
+    ]);
+    expect(s.objects.map(o => o.id)).toEqual([0]);
+    expect(run([{type: 'sync', objects: [server(0, 'tracked'), seedless]}], s).objects.map(o => o.id)).toEqual([0, 4]);
+    expect(run([{type: 'sync', objects: [server(0, 'tracked')]}], s).objects.map(o => o.id)).toEqual([0]);
+  });
+
   it('start over empties the list', () => {
     const s = run([{type: 'restore', objects: [server(0, 'tracked')]}, {type: 'reset'}]);
     expect(s).toEqual(initialState);
@@ -245,7 +276,7 @@ describe('limits and hints', () => {
     expect(canAddObject(s, 3)).toBe(true);
   });
 
-  it('asks for a positive click when a frame has only negative ones', () => {
+  it('asks for a positive click when a frame has only negative ones and no mask', () => {
     const s = run([
       {type: 'add', id: 0},
       {type: 'setPoints', id: 0, frame: 2, points: [[0.1, 0.1, 0], [0.2, 0.2, 0]]},
@@ -255,6 +286,16 @@ describe('limits and hints', () => {
     expect(needsPositiveClick(byId(s, 0), 3)).toBe(false);
     expect(needsPositiveClick(byId(s, 0), 4)).toBe(false);
     expect(needsPositiveClick(undefined, 2)).toBe(false);
+    // a frame that still shows a mask (a legacy seed trimmed by the removed anchor) needs nothing
+    expect(needsPositiveClick(byId(s, 0), 2, true)).toBe(false);
+  });
+
+  it('lists the objects whose shown track is stale', () => {
+    const s = run([
+      {type: 'restore', objects: [server(0, 'tracked'), server(1, 'stale'), server(2, 'untracked')]},
+      {type: 'setPoints', id: 0, frame: 4, points: [[0.1, 0.1, 0]]},
+    ]);
+    expect(staleIds(s)).toEqual([0, 1]);
   });
 });
 
@@ -360,5 +401,135 @@ describe('job progress', () => {
     s = run([{type: 'trackTotal', key: 1, total: 120}], s); // two passes
     expect(jobProgress(s.jobs[0], 60)).toEqual({done: 90, total: 120, fraction: 0.75});
     expect(jobProgress({frames: 5, total: null}, 0)).toEqual({done: 5, total: null, fraction: 0});
+  });
+});
+
+describe('absent ranges', () => {
+  it('come from the backend, and marking one makes the track stale', () => {
+    const tracked = {...server(1, 'tracked'), ranges: [{start: 4, end: 6, state: 'absent'}]};
+    let s = run([{type: 'restore', objects: [tracked, server(2, 'tracked')]}]);
+    expect(byId(s, 1).ranges).toEqual([{start: 4, end: 6, state: 'absent'}]);
+    expect(byId(s, 2).ranges).toEqual([]); // an older backend sends none
+    s = run([{type: 'setRanges', id: 2, ranges: [{start: 1, end: 2, state: 'absent'}]}], s);
+    expect(byId(s, 2).state).toBe('stale');
+    expect(dirtyIds(s)).toEqual([2]);
+    expect(byId(s, 1).state).toBe('tracked');
+  });
+
+  it('leaves the track alone when the ranges did not change', () => {
+    const tracked = {...server(1, 'tracked'), ranges: [{start: 4, end: 6, state: 'absent'}]};
+    let s = run([{type: 'restore', objects: [tracked]}]);
+    s = run([{type: 'setRanges', id: 1, ranges: [{start: 4, end: 5, state: 'absent'}, {start: 6, end: 6, state: 'absent'}]}], s);
+    expect(byId(s, 1).state).toBe('tracked');
+  });
+
+  it('keeps present and candidate ranges as marks, which never make a track stale', () => {
+    const wire = [
+      {start: 0, end: 3, state: 'candidate', source: 'text:dog@sam3', score: 0.5},
+      {start: 4, end: 6, state: 'absent', source: null, score: null},
+      {start: 7, end: 9, state: 'present', source: null, score: null},
+    ];
+    let s = run([{type: 'restore', objects: [{...server(1, 'tracked'), ranges: wire}]}]);
+    expect(byId(s, 1).ranges).toEqual([{start: 4, end: 6, state: 'absent'}]);
+    expect(byId(s, 1).marks).toEqual([
+      {start: 0, end: 3, state: 'candidate', source: 'text:dog@sam3', score: 0.5},
+      {start: 7, end: 9, state: 'present'},
+    ]);
+    s = run([{type: 'setRanges', id: 1, ranges: byId(s, 1).ranges, marks: [{start: 0, end: 9, state: 'present'}]}], s);
+    expect(byId(s, 1).state).toBe('tracked');
+    // the marks shown are a view: absent frames are never shown present
+    expect(byId(s, 1).marks).toEqual([{start: 0, end: 3, state: 'present'}, {start: 7, end: 9, state: 'present'}]);
+    expect(dirtyIds(s)).toEqual([]);
+  });
+});
+
+describe('the object layout (issue #21)', () => {
+  const cast = {id: 'cast', name: 'Cast', color: '#ff4fa3', members: [3, 1], collapsed: false, hidden: false};
+
+  it('starts in creation order, and a stored layout reorders the list without touching tracks', () => {
+    let s = run([{type: 'restore', objects: [server(1, 'tracked'), server(2, 'tracked'), server(3, 'tracked')]}]);
+    expect(orderedObjects(s).map(o => o.id)).toEqual([1, 2, 3]);
+    s = run([{type: 'setLayout', layout: {order: [2, 3, 1], groups: [cast]}}], s);
+    expect(orderedObjects(s).map(o => o.id)).toEqual([2, 3, 1]);
+    expect(s.objects.map(o => o.state)).toEqual(['tracked', 'tracked', 'tracked']);
+    expect(dirtyIds(s)).toEqual([]);
+  });
+
+  it('applies layout actions, and a new object goes last', () => {
+    let s = run([{type: 'restore', objects: [server(1, 'tracked'), server(2, 'tracked')]}]);
+    s = run([{type: 'layout', action: {type: 'stepObject', id: 2, dir: -1}}, {type: 'add', id: 5}], s);
+    expect(orderedObjects(s).map(o => o.id)).toEqual([2, 1, 5]);
+    expect(s.layout.order).toEqual([2, 1, 5]);
+  });
+
+  it('a removed object leaves the order and its group; a reset forgets the layout', () => {
+    let s = run([
+      {type: 'restore', objects: [server(1, 'tracked'), server(2, 'tracked'), server(3, 'tracked')]},
+      {type: 'setLayout', layout: {order: [2, 3, 1], groups: [cast]}},
+      {type: 'removed', id: 3},
+    ]);
+    expect(s.layout).toEqual({order: [2, 1], groups: [{...cast, members: [1]}]});
+    s = run([{type: 'reset'}], s);
+    expect(s.layout).toEqual({order: [], groups: []});
+  });
+
+  it("a group's Track runs only its stale or untracked members", () => {
+    let s = run([
+      {
+        type: 'restore',
+        objects: [server(1, 'stale'), server(2, 'untracked'), server(3, 'tracked'), server(4, 'untracked', [])],
+      },
+      {type: 'setLayout', layout: {order: [], groups: [{...cast, members: [1, 3, 4]}]}},
+    ]);
+    expect(groupDirtyIds(s, 'cast')).toEqual([1]); // 3 is tracked, 4 has no clicks, 2 is not a member
+    s = run([{type: 'trackStarted', key: 1, ids: [1]}], s);
+    expect(groupDirtyIds(s, 'cast')).toEqual([]); // held by the job
+    expect(groupDirtyIds(s, 'nope')).toEqual([]);
+  });
+});
+
+describe('text prompts', () => {
+  const textSeed = {frameIndex: 4, points: [], labels: [], text: 'dog'};
+
+  it('a text seed is a seed without clicks', () => {
+    const s = run([{type: 'restore', objects: [{...server(1, 'untracked', []), seeds: [textSeed]}]}]);
+    const o = byId(s, 1);
+    expect(o.texts).toEqual({4: 'dog'});
+    expect(seedFrames(o)).toEqual([4]);
+    expect(dirtyIds(s)).toEqual([1]); // it can be tracked
+  });
+
+  it('a prompt replaces the frame\'s clicks and stales every track', () => {
+    const s = run([
+      {type: 'restore', objects: [server(1, 'tracked', [[4, [[0.5, 0.5]], [1]]])]},
+      {type: 'setText', id: 1, frame: 4, text: 'dog'},
+    ]);
+    const o = byId(s, 1);
+    expect(o.texts).toEqual({4: 'dog'});
+    expect(o.points).toEqual({});
+    expect(o.state).toBe('stale');
+  });
+
+  it('clicks refine a text frame and keep its text; clearing the clicks clears the frame', () => {
+    const base = run([
+      {type: 'restore', objects: [{...server(1, 'untracked', []), seeds: [textSeed]}]},
+      {type: 'setPoints', id: 1, frame: 4, points: [[0.1, 0.1, 1]]},
+    ]);
+    expect(byId(base, 1).texts).toEqual({4: 'dog'});
+    const cleared = reducer(base, {type: 'setPoints', id: 1, frame: 4, points: []});
+    expect(byId(cleared, 1).texts).toEqual({});
+    expect(seedFrames(byId(cleared, 1))).toEqual([]);
+  });
+});
+
+describe('seed frames for "Gone for a while?"', () => {
+  it('counts a cleared seed (negatives only, from SAM 3) as the next seed', () => {
+    const s = run([
+      {type: 'restore', objects: [server(0, 'tracked')]},
+      {type: 'setPoints', id: 0, frame: 30, points: [[0.4, 0.4, 0]]},
+    ]);
+    const o = byId(s, 0);
+    expect(seedFrames(o)).toEqual([0, 30]);
+    expect(absentUntilNextSeed(seedFrames(o), 20, 100)).toEqual([20, 29]);
   });
 });

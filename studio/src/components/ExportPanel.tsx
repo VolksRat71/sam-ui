@@ -6,7 +6,8 @@
 // writes the folder (POST /export: a folder under its export root, with the
 // extract-frames and overwrite options) and shows its manifest. For browser
 // tracks, or with no backend, studio builds the same layout here and saves
-// it as a zip.
+// it as a zip. Either way the products follow the Objects list's order, and
+// each group gets a folder, with a union matte if asked (issue #21).
 import {Close} from '@carbon/icons-react';
 import {useEffect, useMemo, useState} from 'react';
 import {readJson, writeJson} from '~/lib/storage';
@@ -34,8 +35,10 @@ export default function ExportPanel({session, videoName, mode, onClose}: Props) 
   const {bridge, state} = session;
   const base = videoName.replace(/\.[^.]+$/, '');
   const [outDir, setOutDir] = useState(() => readJson(FOLDER_KEY, `~/Movies/sam-ui/${base}`));
-  const [rows, setRows] = useState<ExportRow[]>(() => defaultRows(state.objects));
+  const [rows, setRows] = useState<ExportRow[]>(() => defaultRows(session.ordered));
   const [includeStale, setIncludeStale] = useState(false);
+  const [union, setUnion] = useState(false);
+  const hasGroups = state.layout.groups.some(g => g.members.length > 0);
   const [frames, setFrames] = useState(false);
   const [force, setForce] = useState(false);
   const [sending, setSending] = useState(false);
@@ -73,6 +76,7 @@ export default function ExportPanel({session, videoName, mode, onClose}: Props) 
         const blob = await session.exportMasks(
           'folder',
           chosen.map(r => ({objectId: r.objectId, name: r.id, prompt: r.prompt.trim() || r.id.replace(/_/g, ' '), color: r.color})),
+          union && hasGroups,
         );
         const name = exportFileName(file, zipFallback, '.zip');
         saveBlob(blob, name);
@@ -94,6 +98,9 @@ export default function ExportPanel({session, videoName, mode, onClose}: Props) 
           include_stale: includeStale,
           frames,
           force,
+          union: union && hasGroups,
+          // the review flags join the audit queue in data/review.json
+          flags: Object.fromEntries(Object.entries(session.flags)),
         }),
       );
     } catch (err) {
@@ -124,7 +131,7 @@ export default function ExportPanel({session, videoName, mode, onClose}: Props) 
               <FileNameField value={file} onChange={setFile} disabled={sending} hint="a zip of the working folder" />
             ) : (
               <label className="field">
-                <span>Folder (under the backend&apos;s export root, ~/Movies by default)</span>
+                <span>Folder (under the backend&apos;s export root, ~/Movies/sam-ui by default)</span>
                 <input value={outDir} onChange={e => setOutDir(e.target.value)} spellCheck={false} />
               </label>
             )}
@@ -181,6 +188,12 @@ export default function ExportPanel({session, videoName, mode, onClose}: Props) 
                 <input type="checkbox" checked={includeStale} onChange={e => setIncludeStale(e.target.checked)} />{' '}
                 Include stale tracks
               </label>
+              {hasGroups && (
+                <label>
+                  <input type="checkbox" checked={union} onChange={e => setUnion(e.target.checked)} /> One union matte per
+                  group too (data/groups/&lt;group&gt;/union)
+                </label>
+              )}
               {!zipping && (
                 <>
                   <label>
@@ -189,7 +202,7 @@ export default function ExportPanel({session, videoName, mode, onClose}: Props) 
                   </label>
                   <label>
                     <input type="checkbox" checked={force} onChange={e => setForce(e.target.checked)} /> Replace existing
-                    products.json, anchors.json and shots.json
+                    products.json, anchors.json, shots.json and mattes
                   </label>
                 </>
               )}

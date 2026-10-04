@@ -1,5 +1,5 @@
 /**
- * @generated SignedSource<<9f16d8efd338f28885ed0c55f7fa12aa>>
+ * @generated SignedSource<<23ab9f1b7afe43ca1f5b2060c2950147>>
  * @lightSyntaxTransform
  * @nogrep
  */
@@ -20,8 +20,31 @@ export type StudioSessionClearTrackMutation$variables = {
 export type StudioSessionClearTrackMutation$data = {
   readonly clearTrack: {
     readonly frames: ReadonlyArray<number> | null | undefined;
+    readonly history: {
+      readonly canRedo: boolean;
+      readonly canUndo: boolean;
+      readonly versions: ReadonlyArray<{
+        readonly bounded: boolean;
+        readonly clicks: number;
+        readonly created: string | null | undefined;
+        readonly current: boolean;
+        readonly elapsedS: number | null | undefined;
+        readonly engine: string;
+        readonly key: string;
+        readonly model: string;
+        readonly nFrames: number | null | undefined;
+        readonly seedFrames: number;
+      }>;
+    };
     readonly nFrames: number;
     readonly objectId: number;
+    readonly ranges: ReadonlyArray<{
+      readonly end: number;
+      readonly score: number | null | undefined;
+      readonly source: string | null | undefined;
+      readonly start: number;
+      readonly state: string;
+    }>;
     readonly seeds: ReadonlyArray<{
       readonly frameIndex: number;
       readonly labels: ReadonlyArray<number>;
@@ -30,6 +53,7 @@ export type StudioSessionClearTrackMutation$data = {
         readonly size: ReadonlyArray<number>;
       } | null | undefined;
       readonly points: ReadonlyArray<ReadonlyArray<number>>;
+      readonly text: string | null | undefined;
     }>;
     readonly state: string;
     readonly tracks: ReadonlyArray<{
@@ -74,7 +98,14 @@ v3 = {
   "name": "nFrames",
   "storageKey": null
 },
-v4 = [
+v4 = {
+  "alias": null,
+  "args": null,
+  "kind": "ScalarField",
+  "name": "engine",
+  "storageKey": null
+},
+v5 = [
   {
     "alias": null,
     "args": [
@@ -131,6 +162,13 @@ v4 = [
           {
             "alias": null,
             "args": null,
+            "kind": "ScalarField",
+            "name": "text",
+            "storageKey": null
+          },
+          {
+            "alias": null,
+            "args": null,
             "concreteType": "RLEMask",
             "kind": "LinkedField",
             "name": "mask",
@@ -164,16 +202,144 @@ v4 = [
         "name": "tracks",
         "plural": true,
         "selections": [
+          (v4/*: any*/),
+          (v1/*: any*/),
+          (v2/*: any*/),
+          (v3/*: any*/)
+        ],
+        "storageKey": null
+      },
+      {
+        "alias": null,
+        "args": null,
+        "concreteType": "ObjectRange",
+        "kind": "LinkedField",
+        "name": "ranges",
+        "plural": true,
+        "selections": [
           {
             "alias": null,
             "args": null,
             "kind": "ScalarField",
-            "name": "engine",
+            "name": "start",
+            "storageKey": null
+          },
+          {
+            "alias": null,
+            "args": null,
+            "kind": "ScalarField",
+            "name": "end",
             "storageKey": null
           },
           (v1/*: any*/),
-          (v2/*: any*/),
-          (v3/*: any*/)
+          {
+            "alias": null,
+            "args": null,
+            "kind": "ScalarField",
+            "name": "source",
+            "storageKey": null
+          },
+          {
+            "alias": null,
+            "args": null,
+            "kind": "ScalarField",
+            "name": "score",
+            "storageKey": null
+          }
+        ],
+        "storageKey": null
+      },
+      {
+        "alias": null,
+        "args": null,
+        "concreteType": "SeedHistory",
+        "kind": "LinkedField",
+        "name": "history",
+        "plural": false,
+        "selections": [
+          {
+            "alias": null,
+            "args": null,
+            "kind": "ScalarField",
+            "name": "canUndo",
+            "storageKey": null
+          },
+          {
+            "alias": null,
+            "args": null,
+            "kind": "ScalarField",
+            "name": "canRedo",
+            "storageKey": null
+          },
+          {
+            "alias": null,
+            "args": null,
+            "concreteType": "TrackVersion",
+            "kind": "LinkedField",
+            "name": "versions",
+            "plural": true,
+            "selections": [
+              {
+                "alias": null,
+                "args": null,
+                "kind": "ScalarField",
+                "name": "key",
+                "storageKey": null
+              },
+              (v4/*: any*/),
+              {
+                "alias": null,
+                "args": null,
+                "kind": "ScalarField",
+                "name": "model",
+                "storageKey": null
+              },
+              {
+                "alias": null,
+                "args": null,
+                "kind": "ScalarField",
+                "name": "created",
+                "storageKey": null
+              },
+              {
+                "alias": null,
+                "args": null,
+                "kind": "ScalarField",
+                "name": "elapsedS",
+                "storageKey": null
+              },
+              (v3/*: any*/),
+              {
+                "alias": null,
+                "args": null,
+                "kind": "ScalarField",
+                "name": "clicks",
+                "storageKey": null
+              },
+              {
+                "alias": null,
+                "args": null,
+                "kind": "ScalarField",
+                "name": "seedFrames",
+                "storageKey": null
+              },
+              {
+                "alias": null,
+                "args": null,
+                "kind": "ScalarField",
+                "name": "bounded",
+                "storageKey": null
+              },
+              {
+                "alias": null,
+                "args": null,
+                "kind": "ScalarField",
+                "name": "current",
+                "storageKey": null
+              }
+            ],
+            "storageKey": null
+          }
         ],
         "storageKey": null
       }
@@ -187,7 +353,7 @@ return {
     "kind": "Fragment",
     "metadata": null,
     "name": "StudioSessionClearTrackMutation",
-    "selections": (v4/*: any*/),
+    "selections": (v5/*: any*/),
     "type": "Mutation",
     "abstractKey": null
   },
@@ -196,19 +362,19 @@ return {
     "argumentDefinitions": (v0/*: any*/),
     "kind": "Operation",
     "name": "StudioSessionClearTrackMutation",
-    "selections": (v4/*: any*/)
+    "selections": (v5/*: any*/)
   },
   "params": {
-    "cacheID": "db50188053362b581385651c5cd6e256",
+    "cacheID": "708ba552d884122d928cde767bdb89bf",
     "id": null,
     "metadata": {},
     "name": "StudioSessionClearTrackMutation",
     "operationKind": "mutation",
-    "text": "mutation StudioSessionClearTrackMutation(\n  $input: ClearTrackInput!\n) {\n  clearTrack(input: $input) {\n    objectId\n    state\n    frames\n    nFrames\n    seeds {\n      frameIndex\n      points\n      labels\n      mask {\n        size\n        counts\n      }\n    }\n    tracks {\n      engine\n      state\n      frames\n      nFrames\n    }\n  }\n}\n"
+    "text": "mutation StudioSessionClearTrackMutation(\n  $input: ClearTrackInput!\n) {\n  clearTrack(input: $input) {\n    objectId\n    state\n    frames\n    nFrames\n    seeds {\n      frameIndex\n      points\n      labels\n      text\n      mask {\n        size\n        counts\n      }\n    }\n    tracks {\n      engine\n      state\n      frames\n      nFrames\n    }\n    ranges {\n      start\n      end\n      state\n      source\n      score\n    }\n    history {\n      canUndo\n      canRedo\n      versions {\n        key\n        engine\n        model\n        created\n        elapsedS\n        nFrames\n        clicks\n        seedFrames\n        bounded\n        current\n      }\n    }\n  }\n}\n"
   }
 };
 })();
 
-(node as any).hash = "62e1b431a687f2d58c46580a9deabe65";
+(node as any).hash = "302498f9121d9f9e458aa2e10681d0bc";
 
 export default node;

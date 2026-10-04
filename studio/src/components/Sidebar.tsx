@@ -21,7 +21,7 @@ const OPEN_KEY = 'sam-ui-studio:sections-open';
 const TAB_KEY = 'sam-ui-studio:sections-tab';
 
 /** Starting share of the column per section, before any drag. */
-const WEIGHT: Record<string, number> = {media: 25, objects: 45, effects: 30};
+const WEIGHT: Record<string, number> = {media: 25, objects: 45, review: 30, effects: 30};
 
 function defaultSize(id: string, opened: Section[]): number {
   const total = opened.reduce((sum, s) => sum + (WEIGHT[s.id] ?? 30), 0);

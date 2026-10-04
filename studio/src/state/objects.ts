@@ -13,6 +13,9 @@
 // authority: after each call the UI syncs from objectTracks, and the reducer's
 // own transitions only keep the list right in between.
 import {THEME_COLORS} from '@/theme/colors';
+import {EMPTY_HISTORY, type SeedHistory, type ServerHistory, normalizeHistory} from './history';
+import {EMPTY_LAYOUT, type Layout, type LayoutAction, arrange, layoutReducer, parseLayout} from './layout';
+import {type FrameRange, type Mark, normalizeMarks, normalizeRanges, rangesKey, viewMarks} from './ranges';
 
 export type TrackState = 'untracked' | 'stale' | 'tracked' | 'tracking';
 export type Label = 0 | 1;
@@ -39,9 +42,26 @@ export type ServerObject = {
     readonly points: ReadonlyArray<ReadonlyArray<number>>;
     readonly labels: ReadonlyArray<number>;
     readonly mask?: {readonly size: ReadonlyArray<number>; readonly counts: string} | null;
+    /** The text prompt that seeded the frame (SAM 3); its mask is the frame's. */
+    readonly text?: string | null;
   }>;
   /** One entry per engine; the top-level fields are the default engine's. */
   readonly tracks?: ReadonlyArray<ServerTrack>;
+  /**
+   * Absent ranges (state/ranges.ts). Studio's queries select this field, so
+   * studio needs a backend that has it: the two ship together (desktop), and a
+   * backend from before ranges fails the whole query rather than sending none.
+   */
+  readonly ranges?: ReadonlyArray<{
+    readonly start: number;
+    readonly end: number;
+    readonly state: string;
+    /** A candidate's provenance (draft 5); null on confirmed ranges. */
+    readonly source?: string | null;
+    readonly score?: number | null;
+  }> | null;
+  /** What the object can undo and redo, and its kept track versions (state/history.ts). */
+  readonly history?: ServerHistory | null;
 };
 
 export type EngineTrack = {
@@ -64,6 +84,20 @@ export type StudioObject = {
   engines: Record<string, EngineTrack>;
   /** Seed clicks per frame. A frame with no clicks has no key. */
   points: Record<number, NormPoint[]>;
+  /**
+   * Text prompts per frame (SAM 3): a frame seeded by a phrase, whose best
+   * match is its mask. Clicks there refine it and keep the text.
+   */
+  texts: Record<number, string>;
+  /** Frames where the object is marked absent: empty, never tracked or exported. */
+  ranges: FrameRange[];
+  /**
+   * Its present and candidate ranges, as the timeline shows them (never over
+   * an absent frame). Annotations: they never touch a mask or a track's state.
+   */
+  marks: Mark[];
+  /** Undo, redo and the kept track versions. */
+  history: SeedHistory;
   /** Held by one of this page's running jobs on the current engine. */
   running: boolean;
   /** Why this object's last track failed. */
@@ -86,6 +120,11 @@ export type Job = {
    */
   total: number | null;
   canceling: boolean;
+  /**
+   * The ids the backend re-tracks only around their corrections (a bounded
+   * re-track, backend tracks/bounded.py; the Objects-Bounded header).
+   */
+  bounded: number[];
 };
 
 export type StudioState = {
@@ -96,6 +135,11 @@ export type StudioState = {
   jobs: Job[];
   /** The last job-level failure, shown until the next job starts. */
   notice: string | null;
+  /**
+   * The objects' order and groups (state/layout.ts): the list's, the lanes'
+   * and the exports' order. `objects` itself stays in id order.
+   */
+  layout: Layout;
 };
 
 export type Action =
@@ -105,8 +149,14 @@ export type Action =
   | {type: 'add'; id: number}
   | {type: 'select'; id: number | null}
   | {type: 'setPoints'; id: number; frame: number; points: NormPoint[]}
+  /** A text prompt matched: it seeds the frame, replacing its clicks. */
+  | {type: 'setText'; id: number; frame: number; text: string}
+  /** The object's ranges changed: absent ones, and (when given) its present and candidate ones. */
+  | {type: 'setRanges'; id: number; ranges: FrameRange[]; marks?: Mark[]}
+  /** The backend's answer to an undo, redo, restore or move: the object as it now is. */
+  | {type: 'objectChanged'; object: ServerObject}
   | {type: 'trackStarted'; key: number; ids: number[]; engine?: string}
-  | {type: 'trackAttached'; key: number; jobId: string | null; selected: number[]}
+  | {type: 'trackAttached'; key: number; jobId: string | null; selected: number[]; bounded?: number[]}
   | {type: 'trackProgress'; key: number}
   | {type: 'trackTotal'; key: number; total: number}
   | {type: 'trackCanceling'; key: number}
@@ -118,7 +168,11 @@ export type Action =
   | {type: 'rename'; id: number; name: string | null}
   /** Names from the backend (ids it does not name keep theirs). */
   | {type: 'names'; names: Record<number, string>}
-  | {type: 'reset'};
+  | {type: 'reset'}
+  /** The stored layout (the backend's or this browser's), as loaded. */
+  | {type: 'setLayout'; layout: unknown}
+  /** A reorder or regroup. */
+  | {type: 'layout'; action: LayoutAction};
 
 export const initialState: StudioState = {
   engine: DEFAULT_ENGINE,
@@ -126,6 +180,7 @@ export const initialState: StudioState = {
   activeId: null,
   jobs: [],
   notice: null,
+  layout: EMPTY_LAYOUT,
 };
 
 const NO_TRACK: EngineTrack = {state: 'untracked', frames: null, nFrames: 0};
@@ -146,6 +201,16 @@ function seedsToPoints(seeds: ServerObject['seeds']): Record<number, NormPoint[]
     );
     if (pts.length > 0) {
       out[s.frameIndex] = pts;
+    }
+  }
+  return out;
+}
+
+function seedsToTexts(seeds: ServerObject['seeds']): Record<number, string> {
+  const out: Record<number, string> = {};
+  for (const s of seeds) {
+    if (s.text != null && s.text !== '') {
+      out[s.frameIndex] = s.text;
     }
   }
   return out;
@@ -184,6 +249,10 @@ export function fromServer(o: ServerObject, engine: string = DEFAULT_ENGINE): St
       nFrames: 0,
       engines,
       points: seedsToPoints(o.seeds),
+      texts: seedsToTexts(o.seeds),
+      ranges: normalizeRanges(o.ranges),
+      marks: viewMarks(normalizeRanges(o.ranges), normalizeMarks(o.ranges)),
+      history: normalizeHistory(o.history),
       running: false,
       error: null,
     },
@@ -192,14 +261,18 @@ export function fromServer(o: ServerObject, engine: string = DEFAULT_ENGINE): St
 }
 
 export function hasSeeds(o: StudioObject): boolean {
-  return Object.values(o.points).some(p => p.length > 0);
+  return Object.values(o.points).some(p => p.length > 0) || Object.keys(o.texts).length > 0;
 }
 
+/** Frames with clicks or a text prompt: the frames the object is seeded on. */
 export function seedFrames(o: StudioObject): number[] {
-  return Object.keys(o.points)
-    .map(Number)
-    .filter(f => o.points[f].length > 0)
-    .sort((a, b) => a - b);
+  const frames = new Set(Object.keys(o.texts).map(Number));
+  for (const f of Object.keys(o.points).map(Number)) {
+    if (o.points[f].length > 0) {
+      frames.add(f);
+    }
+  }
+  return [...frames].sort((a, b) => a - b);
 }
 
 /** Held by a running job on the current engine, this page's or another's. */
@@ -287,12 +360,33 @@ export function canAddObject(state: StudioState, limit: number): boolean {
 }
 
 /**
- * True when every click on this frame is negative. SAM 2 then returns an
- * empty mask: a correction frame needs one positive click on what to keep.
+ * True when every click on this frame is negative and the frame shows no
+ * mask. SAM 2 refuses such clicks before they are stored (the nudge,
+ * state/corrections.ts), so on SAM 2 this holds only for frames stored on
+ * SAM 3 (an emptied frame). `masked`: the frame still shows a mask, as a
+ * legacy seed trimmed by the removed hidden anchor does, and needs nothing.
  */
-export function needsPositiveClick(o: StudioObject | undefined, frame: number): boolean {
+export function needsPositiveClick(o: StudioObject | undefined, frame: number, masked = false): boolean {
   const pts = o?.points[frame];
-  return pts != null && pts.length > 0 && pts.every(p => p[2] === 0);
+  return !masked && pts != null && pts.length > 0 && pts.every(p => p[2] === 0);
+}
+
+/** The objects in list order: the layout's, else creation order. */
+export function orderedObjects(state: Pick<StudioState, 'objects' | 'layout'>): StudioObject[] {
+  const byIdMap = new Map(state.objects.map(o => [o.id, o]));
+  return arrange(state.layout, state.objects.map(o => o.id)).order.map(id => byIdMap.get(id)!);
+}
+
+/** What a group's Track sends: its members a plain Track would run (dirtyIds), in list order. */
+export function groupDirtyIds(state: StudioState, groupId: string): number[] {
+  const members = arrange(state.layout, state.objects.map(o => o.id)).groups.find(g => g.id === groupId)?.members ?? [];
+  const dirty = new Set(dirtyIds(state));
+  return members.filter(id => dirty.has(id));
+}
+
+/** Objects whose shown track is stale: the preview draws it faded until the re-track. */
+export function staleIds(state: StudioState): number[] {
+  return state.objects.filter(o => o.state === 'stale').map(o => o.id);
 }
 
 function update(
@@ -374,24 +468,39 @@ export function reducer(state: StudioState, action: Action): StudioState {
         nFrames: 0,
         engines: {},
         points: {},
+        texts: {},
+        ranges: [],
+        marks: [],
+        history: EMPTY_HISTORY,
         running: false,
         error: null,
       };
-      return {...state, activeId: action.id, objects: [...state.objects, added].sort(byId)};
+      return {
+        ...state,
+        activeId: action.id,
+        objects: [...state.objects, added].sort(byId),
+        layout: layoutReducer(state.layout, {type: 'addObject', id: action.id}, state.objects.map(o => o.id)),
+      };
     }
 
     case 'select':
       return {...state, activeId: action.id};
 
     case 'setPoints':
+    case 'setText':
       return update(state, action.id, o => {
         const points = {...o.points};
-        if (action.points.length > 0) {
+        const texts = {...o.texts};
+        if (action.type === 'setText') {
+          texts[action.frame] = action.text; // the backend drops the frame's clicks
+          delete points[action.frame];
+        } else if (action.points.length > 0) {
           points[action.frame] = action.points;
         } else {
-          delete points[action.frame];
+          delete points[action.frame]; // the backend clears the frame, text and all
+          delete texts[action.frame];
         }
-        const next = {...o, points, error: null};
+        const next = {...o, points, texts, error: null};
         const engines: Record<string, EngineTrack> = {};
         for (const [name, t] of Object.entries(o.engines)) {
           // the backend drops a track with no seeds left behind it; any other
@@ -405,6 +514,30 @@ export function reducer(state: StudioState, action: Action): StudioState {
         return viewed({...next, engines}, state.engine);
       });
 
+    case 'setRanges':
+      return update(state, action.id, o => {
+        const ranges = normalizeRanges(action.ranges);
+        const marks = viewMarks(ranges, action.marks ?? o.marks);
+        if (rangesKey(ranges) === rangesKey(o.ranges)) {
+          // present and candidate ranges are annotations: no track goes stale
+          return action.marks == null ? o : {...o, marks};
+        }
+        // ranges join the seeds hash: every engine's track goes stale
+        const engines: Record<string, EngineTrack> = {};
+        for (const [name, t] of Object.entries(o.engines)) {
+          engines[name] = t.state === 'tracked' ? {...t, state: 'stale'} : t;
+        }
+        return viewed({...o, ranges, marks, engines, error: null}, state.engine);
+      });
+
+    case 'objectChanged': {
+      const s = action.object;
+      if (!state.objects.some(o => o.id === s.objectId)) {
+        return {...state, objects: [...state.objects, fromServer(s, state.engine)].sort(byId)};
+      }
+      return update(state, s.objectId, o => ({...fromServer(s, state.engine), name: o.name, running: o.running}));
+    }
+
     case 'trackStarted': {
       const ids = [...new Set(action.ids)].sort((a, b) => a - b);
       const job: Job = {
@@ -415,6 +548,7 @@ export function reducer(state: StudioState, action: Action): StudioState {
         frames: 0,
         total: null,
         canceling: false,
+        bounded: [],
       };
       const next = withJobs({...state, notice: null}, [...state.jobs, job]);
       return {
@@ -430,7 +564,12 @@ export function reducer(state: StudioState, action: Action): StudioState {
         state,
         state.jobs.map(j =>
           j.key === action.key
-            ? {...j, jobId: action.jobId, ids: j.ids.filter(id => selected.has(id))}
+            ? {
+                ...j,
+                jobId: action.jobId,
+                ids: j.ids.filter(id => selected.has(id)),
+                bounded: (action.bounded ?? []).filter(id => selected.has(id)),
+              }
             : j,
         ),
       );
@@ -484,6 +623,7 @@ export function reducer(state: StudioState, action: Action): StudioState {
         ...state,
         objects: state.objects.filter(o => o.id !== action.id),
         activeId: state.activeId === action.id ? null : state.activeId,
+        layout: layoutReducer(state.layout, {type: 'removeObject', id: action.id}, state.objects.map(o => o.id)),
       };
 
     case 'rename':
@@ -497,6 +637,12 @@ export function reducer(state: StudioState, action: Action): StudioState {
 
     case 'reset':
       return {...initialState, engine: state.engine};
+
+    case 'setLayout':
+      return {...state, layout: arrange(parseLayout(action.layout), state.objects.map(o => o.id))};
+
+    case 'layout':
+      return {...state, layout: layoutReducer(state.layout, action.action, state.objects.map(o => o.id))};
   }
 }
 

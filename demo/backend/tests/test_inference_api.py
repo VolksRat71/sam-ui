@@ -1,9 +1,13 @@
 # sam-ui (Apache-2.0). New file, not from SAM 2.
 """InferenceAPI with a stub SAM 2 predictor (no model): seeds recorded from
 clicks, replay on a new session, corrections refining a tracked frame, and
-track jobs sharing the session's decoded video."""
+track jobs sharing the session's decoded video. One slow test (SAM_UI_SLOW=1)
+checks corrections on the real model."""
+import os
 from collections import OrderedDict
+from pathlib import Path
 
+import numpy as np
 import pytest
 import torch
 
@@ -31,9 +35,11 @@ def square(x, y):
 
 
 class StubPredictor:
-    """SAM 2's video-predictor surface with simple mask rules: a click refines
-    the mask already on that frame (the previous output) or starts from empty;
-    a positive point adds a square, a negative one cuts it."""
+    """SAM 2's video-predictor surface with simple mask rules that keep its
+    real behaviour: a click refines the mask already on that frame (the
+    previous output) or starts from empty; a positive point outside the mask
+    adds a square, a negative one cuts it; and a frame whose points are all
+    negative comes out empty, as it does in SAM 2 even with a mask prompt."""
 
     def __init__(self):
         self.init_calls, self.mask_calls, self.point_calls = 0, [], []
@@ -51,41 +57,60 @@ class StubPredictor:
             i = len(st["obj_ids"])
             st["obj_id_to_idx"][obj_id], st["obj_idx_to_id"][i] = i, obj_id
             st["obj_ids"].append(obj_id)
+            st["point_inputs_per_obj"][i] = {}
             st["temp_output_dict_per_obj"][i] = {"cond_frame_outputs": {}, "non_cond_frame_outputs": {}}
             st["output_dict_per_obj"][i] = {"cond_frame_outputs": {}, "non_cond_frame_outputs": {}}
         return st["obj_id_to_idx"][obj_id]
 
+    @staticmethod
+    def _logits(mask):
+        return mask.float()[None, None] * 2 - 1  # [1, 1, H, W], >0 where the mask is, like pred_masks
+
+    def _mask(self, st, i, frame):
+        out = st["temp_output_dict_per_obj"][i]["cond_frame_outputs"].get(frame)
+        return torch.zeros(H, W, dtype=torch.bool) if out is None else out["pred_masks"][0, 0] > 0
+
     def _out(self, st, frame):
-        masks = []
-        for o in st["obj_ids"]:
-            d = st["temp_output_dict_per_obj"][st["obj_id_to_idx"][o]]["cond_frame_outputs"]
-            masks.append(d.get(frame, torch.zeros(H, W, dtype=torch.bool)))
-        logits = torch.stack(masks).float()[:, None] * 2 - 1  # >0 where the mask is
+        logits = torch.cat([self._logits(self._mask(st, st["obj_id_to_idx"][o], frame)) for o in st["obj_ids"]])
         return frame, list(st["obj_ids"]), logits
 
     def add_new_mask(self, inference_state, frame_idx, obj_id, mask):
         self.mask_calls.append((frame_idx, obj_id))
         i = self._idx(inference_state, obj_id)
-        inference_state["temp_output_dict_per_obj"][i]["cond_frame_outputs"][frame_idx] = torch.as_tensor(mask).bool()
+        inference_state["point_inputs_per_obj"][i].pop(frame_idx, None)
+        out = {"pred_masks": self._logits(torch.as_tensor(mask).bool())}
+        inference_state["temp_output_dict_per_obj"][i]["cond_frame_outputs"][frame_idx] = out
         return self._out(inference_state, frame_idx)
 
     def add_new_points_or_box(self, inference_state, frame_idx, obj_id, points, labels, clear_old_points,
                               normalize_coords):
         assert normalize_coords is False
-        self.point_calls.append((frame_idx, obj_id))
+        self.point_calls.append((frame_idx, obj_id, [list(map(float, p)) for p in points], list(map(int, labels))))
         i = self._idx(inference_state, obj_id)
-        d = inference_state["temp_output_dict_per_obj"][i]["cond_frame_outputs"]
-        m = d.get(frame_idx, torch.zeros(H, W, dtype=torch.bool)).clone()
-        for (x, y), l in zip(points, labels):
-            m = m | square(x, y) if l == 1 else m & ~square(x, y)
-        d[frame_idx] = m
+        old = inference_state["point_inputs_per_obj"][i].get(frame_idx)
+        all_labels = ([] if clear_old_points or old is None else old["point_labels"][0].tolist()) + list(labels)
+        inference_state["point_inputs_per_obj"][i][frame_idx] = {"point_labels": torch.tensor([all_labels])}
+        m = self._mask(inference_state, i, frame_idx).clone()
+        if 1 not in all_labels:
+            m[:] = False
+        else:
+            for (x, y), l in zip(points, labels):
+                if l == 0:
+                    m &= ~square(x, y)
+                elif not m[min(int(y * H), H - 1), min(int(x * W), W - 1)]:
+                    m |= square(x, y)
+        inference_state["temp_output_dict_per_obj"][i]["cond_frame_outputs"][frame_idx] = {"pred_masks": self._logits(m)}
         return self._out(inference_state, frame_idx)
 
-    def clear_all_prompts_in_frame(self, st, frame_idx, obj_id):
+    def clear_all_prompts_in_frame(self, st, frame_idx, obj_id, need_output=True):
         i = st["obj_id_to_idx"].get(obj_id)
         if i is not None:
             st["temp_output_dict_per_obj"][i]["cond_frame_outputs"].pop(frame_idx, None)
-        return self._out(st, frame_idx)
+            st["point_inputs_per_obj"][i].pop(frame_idx, None)
+            out = st["output_dict_per_obj"][i]["cond_frame_outputs"].pop(frame_idx, None)
+            if out is not None:  # SAM 2 keeps a consolidated output, as a non-conditioning one
+                st["output_dict_per_obj"][i]["non_cond_frame_outputs"][frame_idx] = out
+        return self._out(st, frame_idx) if need_output else None
 
     def remove_object(self, st, obj_id):
         return list(st["obj_ids"]), []
@@ -114,9 +139,9 @@ def start(api, path):
     return api.start_session(StartSessionRequest(type="start_session", path=path)).session_id
 
 
-def click(api, sid, obj, frame, points, labels, clear=True):
+def click(api, sid, obj, frame, points, labels, clear=True, engine=None):
     r = api.add_points(AddPointsRequest(type="add_points", session_id=sid, frame_index=frame, object_id=obj,
-                                        points=points, labels=labels, clear_old_points=clear))
+                                        points=points, labels=labels, clear_old_points=clear, engine=engine))
     return {v.object_id: rle.decode({"size": v.mask.size, "counts": v.mask.counts}) for v in r.results}
 
 
@@ -143,6 +168,24 @@ def test_a_new_session_replays_approved_masks_frame_major(world):
     assert stub.mask_calls == [(0, 1), (3, 1), (3, 2)]  # (frame, object) order, as masks
 
 
+
+def test_a_new_session_never_conditions_on_a_cleared_seed(world):
+    """A 'not on this frame' seed (a SAM 3 lone negative, its mask empty) stays
+    out of the interactive SAM 2 session; the object's other seeds still load."""
+    from tracks.seeds import cleared
+
+    make, stub, path = world
+    a = make()
+    sid = start(a, path)
+    click(a, sid, 1, 0, [[0.5, 0.5]], [1])
+    click(a, sid, 1, 3, [[0.5, 0.5]], [0], engine="sam3")
+    assert cleared(a.tracks.seeds.seeds(a.session_states[sid]["video"], 1)[3])
+    stub.mask_calls.clear()
+    stub.point_calls.clear()
+    start(make(), path)  # a restart
+    assert stub.mask_calls == [(0, 1)]
+    assert stub.point_calls == []
+
 def test_a_correction_on_a_tracked_frame_refines_the_cached_mask(world):
     make, _, path = world
     a = make()
@@ -152,10 +195,9 @@ def test_a_correction_on_a_tracked_frame_refines_the_cached_mask(world):
     list(ctx.service.track(ctx.video, ctx.path, [1], video_handle=ctx.video_handle))
     cached = rle.decode(a.tracks.tracks.mask_at(ctx.video, 1, "fake", 4))
     assert cached.any()
-    # one negative click on frame 4, which only the job tracked: it must cut the cached mask, not start empty
-    ys, xs = cached.nonzero()
-    x, y = (xs[0] + 0.5) / W, (ys[0] + 0.5) / H
-    out = click(a, sid, 1, 4, [[x, y]], [0])
+    # a positive inside and a negative on frame 4, which only the job tracked: it must cut the cached
+    # mask, not start empty
+    out = click(a, sid, 1, 4, [mid(cached), corner(cached)], [1, 0])
     assert out[1].any() and (out[1] <= cached).all() and out[1].sum() < cached.sum()
     assert a.object_tracks(sid)[0]["state"] != TRACKED  # the correction made it stale
 
@@ -186,18 +228,101 @@ def test_a_job_shares_the_sessions_decoded_video_and_seeds_with_masks(world):
     assert session_state["obj_ids"] == [1]  # and the session's objects were left alone
 
 
-def test_a_stale_track_is_not_used_to_prime_a_click(world):
-    make, stub, path = world
+def tracked(make, path, obj=1):
+    """A session with one click on frame 0 and a finished track of it."""
     a = make()
     sid = start(a, path)
-    click(a, sid, 1, 0, [[0.2, 0.2]], [1])
+    click(a, sid, obj, 0, [[0.5, 0.5]], [1])
     ctx = a.track_context(sid)
-    list(ctx.service.track(ctx.video, ctx.path, [1]))
-    click(a, sid, 1, 0, [[0.8, 0.8]], [1])  # the object moved: its track is stale now
+    list(ctx.service.track(ctx.video, ctx.path, [obj], video_handle=ctx.video_handle))
+    return a, sid, ctx
+
+
+def corner(m):
+    """A click on the mask's first pixel: its square cuts part of the mask, not all of it."""
+    ys, xs = m.nonzero()
+    return [(xs[0] + 0.5) / W, (ys[0] + 0.5) / H]
+
+
+def mid(m):
+    """A click on the mask's centre pixel: the positive a trim sends alongside its negative."""
+    ys, xs = m.nonzero()
+    return [(xs.mean() + 0.5) / W, (ys.mean() + 0.5) / H]
+
+
+def test_a_correction_on_a_stale_track_still_starts_from_the_cached_mask(world):
+    make, stub, path = world
+    a, sid, ctx = tracked(make, path)
+    first = rle.decode(a.tracks.tracks.mask_at(ctx.video, 1, "fake", 4))
+    click(a, sid, 1, 4, [mid(first), corner(first)], [1, 0])
+    assert a.object_tracks(sid)[0]["state"] != TRACKED  # the first correction made the track stale
+    # the next flagged frame is corrected against the same (now stale) track, not from nothing
+    cached = rle.decode(a.tracks.tracks.mask_at(ctx.video, 1, "fake", 2))
     stub.mask_calls.clear()
-    out = click(a, sid, 1, 3, [[0.8, 0.8]], [1])
-    assert stub.mask_calls == []  # no prime from the stale track
-    assert out[1].sum() == (2 * R) ** 2  # just the new click's square
+    out = click(a, sid, 1, 2, [mid(cached), corner(cached)], [1, 0])
+    assert stub.mask_calls == [(2, 1)]
+    assert out[1].any() and (out[1] <= cached).all() and out[1].sum() < cached.sum()
+
+
+def test_a_lone_positive_on_a_stale_track_grows_the_cached_mask(world):
+    make, _, path = world
+    a, sid, ctx = tracked(make, path)
+    click(a, sid, 1, 4, [[0.9, 0.9]], [1])  # stale now
+    cached = rle.decode(a.tracks.tracks.mask_at(ctx.video, 1, "fake", 3))
+    out = click(a, sid, 1, 3, [[0.9, 0.9]], [1])
+    assert (out[1] >= cached).all() and out[1].sum() > cached.sum()
+
+
+def test_a_lone_negative_on_sam2_is_refused_and_records_nothing(world):
+    make, stub, path = world
+    a, sid, ctx = tracked(make, path)
+    cached = rle.decode(a.tracks.tracks.mask_at(ctx.video, 1, "fake", 4))
+    before = a.object_tracks(sid)[0]
+    primes = list(stub.mask_calls)
+    # only sam3 takes a lone negative; an unnamed, unknown or mis-cased engine is held to SAM 2's rule
+    for engine in (None, "sam2", "browser-sam2", "", "SAM2", "nope"):
+        with pytest.raises(ValueError, match=r"^needs_positive: "):
+            click(a, sid, 1, 4, [corner(cached)], [0], engine=engine)
+    after = a.object_tracks(sid)[0]
+    assert 4 not in after["seeds"] and after == before  # no seed, and state and every track's staleness kept
+    assert after["state"] == TRACKED
+    assert stub.mask_calls == primes  # nothing was primed
+
+
+def test_a_lone_negative_on_sam3_empties_the_frame_and_is_recorded(world):
+    make, stub, path = world
+    a, sid, ctx = tracked(make, path)
+    cached = rle.decode(a.tracks.tracks.mask_at(ctx.video, 1, "fake", 4))
+    out = click(a, sid, 1, 4, [corner(cached)], [0], engine="sam3")[1]
+    assert not out.any()
+    seed = a.object_tracks(sid)[0]["seeds"][4]
+    assert seed["labels"] == [0]
+
+
+def test_appending_without_clear_counts_the_stored_clicks(world):
+    make, stub, path = world
+    a, sid, ctx = tracked(make, path)
+    cached = rle.decode(a.tracks.tracks.mask_at(ctx.video, 1, "fake", 4))
+    ys, xs = cached.nonzero()
+    mid = [(xs[len(xs) // 2] + 0.5) / W, (ys[len(ys) // 2] + 0.5) / H]
+    click(a, sid, 1, 4, [mid], [1], engine="sam2")
+    # a negative appended to a frame that already has the user's positive is a trim
+    a.add_points(AddPointsRequest(type="add_points", session_id=sid, frame_index=4, object_id=1,
+                                  points=[corner(cached)], labels=[0], clear_old_points=False, engine="sam2"))
+    assert a.object_tracks(sid)[0]["seeds"][4]["labels"] == [1, 0]
+
+
+def test_an_empty_cached_frame_is_not_used_to_prime_a_click(world):
+    make, stub, path = world
+    a, sid, ctx = tracked(make, path)
+    frames = dict(a.tracks.tracks.masks(ctx.video, 1, "fake"))
+    frames[5] = rle.encode(torch.zeros(H, W, dtype=torch.bool).numpy())  # the object left the frame
+    meta = a.tracks.tracks.meta(ctx.video, 1, "fake")
+    a.tracks.tracks.save(ctx.video, 1, "fake", meta["model"], meta["seeds_hash"], frames, 0.0)
+    stub.mask_calls.clear()
+    out = click(a, sid, 1, 5, [[0.8, 0.8]], [1])
+    assert stub.mask_calls == []  # nothing to refine: SAM starts from the click
+    assert out[1].sum() == (2 * R) ** 2
 
 
 def test_a_click_that_fails_after_a_prime_leaves_no_prime_behind(world):
@@ -238,6 +363,33 @@ def test_clear_frame_remove_object_and_start_over_keep_the_store_in_step(world):
     assert a.object_tracks(sid) == []
 
 
+def test_removing_a_seedless_or_never_stored_object_is_safe(world):
+    """Studio removes every layer through the backend, clicked or not: a stored
+    object with no seeds left (still listed, so it would come back on sync), a
+    name-only object, and a new layer the backend never saw must all go
+    without an error."""
+    make, _, path = world
+    a = make()
+    sid = start(a, path)
+    video = a.session_states[sid]["video"]
+    click(a, sid, 1, 0, [[0.5, 0.5]], [1])
+    a.clear_points_in_frame(ClearPointsInFrameRequest(type="clear_points_in_frame", session_id=sid,
+                                                      frame_index=0, object_id=1))
+    a.tracks.rename_object(video, 2, "cup")
+    assert [o["object_id"] for o in a.object_tracks(sid)] == [1]  # seedless, still stored
+    for obj in (1, 2, 7):  # 7: never clicked, never named
+        a.remove_object(RemoveObjectRequest(type="remove_object", session_id=sid, object_id=obj))
+    assert a.object_tracks(sid) == [] and a.tracks.object_names(video) == {}
+
+
+def test_sam2_removes_an_object_it_never_saw_without_an_error():
+    """The stub's remove_object is lenient; so is the real one (strict=False)."""
+    from sam2.sam2_video_predictor import SAM2VideoPredictor
+
+    real = object.__new__(SAM2VideoPredictor)  # no model: an unknown id returns before touching it
+    assert SAM2VideoPredictor.remove_object(real, {"obj_id_to_idx": {1: 0}, "obj_ids": [1]}, 7) == ([1], [])
+
+
 def test_idle_sessions_expire_but_a_busy_one_is_kept(world, monkeypatch):
     make, _, path = world
     a = make()
@@ -255,3 +407,131 @@ def test_idle_sessions_expire_but_a_busy_one_is_kept(world, monkeypatch):
     clock[0] += 2 * 60
     start(a, path)
     assert busy not in a.session_states and fresh in a.session_states
+
+
+CKPT = Path(__file__).resolve().parents[3] / "checkpoints" / "sam2.1_hiera_large.pt"
+
+
+def _twotone(path, n=20, h=240, w=320):
+    """A red-and-orange bar moving right: one object whose halves SAM 2 can tell apart."""
+    import av
+
+    bg = np.random.default_rng(0).integers(90, 140, (h, w, 3), dtype=np.uint8)
+    out = av.open(str(path), "w")
+    st = out.add_stream("libx264", rate=24, options={"crf": "12"})
+    st.width, st.height, st.pix_fmt = w, h, "yuv420p"
+    for i in range(n):
+        img = bg.copy()
+        x = 30 + 5 * i
+        img[100:150, x:x + 50] = (220, 40, 40)
+        img[100:150, x + 50:x + 100] = (240, 170, 30)
+        for pkt in st.encode(av.VideoFrame.from_ndarray(img, format="rgb24")):
+            out.mux(pkt)
+    for pkt in st.encode():
+        out.mux(pkt)
+    out.close()
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(not CKPT.exists() or os.environ.get("SAM_UI_SLOW") != "1",
+                    reason="set SAM_UI_SLOW=1 with the large checkpoint in checkpoints/")
+def test_real_sam2_corrections_cut_and_grow_the_tracked_mask(tmp_path):
+    from sam2.build_sam import build_sam2_video_predictor
+
+    h, w = 240, 320
+    _twotone(tmp_path / "bar.mp4")
+    dev = "mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu")
+    pred = build_sam2_video_predictor("configs/sam2.1/sam2.1_hiera_l.yaml", str(CKPT), device=dev)
+    a = InferenceAPI(predictor=pred, device=torch.device(dev), tracks_root=str(tmp_path / "tracks"))
+    sid = start(a, str(tmp_path / "bar.mp4"))
+    y = 125 / h
+
+    def halves(m, f):
+        x = 30 + 5 * f
+        return int(m[100:150, x:x + 50].sum()), int(m[100:150, x + 50:x + 100].sum())
+
+    def track(obj):
+        ctx = a.track_context(sid)
+        with a.inference_lock, a.autocast_context():
+            return {f: rle.decode(m[obj]) for f, m in ctx.service.track(ctx.video, ctx.path, [obj],
+                                                                          video_handle=ctx.video_handle)}
+
+    with torch.inference_mode():
+        click(a, sid, 0, 0, [[55 / w, y], [105 / w, y]], [1, 1])  # object 0: the whole bar
+        bar = track(0)
+        click(a, sid, 1, 0, [[55 / w, y], [105 / w, y]], [1, 0])  # object 1: the red half only
+        red = track(1)
+        results = []
+        # a positive on the red half and a negative on the orange half cut just the orange half, on
+        # a tracked frame and then on a second frame once the first correction has made the track stale
+        for f in (10, 15):
+            out = click(a, sid, 0, f, [[(30 + 5 * f + 25) / w, y], [(30 + 5 * f + 75) / w, y]], [1, 0])[0]
+            (r0, o0), (r1, o1) = halves(bar[f], f), halves(out, f)
+            keep = np.zeros_like(out)
+            keep[:, :30 + 5 * f + 50] = True  # outside the clicked (orange) half
+            iou = (out & bar[f] & keep).sum() / max(((out | bar[f]) & keep).sum(), 1)
+            results.append(f"neg f{f}: area {bar[f].sum()} -> {out.sum()}, red {r0} -> {r1}, orange {o0} -> {o1}, "
+                           f"IoU outside the click {iou:.3f}")
+            assert 0 < out.sum() < bar[f].sum() and o1 < 0.05 * o0 and r1 > 0.9 * r0 and iou > 0.9
+        # a lone positive on the orange half grows the red-only track to the whole bar
+        for f in (12, 17):
+            out = click(a, sid, 1, f, [[(30 + 5 * f + 75) / w, y]], [1])[1]
+            (r0, o0), (r1, o1) = halves(red[f], f), halves(out, f)
+            results.append(f"pos f{f}: area {red[f].sum()} -> {out.sum()}, red {r0} -> {r1}, orange {o0} -> {o1}")
+            assert out.sum() > red[f].sum() and r1 > 0.9 * r0 and o1 > 2000
+    print("\n" + "\n".join(results))
+
+
+def _sam3_ok() -> bool:
+    from tracks.sam3_engine import available
+
+    return available() is None
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("engine", ["sam2", "sam3"])
+@pytest.mark.skipif(not CKPT.exists() or os.environ.get("SAM_UI_SLOW") != "1",
+                    reason="set SAM_UI_SLOW=1 with the large checkpoint in checkpoints/")
+def test_real_engine_tracks_through_a_not_here_seed(tmp_path, engine):
+    """A lone-negative 'not on this frame' seed on frame 10 blanks frame 10 and
+    leaves its neighbours as they were. Conditioned on it, SAM 2 dropped the
+    bar on frames 9-19 (IoU 0.000); SAM 3 conditions on it safely (min 0.996)."""
+    from sam2.build_sam import build_sam2_video_predictor
+    from tracks.engine import Sam2Engine
+    from tracks.sam3_engine import Sam3Engine
+
+    if engine == "sam3" and not _sam3_ok():
+        pytest.skip("needs the SAM 3 weights")
+    h, w, clip = 240, 320, str(tmp_path / "bar.mp4")
+    _twotone(clip, n=30, h=h, w=w)
+    dev = "mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu")
+    if engine == "sam2":
+        eng = Sam2Engine(build_sam2_video_predictor("configs/sam2.1/sam2.1_hiera_l.yaml", str(CKPT), device=dev),
+                         "large")
+    else:
+        eng = Sam3Engine(device=dev)
+
+    y = 125 / h
+    red = lambda f: [(30 + 5 * f + 25) / w, y]
+    orange = lambda f: [(30 + 5 * f + 75) / w, y]
+    pos = lambda f: {"points": [red(f), orange(f)], "labels": [1, 1]}
+    empty = {"points": [orange(10), red(10)], "labels": [0, 0], "mask": rle.encode(np.zeros((h, w), bool))}
+    configs = {
+        "ref1": {0: pos(0)},
+        "emp1": {0: pos(0), 10: empty},
+        "ref2": {0: pos(0), 20: pos(20)},
+        "emp2": {0: pos(0), 10: empty, 20: pos(20)},
+    }
+    with torch.inference_mode():
+        tracks = {k: {f: np.asarray(m[1], bool) for f, m in eng.track(clip, {1: v}) if 1 in m}
+                  for k, v in configs.items()}
+    near = list(range(4, 10)) + list(range(11, 20))
+    lines, ok = [], True
+    for refk, empk in (("ref1", "emp1"), ("ref2", "emp2")):
+        ref, emp = tracks[refk], tracks[empk]
+        ious = [(emp[f] & ref[f]).sum() / max((emp[f] | ref[f]).sum(), 1) for f in near]
+        lines.append(f"{engine} {empk}: f10 area {ref[10].sum()} -> {emp[10].sum()}, "
+                     f"neighbour IoU min {min(ious):.3f} mean {np.mean(ious):.3f}")
+        ok = ok and emp[10].sum() == 0 and min(ious) > 0.9
+    print("\n" + "\n".join(lines))
+    assert ok, lines
