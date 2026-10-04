@@ -98,7 +98,10 @@ Details and progress: [Platform support, #16](https://github.com/VolksRat71/sam-
   range splits the object's track: each side is tracked only from its own clicks,
   so nothing seen before the gap carries into the frames after it. A side with no
   clicks stays empty. Marking or unmarking a range makes the track stale, and the
-  re-track runs only the sides that changed.
+  re-track runs only the sides that changed. A positive click inside a range means
+  the object is back, so the range ends on the frame before it; clicks there with no
+  positive are refused. *Gone for a while?*, offered after a lone negative, marks the
+  object absent from that frame until its next click.
 - **Candidate and confirmed ranges.** Each frame of an object is *unknown* (nobody
   has said), a *candidate* (a model or tool thinks the object is there; it carries
   its source, such as `text:dog@sam3`, and maybe a score), confirmed *present*, or
