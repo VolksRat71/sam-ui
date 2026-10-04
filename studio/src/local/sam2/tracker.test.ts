@@ -2,7 +2,7 @@
 import {describe, expect, it} from 'vitest';
 import type {Sam2Constants} from './config';
 import {maskToRle, rleToMask} from './masks';
-import {isClearedSeed, promptOf, type Releasable, type Sam2Models, Sam2Tracker, splitSeeds, type TrackObject, type TrackWindow} from './tracker';
+import {isClearedSeed, isConfirmedSeed, promptOf, type Releasable, type Sam2Models, Sam2Tracker, splitSeeds, type TrackObject, type TrackWindow} from './tracker';
 
 const S = 32; // model input size
 const F = 2; // feature side: 4 tokens per memory block
@@ -105,6 +105,22 @@ describe('cleared seeds', () => {
   it('a positive, or a legacy anchor-trimmed seed (no positive, a mask), is not', () => {
     expect(isClearedSeed({frame: 1, points: [[0.5, 0.5, 1], [0.2, 0.2, 0]]})).toBe(false);
     expect(isClearedSeed({frame: 1, points: [[0.5, 0.5, 0]], mask: kept})).toBe(false);
+  });
+
+  it('a seed with no clicks is never cleared, as the backend\'s cleared() needs points', () => {
+    expect(isClearedSeed({frame: 1, points: []})).toBe(false);
+    expect(isClearedSeed({frame: 1, points: [], mask: empty})).toBe(false);
+  });
+
+  it('a positive, or a text seed (no clicks, a mask), confirms the object present; a cleared or anchor-trimmed one does not', () => {
+    expect(isConfirmedSeed({frame: 1, points: [[0.5, 0.5, 1]]})).toBe(true);
+    expect(isConfirmedSeed({frame: 1, points: [[0.5, 0.5, 0], [0.2, 0.2, 1]], mask: empty})).toBe(true);
+    expect(isConfirmedSeed({frame: 1, points: [], mask: kept})).toBe(true);
+    expect(isConfirmedSeed({frame: 1, points: [[0.5, 0.5, 0]], mask: empty})).toBe(false);
+    expect(isConfirmedSeed({frame: 1, points: [[0.5, 0.5, 0]]})).toBe(false);
+    expect(isConfirmedSeed({frame: 1, points: [[0.5, 0.5, 0]], mask: kept})).toBe(false);
+    expect(isConfirmedSeed({frame: 1, points: [], mask: empty})).toBe(false);
+    expect(isConfirmedSeed({frame: 1, points: []})).toBe(false);
   });
 
   it('splits an object\'s seeds into conditioning frames and frames to blank', () => {

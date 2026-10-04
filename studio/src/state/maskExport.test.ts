@@ -153,3 +153,36 @@ describe('groups in exports (issue #21)', () => {
     expect(unionMatteName(groups[0], 0)).toBe('data/groups/the_cast/union/00001.png');
   });
 });
+
+describe('the audit queue in the roto folder', () => {
+  const car = {objectId: 2, label: 'Red car', name: 'car', state: 'tracked', prompt: 'red car', color: '#ff0000'};
+  const stop = (frame: number, reviewed: boolean) => ({
+    objectId: 2,
+    frame,
+    start: frame,
+    end: frame + 1,
+    score: 2.5,
+    reviewed,
+    reviewedAt: reviewed ? 't' : null,
+    reasons: [{kind: 'jump' as const, frame, strength: 1, detail: 'the mask jumps'}],
+  });
+
+  it('writes data/review.json as the roto pipeline keys it, and the queue into the manifest', () => {
+    const files = rotoDecisions(prov, [car], () => new Map(), () => 24, [], false, [stop(4, false), stop(10, true), {...stop(3, false), objectId: 9}]);
+    // "<pid>:<1-based frame>": [note], as tracks/export.py writes them
+    expect(JSON.parse(files['data/review.json'])).toEqual({
+      'car:5': ['sam-ui review (score 2.50): the mask jumps'],
+      'car:11': ['sam-ui review (score 2.50, reviewed in sam-ui: looks right): the mask jumps'],
+    });
+    const review = JSON.parse(files['notes/sam-ui-export.json']).products.car.review;
+    expect(review).toMatchObject({n_frames: 24, unreviewed: 1});
+    expect(review.locations.map((l: {frame: number; reviewed: boolean}) => [l.frame, l.reviewed])).toEqual([
+      [4, false],
+      [10, true],
+    ]);
+  });
+
+  it('writes an empty review.json with no queue', () => {
+    expect(rotoDecisions(prov, [car], () => new Map(), () => 24)['data/review.json']).toBe('{}');
+  });
+});

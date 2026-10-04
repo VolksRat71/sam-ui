@@ -18,6 +18,9 @@
 // The tracked segments (the solid line in the object's colour) stay derived
 // output, drawn apart from all four.
 // Lanes follow the Objects list's order (issue #21), with a group's colour by the name.
+// The review queue's stops (draft 7) sit above their lane as downward
+// triangles, a check once reviewed; with one on screen, the transport says
+// why it is there and offers Looks right (Y) and the next stop (.).
 import {
   ChevronLeft,
   ChevronRight,
@@ -27,6 +30,7 @@ import {
   PlayFilledAlt,
 } from '@carbon/icons-react';
 import {useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent} from 'react';
+import {KIND_LABELS, stopLabel} from '~/state/audit';
 import {objectName} from '~/state/fileNames';
 import {flagsOf} from '~/state/flags';
 import {seedFrames} from '~/state/objects';
@@ -45,6 +49,7 @@ import {
 } from '~/state/ranges';
 import type {StudioObject} from '~/state/objects';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
+import {ReviewGlyph} from './ReviewSection';
 
 const FILMSTRIP_HEIGHT = 44;
 
@@ -263,6 +268,35 @@ export default function Timeline({session}: Props) {
             </span>
           )}
         </span>
+        {session.currentStop != null && picked == null && selection == null && (() => {
+          const stop = session.currentStop;
+          const queue = session.review?.queue ?? [];
+          const at = queue.findIndex(e => e.objectId === stop.objectId && e.frame === stop.frame);
+          const o = state.objects.find(x => x.id === stop.objectId);
+          return (
+            <span className="range-bar review-bar" role="group" aria-label="Review stop">
+              <ReviewGlyph reviewed={stop.reviewed} />
+              <span title={stop.reasons.map(r => `Frame ${r.frame + 1}: ${r.detail}`).join('\n')}>
+                Review {at + 1}/{queue.length}: {o != null ? objectName(o) : `Object ${stop.objectId}`}
+                <span className="muted"> · {stop.reasons.map(r => KIND_LABELS[r.kind]).join(', ')}</span>
+                {stop.reviewed && <span className="muted"> · reviewed</span>}
+              </span>
+              <button
+                className="button compact"
+                onClick={() => session.markReviewed(stop, !stop.reviewed, true)}
+                title={stop.reviewed ? 'Open this stop again' : 'The masks here look right (Y): mark the stop reviewed and go to the next one. To fix them, click on the preview instead'}>
+                {stop.reviewed ? 'Reopen' : (
+                  <>
+                    Looks right <kbd>Y</kbd>
+                  </>
+                )}
+              </button>
+              <button className="button subtle compact" onClick={() => session.stepReview(1)} title="The next stop in the queue (.); , goes back">
+                Next <kbd>.</kbd>
+              </button>
+            </span>
+          );
+        })()}
         {pickedObject != null && pickedMark != null && (
           <span className="range-bar candidate-bar" role="group" aria-label="Candidate to review">
             <span>
@@ -485,6 +519,22 @@ export default function Timeline({session}: Props) {
                     }}
                   />
                 ))}
+                {(session.review?.queue ?? [])
+                  .filter(e => e.objectId === o.id)
+                  .map(e => (
+                    <button
+                      key={`review-${e.frame}`}
+                      className={`swimlane-review${e.reviewed ? ' reviewed' : ''}${session.currentStop === e ? ' current' : ''}`}
+                      title={stopLabel(e, objectName(o))}
+                      aria-label={stopLabel(e, objectName(o))}
+                      style={{left: pos(e.frame) - 5}}
+                      onClick={ev => {
+                        ev.stopPropagation();
+                        session.goToStop(e);
+                      }}>
+                      <ReviewGlyph reviewed={e.reviewed} size={9} />
+                    </button>
+                  ))}
                 {seedFrames(o).map(f => (
                   <button
                     key={f}
@@ -526,7 +576,19 @@ export default function Timeline({session}: Props) {
             <span className="legend-swatch swimlane-absent" />
             absent
           </li>
-          <li className="muted">drag a lane to mark · ] [ review candidates</li>
+          <li>
+            <span className="legend-glyph">
+              <ReviewGlyph reviewed={false} />
+            </span>
+            review stop
+          </li>
+          <li>
+            <span className="legend-glyph reviewed">
+              <ReviewGlyph reviewed />
+            </span>
+            reviewed
+          </li>
+          <li className="muted">drag a lane to mark · ] [ review candidates · . , review stops</li>
         </ul>
       )}
     </div>

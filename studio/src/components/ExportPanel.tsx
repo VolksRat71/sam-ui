@@ -99,6 +99,8 @@ export default function ExportPanel({session, videoName, mode, onClose}: Props) 
           frames,
           force,
           union: union && hasGroups,
+          // the review flags join the audit queue in data/review.json
+          flags: Object.fromEntries(Object.entries(session.flags)),
         }),
       );
     } catch (err) {

@@ -8,7 +8,7 @@ steps run on sam-ui's tracks unchanged:
     <out>/anchors.json    {"<pid>": {"points": {"<frame>": [[x, y, label], ...]}}}, full-res pixels
     <out>/shots.json      {"cuts": [1], "unsure": []}: one shot (sam-ui does not know cuts)
     <out>/data/mattes_tracked/<pid>/%05d.png   8-bit 0/255, clip frames 1-based
-    <out>/data/review.json {}  (no review flags yet)
+    <out>/data/review.json {"<pid>:<frame>": [note, ...]}: the audit queue (draft 7)
     <out>/data/frames/%05d.jpg + data/clip.mp4  only with frames=True
     <out>/notes/sam-ui-export.json  provenance: engine, model, seeds hash per object
     <out>/data/groups/<folder>/group.json  one folder per group with an exported member:
@@ -33,6 +33,15 @@ with its state (absent, present, candidate; frames 0-based, as in sam-ui),
 and a candidate's source and score. Present and candidate ranges never change
 a matte: a candidate is a guess, so it never blanks (or fills) a frame.
 
+data/review.json is the roto pipeline's review file (track.py writes it,
+review_video.py burns its notes into the review video), keyed "<pid>:<frame>"
+with 1-based frames. The export adds one note per audit queue location
+(tracks/audit.py): "sam-ui review (score s): why", with ", reviewed in sam-ui:
+looks right" once a person marked it so. Notes from anything else are kept;
+sam-ui's own from an earlier export are replaced. The manifest carries each
+product's queue as data: its locations (0-based), reasons, scores and
+reviewed state. `flags` ({obj_id: [frame]}) are the studio's review flags.
+
 Frames are numbered from 1 in the working folder and from 0 in sam-ui, so
 sam-ui frame i is file (i + 1). Only tracked objects are exported unless
 include_stale; untracked ones are listed as skipped.
@@ -42,9 +51,10 @@ person confirmed, and data/mattes_tracked/<pid> may hold mattes repaired by
 hand, so without force an existing decision file or a non-empty matte folder
 of an exported object is a refusal. With force they are replaced (the matte
 folder is deleted and refilled). sam-ui's own outputs are always rewritten:
-notes/sam-ui-export.json, data/groups (made afresh), and with frames the whole
-data/frames folder, which is replaced only once ffmpeg succeeds (clip.mp4 and
-data/review.json are written only when missing).
+notes/sam-ui-export.json, data/review.json (sam-ui's notes replaced, every
+other note kept), data/groups (made afresh), and with frames the whole
+data/frames folder, which is replaced only once ffmpeg succeeds (clip.mp4 is
+written only when missing).
 
 Every path export writes or deletes must resolve, links followed, to inside
 the export root, and a matte folder or data/groups, which it would delete,
@@ -86,12 +96,14 @@ import numpy as np
 from PIL import Image
 
 from tracks import rle
+from tracks.audit import fmt2
 from tracks.ranges import absent_at
 from tracks.store import STALE, TRACKED
 
 PALETTE = ["#b4ff00", "#ff4fa3", "#3fd0ff", "#ffb020", "#9b6bff", "#2fe38a", "#ff5a36", "#f2f25a"]
 ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
 DECISIONS = ("products.json", "anchors.json", "shots.json")
+REVIEW_NOTE = "sam-ui review"
 logger = logging.getLogger(__name__)
 
 
@@ -236,7 +248,7 @@ def _union(group_dir: Path, member_dirs: List[Path], guard, write) -> None:
 
 def export(service, video: str, video_path: str, out_dir: str, objects: Optional[Dict[int, Dict]] = None,
            include_stale: bool = False, frames: bool = False, force: bool = False,
-           engine: Optional[str] = None, union: bool = False) -> Dict:
+           engine: Optional[str] = None, union: bool = False, flags: Optional[Dict[int, List[int]]] = None) -> Dict:
     out = _check_out(out_dir)
     engine = service.get_engine(engine).name if engine else service.default
     layout = service.layout(video)
@@ -306,13 +318,19 @@ def export(service, video: str, video_path: str, out_dir: str, objects: Optional
 
     groups = _write_groups(_groups_folder(root, out, out_dir), layout["groups"],
                            {o: s["id"] for o, (s, _) in specs.items()}, union, out, guard, write)
+    queue = service.review_queue(video, list(specs), engine, flags)["objects"] if specs else {}
+    notes = {}
+    for o, (spec, _) in specs.items():
+        q = queue.get(str(o)) or {"n_frames": 0, "unreviewed": 0, "locations": []}
+        provenance[spec["id"]]["review"] = {"n_frames": q["n_frames"], "unreviewed": q["unreviewed"],
+                                            "locations": q["locations"]}
+        for loc in q["locations"]:
+            notes[f"{spec['id']}:{loc['frame'] + 1}"] = _note(loc)
 
     write(out / "products.json", json.dumps({"products": products}, indent=1).encode())
     write(out / "anchors.json", json.dumps(anchors, indent=1).encode())
     write(out / "shots.json", json.dumps({"cuts": [1], "unsure": []}, indent=1).encode())
-    review = out / "data" / "review.json"
-    if not review.exists():
-        write(review, b"{}")
+    _write_review(out / "data" / "review.json", notes, write)
     manifest = {"exported": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "video": video, "video_path": video_path,
                 "products": provenance, "skipped": {str(o): s for o, s in skipped.items()}, "n_frames": n_frames,
                 "groups": groups, "frames_extracted": False}
@@ -320,6 +338,34 @@ def export(service, video: str, video_path: str, out_dir: str, objects: Optional
         manifest.update(_extract_frames(video_path, out, n_frames, guard))
     write(out / "notes" / "sam-ui-export.json", json.dumps(manifest, indent=1).encode())
     return {"out_dir": str(out), **manifest}
+
+
+def _note(loc: Dict) -> str:
+    done = ", reviewed in sam-ui: looks right" if loc.get("reviewed") else ""
+    return f"{REVIEW_NOTE} (score {fmt2(loc['score'])}{done}): " + "; ".join(r["detail"] for r in loc["reasons"])
+
+
+def _write_review(path: Path, notes: Dict[str, str], write) -> None:
+    """review.json with sam-ui's notes replaced by `notes` and every other note
+    kept, written through `write` (checked, then temp-and-replaced)."""
+    try:
+        old = json.loads(path.read_text())
+    except (OSError, ValueError):
+        old = {}
+    merged: Dict[str, List] = {}
+    for k, v in (old if isinstance(old, dict) else {}).items():
+        kept = [n for n in (v if isinstance(v, list) else [v])
+                if not (isinstance(n, str) and n.startswith(REVIEW_NOTE))]
+        if kept:
+            merged[k] = kept
+    for k, n in notes.items():
+        merged.setdefault(k, []).append(n)
+
+    def order(k: str):
+        tail = k.rsplit(":", 1)[-1]
+        return (int(tail) if tail.isdigit() else 0, k)
+
+    write(path, json.dumps(dict(sorted(merged.items(), key=lambda kv: order(kv[0]))), indent=1).encode())
 
 
 def _write_groups(root: Path, groups: List[Dict], pids: Dict[int, str], union: bool, out: Path, guard,

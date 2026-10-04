@@ -40,7 +40,15 @@ import {
   parseObjectsHeader,
   readTrackStream,
 } from '~/api/trackStream';
-import {OpfsKv} from '~/local/kv';
+import {MemoryKv, OpfsKv} from '~/local/kv';
+import {KvReviewStore} from '~/local/reviewMarks';
+import {
+  type QueueEntry,
+  type ReasonKind,
+  type ReviewQueue,
+  buildQueue,
+  reviewNow,
+} from '~/state/audit';
 import {LocalEngine, type LocalOptions} from '~/local/LocalEngine';
 import {OfflineService, SeedStore} from '~/local/offlineStores';
 import {localTrackEntry, seedsKey, variantModel, withLocalTracks, type LocalTrackEntry} from '~/local/localTracks';
@@ -48,11 +56,11 @@ import type {Layout} from '~/state/layout';
 import {layoutFromResponse} from '~/state/layoutSync';
 import type {ExportedObject, ExportGroup, ExportKind} from '~/state/maskExport';
 import {buildExport} from './maskExports';
-import type {TrackObject} from '~/local/sam2/tracker';
+import {isClearedSeed, isConfirmedSeed, type TrackObject} from '~/local/sam2/tracker';
 import {BROWSER_ENGINE, engineLabel} from '~/state/engines';
 import {maskSegments} from '~/state/segments';
 import {refusedAsAbsent} from '~/state/corrections';
-import {type FrameRange, type PaintOptions, type RangeState, absentAt, endAbsenceAt, normalizeRanges, planUnits, rangesKey} from '~/state/ranges';
+import {type FrameRange, type Mark, type PaintOptions, type RangeState, absentAt, endAbsenceAt, normalizeRanges, planUnits, rangesKey} from '~/state/ranges';
 import {colorFor, DEFAULT_ENGINE, type NormPoint, type ServerObject} from '~/state/objects';
 import type MaskOverlayEffect from './MaskOverlayEffect';
 import {paintAlpha} from './maskPixels';
@@ -669,6 +677,8 @@ export default class StudioSession {
   private _storeKey: string | null = null;
   /** Set with no backend: seeds, names and tracks live in this browser (OPFS). */
   private _offline: OfflineService | null = null;
+  /** "Looks right" marks on the browser engine's queue: in OPFS with no backend, else in this tab. */
+  private _reviews = new KvReviewStore(new MemoryKv());
   private readonly _local: LocalEngine;
 
   constructor(
@@ -702,7 +712,9 @@ export default class StudioSession {
         throw new Error('this browser has no Origin Private File System, which studio needs without a backend');
       }
       // a job's objects are never swapped under it by an undo
-      this._offline = new OfflineService(new OpfsKv(), () => this._local.heldIds());
+      const kv = new OpfsKv();
+      this._offline = new OfflineService(kv, () => this._local.heldIds());
+      this._reviews = new KvReviewStore(kv);
       this._local.useStore(this._offline.tracks);
     } else {
       this._env = createEnvironment(endpoint);
@@ -1500,6 +1512,7 @@ export default class StudioSession {
     model: string;
     groups?: ExportGroup[];
     union?: boolean;
+    review?: QueueEntry[];
   }): Promise<ArrayBuffer> {
     const decoded = this._context['_decodedVideo'];
     if (decoded == null || this._videoPath == null || this._storeKey == null) {
@@ -1540,7 +1553,7 @@ export default class StudioSession {
         seedsOf: id => this._seedPoints.get(id) ?? new Map(),
       },
       done => this._emit({type: 'exportProgress', done}),
-      {groups: args.groups, union: args.union},
+      {groups: args.groups, union: args.union, review: args.review},
     );
     return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
   }
@@ -1730,6 +1743,117 @@ export default class StudioSession {
       throw new Error(body?.error ?? `track_disagreement: HTTP ${response.status}`);
     }
     return body;
+  }
+
+  // -- the audit queue (draft 7) ----------------------------------------------
+
+  /** The browser engine's queue (and every queue with no backend) is built here; the backend builds its engines'. */
+  private _reviewsLocally(engine: string): boolean {
+    return this._offline != null || engine === BROWSER_ENGINE;
+  }
+
+  /** POST /review_queue, or the browser engine's queue (state/audit.ts buildQueue). */
+  async reviewQueue(engine: string, flags: Record<number, number[]>, candidates: Record<number, Mark[]>): Promise<ReviewQueue> {
+    if (this._reviewsLocally(engine)) {
+      return this._localQueue(engine, flags, candidates);
+    }
+    const response = await fetch(`${this._endpoint}/review_queue`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({session_id: this.sessionId, engine, flags}),
+    });
+    if (response.status === 404) {
+      // a backend from before the audit queue
+      return {engine, compare: null, objects: {}, queue: [], skipped: {}, supported: false};
+    }
+    type Wire = {
+      engine: string;
+      compare: string | null;
+      objects: Record<string, {state: string; n_frames: number; unreviewed: number}>;
+      queue: Array<Omit<QueueEntry, 'objectId' | 'reviewedAt'> & {object_id: number; reviewed_at: string | null}>;
+      skipped: Record<string, string>;
+      error?: string;
+    };
+    const body = (await response.json().catch(() => null)) as Wire | null;
+    if (!response.ok || body == null) {
+      throw new Error(body?.error ?? `review_queue: HTTP ${response.status}`);
+    }
+    return {
+      engine: body.engine,
+      compare: body.compare,
+      objects: Object.fromEntries(
+        Object.entries(body.objects).map(([id, o]) => [Number(id), {state: o.state, nFrames: o.n_frames, unreviewed: o.unreviewed}]),
+      ),
+      queue: body.queue.map(({object_id, reviewed_at, ...e}) => ({...e, objectId: object_id, reviewedAt: reviewed_at})),
+      skipped: Object.fromEntries(Object.entries(body.skipped).map(([id, st]) => [Number(id), st])),
+      supported: true,
+    };
+  }
+
+  private async _localQueue(engine: string, flags: Record<number, number[]>, candidates: Record<number, Mark[]>): Promise<ReviewQueue> {
+    const decoded = this._context['_decodedVideo'];
+    const video = this._storeKey;
+    if (decoded == null || video == null) {
+      return {engine, compare: null, objects: {}, queue: [], skipped: {}, supported: true};
+    }
+    const held = this._local.heldIds();
+    const objects = [];
+    for (const id of [...this._tracklets.keys()].sort((a, b) => a - b)) {
+      const track = await this._local.store.get(video, id);
+      const ranges = this._ranges.get(id) ?? [];
+      const seeds = this._seedPoints.get(id) ?? new Map<number, NormPoint[]>();
+      const approved = this._seedMasks.get(id);
+      // "not on this frame" seeds, as the tracker decides them: never a disappearance, and a candidate's item skips them
+      const seedOf = (frame: number, points: NormPoint[]) => ({frame, points, mask: (approved?.get(frame)?.data as RLEObject | undefined) ?? null});
+      const cleared = [...seeds].filter(([frame, points]) => isClearedSeed(seedOf(frame, points))).map(([frame]) => frame);
+      // a positive or text seed inside a candidate: that frame is confirmed present
+      const confirmed = [...seeds].filter(([frame, points]) => isConfirmedSeed(seedOf(frame, points))).map(([frame]) => frame);
+      const {state} = localTrackEntry(track, {seedsKey: seedsKey(seeds, ranges), variant: this._local.variant, running: held.has(id)});
+      objects.push({
+        id,
+        state,
+        masks: track?.masks ?? null,
+        marks: await this._reviews.marks(video, id),
+        ranges,
+        candidates: candidates[id] ?? [],
+        seeds: [...seeds.keys()],
+        cleared,
+        confirmed,
+        flags: flags[id] ?? [],
+      });
+    }
+    return buildQueue(objects, decoded.numFrames, BROWSER_ENGINE);
+  }
+
+  /** Mark a stop reviewed (on the mask its frame holds now), or unmark the stops over `span`. */
+  async setReviewed(args: {objectId: number; frame: number; engine: string; reviewed: boolean; span: [number, number]; reasons: ReasonKind[]}): Promise<void> {
+    const {objectId, frame, engine, reviewed, span, reasons} = args;
+    if (!this._reviewsLocally(engine)) {
+      const response = await fetch(`${this._endpoint}/set_reviewed`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({session_id: this.sessionId, object_id: objectId, frame, engine, reviewed, span, reasons}),
+      });
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as {error?: string} | null;
+        throw new Error(body?.error ?? `set_reviewed: HTTP ${response.status}`);
+      }
+      return;
+    }
+    const video = this._storeKey;
+    if (video == null) {
+      throw new Error('no video is open');
+    }
+    if (!reviewed) {
+      await this._reviews.unmark(video, objectId, BROWSER_ENGINE, span[0], span[1]);
+      return;
+    }
+    const track = await this._local.store.get(video, objectId);
+    const now = reviewNow(track?.masks ?? null, frame, span, this._context['_decodedVideo']?.numFrames ?? 0);
+    if (now == null) {
+      throw new Error(`there is no ${engineLabel(BROWSER_ENGINE)} track on frame ${frame + 1} to mark reviewed`);
+    }
+    await this._reviews.mark(video, objectId, {frame, span, engine: BROWSER_ENGINE, at: new Date().toISOString(), reasons, ...now});
   }
 
   setActiveObject(objectId: number | null): void {
