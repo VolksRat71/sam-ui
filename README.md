@@ -102,6 +102,18 @@ Details and progress: [Platform support, #16](https://github.com/VolksRat71/sam-
   the object is back, so the range ends on the frame before it; clicks there with no
   positive are refused. *Gone for a while?*, offered after a lone negative, marks the
   object absent from that frame until its next click.
+- **Undo, and earlier track versions.** Every finished track is kept as a version
+  of its object, under the hash of the clicks that made it, and every click, cleared
+  frame or range edit can be undone (Cmd-Z, Shift-Cmd-Z to redo). Going back to
+  clicks a version was made from brings its track back from disk with no re-track,
+  so undoing an accidental click restores the good track at once. Each object lists
+  its kept versions (when, which engine, how many clicks) to go back to any of them,
+  and clicks that went to the wrong object move to the right one, one undo step
+  each. The last 10 versions per object and engine are kept; the version an object
+  shows shares its track's files, so it costs no extra disk; an older one costs its masks (RLE): on the gallery
+  dog clip (289 frames at 1280x720) 257 KB for one object tracked from one click,
+  483 KB once a stray click grew it, plus about 1 to 3 KB for its seeds. An undo
+  there took 13 ms, against 136 s for the track it brought back.
 - **Keep working while it tracks.** A track job holds the model one frame at a time,
   so clicks come back in about 0.1 s even while a job runs. Jobs can overlap, and
   each has its own cancel.
@@ -200,7 +212,7 @@ studio (React, Vite, WebCodecs)                 demo/backend/server (Flask)
 
 | Kind | Endpoints |
 | --- | --- |
-| GraphQL, `POST /graphql` | `startSession` (returns the objects already known for the video), `addPoints` (points normalised 0–1), `clearPointsInFrame`, `removeObject`, `clearPointsInVideo`, `objectTracks`, `clearTrack`, `uploadVideo`, `deleteVideo`, `videos`, `defaultVideo` |
+| GraphQL, `POST /graphql` | `startSession` (returns the objects already known for the video), `addPoints` (points normalised 0–1), `clearPointsInFrame`, `removeObject`, `clearPointsInVideo`, `objectTracks` (with each object's `history`: undo, redo, kept versions), `clearTrack`, `setObjectRange`, `undoSeeds`, `redoSeeds`, `restoreVersion`, `moveClicks`, `uploadVideo`, `deleteVideo`, `videos`, `defaultVideo` |
 | Streams, `multipart/x-savi-stream` | `POST /track_objects {session_id, object_ids?, engine?}` streams one part per frame and ends with a `done` or `error` part. `POST /track_masks` streams cached tracks. |
 | JSON | `GET /engines` (every engine, with why one can't run), `GET /limits` (upload length and size), `POST /cancel_track`, `POST /track_jobs`, `POST /track_disagreement`, `POST /rename_object`, `POST /object_names`, `POST /export` |
 
@@ -220,7 +232,7 @@ python tools/track_cache_e2e.py --api http://127.0.0.1:7373   # live backend (us
 
 `tools/track_cache_e2e.py` uploads its own synthetic clips and deletes them when it
 finishes. It also has `--after-restart`, `--correction`, `--responsive`,
-`--absent` and `--bounded` checks.
+`--absent`, `--bounded` and `--undo` checks.
 
 ## Licences and credits
 

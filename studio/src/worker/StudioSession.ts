@@ -42,7 +42,7 @@ import {
 } from '~/api/trackStream';
 import {OpfsKv} from '~/local/kv';
 import {LocalEngine, type LocalOptions} from '~/local/LocalEngine';
-import {OfflineService} from '~/local/offlineStores';
+import {OfflineService, SeedStore} from '~/local/offlineStores';
 import {localTrackEntry, seedsKey, variantModel, withLocalTracks, type LocalTrackEntry} from '~/local/localTracks';
 import type {ExportedObject, ExportKind} from '~/state/maskExport';
 import {buildExport} from './maskExports';
@@ -74,6 +74,10 @@ import type {StudioSessionObjectTracksQuery} from './__generated__/StudioSession
 import type {StudioSessionRemoveObjectMutation} from './__generated__/StudioSessionRemoveObjectMutation.graphql';
 import type {StudioSessionSetRangeMutation} from './__generated__/StudioSessionSetRangeMutation.graphql';
 import type {StudioSessionStartMutation} from './__generated__/StudioSessionStartMutation.graphql';
+import type {StudioSessionUndoMutation} from './__generated__/StudioSessionUndoMutation.graphql';
+import type {StudioSessionRedoMutation} from './__generated__/StudioSessionRedoMutation.graphql';
+import type {StudioSessionRestoreVersionMutation} from './__generated__/StudioSessionRestoreVersionMutation.graphql';
+import type {StudioSessionMoveClicksMutation} from './__generated__/StudioSessionMoveClicksMutation.graphql';
 
 type RleList = ReadonlyArray<{
   readonly objectId: number;
@@ -110,6 +114,22 @@ const START = graphql`
           start
           end
           state
+        }
+        history {
+          canUndo
+          canRedo
+          versions {
+            key
+            engine
+            model
+            created
+            elapsedS
+            nFrames
+            clicks
+            seedFrames
+            bounded
+            current
+          }
         }
       }
     }
@@ -189,6 +209,22 @@ const CLEAR_TRACK = graphql`
         end
         state
       }
+      history {
+        canUndo
+        canRedo
+        versions {
+          key
+          engine
+          model
+          created
+          elapsedS
+          nFrames
+          clicks
+          seedFrames
+          bounded
+          current
+        }
+      }
     }
   }
 `;
@@ -219,6 +255,210 @@ const SET_RANGE = graphql`
         start
         end
         state
+      }
+      history {
+        canUndo
+        canRedo
+        versions {
+          key
+          engine
+          model
+          created
+          elapsedS
+          nFrames
+          clicks
+          seedFrames
+          bounded
+          current
+        }
+      }
+    }
+  }
+`;
+
+const UNDO = graphql`
+  mutation StudioSessionUndoMutation($input: SeedHistoryInput!) {
+    undoSeeds(input: $input) {
+      objectId
+      state
+      frames
+      nFrames
+      seeds {
+        frameIndex
+        points
+        labels
+        mask {
+          size
+          counts
+        }
+      }
+      tracks {
+        engine
+        state
+        frames
+        nFrames
+      }
+      ranges {
+        start
+        end
+        state
+      }
+      history {
+        canUndo
+        canRedo
+        versions {
+          key
+          engine
+          model
+          created
+          elapsedS
+          nFrames
+          clicks
+          seedFrames
+          bounded
+          current
+        }
+      }
+    }
+  }
+`;
+
+const REDO = graphql`
+  mutation StudioSessionRedoMutation($input: SeedHistoryInput!) {
+    redoSeeds(input: $input) {
+      objectId
+      state
+      frames
+      nFrames
+      seeds {
+        frameIndex
+        points
+        labels
+        mask {
+          size
+          counts
+        }
+      }
+      tracks {
+        engine
+        state
+        frames
+        nFrames
+      }
+      ranges {
+        start
+        end
+        state
+      }
+      history {
+        canUndo
+        canRedo
+        versions {
+          key
+          engine
+          model
+          created
+          elapsedS
+          nFrames
+          clicks
+          seedFrames
+          bounded
+          current
+        }
+      }
+    }
+  }
+`;
+
+const RESTORE_VERSION = graphql`
+  mutation StudioSessionRestoreVersionMutation($input: RestoreVersionInput!) {
+    restoreVersion(input: $input) {
+      objectId
+      state
+      frames
+      nFrames
+      seeds {
+        frameIndex
+        points
+        labels
+        mask {
+          size
+          counts
+        }
+      }
+      tracks {
+        engine
+        state
+        frames
+        nFrames
+      }
+      ranges {
+        start
+        end
+        state
+      }
+      history {
+        canUndo
+        canRedo
+        versions {
+          key
+          engine
+          model
+          created
+          elapsedS
+          nFrames
+          clicks
+          seedFrames
+          bounded
+          current
+        }
+      }
+    }
+  }
+`;
+
+const MOVE_CLICKS = graphql`
+  mutation StudioSessionMoveClicksMutation($input: MoveClicksInput!) {
+    moveClicks(input: $input) {
+      objectId
+      state
+      frames
+      nFrames
+      seeds {
+        frameIndex
+        points
+        labels
+        mask {
+          size
+          counts
+        }
+      }
+      tracks {
+        engine
+        state
+        frames
+        nFrames
+      }
+      ranges {
+        start
+        end
+        state
+      }
+      history {
+        canUndo
+        canRedo
+        versions {
+          key
+          engine
+          model
+          created
+          elapsedS
+          nFrames
+          clicks
+          seedFrames
+          bounded
+          current
+        }
       }
     }
   }
@@ -266,6 +506,22 @@ const OBJECT_TRACKS = graphql`
         start
         end
         state
+      }
+      history {
+        canUndo
+        canRedo
+        versions {
+          key
+          engine
+          model
+          created
+          elapsedS
+          nFrames
+          clicks
+          seedFrames
+          bounded
+          current
+        }
       }
     }
   }
@@ -377,7 +633,8 @@ export default class StudioSession {
       if (!OpfsKv.available()) {
         throw new Error('this browser has no Origin Private File System, which studio needs without a backend');
       }
-      this._offline = new OfflineService(new OpfsKv());
+      // a job's objects are never swapped under it by an undo
+      this._offline = new OfflineService(new OpfsKv(), () => this._local.heldIds());
       this._local.useStore(this._offline.tracks);
     } else {
       this._env = createEnvironment(endpoint);
@@ -472,15 +729,13 @@ export default class StudioSession {
       // no backend: the browser engine answers, and its mask is the approved one
       const video = this._storeKey!;
       if (points.length === 0) {
-        await this._offline.clearFrame(video, objectId, frameIndex);
+        await this._offline.clearFrame(video, objectId, frameIndex, this._variant);
         this._seedMasks.get(objectId)?.delete(frameIndex);
         list = [];
       } else {
         const {rle} = await this._local.click(frameIndex, points);
-        if (absent) {
-          await this._offline.endAbsenceAt(video, objectId, frameIndex);
-        }
-        await this._offline.recordPoints(video, objectId, frameIndex, points, rle);
+        // a positive inside an absent range ends it, in the same undo step as the click
+        await this._offline.recordPoints(video, objectId, frameIndex, points, rle, this._variant, absent);
         list = [{objectId, rleMask: rle}];
       }
     } else if (points.length === 0) {
@@ -517,6 +772,10 @@ export default class StudioSession {
       this._ranges.set(objectId, endAbsenceAt(this._ranges.get(objectId), frameIndex));
     }
     this._setSeedPoints(t, frameIndex, points);
+    if (this._offline == null && this._storeKey != null && points.length > 0 && !this._local.heldIds().has(objectId)) {
+      // back on clicks a kept browser track was made from (a click taken off): it is current again
+      await this._local.store.adopt(this._storeKey, objectId, seedsKey(this._seedPoints.get(objectId) ?? new Map(), this._ranges.get(objectId) ?? []), this._variant);
+    }
     // addPoints answers with every object on this frame; only the clicked
     // object's mask is new. The others' (from tracks) stay as they are.
     const mine = list.find(m => m.objectId === objectId);
@@ -583,7 +842,7 @@ export default class StudioSession {
   async setRange(objectId: number, start: number, end: number, state: 'absent' | null): Promise<ServerObject> {
     let result: ServerObject | undefined;
     if (this._offline != null) {
-      await this._offline.setRange(this._storeKey!, objectId, start, end, state);
+      await this._offline.setRange(this._storeKey!, objectId, start, end, state, this._variant);
       result = (await this.objectTracks()).find(o => o.objectId === objectId);
     } else {
       const res = await mutate<StudioSessionSetRangeMutation>(this.env, SET_RANGE, {
@@ -608,6 +867,139 @@ export default class StudioSession {
       await this.repaint([objectId]);
     }
     return result;
+  }
+
+  // -- undo, versions and moving clicks (issue #18) -----------------------------
+
+  /**
+   * Undo the object's last seed change. Its earlier track comes back from its
+   * kept version with no job when it has one (the backend's tracks/versions.py,
+   * or this browser's store), and the preview shows it at once.
+   */
+  async undo(objectId: number): Promise<ServerObject> {
+    return this._seedStep(objectId, 'undo');
+  }
+
+  async redo(objectId: number): Promise<ServerObject> {
+    return this._seedStep(objectId, 'redo');
+  }
+
+  private async _seedStep(objectId: number, which: 'undo' | 'redo'): Promise<ServerObject> {
+    let o: ServerObject;
+    if (this._offline != null) {
+      const video = this._storeKey!;
+      o = which === 'undo' ? await this._offline.undo(video, objectId, this._variant) : await this._offline.redo(video, objectId, this._variant);
+    } else {
+      const input = {sessionId: this.sessionId, objectId};
+      o =
+        which === 'undo'
+          ? (plain((await mutate<StudioSessionUndoMutation>(this.env, UNDO, {input})).undoSeeds) as ServerObject)
+          : (plain((await mutate<StudioSessionRedoMutation>(this.env, REDO, {input})).redoSeeds) as ServerObject);
+      o = await this._afterSeedChange(o);
+    }
+    await this._showChanged([o]);
+    return o;
+  }
+
+  /** Go back to one of the object's kept versions from its list (undoable). */
+  async restoreVersion(objectId: number, key: string, engine: string): Promise<ServerObject> {
+    let o: ServerObject;
+    if (this._offline != null) {
+      o = await this._offline.restoreVersion(this._storeKey!, objectId, key, this._variant);
+    } else {
+      if (engine === BROWSER_ENGINE) {
+        throw new Error(`${engineLabel(BROWSER_ENGINE)} versions come back with undo here; the list restores the backend's`);
+      }
+      const res = await mutate<StudioSessionRestoreVersionMutation>(this.env, RESTORE_VERSION, {
+        input: {sessionId: this.sessionId, objectId, key},
+      });
+      o = await this._afterSeedChange(plain(res.restoreVersion) as ServerObject);
+    }
+    await this._showChanged([o]);
+    return o;
+  }
+
+  /**
+   * Move one object's clicks on a frame to another object (clicks that landed
+   * on the wrong one): one undo step for each. Needs the backend, whose SAM 2
+   * segments them for the target; with no backend the browser engine does.
+   */
+  async moveClicks(frameIndex: number, fromId: number, toId: number, engine?: string): Promise<ServerObject[]> {
+    if (absentAt(this._ranges.get(toId), frameIndex)) {
+      throw new Error(`frame ${frameIndex + 1} is marked absent for that object: unmark it to move clicks there`);
+    }
+    let out: ServerObject[];
+    if (this._offline != null) {
+      const video = this._storeKey!;
+      const moving = this._seedPoints.get(fromId)?.get(frameIndex) ?? [];
+      if (moving.length === 0) {
+        throw new Error(`no clicks on frame ${frameIndex + 1} to move`);
+      }
+      const held = this._local.heldIds();
+      if (held.has(fromId) || held.has(toId)) {
+        throw new Error('one of these objects is being tracked: wait for its job, or cancel it');
+      }
+      const points = [...(this._seedPoints.get(toId)?.get(frameIndex) ?? []), ...moving];
+      const {rle} = await this._local.click(frameIndex, points);
+      await this._offline.clearFrame(video, fromId, frameIndex, this._variant);
+      await this._offline.recordPoints(video, toId, frameIndex, points, rle, this._variant);
+      out = [
+        await this._offline.objectInfo(video, fromId, this._variant, held),
+        await this._offline.objectInfo(video, toId, this._variant, held),
+      ];
+    } else {
+      const res = await mutate<StudioSessionMoveClicksMutation>(this.env, MOVE_CLICKS, {
+        input: {sessionId: this.sessionId, frameIndex, fromObjectId: fromId, toObjectId: toId, engine: engine ?? null},
+      });
+      out = [];
+      for (const o of plain(res.moveClicks) as ServerObject[]) {
+        out.push(await this._afterSeedChange(o));
+      }
+    }
+    await this._showChanged(out);
+    return out;
+  }
+
+  /**
+   * With a backend: a browser track kept for the object's clicks as they now
+   * are becomes current again (this tab's store), and the object gets its
+   * browser track state.
+   */
+  private async _afterSeedChange(o: ServerObject): Promise<ServerObject> {
+    if (this._storeKey != null && !this._local.heldIds().has(o.objectId) && o.seeds.some(s => s.points.length > 0)) {
+      await this._local.store.adopt(this._storeKey, o.objectId, seedsKey(seedPointsOf(o), normalizeRanges(o.ranges)), this._variant);
+    }
+    return (await this._withLocal([o]))[0];
+  }
+
+  /** Show objects whose seeds changed under the preview: their clicks, seed masks, and cached track. */
+  private async _showChanged(objects: ServerObject[]): Promise<void> {
+    for (const o of objects) {
+      this._ranges.set(o.objectId, normalizeRanges(o.ranges));
+      const t = this._tracklet(o.objectId);
+      const now = seedPointsOf(o);
+      for (const f of [...(this._seedPoints.get(o.objectId)?.keys() ?? [])]) {
+        if (!now.has(f)) {
+          this._setSeedPoints(t, f, []);
+        }
+      }
+      for (const [f, pts] of now) {
+        this._setSeedPoints(t, f, pts);
+      }
+      const masks = new Map<number, Mask>();
+      for (const s of o.seeds) {
+        const m = s.mask == null ? undefined : toMask(s.mask);
+        if (m != null) {
+          masks.set(s.frameIndex, m);
+        }
+      }
+      this._seedMasks.set(o.objectId, masks);
+      this._keepSeedMasksOnly(t);
+    }
+    this._render(true);
+    if (this._sessionId != null) {
+      await this.repaint(objects.map(o => o.objectId));
+    }
   }
 
   /** The objects with their seeds, from the backend (or, with none, from this browser). */
@@ -883,6 +1275,7 @@ export default class StudioSession {
     }
     // taken at the start, as the backend does: clicks edited mid-job leave the track stale
     const keys = new Map<number, string>();
+    const records = new Map<number, Record<string, unknown> | null>();
     const variant = this._local.variant;
     const jobObjects = selected.map(id => {
       const o = byId.get(id)!;
@@ -899,6 +1292,14 @@ export default class StudioSession {
     // one pass per window between absent ranges, each from its own seeds; with
     // no ranges that is one pass over the whole clip, as before ranges existed.
     // Frames outside every seeded window get no mask: empty.
+    if (this._offline != null) {
+      for (const id of selected) {
+        // so the list can restore its version; a click that came in since makes
+        // the record another set of clicks, which the version must not claim
+        const record = await this._offline.seeds.record(video, id);
+        records.set(id, SeedStore.recordKey(record) === keys.get(id) ? record : null);
+      }
+    }
     const units = planUnits(jobObjects).map(u => ({
       objects: u.objects.map((o): TrackObject => ({id: o.id, seeds: o.seeds})),
       window: u.window.lo === 0 && u.window.hi == null ? undefined : u.window,
@@ -938,7 +1339,15 @@ export default class StudioSession {
     if (error == null && !canceled) {
       for (const id of selected) {
         const m = masks.get(id)!;
-        await this._local.store.put(video, {objectId: id, seedsKey: keys.get(id)!, variant, masks: m, nFrames: m.size});
+        await this._local.store.put(video, {
+          objectId: id,
+          seedsKey: keys.get(id)!,
+          variant,
+          masks: m,
+          nFrames: m.size,
+          record: records.get(id) ?? null,
+          created: new Date().toISOString(),
+        });
       }
     }
     const outcome =

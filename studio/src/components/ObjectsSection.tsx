@@ -1,12 +1,15 @@
 // sam-ui (Apache-2.0). New file, not from SAM 2.
 //
 // The Objects list: one row per object with Meta's colour-block thumbnail,
-// its track state, and its own Clear track / Remove actions.
-import {Add, Edit, TrashCan, Reset} from '@carbon/icons-react';
+// its track state, and its own Clear track / Remove actions. The selected
+// object also has Undo / Redo (Cmd-Z / Shift-Cmd-Z), its kept track versions,
+// and "Move these clicks to" for clicks on this frame that went to it by mistake.
+import {Add, Edit, Redo, TrashCan, Reset, Undo} from '@carbon/icons-react';
 import {useEffect, useRef, useState} from 'react';
 import {OBJECT_LIMIT} from '~/config';
-import {engineLabel} from '~/state/engines';
+import {BROWSER_ENGINE, engineLabel} from '~/state/engines';
 import {NAME_MAX, objectName} from '~/state/fileNames';
+import {moveTargets, parseCreated, undoBlock, versionLabel} from '~/state/history';
 import {clearTarget, isTracking, seedFrames, type StudioObject} from '~/state/objects';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
 
@@ -97,6 +100,94 @@ function ObjectName({o, onRename}: {o: StudioObject; onRename: (name: string) =>
   );
 }
 
+/** The selected object's Undo / Redo, its kept versions, and moving this frame's clicks elsewhere. */
+function HistoryControls({o, session}: {o: StudioObject; session: StudioSessionApi}) {
+  const [open, setOpen] = useState(false);
+  const {state, frame, busy} = session;
+  const targets = moveTargets(state, o.id, frame);
+  const versions = o.history.versions;
+  // with a backend, the list restores the backend's versions; the browser's come back with undo
+  const restorable = (engine: string) => !(session.backend && engine === BROWSER_ENGINE);
+  const blocked = (which: 'undo' | 'redo') => {
+    const why = undoBlock(o, which);
+    return why != null && (isTracking(o) || session.pending === 0) ? why : null;
+  };
+  return (
+    <div className="object-history" onClick={e => e.stopPropagation()}>
+      <div className="object-actions">
+        <button
+          className="link-button"
+          disabled={busy || blocked('undo') != null}
+          onClick={() => session.stepSeeds('undo', o.id)}
+          title={blocked('undo') ?? 'Undo the last click or range change (⌘Z); a kept track comes back with no re-track'}>
+          <Undo size={14} /> Undo
+        </button>
+        <button
+          className="link-button"
+          disabled={busy || blocked('redo') != null}
+          onClick={() => session.stepSeeds('redo', o.id)}
+          title={blocked('redo') ?? 'Redo (⇧⌘Z)'}>
+          <Redo size={14} /> Redo
+        </button>
+        <button
+          className="link-button"
+          aria-expanded={open}
+          disabled={versions.length === 0}
+          onClick={() => setOpen(v => !v)}
+          title={versions.length === 0 ? 'No track of this object is kept yet' : 'Tracks kept for earlier clicks'}>
+          Versions ({versions.length})
+        </button>
+      </div>
+      {targets.length > 0 && (
+        <label className="move-clicks">
+          <span>Move these clicks to</span>
+          <select
+            value=""
+            disabled={busy}
+            aria-label={`Move ${objectName(o)}'s clicks on frame ${frame + 1} to another object`}
+            onChange={e => e.target.value !== '' && session.moveClicks(Number(e.target.value))}>
+            <option value="" disabled>
+              object…
+            </option>
+            {targets.map(t => {
+              const target = state.objects.find(x => x.id === t.id);
+              return (
+                <option key={t.id} value={t.id} disabled={t.blocked != null}>
+                  {target != null ? objectName(target) : `Object ${t.id}`}
+                  {t.blocked != null ? ` (${t.blocked})` : ''}
+                </option>
+              );
+            })}
+          </select>
+        </label>
+      )}
+      {open && versions.length > 0 && (
+        <ul className="version-list">
+          {versions.map(v => (
+            <li key={`${v.engine}:${v.key}`}>
+              <button
+                className={v.current ? 'version current' : 'version'}
+                disabled={busy || v.current || isTracking(o) || !restorable(v.engine)}
+                onClick={() => session.restoreVersion(o.id, v.key, v.engine)}
+                title={
+                  v.current
+                    ? 'The clicks the object has now'
+                    : !restorable(v.engine)
+                      ? `${engineLabel(v.engine)} tracks come back with Undo`
+                      : `Go back to these clicks and this track${parseCreated(v.created) != null ? `, tracked ${parseCreated(v.created)!.toLocaleString()}` : ''} (undoable)`
+                }>
+                <span>{versionLabel(v)}</span>
+                {v.bounded && <span className="muted">near corrections</span>}
+                {v.current && <span className="badge tracked">current</span>}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function describe(o: StudioObject): string {
   const seeds = seedFrames(o);
   const clicks =
@@ -173,6 +264,7 @@ export default function ObjectsSection({session}: Props) {
                   </div>
                 )}
                 {o.error != null && <div className="object-error">Track failed: {o.error}</div>}
+                {active && <HistoryControls o={o} session={session} />}
                 <div className="object-actions" onClick={e => e.stopPropagation()}>
                   {(() => {
                     const target = clearTarget(o, state.engine);

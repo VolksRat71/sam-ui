@@ -1,5 +1,5 @@
 /**
- * @generated SignedSource<<d415c16dd7a3cbbefafea377eee9fc57>>
+ * @generated SignedSource<<8cf5fd4a0cd7df41012f367ecbdc8ab0>>
  * @lightSyntaxTransform
  * @nogrep
  */
@@ -19,6 +19,22 @@ export type StudioSessionStartMutation$data = {
   readonly startSession: {
     readonly objects: ReadonlyArray<{
       readonly frames: ReadonlyArray<number> | null | undefined;
+      readonly history: {
+        readonly canRedo: boolean;
+        readonly canUndo: boolean;
+        readonly versions: ReadonlyArray<{
+          readonly bounded: boolean;
+          readonly clicks: number;
+          readonly created: string | null | undefined;
+          readonly current: boolean;
+          readonly elapsedS: number | null | undefined;
+          readonly engine: string;
+          readonly key: string;
+          readonly model: string;
+          readonly nFrames: number | null | undefined;
+          readonly seedFrames: number;
+        }>;
+      };
       readonly nFrames: number;
       readonly objectId: number;
       readonly ranges: ReadonlyArray<{
@@ -80,7 +96,14 @@ v3 = {
   "name": "nFrames",
   "storageKey": null
 },
-v4 = [
+v4 = {
+  "alias": null,
+  "args": null,
+  "kind": "ScalarField",
+  "name": "engine",
+  "storageKey": null
+},
+v5 = [
   {
     "alias": null,
     "args": [
@@ -185,13 +208,7 @@ v4 = [
             "name": "tracks",
             "plural": true,
             "selections": [
-              {
-                "alias": null,
-                "args": null,
-                "kind": "ScalarField",
-                "name": "engine",
-                "storageKey": null
-              },
+              (v4/*: any*/),
               (v1/*: any*/),
               (v2/*: any*/),
               (v3/*: any*/)
@@ -223,6 +240,100 @@ v4 = [
               (v1/*: any*/)
             ],
             "storageKey": null
+          },
+          {
+            "alias": null,
+            "args": null,
+            "concreteType": "SeedHistory",
+            "kind": "LinkedField",
+            "name": "history",
+            "plural": false,
+            "selections": [
+              {
+                "alias": null,
+                "args": null,
+                "kind": "ScalarField",
+                "name": "canUndo",
+                "storageKey": null
+              },
+              {
+                "alias": null,
+                "args": null,
+                "kind": "ScalarField",
+                "name": "canRedo",
+                "storageKey": null
+              },
+              {
+                "alias": null,
+                "args": null,
+                "concreteType": "TrackVersion",
+                "kind": "LinkedField",
+                "name": "versions",
+                "plural": true,
+                "selections": [
+                  {
+                    "alias": null,
+                    "args": null,
+                    "kind": "ScalarField",
+                    "name": "key",
+                    "storageKey": null
+                  },
+                  (v4/*: any*/),
+                  {
+                    "alias": null,
+                    "args": null,
+                    "kind": "ScalarField",
+                    "name": "model",
+                    "storageKey": null
+                  },
+                  {
+                    "alias": null,
+                    "args": null,
+                    "kind": "ScalarField",
+                    "name": "created",
+                    "storageKey": null
+                  },
+                  {
+                    "alias": null,
+                    "args": null,
+                    "kind": "ScalarField",
+                    "name": "elapsedS",
+                    "storageKey": null
+                  },
+                  (v3/*: any*/),
+                  {
+                    "alias": null,
+                    "args": null,
+                    "kind": "ScalarField",
+                    "name": "clicks",
+                    "storageKey": null
+                  },
+                  {
+                    "alias": null,
+                    "args": null,
+                    "kind": "ScalarField",
+                    "name": "seedFrames",
+                    "storageKey": null
+                  },
+                  {
+                    "alias": null,
+                    "args": null,
+                    "kind": "ScalarField",
+                    "name": "bounded",
+                    "storageKey": null
+                  },
+                  {
+                    "alias": null,
+                    "args": null,
+                    "kind": "ScalarField",
+                    "name": "current",
+                    "storageKey": null
+                  }
+                ],
+                "storageKey": null
+              }
+            ],
+            "storageKey": null
           }
         ],
         "storageKey": null
@@ -237,7 +348,7 @@ return {
     "kind": "Fragment",
     "metadata": null,
     "name": "StudioSessionStartMutation",
-    "selections": (v4/*: any*/),
+    "selections": (v5/*: any*/),
     "type": "Mutation",
     "abstractKey": null
   },
@@ -246,19 +357,19 @@ return {
     "argumentDefinitions": (v0/*: any*/),
     "kind": "Operation",
     "name": "StudioSessionStartMutation",
-    "selections": (v4/*: any*/)
+    "selections": (v5/*: any*/)
   },
   "params": {
-    "cacheID": "d374cb77e32ae36fbe7afc107f8a838e",
+    "cacheID": "68e5f0c92e93e37084be6b597085b367",
     "id": null,
     "metadata": {},
     "name": "StudioSessionStartMutation",
     "operationKind": "mutation",
-    "text": "mutation StudioSessionStartMutation(\n  $input: StartSessionInput!\n) {\n  startSession(input: $input) {\n    sessionId\n    objects {\n      objectId\n      state\n      frames\n      nFrames\n      seeds {\n        frameIndex\n        points\n        labels\n        mask {\n          size\n          counts\n        }\n      }\n      tracks {\n        engine\n        state\n        frames\n        nFrames\n      }\n      ranges {\n        start\n        end\n        state\n      }\n    }\n  }\n}\n"
+    "text": "mutation StudioSessionStartMutation(\n  $input: StartSessionInput!\n) {\n  startSession(input: $input) {\n    sessionId\n    objects {\n      objectId\n      state\n      frames\n      nFrames\n      seeds {\n        frameIndex\n        points\n        labels\n        mask {\n          size\n          counts\n        }\n      }\n      tracks {\n        engine\n        state\n        frames\n        nFrames\n      }\n      ranges {\n        start\n        end\n        state\n      }\n      history {\n        canUndo\n        canRedo\n        versions {\n          key\n          engine\n          model\n          created\n          elapsedS\n          nFrames\n          clicks\n          seedFrames\n          bounded\n          current\n        }\n      }\n    }\n  }\n}\n"
   }
 };
 })();
 
-(node as any).hash = "2f0b0d2baf3a95a7b8233121b663a74b";
+(node as any).hash = "8a33082fe6a22ea082d45df52657a25d";
 
 export default node;

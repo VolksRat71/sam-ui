@@ -13,6 +13,7 @@
 // authority: after each call the UI syncs from objectTracks, and the reducer's
 // own transitions only keep the list right in between.
 import {THEME_COLORS} from '@/theme/colors';
+import {EMPTY_HISTORY, type SeedHistory, type ServerHistory, normalizeHistory} from './history';
 import {type FrameRange, normalizeRanges, rangesKey} from './ranges';
 
 export type TrackState = 'untracked' | 'stale' | 'tracked' | 'tracking';
@@ -49,6 +50,8 @@ export type ServerObject = {
    * backend from before ranges fails the whole query rather than sending none.
    */
   readonly ranges?: ReadonlyArray<{readonly start: number; readonly end: number; readonly state: string}> | null;
+  /** What the object can undo and redo, and its kept track versions (state/history.ts). */
+  readonly history?: ServerHistory | null;
 };
 
 export type EngineTrack = {
@@ -73,6 +76,8 @@ export type StudioObject = {
   points: Record<number, NormPoint[]>;
   /** Frames where the object is marked absent: empty, never tracked or exported. */
   ranges: FrameRange[];
+  /** Undo, redo and the kept track versions. */
+  history: SeedHistory;
   /** Held by one of this page's running jobs on the current engine. */
   running: boolean;
   /** Why this object's last track failed. */
@@ -121,6 +126,8 @@ export type Action =
   | {type: 'setPoints'; id: number; frame: number; points: NormPoint[]}
   /** The object's absent ranges changed (marked or unmarked). */
   | {type: 'setRanges'; id: number; ranges: FrameRange[]}
+  /** The backend's answer to an undo, redo, restore or move: the object as it now is. */
+  | {type: 'objectChanged'; object: ServerObject}
   | {type: 'trackStarted'; key: number; ids: number[]; engine?: string}
   | {type: 'trackAttached'; key: number; jobId: string | null; selected: number[]; bounded?: number[]}
   | {type: 'trackProgress'; key: number}
@@ -201,6 +208,7 @@ export function fromServer(o: ServerObject, engine: string = DEFAULT_ENGINE): St
       engines,
       points: seedsToPoints(o.seeds),
       ranges: normalizeRanges(o.ranges),
+      history: normalizeHistory(o.history),
       running: false,
       error: null,
     },
@@ -400,6 +408,7 @@ export function reducer(state: StudioState, action: Action): StudioState {
         engines: {},
         points: {},
         ranges: [],
+        history: EMPTY_HISTORY,
         running: false,
         error: null,
       };
@@ -444,6 +453,14 @@ export function reducer(state: StudioState, action: Action): StudioState {
         }
         return viewed({...o, ranges, engines, error: null}, state.engine);
       });
+
+    case 'objectChanged': {
+      const s = action.object;
+      if (!state.objects.some(o => o.id === s.objectId)) {
+        return {...state, objects: [...state.objects, fromServer(s, state.engine)].sort(byId)};
+      }
+      return update(state, s.objectId, o => ({...fromServer(s, state.engine), name: o.name, running: o.running}));
+    }
 
     case 'trackStarted': {
       const ids = [...new Set(action.ids)].sort((a, b) => a - b);

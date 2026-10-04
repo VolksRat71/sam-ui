@@ -101,6 +101,16 @@ export type StudioMethods = {
   /** Mark frames start-end of an object absent, or clear them (state null). */
   setRange: {args: {objectId: number; start: number; end: number; state: 'absent' | null}; result: ServerObject};
   objectTracks: {args: Record<string, never>; result: ServerObject[]};
+  /** Undo or redo one object's last seed change; a kept track of the restored clicks comes back with no job. */
+  undo: {args: {objectId: number}; result: ServerObject};
+  redo: {args: {objectId: number}; result: ServerObject};
+  /** Go back to one of the object's kept versions (the list's key, and the engine that made it). */
+  restoreVersion: {args: {objectId: number; key: string; engine: string}; result: ServerObject};
+  /**
+   * Move one object's clicks on a frame to another object; answers both objects.
+   * `engine`: the one on screen, as for setPoints (a missing one counts as SAM 2).
+   */
+  moveClicks: {args: {frameIndex: number; fromId: number; toId: number; engine?: string}; result: ServerObject[]};
   /**
    * Run a track job for these ids (the backend skips any another job holds);
    * resolves when its stream closes. `key` names the job in events.

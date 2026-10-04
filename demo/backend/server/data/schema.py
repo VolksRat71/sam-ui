@@ -4,6 +4,7 @@
 # LICENSE file in the root directory of this source tree.
 # Modified by sam-ui: objectTracks query, clearTrack mutation, startSession returns known objects and stays inside DATA_PATH.
 # Modified by sam-ui: setObjectRange mutation (absent ranges).
+# Modified by sam-ui: undoSeeds, redoSeeds, restoreVersion and moveClicks mutations.
 
 import hashlib
 import os
@@ -34,11 +35,14 @@ from data.data_types import (
     DeleteVideoInput,
     CloseSession,
     CloseSessionInput,
+    MoveClicksInput,
     ObjectTrack,
     RemoveObjectInput,
+    RestoreVersionInput,
     RLEMask,
     RLEMaskForObject,
     RLEMaskListOnFrame,
+    SeedHistoryInput,
     SetObjectRangeInput,
     StartSession,
     StartSessionInput,
@@ -194,6 +198,38 @@ class Mutation:
                 input.session_id, input.object_id, input.start, input.end, input.state
             )
         )
+
+    @strawberry.mutation
+    def undo_seeds(self, input: SeedHistoryInput, info: strawberry.Info) -> ObjectTrack:
+        """sam-ui: undo the object's last seed change (a click, a cleared frame,
+        a range). Its earlier track comes back from its version, with no job,
+        when it has one. Refused while a job tracks the object."""
+        inference_api: InferenceAPI = info.context["inference_api"]
+        return ObjectTrack.from_info(inference_api.undo_seeds(input.session_id, input.object_id))
+
+    @strawberry.mutation
+    def redo_seeds(self, input: SeedHistoryInput, info: strawberry.Info) -> ObjectTrack:
+        """sam-ui: redo the last seed change undone."""
+        inference_api: InferenceAPI = info.context["inference_api"]
+        return ObjectTrack.from_info(inference_api.redo_seeds(input.session_id, input.object_id))
+
+    @strawberry.mutation
+    def restore_version(self, input: RestoreVersionInput, info: strawberry.Info) -> ObjectTrack:
+        """sam-ui: go back to one of the object's kept versions (undoable)."""
+        inference_api: InferenceAPI = info.context["inference_api"]
+        return ObjectTrack.from_info(inference_api.restore_version(input.session_id, input.object_id, input.key))
+
+    @strawberry.mutation
+    def move_clicks(self, input: MoveClicksInput, info: strawberry.Info) -> List[ObjectTrack]:
+        """sam-ui: move one object's clicks on a frame to another object; one
+        undo step per object. Refused into the target's absent range."""
+        inference_api: InferenceAPI = info.context["inference_api"]
+        return [
+            ObjectTrack.from_info(o)
+            for o in inference_api.move_clicks(
+                input.session_id, input.frame_index, input.from_object_id, input.to_object_id, input.engine
+            )
+        ]
 
     @strawberry.mutation
     def close_session(
