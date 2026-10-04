@@ -5,17 +5,21 @@
 //     backend writes it for server tracks; studio zips it for browser tracks
 //     or with no backend);
 //   - Vector JSON (.zip): outlines per frame, contours.py's format;
-//   - Export to After Effects: not yet (disabled, and says why);
+//   - Export to After Effects (desktop app, a video opened from After Effects):
+//     a new comp with one masked layer per object (AeExportModal); elsewhere
+//     listed disabled, saying why;
 //   - and the video with effects, as before.
 // The mask items take every object with a track on the engine on screen.
 import {ChevronDown, Download} from '@carbon/icons-react';
 import {useEffect, useRef, useState} from 'react';
-import {BROWSER_ENGINE, RELEASES_URL} from '~/state/engines';
+import {aeBridge} from '~/lib/desktop';
+import {aeExportOffer} from '~/state/aeBridge';
+import {BROWSER_ENGINE} from '~/state/engines';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
 
-export type ExportChoice = 'videos' | 'folder' | 'vectors' | 'effects';
+export type ExportChoice = 'videos' | 'folder' | 'vectors' | 'ae' | 'effects';
 
-type Props = {session: StudioSessionApi; onChoose: (c: ExportChoice) => void};
+type Props = {session: StudioSessionApi; videoPath: string; onChoose: (c: ExportChoice) => void};
 
 /** A menu item that cannot be used yet: why on hover or focus, with a link when there is one. */
 function Unavailable({label, why, href}: {label: string; why: string; href?: string}) {
@@ -37,7 +41,7 @@ function Unavailable({label, why, href}: {label: string; why: string; href?: str
   );
 }
 
-export default function ExportMenu({session, onChoose}: Props) {
+export default function ExportMenu({session, videoPath, onChoose}: Props) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   const {state, meta} = session;
@@ -62,6 +66,7 @@ export default function ExportMenu({session, onChoose}: Props) {
     onChoose(c);
   };
   const noTracks = tracked === 0 ? 'Track an object first' : undefined;
+  const aeOffer = aeExportOffer({desktop: aeBridge() != null, backend: session.backend, videoPath, tracked});
   const folderHow =
     !session.backend || state.engine === BROWSER_ENGINE
       ? 'A zip of the working folder, built in the browser'
@@ -88,10 +93,13 @@ export default function ExportMenu({session, onChoose}: Props) {
             <span>Vector JSON (.zip)</span>
             <span className="muted">outlines per frame, for After Effects masks</span>
           </button>
-          {session.backend ? (
-            <Unavailable label="Export to After Effects" why="Coming soon, via the AE MCP." />
+          {aeOffer.kind === 'ready' ? (
+            <button className="menu-item" role="menuitem" onClick={() => choose('ae')}>
+              <span>Export to After Effects</span>
+              <span className="muted">a new comp, one masked layer per object</span>
+            </button>
           ) : (
-            <Unavailable label="Export to After Effects" why="Needs the desktop app." href={RELEASES_URL} />
+            <Unavailable label="Export to After Effects" why={aeOffer.why} href={aeOffer.href} />
           )}
           <div className="menu-sep" />
           <button className="menu-item" role="menuitem" onClick={() => choose('effects')}>

@@ -91,10 +91,11 @@ function App({media}: {media: MediaApi}) {
         offline={media.offline}
         onSelect={select}
         uploads={uploads}
+        onAdded={added}
         onDelete={setDeleting}
       />
     ),
-    [videos, current, media, select, uploads],
+    [videos, current, media, select, uploads, added],
   );
 
   const dialog =

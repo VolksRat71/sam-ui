@@ -3,15 +3,17 @@
 // The Media list: the backend's gallery videos plus this browser's uploads
 // (or, with no backend, the files opened into this browser and the bundled
 // samples), and an upload control. Picking a video starts a new session on it.
-// The upload itself is held above this section (media/uploads.ts), so it
-// survives the section being hidden or remounted.
-import {TrashCan, Upload} from '@carbon/icons-react';
-import {useRef} from 'react';
+// Uploads live above this section so they survive layout changes.
+// The desktop app can also open footage from the current After Effects project.
+import {Launch, TrashCan, Upload} from '@carbon/icons-react';
+import {useRef, useState} from 'react';
+import {aeBridge} from '~/lib/desktop';
 import {videoDisplayName} from '~/lib/uploadNames';
 import type {UploadApi} from '~/media/uploads';
 import {RELEASES_URL} from '~/state/engines';
 import {isDeletable} from '~/state/media';
 import type {VideoItem} from '~/workspace/useStudioSession';
+import AeOpenModal from './AeOpenModal';
 
 const ACCEPT = 'video/mp4,video/quicktime,.mp4,.mov';
 
@@ -24,13 +26,17 @@ type Props = {
   onSelect: (video: VideoItem) => void;
   /** The upload in flight, if any, and how to start one (App holds it). */
   uploads: UploadApi;
+  /** Register footage opened from After Effects and select it. */
+  onAdded: (video: VideoItem) => void;
   /** Ask to delete an upload (the app confirms it, above this pane). */
   onDelete: (video: VideoItem) => void;
 };
 
-export default function MediaSection({videos, current, locked, offline, onSelect, uploads, onDelete}: Props) {
+export default function MediaSection({videos, current, locked, offline, onSelect, uploads, onAdded, onDelete}: Props) {
   const input = useRef<HTMLInputElement>(null);
   const {uploading, error, notice, upload} = uploads;
+  const [fromAe, setFromAe] = useState(false);
+  const canAe = !offline && aeBridge() != null;
 
   return (
     <div className="media">
@@ -69,6 +75,20 @@ export default function MediaSection({videos, current, locked, offline, onSelect
           }}
         />
       </div>
+      {canAe && (
+        <button className="button subtle ae-open" disabled={locked} onClick={() => setFromAe(true)} title={locked ? 'Wait for the running track jobs' : undefined}>
+          <Launch size={16} /> Open from After Effects…
+        </button>
+      )}
+      {fromAe && (
+        <AeOpenModal
+          onClose={() => setFromAe(false)}
+          onOpened={v => {
+            setFromAe(false);
+            onAdded(v);
+          }}
+        />
+      )}
       {error != null && (
         <div className="media-error">
           {error.text}
