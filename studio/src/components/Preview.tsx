@@ -180,8 +180,9 @@ export default function Preview({session, mode, onModeChange}: Props) {
       if (rect == null) {
         return;
       }
-      const px = midX - (rect.left + rect.width / 2);
-      const py = midY - (rect.top + rect.height / 2);
+      // Scale about the old midpoint, then move it with the fingers.
+      const px = midX - dx - (rect.left + rect.width / 2);
+      const py = midY - dy - (rect.top + rect.height / 2);
       setView(v => panBy(zoomAt(v, factor, px, py, box.width, box.height), dx, dy, box.width, box.height));
     },
   });
@@ -269,7 +270,9 @@ export default function Preview({session, mode, onModeChange}: Props) {
                   className="point"
                   onClick={e => {
                     e.stopPropagation();
-                    session.removePoint(i);
+                    if (touch.allowsClick() && clickOk()) {
+                      session.removePoint(i);
+                    }
                   }}>
                   {/* a finger-sized target, on touch screens only (responsive.css) */}
                   <circle className="point-hit" cx={cx} cy={cy} r={22} />
