@@ -29,7 +29,11 @@ POST /rename_object {session_id, object_id, name}: name an object (trimmed, at
 POST /object_names {session_id}: {"names": {"<object_id>": name}} for the video.
 POST /export {session_id, out_dir, objects?, include_stale?, frames?, force?, engine?}:
   write tracked objects as a rotoscoping working folder (see tracks/export.py);
-  out_dir must be under SAM_UI_EXPORT_ROOT (default ~/Movies). 400 on a refusal.
+  out_dir (a string) must be under SAM_UI_EXPORT_ROOT (default ~/Movies/sam-ui),
+  and so must every path written or deleted inside it, links followed. force
+  replaces decision files and existing mattes; 400 on a refusal. The reply
+  gives out_dir back as asked and leaves out the source video's path (it stays
+  in the export's notes/sam-ui-export.json).
 
 The routes get everything through `resolve(session_id)`, so tests can mount
 them with a fake engine and no model.
@@ -211,12 +215,17 @@ def make_blueprint(resolve: Callable[[str], TrackContext], service: Optional[Tra
     def export_route() -> Response:
         data = request.json
         ctx = resolve(data["session_id"])
+        if not isinstance(data.get("out_dir"), str):
+            return jsonify({"error": "out_dir must be a string"}), 400
         try:
             manifest = export(ctx.service, ctx.video, ctx.path, data["out_dir"], objects=data.get("objects"),
                               include_stale=bool(data.get("include_stale")), frames=bool(data.get("frames")),
                               force=bool(data.get("force")), engine=data.get("engine"))
         except ExportError as err:
             return jsonify({"error": str(err)}), 400
-        return jsonify(manifest)
+        # the server's own paths stay on the server
+        reply = {k: v for k, v in manifest.items() if k != "video_path"}
+        reply["out_dir"] = data["out_dir"]
+        return jsonify(reply)
 
     return bp

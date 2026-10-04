@@ -18,16 +18,50 @@ with default names (object_<n>, palette colours).
 
 Frames are numbered from 1 in the working folder and from 0 in sam-ui, so
 sam-ui frame i is file (i + 1). Only tracked objects are exported unless
-include_stale; untracked ones are listed as skipped. Existing products.json /
-anchors.json / shots.json are decisions a person confirmed: they are not
-overwritten without force.
+include_stale; untracked ones are listed as skipped.
+
+What force gates: products.json / anchors.json / shots.json are decisions a
+person confirmed, and data/mattes_tracked/<pid> may hold mattes repaired by
+hand, so without force an existing decision file or a non-empty matte folder
+of an exported object is a refusal. With force they are replaced (the matte
+folder is deleted and refilled). sam-ui's own outputs are always rewritten:
+notes/sam-ui-export.json, and with frames the whole data/frames folder, which
+is replaced only once ffmpeg succeeds (clip.mp4 and data/review.json are
+written only when missing).
+
+Every path export writes or deletes must resolve, links followed, to inside
+the export root, and a matte folder it would delete must not be a link at all
+(nor a broken link where a folder belongs). All of it is checked before
+anything is written, so a refusal changes nothing, and checked again as each
+folder is used. Each file is written to a temp name beside it and os.replace'd
+into place, so a link or hard link planted meanwhile is replaced, never written
+through. For frames, data is opened once without following a link; ffmpeg
+fills a fresh hidden folder made through that descriptor, which then takes
+data/frames' place by rename, and the old folder is removed, all through the
+descriptor. So export never writes into, or clears, a data/frames or a data
+swapped for a link, and if data by path is no longer that folder after ffmpeg
+the frames are refused, not installed.
+
+What remains: ffmpeg itself writes by path, so a process that can write in
+the export root, reads the hidden folder's random name and swaps data mid-run
+could redirect those JPEG writes (the export then refuses). And the instant
+between a folder's re-check and its use, for data, notes and the matte
+folders (or a parent), could redirect that one mkdir, matte rmtree or file
+replace. Closing both needs every write made through directory descriptors.
 """
+import contextlib
+import functools
+import io
 import json
+import logging
 import os
 import re
 import shutil
+import stat
 import subprocess
+import tempfile
 import time
+import uuid
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -40,6 +74,7 @@ from tracks.store import STALE, TRACKED
 PALETTE = ["#b4ff00", "#ff4fa3", "#3fd0ff", "#ffb020", "#9b6bff", "#2fe38a", "#ff5a36", "#f2f25a"]
 ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
 DECISIONS = ("products.json", "anchors.json", "shots.json")
+logger = logging.getLogger(__name__)
 
 
 class ExportError(ValueError):
@@ -47,15 +82,94 @@ class ExportError(ValueError):
 
 
 def export_root() -> Path:
-    return Path(os.environ.get("SAM_UI_EXPORT_ROOT", str(Path.home() / "Movies"))).expanduser().resolve()
+    """Where exports may write: SAM_UI_EXPORT_ROOT, else ~/Movies/sam-ui (the
+    folder studio suggests). The desktop app sets it to the user's home, since
+    only its own window can reach that backend; a backend on a network keeps
+    the narrow default, so `force` cannot replace files across ~/Movies."""
+    default = Path.home() / "Movies" / "sam-ui"
+    return Path(os.environ.get("SAM_UI_EXPORT_ROOT", str(default))).expanduser().resolve()
+
+
+def _inside(root: Path, p: Path) -> bool:
+    """p, links followed, is root or under it (root is already resolved)."""
+    try:
+        real = p.resolve()
+    except (OSError, RuntimeError):  # a link loop: refused, not a 500
+        return False
+    return real == root or root in real.parents
 
 
 def _check_out(out_dir: str) -> Path:
     out = Path(out_dir).expanduser().resolve()
-    root = export_root()
-    if out != root and root not in out.parents:
-        raise ExportError(f"export folder {out} is outside the export root {root} (set SAM_UI_EXPORT_ROOT)")
+    if not _inside(export_root(), out):
+        # name only the folder asked for, never the server's own root
+        raise ExportError(f"export folder {out_dir!r} is outside the export root (set SAM_UI_EXPORT_ROOT)")
     return out
+
+
+def _guard(root: Path, out: Path, out_dir: str, p: Path) -> Path:
+    """p, or a refusal naming it relative to out_dir if it leads outside the root."""
+    if not _inside(root, p):
+        raise ExportError(f"{out_dir!r}: {p.relative_to(out).as_posix()} leads outside the export root")
+    return p
+
+
+def _matte_folder(root: Path, out: Path, out_dir: str, pid: str) -> Path:
+    """data/mattes_tracked/<pid>, which export deletes and refills: inside the
+    root and not a link, wherever the link points."""
+    mdir = _guard(root, out, out_dir, out / "data" / "mattes_tracked" / pid)
+    if mdir.is_symlink():
+        raise ExportError(f"{out_dir!r}: data/mattes_tracked/{pid} is a link; "
+                          "sam-ui only replaces its own matte folders")
+    return mdir
+
+
+def _check_targets(out: Path, out_dir: str, pids: List[str], frames: bool, force: bool) -> None:
+    """Refuse before writing: a path that leads outside the root, a linked
+    matte folder, a file where a folder belongs (or the reverse), or (without
+    force) a decision or matte that would be replaced. Refusals name paths
+    relative to out_dir, never where a link points."""
+    root = export_root()
+    mattes = [f"data/mattes_tracked/{pid}" for pid in pids]
+    folders = ["data", "data/mattes_tracked", "notes", *mattes] + (["data/frames"] if frames else [])
+    files = ["data/review.json", "notes/sam-ui-export.json", *DECISIONS] + (["data/clip.mp4"] if frames else [])
+    for rel in folders + files:
+        p = _guard(root, out, out_dir, out / rel)
+        if rel in folders and p.is_symlink() and not p.exists():
+            raise ExportError(f"{out_dir!r}: {rel} is a broken link")  # mkdir(exist_ok) would raise on it
+        if p.exists() and p.is_dir() != (rel in folders):
+            raise ExportError(f"{out_dir!r}: {rel} is {'a file, not a folder' if rel in folders else 'a folder'}")
+    if frames and (out / "data" / "frames").is_dir():
+        for p in (out / "data" / "frames").iterdir():
+            _guard(root, out, out_dir, p)
+    for pid in pids:
+        _matte_folder(root, out, out_dir, pid)
+    if not force:
+        clash = [n for n in DECISIONS if (out / n).exists()]
+        clash += [rel for rel in mattes if (out / rel).is_dir() and any((out / rel).iterdir())]
+        if clash:
+            # studio's checkbox for force is "Replace existing"
+            raise ExportError(f"{out_dir!r} already has {clash}; tick Replace existing (force) to replace them")
+
+
+@contextlib.contextmanager
+def _replacing(path: Path):
+    """A temp name beside path, os.replace'd onto path on success: a link or a
+    hard link already at path is replaced, never written through."""
+    tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        yield tmp
+        os.replace(tmp, path)
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            tmp.unlink()
+
+
+def _write_atomic(path: Path, data: bytes) -> None:
+    with _replacing(path) as tmp:
+        # O_EXCL: a fresh file, never one (or a link) already at the temp name
+        with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666), "wb") as f:
+            f.write(data)
 
 
 def _spec(obj_id: int, given: Optional[Dict], index: int) -> Dict:
@@ -74,10 +188,6 @@ def export(service, video: str, video_path: str, out_dir: str, objects: Optional
            engine: Optional[str] = None) -> Dict:
     out = _check_out(out_dir)
     engine = service.get_engine(engine).name if engine else service.default
-    if not force:
-        clash = [n for n in DECISIONS if (out / n).exists()]
-        if clash:
-            raise ExportError(f"{out} already has {clash}; pass force to replace them")
     wanted = sorted(int(o) for o in objects) if objects else service.seeds.objects(video)
     ok_states = (TRACKED, STALE) if include_stale else (TRACKED,)
     specs, skipped = {}, {}
@@ -90,20 +200,32 @@ def export(service, video: str, video_path: str, out_dir: str, objects: Optional
     ids = [s["id"] for s, _ in specs.values()]
     if len(set(ids)) != len(ids):
         raise ExportError(f"duplicate product ids {ids}")
+    _check_targets(out, out_dir, ids, frames, force)
 
-    (out / "data" / "mattes_tracked").mkdir(parents=True, exist_ok=True)
-    (out / "notes").mkdir(exist_ok=True)
+    # checked again as each folder is used: a link planted since is refused
+    root = export_root()
+    guard = functools.partial(_guard, root, out, out_dir)
+
+    def write(path: Path, data: bytes) -> None:
+        guard(path.parent)
+        _write_atomic(path, data)
+
+    out.mkdir(parents=True, exist_ok=True)  # resolved and checked by _check_out
+    for d in (out / "data", out / "data" / "mattes_tracked", out / "notes"):
+        guard(d).mkdir(exist_ok=True)
     products, anchors, provenance, n_frames = [], {}, {}, 0
     for o, (spec, info) in specs.items():
-        mdir = out / "data" / "mattes_tracked" / spec["id"]
+        mdir = _matte_folder(root, out, out_dir, spec["id"])
         if mdir.exists():
             shutil.rmtree(mdir)
-        mdir.mkdir(parents=True)
+        mdir.mkdir()
         size = None
         for frame, r in service.tracks.masks(video, o, engine):
             m = rle.decode(r)
             size = m.shape
-            Image.fromarray((m * 255).astype(np.uint8)).save(mdir / f"{frame + 1:05d}.png")
+            png = io.BytesIO()
+            Image.fromarray((m * 255).astype(np.uint8)).save(png, format="PNG")
+            write(mdir / f"{frame + 1:05d}.png", png.getvalue())
             n_frames = max(n_frames, frame + 1)
         h, w = size if size else (None, None)
         points = {}
@@ -119,32 +241,85 @@ def export(service, video: str, video_path: str, out_dir: str, objects: Optional
         provenance[spec["id"]] = {"object_id": o, "state": info["state"], "engine": info["engine"],
                                   "model": info["model"], "frames": info["frames"], "n_frames": info["n_frames"]}
 
-    (out / "products.json").write_text(json.dumps({"products": products}, indent=1))
-    (out / "anchors.json").write_text(json.dumps(anchors, indent=1))
-    (out / "shots.json").write_text(json.dumps({"cuts": [1], "unsure": []}, indent=1))
+    write(out / "products.json", json.dumps({"products": products}, indent=1).encode())
+    write(out / "anchors.json", json.dumps(anchors, indent=1).encode())
+    write(out / "shots.json", json.dumps({"cuts": [1], "unsure": []}, indent=1).encode())
     review = out / "data" / "review.json"
     if not review.exists():
-        review.write_text("{}")
+        write(review, b"{}")
     manifest = {"exported": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "video": video, "video_path": video_path,
                 "products": provenance, "skipped": {str(o): s for o, s in skipped.items()}, "n_frames": n_frames,
                 "frames_extracted": False}
     if frames:
-        manifest.update(_extract_frames(video_path, out, n_frames))
-    (out / "notes" / "sam-ui-export.json").write_text(json.dumps(manifest, indent=1))
+        manifest.update(_extract_frames(video_path, out, n_frames, guard))
+    write(out / "notes" / "sam-ui-export.json", json.dumps(manifest, indent=1).encode())
     return {"out_dir": str(out), **manifest}
 
 
-def _extract_frames(video_path: str, out: Path, n_frames: int) -> Dict:
+def _entry(fd: int, name: str) -> Optional[os.stat_result]:
+    """name in the folder fd holds, links not followed, or None."""
+    try:
+        return os.stat(name, dir_fd=fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return None
+
+
+def _same_folder(fd: int, data: Path, name: str) -> None:
+    """data/name by path still is name in the folder fd holds: data was not
+    swapped for a link or another folder meanwhile."""
+    held, by_path = os.stat(name, dir_fd=fd, follow_symlinks=False), None
+    with contextlib.suppress(OSError):
+        now, then = os.stat(data, follow_symlinks=False), os.fstat(fd)
+        if (now.st_ino, now.st_dev) == (then.st_ino, then.st_dev):
+            by_path = os.stat(data / name, follow_symlinks=False)
+    if by_path is None or (by_path.st_ino, by_path.st_dev) != (held.st_ino, held.st_dev):
+        raise ExportError("data was replaced while the frames were extracted; the new frames were not installed")
+
+
+def _extract_frames(video_path: str, out: Path, n_frames: int, guard) -> Dict:
     """data/clip.mp4 and data/frames/%05d.jpg from the very file sam-ui decoded,
     so the mattes line up with the frames pixel for pixel."""
     clip = out / "data" / "clip.mp4"
     if not clip.exists():
-        shutil.copy2(video_path, clip)
-    fdir = out / "data" / "frames"
-    fdir.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(clip), "-an", "-q:v", "2", str(fdir / "%05d.jpg")],
-                   check=True)
-    got = len(list(fdir.glob("*.jpg")))
+        guard(clip.parent)
+        with _replacing(clip) as tmp:
+            shutil.copy2(video_path, tmp)
+    # ffmpeg -y writes through whatever sits at a frame's name, so it never
+    # writes into data/frames: it fills a fresh hidden folder, which then takes
+    # data/frames' place by rename. data is opened once, without following a
+    # link, and the folder is made, swapped and cleared through that
+    # descriptor, so a data swapped for a link later cannot redirect any of it.
+    data = guard(out / "data")
+    fd = os.open(data, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    name = f".frames.{uuid.uuid4().hex}"
+    try:
+        os.mkdir(name, 0o700, dir_fd=fd)
+        try:
+            _same_folder(fd, data, name)
+            subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(clip), "-an", "-q:v", "2",
+                            str(data / name / "%05d.jpg")], check=True)
+            # ffmpeg wrote by path: refuse its frames unless that path still is this folder
+            _same_folder(fd, data, name)
+            got = sum(n.endswith(".jpg") for n in os.listdir(data / name))
+            os.chmod(name, 0o755, dir_fd=fd)  # as a plain mkdir would leave it
+            old = None
+            if _entry(fd, "frames"):
+                old = f".frames.old.{uuid.uuid4().hex}"
+                os.rename("frames", old, src_dir_fd=fd, dst_dir_fd=fd)
+            os.rename(name, "frames", src_dir_fd=fd, dst_dir_fd=fd)
+        except BaseException:
+            shutil.rmtree(name, dir_fd=fd, ignore_errors=True)
+            raise
+        if old:  # the new frames are in place; a stuck old folder is only clutter
+            try:
+                if stat.S_ISLNK(_entry(fd, old).st_mode):
+                    os.unlink(old, dir_fd=fd)  # a link: drop it, never its target
+                else:
+                    shutil.rmtree(old, dir_fd=fd)
+            except OSError as err:
+                logger.warning("export: could not remove the old frames (left as data/%s): %s", old, err)
+    finally:
+        os.close(fd)
     info: Dict = {"frames_extracted": True, "frames_on_disk": got}
     if n_frames and got != n_frames:
         info["warning"] = f"ffmpeg wrote {got} frames but the tracks cover {n_frames}: check the frame alignment"
