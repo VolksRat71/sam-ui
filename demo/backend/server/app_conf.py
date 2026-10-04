@@ -58,3 +58,9 @@ os.makedirs(DATA_PATH, exist_ok=True)
 os.makedirs(GALLERY_PATH, exist_ok=True)
 os.makedirs(UPLOADS_PATH, exist_ok=True)
 os.makedirs(POSTERS_PATH, exist_ok=True)
+
+# Auxiliary originals only; playback/tracking continue using the working copy.
+_retain_originals = os.environ.get("SAM_UI_RETAIN_ORIGINAL_UPLOADS", "0")
+if _retain_originals not in {"0", "1"}:
+    raise ValueError("SAM_UI_RETAIN_ORIGINAL_UPLOADS must be 0 or 1")
+RETAIN_ORIGINAL_UPLOADS = _retain_originals == "1"

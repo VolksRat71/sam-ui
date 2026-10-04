@@ -2,7 +2,7 @@
 # All rights reserved.
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
-# Modified by sam-ui: objectTracks query, clearTrack mutation, startSession returns known objects.
+# Modified by sam-ui: objectTracks query, clearTrack mutation, startSession returns known objects and stays inside DATA_PATH.
 # Modified by sam-ui: setObjectRange mutation (absent ranges).
 
 import hashlib
@@ -18,6 +18,7 @@ from app_conf import (
     DATA_PATH,
     DEFAULT_VIDEO_PATH,
     MAX_UPLOAD_VIDEO_DURATION,
+    RETAIN_ORIGINAL_UPLOADS,
     UPLOADS_PATH,
     UPLOADS_PREFIX,
 )
@@ -84,7 +85,7 @@ class Query:
         # Fallback is returning the first video
         if not all_videos:  # sam-ui: a clear error, not a bare StopIteration
             raise ValueError(
-                f"no videos: put an .mp4 in {DATA_PATH}/gallery or upload one"
+                "no videos: put an .mp4 in the data folder's gallery/ or upload one"
             )
         return next(iter(all_videos.values()))
 
@@ -145,7 +146,7 @@ class Mutation:
 
         request = StartSessionRequest(
             type="start_session",
-            path=f"{DATA_PATH}/{input.path}",
+            path=session_video_path(input.path),
         )
 
         response = inference_api.start_session(request=request)
@@ -317,6 +318,35 @@ class Mutation:
         return CancelPropagateInVideo(success=response.success)
 
 
+def session_video_path(rel: str) -> str:
+    """The file a session opens for `rel` (as the page sends it, e.g.
+    "gallery/x.mp4"), or ValueError naming only `rel`, never the server's own
+    path. `rel` must be one of the listed videos, stay inside DATA_PATH once
+    normalised, and exist. The check is on the path's text, not its resolved
+    target, so a link the backend made itself under DATA_PATH (an in-place link
+    to footage elsewhere) still opens, while an absolute path or a `..` that
+    climbs out of DATA_PATH is refused."""
+    refused = ValueError(f"not a video path under the data folder: {rel!r}")
+    root = os.path.abspath(str(DATA_PATH))  # abspath, not realpath: lexical
+    if not rel or os.path.isabs(rel) or "\x00" in rel:
+        raise refused
+    full = os.path.normpath(os.path.join(root, rel))
+    try:
+        inside = os.path.commonpath([root, full]) == root and full != root
+    except ValueError:  # e.g. another drive on Windows
+        inside = False
+    if not inside:
+        raise refused
+    listed = get_videos() or {}  # upstream starts the store as [] until videos are set
+    # a lookup, not a walk: an upload on another thread may add to it meanwhile.
+    # Videos are keyed by code, which get_video makes equal to the path.
+    if listed.get(os.path.normpath(rel)) is None:
+        raise ValueError(f"not a listed video: {rel!r}")
+    if not os.path.isfile(full):
+        raise ValueError(f"no video file for {rel!r}")
+    return full
+
+
 def get_file_hash(video_path_or_file) -> str:
     if isinstance(video_path_or_file, str):
         with open(video_path_or_file, "rb") as in_f:
@@ -389,8 +419,6 @@ def process_video(
             duration_time_sec=duration_time_sec,
         )
 
-        os.remove(in_path)  # don't need original video now
-
         out_video_metadata = get_video_metadata(out_path)
         if out_video_metadata.num_video_frames == 0:
             raise Exception(
@@ -407,6 +435,16 @@ def process_video(
             filepath = os.path.join(UPLOADS_PATH, f"{file_hash}.mp4")
 
         assert filepath is not None and file_key is not None
+        if RETAIN_ORIGINAL_UPLOADS:
+            from data.assets import retain_upload
+
+            retain_upload(
+                Path(in_path), root=DATA_PATH / "assets",
+                working_copy_sha256=file_hash,
+                start_time_sec=start_time_sec,
+                duration_time_sec=duration_time_sec,
+            )
+        os.remove(in_path)
         shutil.move(out_path, filepath)
 
         return filepath, file_key, out_video_metadata
