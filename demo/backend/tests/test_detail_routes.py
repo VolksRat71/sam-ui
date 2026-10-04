@@ -114,3 +114,11 @@ def test_decoder_errors_do_not_expose_server_paths(h):
     h.service._detail_previews.read_frame = failed
     response = post(h, 'detail_frame')
     assert response.status_code == 400 and response.json == {'error': 'detail_media_unavailable'}
+
+
+def test_real_decode_failure_has_media_error_code(h):
+    from tracks.detail_preview import read_working_frame
+    h.service._detail_previews.read_frame = read_working_frame
+    response = post(h, 'detail_frame')  # Harness's clip is deliberately not a video
+    assert response.status_code == 400
+    assert response.json == {'error': 'detail_media_unavailable'}

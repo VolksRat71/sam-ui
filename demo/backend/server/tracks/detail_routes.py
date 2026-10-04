@@ -1,5 +1,6 @@
 """Opt-in detail endpoints; session resolution owns every source path."""
 from flask import jsonify, request
+from av.error import FFmpegError
 from tracks.detail import DetailError, enabled
 from tracks.service import UnknownEngine, ObjectBusy
 from tracks.detail_preview import DetailPreviews
@@ -23,6 +24,8 @@ def register_detail_routes(bp, resolve):
             return jsonify(error='invalid_engine'), 400
         except ObjectBusy:
             return jsonify(error='detail_object_busy'), 409
+        except FFmpegError:
+            return jsonify(error='detail_media_unavailable'), 400
         except (ValueError, KeyError, IndexError, TypeError):
             return jsonify(error='invalid_detail_request'), 400
         except OSError:

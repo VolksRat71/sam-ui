@@ -242,3 +242,21 @@ def test_flag_off_with_stored_details_and_on_without_details_are_byte_identical(
     h.service.seeds.add_detail(h.video, 1, 0, fitted_detail(h))
     monkeypatch.setenv('SAM_UI_REFINE_DETAIL', '0')
     assert capture(tmp_path / 'off_with_details') == baseline
+
+
+def test_detail_stream_reads_seed_and_range_files_once(tmp_path, monkeypatch):
+    from collections import Counter
+    monkeypatch.setenv('SAM_UI_REFINE_DETAIL', '1')
+    h = Harness(tmp_path, engine=FakeEngine(n_frames=3000)); h.click(1); h.track()
+    h.service.seeds.add_detail(h.video, 1, 0, fitted_detail(h))
+    reads = Counter()
+    for method in ('raw_seeds', 'ranges'):
+        original = getattr(h.service.seeds, method)
+        def spy(*args, _original=original, _method=method):
+            reads[_method] += 1
+            return _original(*args)
+        monkeypatch.setattr(h.service.seeds, method, spy)
+    for stream in (lambda: h.service.cached(h.video), lambda: h.service.output_masks(h.video, 1, 'fake')):
+        reads.clear()
+        assert len(list(stream())) == 3000
+        assert reads == {'raw_seeds': 1, 'ranges': 1}

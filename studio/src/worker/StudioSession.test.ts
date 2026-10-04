@@ -189,3 +189,27 @@ describe('Refine Detail base separation', () => {
     expect(inside._seedMasks.size).toBe(0);
   });
 });
+
+it('keeps a newer click mask when another object refreshes or applies a detail', async () => {
+  const {DataArray, encode} = await import('@/jscocotools/mask');
+  const old = {data: encode(new DataArray(new Uint8Array([1, 0, 0, 0]), [2, 2, 1]))[0]};
+  const clicked = {data: encode(new DataArray(new Uint8Array([0, 1, 0, 0]), [2, 2, 1]))[0]};
+  const t = {id: 1, masks: [] as Array<typeof old>, points: []};
+  const s = new StudioSession({} as never, {} as never, () => {});
+  s.init('http://backend.test');
+  const inside = s as unknown as {_sessionId: string; _render: () => void; _tracklets: Map<number, typeof t>;
+    _setMask: (tracklet: typeof t, frame: number, mask: typeof old, fromTrack?: boolean) => void};
+  inside._sessionId = 's'; inside._render = () => {}; inside._tracklets.set(1, t);
+  const repaint = vi.spyOn(s, 'repaint').mockResolvedValue();
+  vi.stubGlobal('fetch', async (url: string) => new Response(JSON.stringify(url.endsWith('/detail_state')
+    ? {enabled: true, objects: {}} : {object_id: 2})));
+  try {
+    inside._setMask(t, 0, old, true);
+    inside._setMask(t, 0, clicked);
+    await s.detailRequest('detail_state');
+    expect(t.masks[0]).toBe(clicked);
+    await s.detailRequest('apply_detail_crop', {preview_id: 'other-object'});
+    expect(t.masks[0]).toBe(clicked);
+    expect(repaint).toHaveBeenCalledWith([2]);
+  } finally {vi.unstubAllGlobals();}
+});

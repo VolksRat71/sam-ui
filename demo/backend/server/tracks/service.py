@@ -63,7 +63,7 @@ from tracks.seeds import Seeds, SeedStore, cleared, confirmed, seeds_hash, video
 from tracks.store import STALE, TRACKED, TrackStore
 from tracks import versions as ver
 from tracks.versions import VersionStore
-from tracks.text import normalize as normalize_text
+from tracks.text import has_prompt, normalize as normalize_text
 
 FrameRle = Tuple[int, Dict[int, Dict]]
 logger = logging.getLogger(__name__)
@@ -887,13 +887,24 @@ class TrackService:
     def output_masks(self, video: str, obj_id: int, engine: str):
         """Display/export only. Tracking and conditioning read TrackStore directly."""
         from tracks.detail import enabled
-        if not enabled() or not self.seeds.details(video, obj_id):
+        if not enabled():
             yield from self.tracks.masks(video, obj_id, engine)
             return
-        if not self.seeds.seeds(video, obj_id):
+        seeds = self.seeds.raw_seeds(video, obj_id)
+        ranges = self.seeds.ranges(video, obj_id)
+        yield from self._detail_output_masks(video, obj_id, engine, seeds, ranges)
+
+    def _detail_output_masks(self, video, obj_id, engine, seeds, ranges):
+        """Compose one stream against one immutable seed/range read, not per frame."""
+        from tracks.detail import effective_mask
+        details = {f: seed['details'] for f, seed in seeds.items() if seed.get('details')}
+        if details and not any(has_prompt(seed) for seed in seeds.values()):
             return
         for frame, mask in self.tracks.masks(video, obj_id, engine):
-            yield frame, self.effective_mask(video, obj_id, frame, mask)
+            records = details.get(frame)
+            if records and not absent_at(ranges, frame):
+                mask = effective_mask(mask, records)
+            yield frame, mask
 
     def cached_base(self, video: str, obj_ids: Optional[List[int]] = None,
                engine: Optional[str] = None) -> Iterator[FrameRle]:
@@ -918,14 +929,20 @@ class TrackService:
         """Stream stored tracks, merged per frame, to repaint them after a reload.
         Stale tracks are sent too; the UI marks them. Frames inside an absent
         range go out empty, even from a track made before the range was marked."""
+        from tracks.detail import enabled
+        if not enabled():
+            yield from self.cached_base(video, obj_ids, engine)
+            return
         name = self._engine_model(engine or self.default)[0]
         ids = self.seeds.objects(video) if obj_ids is None else [int(o) for o in obj_ids]
-        ids = [o for o in ids if self.seeds.seeds(video, o)]  # no seeds, nothing to show
         by_frame: Dict[int, Dict[int, Dict]] = {}
         for o in ids:
+            seeds = self.seeds.raw_seeds(video, o)
+            if not any(has_prompt(seed) for seed in seeds.values()):
+                continue
             ranges = self.seeds.ranges(video, o)
-            for frame, r in self.output_masks(video, o, name):
-                if ranges and absent_at(ranges, frame):  # a stale track, marked since: never shown
+            for frame, r in self._detail_output_masks(video, o, name, seeds, ranges):
+                if ranges and absent_at(ranges, frame):
                     r = rle.encode(np.zeros(r["size"], bool))
                 by_frame.setdefault(frame, {})[o] = r
         for frame in sorted(by_frame):

@@ -1743,7 +1743,8 @@ export default class StudioSession {
     }
     if (operation === 'apply_detail_crop' || operation === 'remove_detail_crop') {
       await this.detailRequest('detail_state');
-      await this.repaint();
+      const objectId = (result as {object_id?: number}).object_id ?? args.object_id;
+      await this.repaint(typeof objectId === 'number' ? [objectId] : undefined);
     }
     return result;
   }
@@ -1997,6 +1998,11 @@ export default class StudioSession {
   }
 
   private _setMask(t: Tracklet, frame: number, mask: Mask | undefined, fromTrack = false): void {
+    if (!fromTrack) {
+      // A newer click/seed result supersedes this frame's cached track base.
+      // Detail-state refreshes must not resurrect it before an explicit repaint.
+      this._baseMasks.get(t.id)?.delete(frame);
+    }
     if (fromTrack && !this._isLocal) {
       const bases = this._baseMasks.get(t.id) ?? new Map<number, Mask>();
       if (mask == null) bases.delete(frame); else bases.set(frame, mask);
