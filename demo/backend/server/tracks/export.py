@@ -38,13 +38,13 @@ person confirmed, and data/mattes_tracked/<pid> may hold mattes repaired by
 hand, so without force an existing decision file or a non-empty matte folder
 of an exported object is a refusal. With force they are replaced (the matte
 folder is deleted and refilled). sam-ui's own outputs are always rewritten:
-notes/sam-ui-export.json, and with frames the whole data/frames folder, which
-is replaced only once ffmpeg succeeds (clip.mp4 and data/review.json are
-written only when missing).
+notes/sam-ui-export.json, data/groups (made afresh), and with frames the whole
+data/frames folder, which is replaced only once ffmpeg succeeds (clip.mp4 and
+data/review.json are written only when missing).
 
 Every path export writes or deletes must resolve, links followed, to inside
-the export root, and a matte folder it would delete must not be a link at all
-(nor a broken link where a folder belongs). All of it is checked before
+the export root, and a matte folder or data/groups, which it would delete,
+must not be a link at all (nor a broken link where a folder belongs). All of it is checked before
 anything is written, so a refusal changes nothing, and checked again as each
 folder is used. Each file is written to a temp name beside it and os.replace'd
 into place, so a link or hard link planted meanwhile is replaced, never written
@@ -138,6 +138,15 @@ def _matte_folder(root: Path, out: Path, out_dir: str, pid: str) -> Path:
     return mdir
 
 
+def _groups_folder(root: Path, out: Path, out_dir: str) -> Path:
+    """data/groups, which export deletes and remakes: inside the root and not a
+    link, wherever the link points (as _matte_folder)."""
+    gdir = _guard(root, out, out_dir, out / "data" / "groups")
+    if gdir.is_symlink():
+        raise ExportError(f"{out_dir!r}: data/groups is a link; sam-ui only replaces its own group folders")
+    return gdir
+
+
 def _check_targets(out: Path, out_dir: str, pids: List[str], frames: bool, force: bool) -> None:
     """Refuse before writing: a path that leads outside the root, a linked
     matte folder, a file where a folder belongs (or the reverse), or (without
@@ -145,7 +154,7 @@ def _check_targets(out: Path, out_dir: str, pids: List[str], frames: bool, force
     relative to out_dir, never where a link points."""
     root = export_root()
     mattes = [f"data/mattes_tracked/{pid}" for pid in pids]
-    folders = ["data", "data/mattes_tracked", "notes", *mattes] + (["data/frames"] if frames else [])
+    folders = ["data", "data/mattes_tracked", "notes", "data/groups", *mattes] + (["data/frames"] if frames else [])
     files = ["data/review.json", "notes/sam-ui-export.json", *DECISIONS] + (["data/clip.mp4"] if frames else [])
     for rel in folders + files:
         p = _guard(root, out, out_dir, out / rel)
@@ -158,6 +167,7 @@ def _check_targets(out: Path, out_dir: str, pids: List[str], frames: bool, force
             _guard(root, out, out_dir, p)
     for pid in pids:
         _matte_folder(root, out, out_dir, pid)
+    _groups_folder(root, out, out_dir)
     if not force:
         clash = [n for n in DECISIONS if (out / n).exists()]
         clash += [rel for rel in mattes if (out / rel).is_dir() and any((out / rel).iterdir())]
@@ -202,19 +212,22 @@ def _folder(name: str, gid: str) -> str:
     return slug or gid.lower()
 
 
-def _union(group_dir: Path, member_dirs: List[Path]) -> None:
+def _union(group_dir: Path, member_dirs: List[Path], guard, write) -> None:
     """union/%05d.png: per frame, the OR of the members' mattes (read back
-    from disk, one frame at a time, so no whole track is held in memory)."""
+    from disk, one frame at a time, so no whole track is held in memory).
+    Written as every export file is: checked, then temp-and-replaced."""
     names = sorted({p.name for d in member_dirs for p in d.glob("*.png")})
-    udir = group_dir / "union"
-    udir.mkdir(parents=True)
+    udir = guard(group_dir / "union")
+    udir.mkdir()
     for name in names:
         acc = None
         for d in member_dirs:
             if (d / name).exists():
                 m = np.asarray(Image.open(d / name)) > 127
                 acc = m if acc is None else (acc | m)
-        Image.fromarray((acc * 255).astype(np.uint8)).save(udir / name)
+        png = io.BytesIO()
+        Image.fromarray((acc * 255).astype(np.uint8)).save(png, format="PNG")
+        write(udir / name, png.getvalue())
 
 
 def export(service, video: str, video_path: str, out_dir: str, objects: Optional[Dict[int, Dict]] = None,
@@ -287,7 +300,8 @@ def export(service, video: str, video_path: str, out_dir: str, objects: Optional
                                   "model": info["model"], "frames": info["frames"], "n_frames": info["n_frames"],
                                   "ranges": ranges, "group": tag}
 
-    groups = _write_groups(out, layout["groups"], {o: s["id"] for o, (s, _) in specs.items()}, union)
+    groups = _write_groups(_groups_folder(root, out, out_dir), layout["groups"],
+                           {o: s["id"] for o, (s, _) in specs.items()}, union, out, guard, write)
 
     write(out / "products.json", json.dumps({"products": products}, indent=1).encode())
     write(out / "anchors.json", json.dumps(anchors, indent=1).encode())
@@ -304,10 +318,12 @@ def export(service, video: str, video_path: str, out_dir: str, objects: Optional
     return {"out_dir": str(out), **manifest}
 
 
-def _write_groups(out: Path, groups: List[Dict], pids: Dict[int, str], union: bool) -> List[Dict]:
+def _write_groups(root: Path, groups: List[Dict], pids: Dict[int, str], union: bool, out: Path, guard,
+                  write) -> List[Dict]:
     """data/groups/<folder>/ for every group with an exported member, made
-    afresh (a group gone since the last export leaves nothing behind)."""
-    root = out / "data" / "groups"
+    afresh (a group gone since the last export leaves nothing behind). `root`
+    is data/groups as _groups_folder checked it just now: inside the export
+    root and not a link, so the rmtree never follows one."""
     if root.exists():
         shutil.rmtree(root)
     written, used = [], set()
@@ -323,11 +339,12 @@ def _write_groups(out: Path, groups: List[Dict], pids: Dict[int, str], union: bo
         used.add(folder)
         entry = {"id": g["id"], "name": g["name"], "color": g["color"], "folder": folder, "members": members,
                  "union": bool(union)}
-        gdir = root / folder
-        gdir.mkdir(parents=True)
-        (gdir / "group.json").write_text(json.dumps({k: v for k, v in entry.items() if k != "folder"}, indent=1))
+        guard(root).mkdir(exist_ok=True)
+        gdir = guard(root / folder)
+        gdir.mkdir()
+        write(gdir / "group.json", json.dumps({k: v for k, v in entry.items() if k != "folder"}, indent=1).encode())
         if union:
-            _union(gdir, [out / "data" / "mattes_tracked" / pid for pid in members])
+            _union(gdir, [out / "data" / "mattes_tracked" / pid for pid in members], guard, write)
         written.append(entry)
     return written
 
