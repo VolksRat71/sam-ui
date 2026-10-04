@@ -330,7 +330,7 @@ def export(service, video: str, video_path: str, out_dir: str, objects: Optional
     write(out / "products.json", json.dumps({"products": products}, indent=1).encode())
     write(out / "anchors.json", json.dumps(anchors, indent=1).encode())
     write(out / "shots.json", json.dumps({"cuts": [1], "unsure": []}, indent=1).encode())
-    _write_review(out / "data" / "review.json", notes)
+    _write_review(out / "data" / "review.json", notes, write)
     manifest = {"exported": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "video": video, "video_path": video_path,
                 "products": provenance, "skipped": {str(o): s for o, s in skipped.items()}, "n_frames": n_frames,
                 "groups": groups, "frames_extracted": False}
@@ -345,8 +345,9 @@ def _note(loc: Dict) -> str:
     return f"{REVIEW_NOTE} (score {fmt2(loc['score'])}{done}): " + "; ".join(r["detail"] for r in loc["reasons"])
 
 
-def _write_review(path: Path, notes: Dict[str, str]) -> None:
-    """review.json with sam-ui's notes replaced by `notes` and every other note kept."""
+def _write_review(path: Path, notes: Dict[str, str], write) -> None:
+    """review.json with sam-ui's notes replaced by `notes` and every other note
+    kept, written through `write` (checked, then temp-and-replaced)."""
     try:
         old = json.loads(path.read_text())
     except (OSError, ValueError):
@@ -364,7 +365,7 @@ def _write_review(path: Path, notes: Dict[str, str]) -> None:
         tail = k.rsplit(":", 1)[-1]
         return (int(tail) if tail.isdigit() else 0, k)
 
-    path.write_text(json.dumps(dict(sorted(merged.items(), key=lambda kv: order(kv[0]))), indent=1))
+    write(path, json.dumps(dict(sorted(merged.items(), key=lambda kv: order(kv[0]))), indent=1).encode())
 
 
 def _write_groups(root: Path, groups: List[Dict], pids: Dict[int, str], union: bool, out: Path, guard,

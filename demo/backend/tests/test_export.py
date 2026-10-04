@@ -635,6 +635,27 @@ def test_a_linked_groups_folder_is_refused_even_inside_the_root(h, tmp_path):
         "keep.json"]
 
 
+def test_group_files_and_review_json_replace_a_hard_link_not_write_through_it(h, tmp_path, tmp_path_factory):
+    """group.json, the union mattes and data/review.json are written as every
+    export file is, to a temp name and os.replace'd (main's atomic writes over
+    the groups and audit-queue exports)."""
+    h.click(1), h.click(3)
+    h.track()
+    _layout(h, [1, 3], [CAST])
+    outside = tmp_path_factory.mktemp("outside")
+    (outside / "victim").write_text("keep")
+    out = tmp_path / "build"
+    (out / "data").mkdir(parents=True)
+    os.link(outside / "victim", out / "data" / "review.json")
+    code, m = export(h, out_dir=str(out), union=True)
+    assert code == 200 and (outside / "victim").read_text() == "keep"
+    assert isinstance(json.loads((out / "data" / "review.json").read_text()), dict)
+    assert sorted(json.loads((out / "data/groups/the_cast/group.json").read_text())["members"]) == ["object_1", "object_3"]
+    assert (out / "data/groups/the_cast/union/00001.png").exists()
+    leftovers = [p for p in out.rglob("*") if p.name.endswith(".tmp")]
+    assert leftovers == []
+
+
 # -- the audit queue (draft 7): data/review.json carries it, reviewed or not ------------
 
 @pytest.fixture
