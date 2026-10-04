@@ -170,7 +170,8 @@ export type TrackletSummary = {
 
 export type StudioEvent =
   | {type: 'tracklets'; tracklets: TrackletSummary[]}
-  | {type: 'jobStarted'; key: number; jobId: string | null; selected: number[]}
+  /** bounded: the selected ids re-tracked only around their corrections (Objects-Bounded). */
+  | {type: 'jobStarted'; key: number; jobId: string | null; selected: number[]; bounded?: number[]}
   | {type: 'trackFrame'; key: number; frameIndex: number}
   | {type: 'repaint'; active: boolean}
   | {type: 'exportProgress'; done: number}

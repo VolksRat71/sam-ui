@@ -5,10 +5,12 @@ same parts /propagate_in_video sends).
 Every track route takes an optional "engine" ("sam2", the default, or "sam3");
 an unknown or unavailable engine is a 400. GET /engines lists them.
 
-POST /track_objects {session_id, object_ids?, engine?}: run the untracked and
-  stale objects (or the object_ids given) that no other running job on that
-  engine holds. Headers:
-  Job-Id, and Objects-Tracked (the objects this job claimed). The job takes
+POST /track_objects {session_id, object_ids?, engine?, full?}: run the untracked
+  and stale objects (or the object_ids given) that no other running job on
+  that engine holds. A stale object re-tracks only what its edits changed
+  (windows, and stretches around corrections: tracks/bounded.py); full: true
+  re-tracks every window whole. Headers: Job-Id, Objects-Tracked (the objects
+  this job claimed), and Objects-Bounded (those it re-tracks in bounded passes). The job takes
   the model lock one frame at a time, so clicks are served between frames.
   The last part is {"done": true, "job_id", "objects", "tracked", "failed"}, or
   {"done": false, "job_id", "error", "objects"} when the engine failed or the
@@ -19,10 +21,14 @@ POST /track_masks {session_id, object_ids?, engine?}: stream cached tracks, to r
 POST /cancel_track {session_id, job_id}: cancel one job. (cancelPropagateInVideo
   cancels every job of its session.)
 POST /track_jobs {session_id}: the running jobs on the session's video, with
-  progress.
+  progress and the objects each re-tracks in bounded passes ("bounded").
 POST /track_disagreement {session_id, object_ids?, a?, b?, threshold?}: frames
   where two engines' current tracks of an object disagree (IoU < threshold,
   default 0.8; engines default sam2 and sam3), as review flags.
+POST /track_provenance {session_id, object_id, engine?}: which pass made each
+  frame of the object's track (tracks/bounded.py): {"object_id", "engine",
+  "state", "passes", "provenance", "bounded"}, where bounded lists the
+  [first, last] stretches bounded passes made. 404 without a track.
 POST /rename_object {session_id, object_id, name}: name an object (trimmed, at
   most 64 characters; empty clears it). Metadata only: no track goes stale.
   Answers {"object_id", "name"}.
@@ -41,6 +47,7 @@ them with a fake engine and no model.
 import contextlib
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Callable, Iterator, Optional
 
@@ -52,6 +59,7 @@ from tracks.jobs import Job
 from tracks.service import FrameRle, JobResult, TrackService, UnknownEngine
 
 BOUNDARY = "frame"
+HANDOFF_S = 0.002  # after a step with no frame, time for a waiting click to take the model lock
 logger = logging.getLogger(__name__)
 
 
@@ -92,14 +100,15 @@ def _n_frames(handle) -> Optional[int]:
         return None
 
 
-def _run_job(ctx: TrackContext, job: Job) -> Iterator[bytes]:
-    """Stream one job. The model lock is held per step (one frame, or the
-    seeding before the first one), never across a yield to the client."""
+def _run_job(ctx: TrackContext, job: Job, full: bool = False) -> Iterator[bytes]:
+    """Stream one job. The model lock is held per step (one frame, the
+    seeding before the first one, or a bounded pass's frame it holds back),
+    never across a yield to the client."""
     service, result = ctx.service, JobResult()
     try:
         with ctx.autocast():
             it = service.track(ctx.video, ctx.path, job.objects, video_handle=ctx.video_handle, result=result,
-                               engine=job.engine, n_frames=_n_frames(ctx.video_handle))
+                               engine=job.engine, n_frames=_n_frames(ctx.video_handle), full=full, steps=True)
             try:
                 while True:
                     if job.canceled:
@@ -108,9 +117,15 @@ def _run_job(ctx: TrackContext, job: Job) -> Iterator[bytes]:
                         return
                     with ctx.lock:
                         try:
-                            frame, masks = next(it)
+                            item = next(it)
                         except StopIteration:
                             break
+                    if item is None:  # a step with no frame: the lock was let go, nothing to send
+                        # threading.Lock is not fair: taken straight back, a waiting click
+                        # could miss every gap of a run of these steps (seconds, measured)
+                        time.sleep(HANDOFF_S)
+                        continue
+                    frame, masks = item
                     job.frames_done += 1
                     yield part(frame, masks)
             except Exception as err:
@@ -142,7 +157,8 @@ def make_blueprint(resolve: Callable[[str], TrackContext], service: Optional[Tra
         expose = ["Objects-Tracked"]
         if job is not None:
             r.headers["Job-Id"] = job.id
-            expose.append("Job-Id")
+            r.headers["Objects-Bounded"] = ",".join(str(o) for o in job.bounded)
+            expose += ["Job-Id", "Objects-Bounded"]
         r.headers["Access-Control-Expose-Headers"] = ", ".join(expose)
         return r
 
@@ -161,12 +177,13 @@ def make_blueprint(resolve: Callable[[str], TrackContext], service: Optional[Tra
         data = request.json
         ctx = resolve(data["session_id"])
         engine = ctx.service.get_engine(data.get("engine")).name  # 400 now if it can't run, not mid-stream
+        full = bool(data.get("full"))
         with ctx.lock:  # a consistent read of the seeds and tracks
             ids = ctx.service.select(ctx.video, data.get("object_ids"), engine)
-            n = _n_frames(ctx.video_handle)
-            n = ctx.service.job_frames(ctx.video, ids, n, engine) if n else n  # every frame part the job sends
-        job = ctx.service.jobs.claim(ctx.session_id, ctx.video, ids, n, engine)
-        r = _response(_run_job(ctx, job), job.objects, job)
+            # frames: every frame part the job sends (None without the session's video)
+            outline = ctx.service.job_outline(ctx.video, ids, _n_frames(ctx.video_handle), engine, full)
+        job = ctx.service.jobs.claim(ctx.session_id, ctx.video, ids, outline["frames"], engine, outline["bounded"])
+        r = _response(_run_job(ctx, job, full), job.objects, job)
         r.call_on_close(lambda: ctx.service.jobs.release(job))  # also if the stream never started
         return r
 
@@ -195,6 +212,15 @@ def make_blueprint(resolve: Callable[[str], TrackContext], service: Optional[Tra
         ctx = resolve(data["session_id"])
         return jsonify(ctx.service.disagreement(ctx.video, data.get("object_ids"), data.get("a"),
                                                 data.get("b", "sam3"), float(data.get("threshold", 0.8))))
+
+    @bp.route("/track_provenance", methods=["POST"])
+    def track_provenance() -> Response:
+        data = request.json
+        ctx = resolve(data["session_id"])
+        got = ctx.service.provenance(ctx.video, int(data["object_id"]), data.get("engine"))
+        if got is None:
+            return jsonify({"error": "no track"}), 404
+        return jsonify(got)
 
     @bp.route("/rename_object", methods=["POST"])
     def rename_object() -> Response:

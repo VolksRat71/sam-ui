@@ -785,7 +785,8 @@ export default class StudioSession {
     }
     const selected = parseObjectsHeader(response.headers.get('Objects-Tracked'));
     const jobId = response.headers.get('Job-Id');
-    this._emit({type: 'jobStarted', key, jobId, selected});
+    const bounded = parseObjectsHeader(response.headers.get('Objects-Bounded'));
+    this._emit({type: 'jobStarted', key, jobId, selected, bounded});
     // a job's masks are drawn only while its engine is the one on screen
     const shown = () => engine === this._engine;
     if (shown()) {
