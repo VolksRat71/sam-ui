@@ -124,7 +124,7 @@ export default function ExportPanel({session, videoName, mode, onClose}: Props) 
               <FileNameField value={file} onChange={setFile} disabled={sending} hint="a zip of the working folder" />
             ) : (
               <label className="field">
-                <span>Folder (under the backend&apos;s export root, ~/Movies by default)</span>
+                <span>Folder (under the backend&apos;s export root, ~/Movies/sam-ui by default)</span>
                 <input value={outDir} onChange={e => setOutDir(e.target.value)} spellCheck={false} />
               </label>
             )}
@@ -189,7 +189,7 @@ export default function ExportPanel({session, videoName, mode, onClose}: Props) 
                   </label>
                   <label>
                     <input type="checkbox" checked={force} onChange={e => setForce(e.target.checked)} /> Replace existing
-                    products.json, anchors.json and shots.json
+                    products.json, anchors.json, shots.json and mattes
                   </label>
                 </>
               )}
