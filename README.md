@@ -180,7 +180,7 @@ option in studio stays disabled, with the reason shown, until they're found.
 | --- | --- | --- |
 | `SAM_UI_FEATURE_CACHE_GB` | 6 | backbone feature cache budget (0 turns it off) |
 | `SAM_UI_SESSION_TTL_MIN` | 30 | idle sessions are freed after this long (0 keeps them) |
-| `SAM_UI_EXPORT_ROOT` | `~/Movies` | rotoscoping exports may only write under this folder |
+| `SAM_UI_EXPORT_ROOT` | `~/Movies/sam-ui` (the desktop app sets your home folder) | rotoscoping exports may only write under this folder |
 | `SAM_UI_SAM3_WEIGHTS` | `~/.cache/rotoscoping-video-subjects/weights/sam3-hf` | where the SAM 3 weights are |
 
 ## How it fits together
