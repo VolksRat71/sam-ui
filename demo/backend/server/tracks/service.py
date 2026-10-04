@@ -198,9 +198,15 @@ class TrackService:
             why = spec.unavailable() if spec and name not in self._engines else None
             text_why = self.text_reason(name)
             out.append({"name": name, "model": self._engine_model(name)[1], "default": name == self.default,
-                        "available": why is None, "reason": why, "loaded": name in self._engines,
+                        "available": why is None, "reason": why, "loaded": self._loaded(name),
                         "text": text_why is None, "text_reason": text_why})
         return out
+
+    def _loaded(self, name: str) -> bool:
+        """Whether engine `name` holds its model now: built, and not unloaded
+        since (SAM 3 unloads when idle, tracks/sam3_engine.py)."""
+        e = self._engines.get(name)
+        return e is not None and bool(getattr(e, "loaded", True))
 
     def text_reason(self, name: str) -> Optional[str]:
         """None when engine `name` can take a text prompt here, else why not.

@@ -492,7 +492,7 @@ def _sam3_ok() -> bool:
 @pytest.mark.parametrize("engine", ["sam2", "sam3"])
 @pytest.mark.skipif(not CKPT.exists() or os.environ.get("SAM_UI_SLOW") != "1",
                     reason="set SAM_UI_SLOW=1 with the large checkpoint in checkpoints/")
-def test_real_engine_tracks_through_a_not_here_seed(tmp_path, engine):
+def test_real_engine_tracks_through_a_not_here_seed(tmp_path, engine, request):
     """A lone-negative 'not on this frame' seed on frame 10 blanks frame 10 and
     leaves its neighbours as they were. Conditioned on it, SAM 2 dropped the
     bar on frames 9-19 (IoU 0.000); SAM 3 conditions on it safely (min 0.996)."""
@@ -510,6 +510,7 @@ def test_real_engine_tracks_through_a_not_here_seed(tmp_path, engine):
                          "large")
     else:
         eng = Sam3Engine(device=dev)
+        request.addfinalizer(eng.unload)
 
     y = 125 / h
     red = lambda f: [(30 + 5 * f + 25) / w, y]
