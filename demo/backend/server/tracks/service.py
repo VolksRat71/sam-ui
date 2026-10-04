@@ -338,7 +338,8 @@ class TrackService:
         mask = None
         if match.mask is not None:
             mask = rle.encode(np.asarray(match.mask, bool))
-            self.seeds.set_text(video, obj_id, frame, text, mask)
+            with self._seed_change(video, obj_id):  # a seed change like a click: it can be undone
+                self.seeds.set_text(video, obj_id, frame, text, mask)
         return {"object_id": obj_id, "frame_index": frame, "text": text, "engine": e.name,
                 "matched": mask is not None, "score": round(float(match.score), 4), "instances": int(match.instances),
                 "box": None if match.box is None else [round(float(v), 1) for v in match.box], "mask": mask}
