@@ -42,6 +42,21 @@ export function planClicks<P extends Click>(
 }
 
 /**
+ * What deleting a click from a frame does. The last click going from a text
+ * frame goes back to the text's mask (sending no clicks would clear the frame,
+ * text and all), and it asks for the first engine that reads text (`engine:
+ * null`), not the one on screen: on SAM 2 or the browser engine the backend
+ * refuses a text prompt named for them. Anything else is a correction of the
+ * frame's clicks.
+ */
+export function planRemoval(
+  rest: ReadonlyArray<Click>,
+  text: string | null | undefined,
+): {kind: 'restoreText'; text: string; engine: null} | {kind: 'correct'} {
+  return rest.length === 0 && text != null ? {kind: 'restoreText', text, engine: null} : {kind: 'correct'};
+}
+
+/**
  * True when clicks on a frame inside an absent range are refused: none is a
  * positive, so nothing says the object is back. A positive goes through and
  * ends the absence at that frame (the backend trims the range); an emptied

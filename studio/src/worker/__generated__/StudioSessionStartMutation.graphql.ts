@@ -1,5 +1,5 @@
 /**
- * @generated SignedSource<<03d3fc7609ebe5bfa0b8aa4f85545d7a>>
+ * @generated SignedSource<<28bd35f98cb48e057f07b2f5ea95f160>>
  * @lightSyntaxTransform
  * @nogrep
  */
@@ -52,6 +52,7 @@ export type StudioSessionStartMutation$data = {
           readonly size: ReadonlyArray<number>;
         } | null | undefined;
         readonly points: ReadonlyArray<ReadonlyArray<number>>;
+        readonly text: string | null | undefined;
       }>;
       readonly state: string;
       readonly tracks: ReadonlyArray<{
@@ -172,6 +173,13 @@ v5 = [
                 "args": null,
                 "kind": "ScalarField",
                 "name": "labels",
+                "storageKey": null
+              },
+              {
+                "alias": null,
+                "args": null,
+                "kind": "ScalarField",
+                "name": "text",
                 "storageKey": null
               },
               {
@@ -376,16 +384,16 @@ return {
     "selections": (v5/*: any*/)
   },
   "params": {
-    "cacheID": "e129c6ee26e287cd6d01de155fda1043",
+    "cacheID": "8fdaf96952b7f6106d2aece71a4f8a48",
     "id": null,
     "metadata": {},
     "name": "StudioSessionStartMutation",
     "operationKind": "mutation",
-    "text": "mutation StudioSessionStartMutation(\n  $input: StartSessionInput!\n) {\n  startSession(input: $input) {\n    sessionId\n    objects {\n      objectId\n      state\n      frames\n      nFrames\n      seeds {\n        frameIndex\n        points\n        labels\n        mask {\n          size\n          counts\n        }\n      }\n      tracks {\n        engine\n        state\n        frames\n        nFrames\n      }\n      ranges {\n        start\n        end\n        state\n        source\n        score\n      }\n      history {\n        canUndo\n        canRedo\n        versions {\n          key\n          engine\n          model\n          created\n          elapsedS\n          nFrames\n          clicks\n          seedFrames\n          bounded\n          current\n        }\n      }\n    }\n  }\n}\n"
+    "text": "mutation StudioSessionStartMutation(\n  $input: StartSessionInput!\n) {\n  startSession(input: $input) {\n    sessionId\n    objects {\n      objectId\n      state\n      frames\n      nFrames\n      seeds {\n        frameIndex\n        points\n        labels\n        text\n        mask {\n          size\n          counts\n        }\n      }\n      tracks {\n        engine\n        state\n        frames\n        nFrames\n      }\n      ranges {\n        start\n        end\n        state\n        source\n        score\n      }\n      history {\n        canUndo\n        canRedo\n        versions {\n          key\n          engine\n          model\n          created\n          elapsedS\n          nFrames\n          clicks\n          seedFrames\n          bounded\n          current\n        }\n      }\n    }\n  }\n}\n"
   }
 };
 })();
 
-(node as any).hash = "8fd04c413fc0e4fd1bdcd81824617965";
+(node as any).hash = "acd556faad7774f1531875c8ec129c53";
 
 export default node;

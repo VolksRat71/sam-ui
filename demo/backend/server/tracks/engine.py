@@ -28,6 +28,7 @@ from tracks.bounded import PRIME, StopFn, Stretch
 from tracks.ranges import Window, in_window
 from tracks.seeds import Seeds, cleared
 from tracks.streaming import sam2_prune
+from tracks.text import has_prompt
 
 FrameMasks = Tuple[int, Dict[int, np.ndarray]]
 Windows = Dict[int, List[Window]]
@@ -85,7 +86,7 @@ def plan_units(objects: Dict[int, Seeds], windows: Optional[Windows] = None,
     by: Dict[Tuple, Dict[int, Seeds]] = {}
     for o, s in objects.items():
         for w in (windows or {}).get(o, [WHOLE]):
-            mine = {f: v for f, v in s.items() if v["points"] and in_window(f, w)}
+            mine = {f: v for f, v in s.items() if has_prompt(v) and in_window(f, w)}
             if not mine:
                 continue
             key = (w[0], min(mine) if by_first_seed else 0, float("inf") if w[1] is None else w[1])
@@ -270,7 +271,7 @@ def groups_by_first_seed(objects: Dict[int, Seeds]) -> List[Dict[int, Seeds]]:
     group first (objects without one are dropped)."""
     by: Dict[int, Dict[int, Seeds]] = {}
     for o, s in objects.items():
-        seeded = [f for f, v in s.items() if v["points"]]
+        seeded = [f for f, v in s.items() if has_prompt(v)]
         if seeded:
             by.setdefault(min(seeded), {})[o] = s
     return [by[f] for f in sorted(by)]

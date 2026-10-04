@@ -1,5 +1,5 @@
 /**
- * @generated SignedSource<<83a46287bb44657eea6ef2b3593f28cb>>
+ * @generated SignedSource<<23ab9f1b7afe43ca1f5b2060c2950147>>
  * @lightSyntaxTransform
  * @nogrep
  */
@@ -53,6 +53,7 @@ export type StudioSessionClearTrackMutation$data = {
         readonly size: ReadonlyArray<number>;
       } | null | undefined;
       readonly points: ReadonlyArray<ReadonlyArray<number>>;
+      readonly text: string | null | undefined;
     }>;
     readonly state: string;
     readonly tracks: ReadonlyArray<{
@@ -156,6 +157,13 @@ v5 = [
             "args": null,
             "kind": "ScalarField",
             "name": "labels",
+            "storageKey": null
+          },
+          {
+            "alias": null,
+            "args": null,
+            "kind": "ScalarField",
+            "name": "text",
             "storageKey": null
           },
           {
@@ -357,16 +365,16 @@ return {
     "selections": (v5/*: any*/)
   },
   "params": {
-    "cacheID": "8d56b1d435487a5105d9e128a7726097",
+    "cacheID": "708ba552d884122d928cde767bdb89bf",
     "id": null,
     "metadata": {},
     "name": "StudioSessionClearTrackMutation",
     "operationKind": "mutation",
-    "text": "mutation StudioSessionClearTrackMutation(\n  $input: ClearTrackInput!\n) {\n  clearTrack(input: $input) {\n    objectId\n    state\n    frames\n    nFrames\n    seeds {\n      frameIndex\n      points\n      labels\n      mask {\n        size\n        counts\n      }\n    }\n    tracks {\n      engine\n      state\n      frames\n      nFrames\n    }\n    ranges {\n      start\n      end\n      state\n      source\n      score\n    }\n    history {\n      canUndo\n      canRedo\n      versions {\n        key\n        engine\n        model\n        created\n        elapsedS\n        nFrames\n        clicks\n        seedFrames\n        bounded\n        current\n      }\n    }\n  }\n}\n"
+    "text": "mutation StudioSessionClearTrackMutation(\n  $input: ClearTrackInput!\n) {\n  clearTrack(input: $input) {\n    objectId\n    state\n    frames\n    nFrames\n    seeds {\n      frameIndex\n      points\n      labels\n      text\n      mask {\n        size\n        counts\n      }\n    }\n    tracks {\n      engine\n      state\n      frames\n      nFrames\n    }\n    ranges {\n      start\n      end\n      state\n      source\n      score\n    }\n    history {\n      canUndo\n      canRedo\n      versions {\n        key\n        engine\n        model\n        created\n        elapsedS\n        nFrames\n        clicks\n        seedFrames\n        bounded\n        current\n      }\n    }\n  }\n}\n"
   }
 };
 })();
 
-(node as any).hash = "403ae7efbf905307f44029dc5a8124ff";
+(node as any).hash = "302498f9121d9f9e458aa2e10681d0bc";
 
 export default node;

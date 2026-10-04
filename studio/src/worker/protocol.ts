@@ -51,6 +51,23 @@ export type EngineInfo = {
   hint?: string;
   /** The picker's name for it, when not engineLabel(name). */
   label?: string;
+  /** It reads text prompts here (SAM 3's detector). A backend from before them sends none. */
+  text?: boolean;
+  /** Why it cannot read text here, when it cannot. */
+  textReason?: string | null;
+};
+
+/** POST /text_prompt's answer: the best instance of `text` on one frame. */
+export type TextPromptResult = {
+  objectId: number;
+  frameIndex: number;
+  text: string;
+  engine: string;
+  /** False: nothing on the frame matched, and nothing was stored. */
+  matched: boolean;
+  score: number;
+  /** How many instances matched; the best one is the frame's mask. */
+  instances: number;
 };
 
 /** POST /track_disagreement's answer. */
@@ -103,6 +120,8 @@ export type StudioMethods = {
     args: {objectId: number; frameIndex: number; points: NormPoint[]; engine?: string};
     result: void;
   };
+  /** Seed one frame of an object from a phrase (SAM 3); its best match becomes the frame's mask. */
+  textPrompt: {args: {objectId: number; frameIndex: number; text: string; engine: string | null}; result: TextPromptResult};
   removeObject: {args: {objectId: number}; result: void};
   clearTrack: {args: {objectId: number; engine: string | null}; result: ServerObject};
   /**

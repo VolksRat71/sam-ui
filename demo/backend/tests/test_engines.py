@@ -92,7 +92,8 @@ def test_engines_lists_default_first_with_availability(h):
     assert [e["name"] for e in engines] == ["fake", "fake3", "gpu_only"]
     assert engines[0]["default"] and engines[1]["available"] and not engines[1]["loaded"]
     assert engines[2] == {"name": "gpu_only", "model": "x", "default": False, "available": False,
-                          "reason": "needs CUDA", "loaded": False}
+                          "reason": "needs CUDA", "loaded": False, "text": False,
+                          "text_reason": "this engine takes clicks only; text prompts need SAM 3"}
 
 
 def test_disagreement_flags_the_frames_where_the_engines_part(h):

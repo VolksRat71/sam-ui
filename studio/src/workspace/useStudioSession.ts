@@ -28,8 +28,8 @@ import {readJson, writeJson} from '~/lib/storage';
 import {API_ENDPOINT, OBJECT_LIMIT} from '~/config';
 import type {LocalModelStatus, LocalOptions} from '~/local/LocalEngine';
 import {browserModelName, parseQuality} from '~/local/sam2/config';
-import {BROWSER_ENGINE, engineLabel, pickerEngines} from '~/state/engines';
-import {goneSteps, isNeedsPositive, planClicks, refusedAsAbsent, type Hint, type Nudge} from '~/state/corrections';
+import {BROWSER_ENGINE, engineLabel, pickerEngines, textPrompts} from '~/state/engines';
+import {goneSteps, isNeedsPositive, planClicks, planRemoval, refusedAsAbsent, type Hint, type Nudge} from '~/state/corrections';
 import {cleanObjectName, objectName, uniqueFileNames} from '~/state/fileNames';
 import {type ExportedObject, type ExportKind, groupExport} from '~/state/maskExport';
 import {
@@ -74,7 +74,7 @@ import {
   normalizeRanges,
   paintTimeline,
 } from '~/state/ranges';
-import type {EngineInfo, RunningJob, TrackletSummary} from '~/worker/protocol';
+import type {EngineInfo, RunningJob, TextPromptResult, TrackletSummary} from '~/worker/protocol';
 
 /** Where two engines disagree on one object: frames under the IoU threshold. */
 export type ObjectDisagreement = {flagged: number[]; meanIou: number | null};
@@ -411,6 +411,7 @@ export default function useStudioSession(video: VideoItem) {
   // no engine can run (the browser-only build without WebGPU): nothing to click or track
   const noEngine = engines.length > 0 && engines.every(e => !e.available);
   const busy = repainting || status !== 'ready' || noEngine;
+  const textSupport = useMemo(() => textPrompts(engines, state.engine), [engines, state.engine]);
 
   // review flags (F while scrubbing), saved per video in this browser
   const flagsKey = `sam-ui-studio:flags:${video.path}`;
@@ -493,6 +494,32 @@ export default function useStudioSession(video: VideoItem) {
     [frame, setPoints, showNudge],
   );
 
+  /**
+   * Seed the current frame of an object from a phrase, on the engine on
+   * screen (only SAM 3 reads text: textSupport says so), or on `engine`;
+   * null asks the backend for the first engine that reads text. Its best
+   * match replaces the frame's clicks. Resolves with what was found, or null
+   * when the call failed (the warning says why).
+   */
+  const textPrompt = useCallback(
+    (objectId: number, text: string, engine: string | null = stateRef.current.engine): Promise<TextPromptResult | null> => {
+      if (bridge == null) {
+        return Promise.resolve(null);
+      }
+      const at = frame;
+      let result: TextPromptResult | null = null;
+      return serial(async () => {
+        result = await bridge.call('textPrompt', {objectId, frameIndex: at, text, engine});
+        if (result.matched) {
+          dispatch({type: 'setText', id: objectId, frame: at, text: result.text});
+          setFlags(m => clearFlag(m, objectId, at));
+        }
+        await sync();
+      }).then(() => result);
+    },
+    [bridge, serial, sync, frame],
+  );
+
   /** A new object's id: past every id this video has used, and remembered. */
   const claimId = useCallback(
     (objects: ReadonlyArray<{id: number}>) => {
@@ -539,10 +566,18 @@ export default function useStudioSession(video: VideoItem) {
         return;
       }
       const current = o.points[frame] ?? [];
+      const rest = current.filter((_, i) => i !== index);
+      const plan = planRemoval(rest, o.texts[frame]);
+      if (plan.kind === 'restoreText') {
+        // the last refinement of a text frame goes: back to the text's mask,
+        // on the first engine that reads text, whatever is on screen
+        void textPrompt(o.id, plan.text, plan.engine);
+        return;
+      }
       // deleting the last positive while negatives remain nudges too
-      correct(o.id, current, current.filter((_, i) => i !== index));
+      correct(o.id, current, rest);
     },
-    [busy, playing, frame, correct],
+    [busy, playing, frame, correct, textPrompt],
   );
 
   const addObject = useCallback(() => {
@@ -1450,6 +1485,8 @@ export default function useStudioSession(video: VideoItem) {
     start,
     addPoint,
     removePoint,
+    textPrompt,
+    textSupport,
     addObject,
     renameObject,
     selectObject,

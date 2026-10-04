@@ -2,7 +2,7 @@
 # All rights reserved.
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
-# Modified by sam-ui: clicks are recorded as seeds, track jobs run through tracks/, a correction refines the cached track mask, and a positive inside an absent range ends it there (clicks with no positive there are refused); undo, redo and versions of an object's seeds, and moving a frame's clicks to another object.
+# Modified by sam-ui: clicks are recorded as seeds, track jobs run through tracks/, a correction refines the cached track mask, and a positive inside an absent range ends it there (clicks with no positive there are refused); undo, redo and versions of an object's seeds, and moving a frame's clicks to another object. A text prompt's seed mask (SAM 3, /text_prompt) joins the session like a replayed seed.
 
 import contextlib
 import logging
@@ -45,6 +45,7 @@ from tracks.routes import TrackContext
 from tracks.seeds import cleared
 from tracks import sam3_engine
 from tracks.service import EngineSpec, ObjectBusy, TrackService
+from tracks.text import has_prompt
 
 
 logger = logging.getLogger(__name__)
@@ -144,6 +145,7 @@ class InferenceAPI:
                     model=sam3_engine.Sam3Engine.model,
                     factory=sam3_engine.Sam3Engine,
                     unavailable=sam3_engine.available,
+                    text=sam3_engine.text_available,  # its detector reads text prompts
                 )
             ],
         )
@@ -173,7 +175,7 @@ class InferenceAPI:
             inference_state[VIDEO_KEY] = video  # opts the session (and its jobs) into the feature cache
             seeds = {o: self.tracks.seeds.seeds(video, o) for o in self.tracks.seeds.objects(video)}
             for frame_idx, obj_id in sorted(
-                (f, o) for o, s in seeds.items() for f, v in s.items() if v["points"] and not cleared(v)
+                (f, o) for o, s in seeds.items() for f, v in s.items() if has_prompt(v) and not cleared(v)
             ):
                 seed_into_state(self.predictor, inference_state, obj_id, frame_idx, seeds[obj_id][frame_idx])
             self.session_states[session_id] = {
@@ -631,6 +633,14 @@ class InferenceAPI:
 
     def track_context(self, session_id: str) -> TrackContext:
         session = self.__get_session(session_id)
+
+        def seed_mask(obj_id: int, frame_idx: int, mask) -> None:
+            # a text prompt's mask replaces the frame's inputs in the session, as
+            # start_session replays a seed, so a click there refines it
+            self.predictor.add_new_mask(
+                inference_state=session["state"], frame_idx=frame_idx, obj_id=obj_id, mask=mask
+            )
+
         return TrackContext(
             service=self.tracks,
             video=session["video"],
@@ -639,6 +649,7 @@ class InferenceAPI:
             lock=self.inference_lock,
             autocast=self.autocast_context,
             video_handle=session["state"],
+            seed_mask=seed_mask,
         )
 
     @staticmethod
