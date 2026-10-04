@@ -107,6 +107,11 @@ describe('cleared seeds', () => {
     expect(isClearedSeed({frame: 1, points: [[0.5, 0.5, 0]], mask: kept})).toBe(false);
   });
 
+  it('a seed with no clicks is never cleared, as the backend\'s cleared() needs points', () => {
+    expect(isClearedSeed({frame: 1, points: []})).toBe(false);
+    expect(isClearedSeed({frame: 1, points: [], mask: empty})).toBe(false);
+  });
+
   it('a positive, or a text seed (no clicks, a mask), confirms the object present; a cleared or anchor-trimmed one does not', () => {
     expect(isConfirmedSeed({frame: 1, points: [[0.5, 0.5, 1]]})).toBe(true);
     expect(isConfirmedSeed({frame: 1, points: [[0.5, 0.5, 0], [0.2, 0.2, 1]], mask: empty})).toBe(true);
