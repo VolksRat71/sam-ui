@@ -114,9 +114,15 @@ python3 -m http.server 7390 --bind 127.0.0.1 --directory /tmp/pages   # http://1
   range shows as a hatched block on the lane; its frames are empty in the
   preview and in every export, and tracking skips them. Each side of the gap is
   tracked from its own clicks, and a side with none stays empty, with a "click
-  the object after the gap" hint on the lane. A click inside an absent range is
-  refused, with a note saying so: click the block to select it and *Unmark* it
-  (all of it, or a dragged part) first. Escape drops a selection.
+  the object after the gap" hint on the lane. A positive click inside an absent
+  range says the object is back: the range ends on the frame before it (and
+  goes, when the click is on its first frame), and the click segments as
+  usual. Clicks there with no positive are refused, with a note saying so; to
+  place them, click the block to select it and *Unmark* it (all of it, or a
+  dragged part) first. *Gone for a while?* (from the SAM 2 nudge, or after
+  SAM 3 empties a frame) marks the object absent from that frame to the frame
+  before its next click, or to the clip's end; from the nudge it first clears
+  the clicks the nudge kept on that frame. Escape drops a selection.
 - **Names.** Objects are *Object N* until renamed:
   double-click the name (or the pencil) to rename it in place. Names are
   stored with the seeds (`POST /rename_object`) and never make a track stale;
