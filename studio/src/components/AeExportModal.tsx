@@ -7,7 +7,7 @@
 // after it, its outlines as mask keys. Before writing anything it lists the
 // footage again, and stops if the item, its file, size, rate or frame count
 // moved since the video was opened here.
-import {useEffect, useState} from 'react';
+import {useEffect, useRef, useState} from 'react';
 import {createPortal} from 'react-dom';
 import {type AeError, type AeExportResult, type AeSourceRecord, aeBridge} from '~/lib/desktop';
 import {describeItem, vectorsFromZip} from '~/state/aeBridge';
@@ -55,6 +55,10 @@ export default function AeExportModal({session, video, onClose}: Props) {
       live = false;
     };
   }, [ae, video.path]);
+
+  // focus starts on Cancel, as in the other dialogs (ConfirmModal)
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => cancelRef.current?.focus(), []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && !busy && onClose();
@@ -142,7 +146,7 @@ export default function AeExportModal({session, video, onClose}: Props) {
           {error != null && <AeNotice error={error} />}
         </div>
         <div className="modal-actions">
-          <button className="button" onClick={onClose} disabled={busy}>
+          <button ref={cancelRef} className="button" onClick={onClose} disabled={busy}>
             {done != null ? 'Close' : 'Cancel'}
           </button>
           <button

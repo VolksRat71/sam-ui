@@ -20,6 +20,7 @@ import {
   pickEffect,
   pruneEffects,
 } from '~/state/objectEffects';
+import {parseObjectColors} from '~/state/objectColors';
 import {isOffline} from '~/lib/mode';
 import {webGpuAvailable} from '~/lib/webgpu';
 import {requestPersistentStorage} from '~/lib/persist';
@@ -139,10 +140,22 @@ function absentWarning(target: Parameters<typeof objectName>[0] | undefined, fra
 export default function useStudioSession(video: VideoItem) {
   const [bridge, setBridge] = useState<StudioBridge | null>(null);
   // the engine is remembered per browser: a reload keeps showing the tracks you chose
-  const [state, dispatch] = useReducer(reducer, initialState, s => ({
+  const [rawState, dispatch] = useReducer(reducer, initialState, s => ({
     ...s,
     engine: readJson<string>(ENGINE_KEY, s.engine),
   }));
+  const colorsKey = `sam-ui-studio:mask-colors:${video.path}`;
+  const [objectColors, setObjectColors] = useState(() => parseObjectColors(readJson(colorsKey, {})));
+  const state = useMemo(() => ({...rawState, objects: rawState.objects.map(o => objectColors[o.id] ? {...o, color: objectColors[o.id]} : o)}), [rawState, objectColors]);
+  const setObjectColor = useCallback((id: number, color: string | null) => {
+    const valid = color == null ? null : parseObjectColors({[id]: color})[id];
+    if (color != null && valid == null) return;
+    setObjectColors(current => {
+      const next = {...current};
+      if (valid == null) delete next[id]; else next[id] = valid;
+      return next;
+    });
+  }, []);
   const [status, setStatus] = useState<SessionStatus>('starting');
   const [statusError, setStatusError] = useState<string | null>(null);
   const [frame, setFrame] = useState(0);
@@ -158,6 +171,10 @@ export default function useStudioSession(video: VideoItem) {
   const [repainting, setRepainting] = useState(false);
   const [pending, setPending] = useState(0);
   const [warning, setWarning] = useState<string | null>(null);
+  useEffect(() => {
+    writeJson(colorsKey, objectColors);
+    bridge?.call('setObjectColors', {colors: objectColors}).catch(error => setWarning(message(error)));
+  }, [bridge, colorsKey, objectColors]);
   /** Jobs on this video that this page did not start (another tab's). */
   const [foreignJobs, setForeignJobs] = useState<RunningJob[]>([]);
   const [engines, setEngines] = useState<EngineInfo[]>([]);
@@ -1472,6 +1489,8 @@ export default function useStudioSession(video: VideoItem) {
     flags,
     toggleFlag,
     objectEffects,
+    objectColors,
+    setObjectColor,
     pickObjectEffect,
     variantCounts,
     exportVideo,

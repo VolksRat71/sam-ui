@@ -8,6 +8,7 @@ import {API_ENDPOINT, NO_BACKEND_BUILD} from './config';
 import {waitForBackend} from './lib/mode';
 import './styles.css';
 import './responsive.css';
+import './suite.css';
 
 // Meta's Relay environment, pointed at the configured backend
 const environment = createEnvironment(API_ENDPOINT);
