@@ -74,9 +74,13 @@ export function checkUpload(bytes: number, seconds: number | null, limits: Uploa
   }
   if (limits.over === 'refuse') {
     return {
-      error: `The browser demo handles clips up to ${formatDuration(limits.maxSeconds)}. The desktop app handles up to ${DESKTOP_MAX_SECONDS / 60} minutes.`,
+      // point at the desktop app only when it takes a longer clip than this
+      error:
+        limits.maxSeconds < DESKTOP_MAX_SECONDS
+          ? `The browser demo handles clips up to ${formatDuration(limits.maxSeconds)}. The desktop app handles up to ${DESKTOP_MAX_SECONDS / 60} minutes.`
+          : `The browser demo handles clips up to ${formatDuration(limits.maxSeconds)}. Trim the clip and try again.`,
       notice: null,
-      desktop: true,
+      desktop: limits.maxSeconds < DESKTOP_MAX_SECONDS,
     };
   }
   return {

@@ -28,15 +28,16 @@ export const DECODED_FRAME_BYTES = 1.0e9;
 
 /**
  * Longest clip the browser build opens. Its memory no longer grows with the
- * clip (the frames above are an LRU): tracking a 2-minute 720p clip at 512
- * plateaued at 2.7-3.6 GB for all of Chrome, JS heap under 35 MB. 120 s is
- * the longest length measured end to end; a 5-minute run held the same
- * level (2.8-3.1 GB) for its first 196 frames before it was stopped, so
- * raising this to 300 needs that run finished. Tracking takes about 0.3 s a
- * frame at 720p, so 2 minutes takes about 15. VITE_BROWSER_MAX_SECONDS
- * overrides it.
+ * clip (the frames above are an LRU). Measured end to end with `npm run
+ * memory` (studio/README.md) on a 5-minute 720p 24 fps clip, one object, on
+ * a 48 GB Apple-silicon Mac (2026-09-30): all 7,200 frames tracked in 696 s
+ * (0.097 s a frame), Chrome plateaued at 2.83 GB (second half 2.78-2.87 GB)
+ * with a 3.65 GB peak in the first quarter, JS heap under 16 MB, no memory
+ * pressure, mask IoU against the clip's known shape min 0.974 over 31
+ * sampled frames. Earlier, a 2-minute run plateaued at 2.7-3.6 GB. 300 s
+ * matches the desktop app's limit. VITE_BROWSER_MAX_SECONDS overrides it.
  */
-export const BROWSER_MAX_SECONDS: number = Number(import.meta.env.VITE_BROWSER_MAX_SECONDS) || 120;
+export const BROWSER_MAX_SECONDS: number = Number(import.meta.env.VITE_BROWSER_MAX_SECONDS) || 300;
 
 /** The browser build's limits: longer clips are refused, not trimmed. */
 export const BROWSER_LIMITS: UploadLimits = {maxSeconds: BROWSER_MAX_SECONDS, maxMb: 500, over: 'refuse'};
