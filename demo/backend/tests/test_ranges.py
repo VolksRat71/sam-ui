@@ -545,7 +545,7 @@ def test_real_sam2_leaves_an_absent_range_empty_and_tracks_the_far_side_from_its
 
 @pytest.mark.slow
 @pytest.mark.skipif(os.environ.get("SAM_UI_SLOW") != "1", reason="set SAM_UI_SLOW=1 (and have the SAM 3 weights)")
-def test_real_sam3_tracks_each_window_on_its_own(tmp_path):
+def test_real_sam3_tracks_each_window_on_its_own(tmp_path, request):
     from tracks import sam3_engine
 
     why = sam3_engine.available()
@@ -558,6 +558,7 @@ def test_real_sam3_tracks_each_window_on_its_own(tmp_path):
         return {"points": [[float(xs.mean()) / GW, float(ys.mean()) / GH]], "labels": [1]}
 
     e = sam3_engine.Sam3Engine()
+    request.addfinalizer(e.unload)
     got = {}
     for f, m in e.track(str(tmp_path / "gap.mp4"), {1: {0: center(0), 24: center(24)}},
                         windows={1: [(0, GAP[0] - 1), (GAP[1] + 1, None)]}):

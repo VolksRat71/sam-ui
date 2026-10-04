@@ -457,7 +457,7 @@ if not GALLERY.is_dir():  # a worktree without the gallery: the main checkout's
 
 @pytest.mark.slow
 @pytest.mark.skipif(os.environ.get("SAM_UI_SLOW") != "1", reason="set SAM_UI_SLOW=1 (and have the SAM 3 weights)")
-def test_real_sam3_text_prompt_finds_the_dog_and_tracks_it():
+def test_real_sam3_text_prompt_finds_the_dog_and_tracks_it(request):
     import time
 
     import torch
@@ -470,13 +470,16 @@ def test_real_sam3_text_prompt_finds_the_dog_and_tracks_it():
     if not clip.exists():
         pytest.skip(f"no gallery clip at {clip}")
     e = sam3_engine.Sam3Engine()
+    request.addfinalizer(e.unload)
     mps = torch.backends.mps.is_available()
+    sam3_engine.memory.release_cached()
+    baseline = torch.mps.driver_allocated_memory() / 2 ** 30 if mps else 0.0
     peak = 0.0
 
     def mem():
         nonlocal peak
         if mps:
-            peak = max(peak, torch.mps.driver_allocated_memory() / 2 ** 30)
+            peak = max(peak, torch.mps.driver_allocated_memory() / 2 ** 30 - baseline)
 
     t0 = time.perf_counter()
     miss = e.segment_text(str(clip), 0, "giraffe")
@@ -518,5 +521,110 @@ def test_real_sam3_text_prompt_finds_the_dog_and_tracks_it():
           f"first prompt (loads) {t_first:.1f} s, warm prompt {t_prompt:.2f} s; tracked {n} frames in "
           f"{t_track:.1f} s, frame-to-frame IoU min {min(ious):.3f}, IoU with a fresh 'dog' on frame {n - 1} "
           f"{end_iou:.3f}, area {min(areas):.4f}-{max(areas):.4f}; "
-          f"peak MPS driver memory {peak:.1f} GB")
+          f"peak MPS driver memory above baseline {peak:.1f} GB (baseline {baseline:.1f} GB)")
     assert min(ious) > 0.6 and min(areas) > 0.3 * area and end_iou > 0.7
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(os.environ.get("SAM_UI_SLOW") != "1", reason="set SAM_UI_SLOW=1 (and have the SAM 3 weights)")
+def test_real_sam3_text_detector_loaded_alone_is_from_pretrained_bit_for_bit(request):
+    """shared_detector reads only the detector's own weights onto the device
+    (issue #11). It must be the model Sam3Model.from_pretrained makes, with the
+    tracker's backbone swapped in: the same weights, and the same outputs."""
+    import torch
+    from tracks import sam3_engine
+
+    why = sam3_engine.available() or sam3_engine.text_available()
+    if why:
+        pytest.skip(why)
+    if os.environ.get("SAM_UI_SAM3_DTYPE", "fp32") not in ("", "fp32"):
+        pytest.skip("compares against fp32 from_pretrained")
+    from transformers import Sam3Model
+
+    clip = GALLERY / "01_dog.mp4"
+    if not clip.exists():
+        pytest.skip(f"no gallery clip at {clip}")
+    e = sam3_engine.Sam3Engine()
+    request.addfinalizer(e.unload)
+    proc, model, dev = e._load()
+    det, tok = e._load_detector()
+    ref = Sam3Model.from_pretrained(str(sam3_engine.weights_path())).eval()
+    ref.vision_encoder.backbone = model.vision_encoder.backbone
+    ref = ref.to(dev)
+    got, want = det.state_dict(), ref.state_dict()
+    assert sorted(got) == sorted(want)
+    for k in want:
+        assert got[k].dtype == want[k].dtype and torch.equal(got[k], want[k]), k
+    for name, b in ref.named_buffers():
+        mine = dict(det.named_buffers())[name]
+        assert mine.dtype == b.dtype and mine.device == b.device and torch.equal(mine, b), name
+    frames = sam3_engine.Sam3Frames(str(clip), proc)
+    ids = tok("dog", return_tensors="pt", padding="max_length", max_length=32, truncation=True).to(dev)
+    with torch.inference_mode():
+        a = det(pixel_values=frames[0][None].to(dev), input_ids=ids.input_ids, attention_mask=ids.attention_mask)
+        b = ref(pixel_values=frames[0][None].to(dev), input_ids=ids.input_ids, attention_mask=ids.attention_mask)
+    for k in ("pred_logits", "pred_masks", "pred_boxes", "presence_logits"):
+        assert torch.equal(getattr(a, k), getattr(b, k)), k
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(os.environ.get("SAM_UI_SLOW") != "1", reason="set SAM_UI_SLOW=1 (and have the SAM 3 weights)")
+def test_real_sam3_text_detector_at_half_precision_has_from_pretrained_dtypes():
+    """At bf16 (SAM_UI_SAM3_DTYPE) every detector tensor must have the dtype
+    from_pretrained(dtype=bf16) gives it: MPS aborts the process on a matmul
+    of mixed dtypes. On the CPU, so no GPU is needed."""
+    import torch
+    from tracks import sam3_engine
+
+    why = sam3_engine.available() or sam3_engine.text_available()
+    if why:
+        pytest.skip(why)
+    from transformers import Sam3Model, Sam3TrackerVideoModel
+
+    path = str(sam3_engine.weights_path())
+    tracker = Sam3TrackerVideoModel.from_pretrained(path, dtype=torch.bfloat16)
+    det = sam3_engine.shared_detector(tracker.vision_encoder.backbone, "cpu", torch.bfloat16)
+    ref = Sam3Model.from_pretrained(path, dtype=torch.bfloat16)
+    ref.vision_encoder.backbone = tracker.vision_encoder.backbone
+    got, want = det.state_dict(), ref.state_dict()
+    assert sorted(got) == sorted(want)
+    for k in want:
+        assert got[k].dtype == want[k].dtype and torch.equal(got[k], want[k]), k
+    mine = dict(det.named_buffers())
+    for name, b in ref.named_buffers():
+        assert mine[name].dtype == b.dtype and torch.equal(mine[name], b), name
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(os.environ.get("SAM_UI_SLOW") != "1", reason="set SAM_UI_SLOW=1 (and have the SAM 3 weights)")
+def test_real_sam3_text_and_track_ignore_sam2s_autocast(monkeypatch, request):
+    """The routes wrap jobs and prompts in SAM 2's autocast. With
+    SAM_UI_SAM2_DTYPE=fp16, SAM 3 must give exactly its own fp32 masks."""
+    import torch
+    from tracks import precision, sam3_engine
+
+    why = sam3_engine.available() or sam3_engine.text_available()
+    if why:
+        pytest.skip(why)
+    if not torch.backends.mps.is_available():
+        pytest.skip("SAM_UI_SAM2_DTYPE is MPS autocast")
+    clip = GALLERY / "01_dog.mp4"
+    if not clip.exists():
+        pytest.skip(f"no gallery clip at {clip}")
+    monkeypatch.delenv("SAM_UI_SAM3_DTYPE", raising=False)
+    monkeypatch.setenv("SAM_UI_SAM2_DTYPE", "fp16")
+    e = sam3_engine.Sam3Engine()
+    request.addfinalizer(e.unload)
+    seeds = {1: {0: {"points": [[0.484, 0.611]], "labels": [1]}}}
+
+    def run():
+        hit = e.segment_text(str(clip), 0, "dog")
+        return hit, dict(e.track(str(clip), seeds, windows={1: [(0, 7)]}))
+
+    want_hit, want = run()
+    with precision.sam2_autocast("mps"):
+        got_hit, got = run()
+    assert got_hit.score == want_hit.score and np.array_equal(got_hit.mask, want_hit.mask)
+    assert sorted(got) == sorted(want) == list(range(8))
+    for f in want:
+        assert np.array_equal(got[f][1], want[f][1]), f
