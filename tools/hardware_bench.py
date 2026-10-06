@@ -64,20 +64,29 @@ SAM2_LARGE = ("sam2.1_hiera_large.pt", "configs/sam2.1/sam2.1_hiera_l.yaml")
 # normalised (x, y) clicks on frame 0, one object each
 SEEDS = {
     "synth": {1: (130 / 1280, 210 / 720), 2: ((1280 - 130) / 1280, 510 / 720)},
-    "05_default_juggle": {1: (0.547, 0.32), 2: (0.509, 0.444)},  # the player's shirt, the ball
+    "05_default_juggle": {
+        1: (0.547, 0.32),
+        2: (0.509, 0.444),
+    },  # the player's shirt, the ball
     "01_dog": {1: (0.484, 0.611), 2: (0.242, 0.583)},  # the dog, the woman's jeans
     "02_cups": {1: (0.5, 0.5)},
 }
-GB = 2 ** 30
+GB = 2**30
 
 
 # -- memory --------------------------------------------------------------------------------
 
+
 class _RusageV4(ctypes.Structure):
-    _fields_ = [("uuid", ctypes.c_uint8 * 16)] + [(f"f{i}", ctypes.c_uint64) for i in range(40)]
+    _fields_ = [("uuid", ctypes.c_uint8 * 16)] + [
+        (f"f{i}", ctypes.c_uint64) for i in range(40)
+    ]
 
 
-_PHYS_FOOTPRINT, _LIFETIME_MAX = 7, 28  # ri_phys_footprint, ri_lifetime_max_phys_footprint
+_PHYS_FOOTPRINT, _LIFETIME_MAX = (
+    7,
+    28,
+)  # ri_phys_footprint, ri_lifetime_max_phys_footprint
 
 
 def footprint() -> tuple:
@@ -96,12 +105,19 @@ def vmmap_peak() -> dict:
     """vmmap --summary's physical footprint and its peak, GB (a cross-check)."""
     if sys.platform != "darwin":
         return {}
-    out = subprocess.run(["vmmap", "--summary", str(os.getpid())], capture_output=True, text=True).stdout
+    out = subprocess.run(
+        ["vmmap", "--summary", str(os.getpid())], capture_output=True, text=True
+    ).stdout
     got = {}
-    for key, label in (("vmmap_footprint_gb", "Physical footprint:"), ("vmmap_peak_gb", "Physical footprint (peak):")):
+    for key, label in (
+        ("vmmap_footprint_gb", "Physical footprint:"),
+        ("vmmap_peak_gb", "Physical footprint (peak):"),
+    ):
         m = re.search(re.escape(label) + r"\s+([\d.]+)([KMG])", out)
         if m:
-            got[key] = round(float(m.group(1)) / {"K": 2 ** 20, "M": 2 ** 10, "G": 1}[m.group(2)], 2)
+            got[key] = round(
+                float(m.group(1)) / {"K": 2**20, "M": 2**10, "G": 1}[m.group(2)], 2
+            )
     return got
 
 
@@ -141,6 +157,7 @@ def _gb(v):
 
 # -- clips ---------------------------------------------------------------------------------
 
+
 def clip_path(spec: str, out: Path) -> Path:
     kind, _, arg = spec.partition(":")
     if kind == "synth":
@@ -163,10 +180,15 @@ def clip_seeds(spec: str) -> dict:
 
 # -- one run (child process) ---------------------------------------------------------------
 
+
 def _device():
     import torch
 
-    return "mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu")
+    return (
+        "mps"
+        if torch.backends.mps.is_available()
+        else ("cuda" if torch.cuda.is_available() else "cpu")
+    )
 
 
 def _sam2_engine(cache_gb: float):
@@ -187,12 +209,20 @@ def _sam2_engine(cache_gb: float):
         install_feature_cache(pred, FeatureCache(int(cache_gb * GB)))
     try:
         from tracks.precision import sam2_autocast
-    except ImportError:  # a tree from before the switch (a baseline): fp32 on MPS, as it ran
+    except (
+        ImportError
+    ):  # a tree from before the switch (a baseline): fp32 on MPS, as it ran
         import contextlib
 
         def sam2_autocast(_):
             return contextlib.nullcontext()
-    return Sam2Engine(pred, model="large", offload_video_to_cpu=dev == "mps", autocast=lambda: sam2_autocast(dev))
+
+    return Sam2Engine(
+        pred,
+        model="large",
+        offload_video_to_cpu=dev == "mps",
+        autocast=lambda: sam2_autocast(dev),
+    )
 
 
 def _sam2_session(e, path: Path, cache_gb: float):
@@ -204,12 +234,16 @@ def _sam2_session(e, path: Path, cache_gb: float):
         return None
     from tracks.features import VIDEO_KEY
 
-    state = e.predictor.init_state(str(path), offload_video_to_cpu=e.offload_video_to_cpu)
+    state = e.predictor.init_state(
+        str(path), offload_video_to_cpu=e.offload_video_to_cpu
+    )
     state[VIDEO_KEY] = str(path)
     return state
 
 
-def run_child(run: str, clip: str, out: Path, cache_gb: float, text: str, save: str) -> dict:
+def run_child(
+    run: str, clip: str, out: Path, cache_gb: float, text: str, save: str
+) -> dict:
     sys.path.insert(0, str(REPO / "demo/backend/server"))
     import numpy as np
     import torch
@@ -233,12 +267,15 @@ def run_child(run: str, clip: str, out: Path, cache_gb: float, text: str, save: 
     row["footprint_after_load_gb"] = _gb(footprint()[0])
 
     if run == "sam3-idle":
+
         def settled():
             time.sleep(2)
             return _gb(footprint()[0]), _gb(meter.mps())
 
         seeds = clip_seeds(clip)
-        n = sum(1 for _ in e.track(str(path), seeds, windows={o: [(0, 47)] for o in seeds}))  # 48 frames
+        n = sum(
+            1 for _ in e.track(str(path), seeds, windows={o: [(0, 47)] for o in seeds})
+        )  # 48 frames
         row["frames"] = n
         row["after_job_gb"], row["after_job_mps_gb"] = settled()
         e.segment_text(str(path), 0, text)
@@ -265,18 +302,30 @@ def run_child(run: str, clip: str, out: Path, cache_gb: float, text: str, save: 
         from tracks.sam3_engine import Sam3Engine
 
         seeds = clip_seeds(clip)
-        n2 = sum(1 for _ in e.track(str(path), seeds, video_handle=_sam2_session(e, path, cache_gb)))
+        n2 = sum(
+            1
+            for _ in e.track(
+                str(path), seeds, video_handle=_sam2_session(e, path, cache_gb)
+            )
+        )
         row["footprint_sam2_done_gb"] = _gb(footprint()[1])
         s3 = Sam3Engine()
         n3, t0 = 0, time.perf_counter()
         for _ in s3.track(str(path), seeds):
             n3 += 1
             meter.sample()
-        row.update(frames=n3, s_per_frame=round((time.perf_counter() - t0) / max(n3, 1), 3), sam2_frames=n2)
+        row.update(
+            frames=n3,
+            s_per_frame=round((time.perf_counter() - t0) / max(n3, 1), 3),
+            sam2_frames=n2,
+        )
         if clip.startswith("gallery:"):
             t0 = time.perf_counter()
             hit = s3.segment_text(str(path), 0, text)
-            row.update(first_prompt_s=round(time.perf_counter() - t0, 1), score=round(hit.score, 3))
+            row.update(
+                first_prompt_s=round(time.perf_counter() - t0, 1),
+                score=round(hit.score, 3),
+            )
             meter.sample()
     else:
         seeds = clip_seeds(clip)
@@ -306,21 +355,33 @@ def run_child(run: str, clip: str, out: Path, cache_gb: float, text: str, save: 
     row["mps_idle_gb"] = _gb(meter.mps())
     row["footprint_idle_gb"] = _gb(footprint()[0])
     row.update(vmmap_peak())
-    row["env"] = {k: v for k, v in os.environ.items() if k.startswith("SAM_UI_") and k != "SAM_UI_GALLERY"}
+    row["env"] = {
+        k: v
+        for k, v in os.environ.items()
+        if k.startswith("SAM_UI_") and k != "SAM_UI_GALLERY"
+    }
     if cache_gb > 0:
         row["env"]["feature_cache_gb"] = cache_gb
     if save:
         d = Path(save) / f"{run}_{clip.replace(':', '_')}"
         d.mkdir(parents=True, exist_ok=True)
         keys = sorted(masks)
-        np.savez_compressed(d / "masks.npz", keys=np.array(keys, dtype=np.int64).reshape(-1, 2),
-                            masks=np.packbits(np.stack([masks[k] for k in keys]), axis=-1) if keys else np.zeros(0),
-                            shape=np.array(next(iter(masks.values())).shape if keys else (0, 0)))
+        np.savez_compressed(
+            d / "masks.npz",
+            keys=np.array(keys, dtype=np.int64).reshape(-1, 2),
+            masks=(
+                np.packbits(np.stack([masks[k] for k in keys]), axis=-1)
+                if keys
+                else np.zeros(0)
+            ),
+            shape=np.array(next(iter(masks.values())).shape if keys else (0, 0)),
+        )
         (d / "row.json").write_text(json.dumps(row, indent=1))
     return row
 
 
 # -- comparing two saved runs --------------------------------------------------------------
+
 
 def _load_masks(d: Path) -> dict:
     import numpy as np
@@ -335,7 +396,9 @@ def _load_masks(d: Path) -> dict:
 
 def compare(a: Path, b: Path) -> None:
     """Per-run IoU of b's masks against a's (frame, object by frame, object)."""
-    print("| run | frames | objects | IoU min | IoU mean | masks < 0.98 | masks < 0.995 |")
+    print(
+        "| run | frames | objects | IoU min | IoU mean | masks < 0.98 | masks < 0.995 |"
+    )
     print("|---|---|---|---|---|---|---|")
     for da in sorted(p for p in a.iterdir() if (p / "masks.npz").exists()):
         db = b / da.name
@@ -349,27 +412,49 @@ def compare(a: Path, b: Path) -> None:
             ious.append(1.0 if u == 0 else float((x & y).sum() / u))
         if not ious:
             continue
-        print(f"| {da.name} | {len({k[0] for k in ma})} | {len({k[1] for k in ma})} | {min(ious):.4f} | "
-              f"{sum(ious) / len(ious):.4f} | {sum(i < 0.98 for i in ious)} | {sum(i < 0.995 for i in ious)} |")
+        print(
+            f"| {da.name} | {len({k[0] for k in ma})} | {len({k[1] for k in ma})} | {min(ious):.4f} | "
+            f"{sum(ious) / len(ious):.4f} | {sum(i < 0.98 for i in ious)} | {sum(i < 0.995 for i in ious)} |"
+        )
 
 
 # -- the table -----------------------------------------------------------------------------
 
+
 def machine() -> str:
     try:
-        cpu = subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"], capture_output=True, text=True).stdout.strip()
-        ram = int(subprocess.run(["sysctl", "-n", "hw.memsize"], capture_output=True, text=True).stdout) / GB
+        cpu = subprocess.run(
+            ["sysctl", "-n", "machdep.cpu.brand_string"], capture_output=True, text=True
+        ).stdout.strip()
+        ram = (
+            int(
+                subprocess.run(
+                    ["sysctl", "-n", "hw.memsize"], capture_output=True, text=True
+                ).stdout
+            )
+            / GB
+        )
         return f"{cpu}, {ram:.0f} GB, macOS {platform.mac_ver()[0]}"
     except (OSError, ValueError):
         return platform.platform()
 
 
 def table(rows) -> str:
-    cols = [("run", "run"), ("clip", "clip"), ("frames", "frames"), ("load_s", "load s"),
-            ("s_per_frame", "s/frame"), ("first_prompt_s", "1st prompt s"), ("warm_prompt_s", "warm prompt s"),
-            ("mps_peak_gb", "MPS peak GB"), ("footprint_after_load_gb", "footprint loaded GB"),
-            ("footprint_peak_gb", "footprint peak GB"), ("footprint_idle_gb", "footprint idle GB"),
-            ("vmmap_peak_gb", "vmmap peak GB"), ("env", "config")]
+    cols = [
+        ("run", "run"),
+        ("clip", "clip"),
+        ("frames", "frames"),
+        ("load_s", "load s"),
+        ("s_per_frame", "s/frame"),
+        ("first_prompt_s", "1st prompt s"),
+        ("warm_prompt_s", "warm prompt s"),
+        ("mps_peak_gb", "MPS peak GB"),
+        ("footprint_after_load_gb", "footprint loaded GB"),
+        ("footprint_peak_gb", "footprint peak GB"),
+        ("footprint_idle_gb", "footprint idle GB"),
+        ("vmmap_peak_gb", "vmmap peak GB"),
+        ("env", "config"),
+    ]
     lines = ["| " + " | ".join(c[1] for c in cols) + " |", "|" + "---|" * len(cols)]
     for r in rows:
         if "error" in r:
@@ -387,16 +472,42 @@ def table(rows) -> str:
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--runs", nargs="*", default=["sam2", "sam3", "sam3-text"],
-                    choices=["sam2", "sam3", "sam3-text", "app", "sam3-idle"])
+    ap.add_argument(
+        "--runs",
+        nargs="*",
+        default=["sam2", "sam3", "sam3-text"],
+        choices=["sam2", "sam3", "sam3-text", "app", "sam3-idle"],
+    )
     ap.add_argument("--clips", nargs="*", default=["synth:10"])
-    ap.add_argument("--text", default="dog", help="the phrase for sam3-text (on frame 0 of each clip)")
-    ap.add_argument("--feature-cache-gb", type=float, default=0.0,
-                    help="SAM 2's backbone-feature cache (the app defaults to a quarter of RAM, up to 6)")
-    ap.add_argument("--env", nargs="*", default=[], help="KEY=VALUE set for every run (the app's switches)")
-    ap.add_argument("--save-masks", default="", help="keep every run's masks under this folder")
-    ap.add_argument("--compare", nargs=2, metavar=("A", "B"), help="IoU between two --save-masks folders")
-    ap.add_argument("--out", default=str(Path(tempfile.gettempdir()) / "sam-ui-hardware-bench"))
+    ap.add_argument(
+        "--text",
+        default="dog",
+        help="the phrase for sam3-text (on frame 0 of each clip)",
+    )
+    ap.add_argument(
+        "--feature-cache-gb",
+        type=float,
+        default=0.0,
+        help="SAM 2's backbone-feature cache (the app defaults to a quarter of RAM, up to 6)",
+    )
+    ap.add_argument(
+        "--env",
+        nargs="*",
+        default=[],
+        help="KEY=VALUE set for every run (the app's switches)",
+    )
+    ap.add_argument(
+        "--save-masks", default="", help="keep every run's masks under this folder"
+    )
+    ap.add_argument(
+        "--compare",
+        nargs=2,
+        metavar=("A", "B"),
+        help="IoU between two --save-masks folders",
+    )
+    ap.add_argument(
+        "--out", default=str(Path(tempfile.gettempdir()) / "sam-ui-hardware-bench")
+    )
     ap.add_argument("--_child", nargs=2, help=argparse.SUPPRESS)
     a = ap.parse_args()
     out = Path(a.out)
@@ -405,9 +516,24 @@ def main():
         compare(Path(a.compare[0]), Path(a.compare[1]))
         return
     if a._child:
-        print(json.dumps(run_child(a._child[0], a._child[1], out, a.feature_cache_gb, a.text, a.save_masks)))
+        print(
+            json.dumps(
+                run_child(
+                    a._child[0],
+                    a._child[1],
+                    out,
+                    a.feature_cache_gb,
+                    a.text,
+                    a.save_masks,
+                )
+            )
+        )
         return
-    env = {**os.environ, "PYTORCH_ENABLE_MPS_FALLBACK": "1", **dict(kv.split("=", 1) for kv in a.env)}
+    env = {
+        **os.environ,
+        "PYTORCH_ENABLE_MPS_FALLBACK": "1",
+        **dict(kv.split("=", 1) for kv in a.env),
+    }
     rows = []
     print(f"machine: {machine()}", flush=True)
     for clip in a.clips:
@@ -415,11 +541,28 @@ def main():
         for run in a.runs:
             if run in ("sam3-text", "sam3-idle") and not clip.startswith("gallery:"):
                 continue  # a phrase needs something to name
-            cmd = [sys.executable, __file__, "--_child", run, clip, "--out", str(out), "--text", a.text,
-                   "--feature-cache-gb", str(a.feature_cache_gb), "--save-masks", a.save_masks]
+            cmd = [
+                sys.executable,
+                __file__,
+                "--_child",
+                run,
+                clip,
+                "--out",
+                str(out),
+                "--text",
+                a.text,
+                "--feature-cache-gb",
+                str(a.feature_cache_gb),
+                "--save-masks",
+                a.save_masks,
+            ]
             r = subprocess.run(cmd, capture_output=True, text=True, env=env, cwd=REPO)
             last = [l for l in r.stdout.splitlines() if l.startswith("{")]
-            row = json.loads(last[-1]) if last else {"run": run, "clip": clip, "error": (r.stderr or "")[-400:]}
+            row = (
+                json.loads(last[-1])
+                if last
+                else {"run": run, "clip": clip, "error": (r.stderr or "")[-400:]}
+            )
             rows.append(row)
             print(json.dumps(row), flush=True)
     print("\n" + table(rows))
