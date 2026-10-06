@@ -10,7 +10,7 @@ the app, and studio is served by it, so nothing else needs installing.
 Any M-series Mac (M1 or later). macOS 14 is the floor because the bundled
 PyTorch needs it. Memory: 16 GB recommended. SAM 2.1 large may run on 8 GB with
 the feature cache off, and SAM 3 on 12 GB at half precision (both estimates from
-measured footprints). See [Hardware](../README.md#hardware).
+measured footprints). See [Hardware](../docs/hardware.md).
 
 1. Download `sam-ui-<version>-arm64.dmg` from the
    [releases](https://github.com/VolksRat71/sam-ui/releases) and drag **sam-ui**
@@ -44,7 +44,7 @@ If you already have the weights, **SAM 3 → Choose SAM 3 weights folder…** us
 folder instead. With SAM 2.1 large beside it, SAM 3 peaks at about 6.7 GB of the
 app's memory, or 5.7 GB at half precision. Half precision moves masks a little.
 To turn it on, run `launchctl setenv SAM_UI_SAM3_DTYPE fp16` and restart the app.
-SAM 3 unloads itself after 10 idle minutes. See [Hardware](../README.md#hardware).
+SAM 3 unloads itself after 10 idle minutes. See [Hardware](../docs/hardware.md).
 
 **Where things are:**
 - Everything lives in `~/Library/Application Support/sam-ui/`: `checkpoints/`;

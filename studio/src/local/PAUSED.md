@@ -4,7 +4,7 @@
 Phase 2 (no-server mode on OPFS, MediaApi, `npm run build:pages`, the
 no-server smoke run) is built; the Pages workflow is not (it waits for review).
 The user-facing description and the list of approximations are in
-`studio/README.md` (*Browser engine*).
+`docs/using-studio.md` (*Browser engine*).
 
 ## What is built
 - `sam2/`: config, memoryBank, masks, tracker (pure, vitest with fake models),

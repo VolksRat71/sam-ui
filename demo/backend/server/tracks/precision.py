@@ -14,8 +14,8 @@ app, the tests and tools/hardware_bench.py run the same code:
                      under bf16 autocast, as upstream.
 
 Anything but fp32 moves masks: small objects most (a ball at under 1% of the
-frame fell to IoU 0.80 against fp32 on some frames), so it is opt-in. The
-README's Hardware section has the measurements.
+frame fell to IoU 0.80 against fp32 on some frames), so it is opt-in.
+docs/hardware.md has the measurements.
 """
 import contextlib
 import os

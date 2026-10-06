@@ -29,7 +29,7 @@ export const DECODED_FRAME_BYTES = 1.0e9;
 /**
  * Longest clip the browser build opens. Its memory no longer grows with the
  * clip (the frames above are an LRU). Measured end to end with `npm run
- * memory` (studio/README.md) on a 5-minute 720p 24 fps clip, one object, on
+ * memory` (docs/development.md) on a 5-minute 720p 24 fps clip, one object, on
  * a 48 GB Apple-silicon Mac (2026-09-30): all 7,200 frames tracked in 696 s
  * (0.097 s a frame), Chrome plateaued at 2.83 GB (second half 2.78-2.87 GB)
  * with a 3.65 GB peak in the first quarter, JS heap under 16 MB, no memory
