@@ -47,8 +47,10 @@ import torch.nn.functional as F
 
 REPO = Path(__file__).resolve().parents[1]
 WEIGHTS = Path.home() / ".cache/rotoscoping-video-subjects/weights"
-MODELS = {"tiny": ("sam2.1_hiera_tiny.pt", "configs/sam2.1/sam2.1_hiera_t.yaml"),
-          "large": ("sam2.1_hiera_large.pt", "configs/sam2.1/sam2.1_hiera_l.yaml")}
+MODELS = {
+    "tiny": ("sam2.1_hiera_tiny.pt", "configs/sam2.1/sam2.1_hiera_t.yaml"),
+    "large": ("sam2.1_hiera_large.pt", "configs/sam2.1/sam2.1_hiera_l.yaml"),
+}
 GALLERY = REPO / "demo/data/gallery"
 IMAGE_SIZE = 1024  # SAM 2.1's input side
 MEAN = (0.485, 0.456, 0.406)
@@ -64,15 +66,22 @@ OBJECTS: Dict[str, Tuple[str, int, int, int]] = {
     "juggle_person": ("05_default_juggle.mp4", 0, 700, 230),
 }
 STRATEGIES = ["rough", "reference", "s1", "s2", "s3", "s4"]
-Box = Tuple[int, int, int]  # (x0, y0, side): a square crop in source pixels, may overhang the frame
+Box = Tuple[
+    int, int, int
+]  # (x0, y0, side): a square crop in source pixels, may overhang the frame
 
 
 # --------------------------------------------------------------------------
 # Envelope and crop geometry (pure, unit-tested in demo/backend/tests)
 # --------------------------------------------------------------------------
 
-def envelope_frames(nonempty: Sequence[bool], pad: int = 2, merge_gap: int = 5,
-                    always: Sequence[int] = ()) -> List[int]:
+
+def envelope_frames(
+    nonempty: Sequence[bool],
+    pad: int = 2,
+    merge_gap: int = 5,
+    always: Sequence[int] = (),
+) -> List[int]:
     """Frames the refinement runs on: the non-empty frames, with gaps of at
     most `merge_gap` frames filled, each interval grown by `pad` frames on both
     sides, plus `always` (the seed frame)."""
@@ -121,13 +130,15 @@ def moving_average(a: np.ndarray, win: int) -> np.ndarray:
         return np.asarray(a, float).copy()
     a = np.asarray(a, float)
     n, h = len(a), win // 2
-    return np.stack([a[i - k:i + k + 1].mean(0) for i in range(n) for k in [min(h, i, n - 1 - i)]])
+    return np.stack(
+        [a[i - k : i + k + 1].mean(0) for i in range(n) for k in [min(h, i, n - 1 - i)]]
+    )
 
 
 def rolling_max(a: np.ndarray, win: int) -> np.ndarray:
     a = np.asarray(a, float)
     h = win // 2
-    return np.array([a[max(0, i - h):i + h + 1].max() for i in range(len(a))])
+    return np.array([a[max(0, i - h) : i + h + 1].max() for i in range(len(a))])
 
 
 def place_square(cx: float, cy: float, side: float, W: int, H: int) -> Box:
@@ -152,18 +163,36 @@ def _crop_sizes(boxes: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     return cx, cy, size
 
 
-def fixed_crops(boxes: np.ndarray, W: int, H: int, pad: float = 0.25, win: int = 9,
-                min_side: int = 64) -> List[Box]:
+def fixed_crops(
+    boxes: np.ndarray,
+    W: int,
+    H: int,
+    pad: float = 0.25,
+    win: int = 9,
+    min_side: int = 64,
+) -> List[Box]:
     """Strategy 2: bbox centre and size smoothed over `win` frames, `pad` of
     the size added on each side, square."""
     cx, cy, size = _crop_sizes(boxes)
-    cx, cy, size = moving_average(cx, win), moving_average(cy, win), moving_average(size, win)
+    cx, cy, size = (
+        moving_average(cx, win),
+        moving_average(cy, win),
+        moving_average(size, win),
+    )
     side = np.clip(size * (1 + 2 * pad), min_side, max(W, H))
     return [place_square(x, y, s, W, H) for x, y, s in zip(cx, cy, side)]
 
 
-def adaptive_crops(boxes: np.ndarray, W: int, H: int, base_pad: float = 0.15, lead: float = 4.0,
-                   win: int = 9, centre_win: int = 5, min_side: int = 256) -> List[Box]:
+def adaptive_crops(
+    boxes: np.ndarray,
+    W: int,
+    H: int,
+    base_pad: float = 0.15,
+    lead: float = 4.0,
+    win: int = 9,
+    centre_win: int = 5,
+    min_side: int = 256,
+) -> List[Box]:
     """Strategy 3: size from a rolling max (never under-covers a growing
     object), centre smoothed less (follows fast motion), and a margin of
     `base_pad` of the size plus `lead` frames of the local speed on each side.
@@ -178,7 +207,9 @@ def adaptive_crops(boxes: np.ndarray, W: int, H: int, base_pad: float = 0.15, le
     return [place_square(x, y, s, W, H) for x, y, s in zip(cx, cy, side)]
 
 
-def crop_image(frame: torch.Tensor, box: Box, out: int = IMAGE_SIZE, fill: Sequence[float] = None) -> torch.Tensor:
+def crop_image(
+    frame: torch.Tensor, box: Box, out: int = IMAGE_SIZE, fill: Sequence[float] = None
+) -> torch.Tensor:
     """The square `box` of an H x W x 3 uint8 frame as a 3 x out x out float
     image in 0..255, overhang filled with `fill` (default the model's mean
     colour, which normalises to 0). Pixel u of the output samples source
@@ -191,11 +222,18 @@ def crop_image(frame: torch.Tensor, box: Box, out: int = IMAGE_SIZE, fill: Seque
     canvas[:] = torch.tensor(fill, dtype=torch.float32)[:, None, None]
     sx0, sy0, sx1, sy1 = max(x0, 0), max(y0, 0), min(x0 + s, W), min(y0 + s, H)
     if sx1 > sx0 and sy1 > sy0:
-        canvas[:, sy0 - y0:sy1 - y0, sx0 - x0:sx1 - x0] = frame[sy0:sy1, sx0:sx1].permute(2, 0, 1).float()
+        canvas[:, sy0 - y0 : sy1 - y0, sx0 - x0 : sx1 - x0] = (
+            frame[sy0:sy1, sx0:sx1].permute(2, 0, 1).float()
+        )
     if s == out:
         return canvas
-    return F.interpolate(canvas[None], size=(out, out), mode="bilinear", align_corners=False,
-                         antialias=s > out)[0]
+    return F.interpolate(
+        canvas[None],
+        size=(out, out),
+        mode="bilinear",
+        align_corners=False,
+        antialias=s > out,
+    )[0]
 
 
 def paste_logits(logits: torch.Tensor, box: Box, W: int, H: int) -> np.ndarray:
@@ -205,12 +243,14 @@ def paste_logits(logits: torch.Tensor, box: Box, W: int, H: int) -> np.ndarray:
     x0, y0, s = box
     lg = logits.float()
     if lg.shape[-1] != s or lg.shape[-2] != s:
-        lg = F.interpolate(lg[None, None], size=(s, s), mode="bilinear", align_corners=False)[0, 0]
+        lg = F.interpolate(
+            lg[None, None], size=(s, s), mode="bilinear", align_corners=False
+        )[0, 0]
     m = (lg > 0).cpu().numpy()
     out = np.zeros((H, W), bool)
     sx0, sy0, sx1, sy1 = max(x0, 0), max(y0, 0), min(x0 + s, W), min(y0 + s, H)
     if sx1 > sx0 and sy1 > sy0:
-        out[sy0:sy1, sx0:sx1] = m[sy0 - y0:sy1 - y0, sx0 - x0:sx1 - x0]
+        out[sy0:sy1, sx0:sx1] = m[sy0 - y0 : sy1 - y0, sx0 - x0 : sx1 - x0]
     return out
 
 
@@ -227,13 +267,14 @@ def outside_fraction(mask: np.ndarray, box: Box) -> float:
         return 0.0
     x0, y0, s = box
     H, W = mask.shape
-    inside = mask[max(y0, 0):min(y0 + s, H), max(x0, 0):min(x0 + s, W)].sum()
+    inside = mask[max(y0, 0) : min(y0 + s, H), max(x0, 0) : min(x0 + s, W)].sum()
     return float(1 - inside / n)
 
 
 # --------------------------------------------------------------------------
 # Metrics
 # --------------------------------------------------------------------------
+
 
 def iou(a: np.ndarray, b: np.ndarray) -> float:
     """IoU of two bool masks; two empty masks agree (1.0)."""
@@ -270,12 +311,19 @@ def boundary_f(a: np.ndarray, b: np.ndarray, tol: int = 2) -> float:
 # Mask storage
 # --------------------------------------------------------------------------
 
-def save_masks(path: Path, masks: Dict[int, np.ndarray], n: int, H: int, W: int, **extra) -> None:
+
+def save_masks(
+    path: Path, masks: Dict[int, np.ndarray], n: int, H: int, W: int, **extra
+) -> None:
     packed = np.zeros((n, (H * W + 7) // 8), np.uint8)
     for f, m in masks.items():
         packed[f] = np.packbits(m.reshape(-1))
-    np.savez_compressed(path, packed=packed, shape=np.array([n, H, W]),
-                        **{k: np.asarray(v) for k, v in extra.items()})
+    np.savez_compressed(
+        path,
+        packed=packed,
+        shape=np.array([n, H, W]),
+        **{k: np.asarray(v) for k, v in extra.items()},
+    )
 
 
 def load_masks(path: Path) -> Tuple[np.ndarray, Dict]:
@@ -293,6 +341,7 @@ def unpack(packed: np.ndarray, f: int, H: int, W: int) -> np.ndarray:
 # Running the models (child process)
 # --------------------------------------------------------------------------
 
+
 class SubVideo:
     """A video SAM 2 can track (it stands in for inference_state["images"]):
     a chosen list of source frames, each whole (resized to 1024 by decord, as
@@ -300,7 +349,12 @@ class SubVideo:
     resolution, then resized). Masks come out at the source size for whole
     frames and at 1024 x 1024 for crops (paste_logits maps them back)."""
 
-    def __init__(self, video_path: str, frames: Sequence[int], boxes: Optional[Sequence[Box]] = None):
+    def __init__(
+        self,
+        video_path: str,
+        frames: Sequence[int],
+        boxes: Optional[Sequence[Box]] = None,
+    ):
         from tracks.streaming import _DecordRuns
 
         self.frames = list(frames)
@@ -378,7 +432,7 @@ def footprint_mb() -> Dict[str, float]:
         import resource
 
         r = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-        out["peak_rss_mb"] = r / 2 ** 20 if sys.platform == "darwin" else r / 1024
+        out["peak_rss_mb"] = r / 2**20 if sys.platform == "darwin" else r / 1024
     except Exception:
         pass
     if sys.platform == "darwin":
@@ -387,15 +441,19 @@ def footprint_mb() -> Dict[str, float]:
             libc = ctypes.CDLL("/usr/lib/libSystem.dylib")
             if libc.proc_pid_rusage(os.getpid(), 4, buf) == 0:  # RUSAGE_INFO_V4
                 # 16-byte uuid, then uint64 fields: [2+7] ri_phys_footprint, [2+28] ri_lifetime_max_phys_footprint
-                out["footprint_now_mb"] = buf[2 + 7] / 2 ** 20
-                out["peak_footprint_mb"] = buf[2 + 28] / 2 ** 20
+                out["footprint_now_mb"] = buf[2 + 7] / 2**20
+                out["peak_footprint_mb"] = buf[2 + 28] / 2**20
         except Exception:
             pass
     return out
 
 
 def _device() -> str:
-    return "mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu")
+    return (
+        "mps"
+        if torch.backends.mps.is_available()
+        else ("cuda" if torch.cuda.is_available() else "cpu")
+    )
 
 
 def _build(model: str):
@@ -405,8 +463,14 @@ def _build(model: str):
     return build_sam2_video_predictor(cfg, str(WEIGHTS / ckpt), device=_device())
 
 
-def _propagate(pred, video, start: int, peak: Peak, point: Optional[Tuple[float, float]] = None,
-               masks: Optional[Dict[int, np.ndarray]] = None):
+def _propagate(
+    pred,
+    video,
+    start: int,
+    peak: Peak,
+    point: Optional[Tuple[float, float]] = None,
+    masks: Optional[Dict[int, np.ndarray]] = None,
+):
     """Yield (position, logits on the video's output grid) for every frame of
     `video`, seeded with a normalised click at `start` or with masks at given
     positions. Same pruning as tracks.engine.Sam2Engine."""
@@ -416,13 +480,23 @@ def _propagate(pred, video, start: int, peak: Peak, point: Optional[Tuple[float,
     try:
         if masks:
             for pos in sorted(masks):
-                pred.add_new_mask(inference_state=state, frame_idx=pos, obj_id=1, mask=masks[pos])
+                pred.add_new_mask(
+                    inference_state=state, frame_idx=pos, obj_id=1, mask=masks[pos]
+                )
         else:
-            pred.add_new_points_or_box(inference_state=state, frame_idx=start, obj_id=1,
-                                       points=np.array([point], np.float32), labels=np.array([1], np.int32),
-                                       clear_old_points=True, normalize_coords=False)
+            pred.add_new_points_or_box(
+                inference_state=state,
+                frame_idx=start,
+                obj_id=1,
+                points=np.array([point], np.float32),
+                labels=np.array([1], np.int32),
+                clear_old_points=True,
+                normalize_coords=False,
+            )
         for reverse in (False, True):
-            for f, _ids, out in pred.propagate_in_video(state, start_frame_idx=start, reverse=reverse):
+            for f, _ids, out in pred.propagate_in_video(
+                state, start_frame_idx=start, reverse=reverse
+            ):
                 sam2_prune(pred, state, f, start, reverse)
                 if reverse and f == start:
                     continue
@@ -463,7 +537,9 @@ def run_child(spec: Dict) -> Dict:
         import decord
 
         n = len(decord.VideoReader(clip))
-        e = Sam2Engine(pred, model=spec["model"], offload_video_to_cpu=_device() == "mps")
+        e = Sam2Engine(
+            pred, model=spec["model"], offload_video_to_cpu=_device() == "mps"
+        )
         seeds = {1: {seed_f: {"points": [[sx / W, sy / H]], "labels": [1]}}}
         for f, by_obj in e.track(clip, seeds):
             peak.sample()
@@ -484,7 +560,9 @@ def run_child(spec: Dict) -> Dict:
         elif kind == "crop":
             boxes = [tuple(b) for b in spec["boxes"]]
             v = SubVideo(clip, frames, boxes)
-            for pos, lg in _propagate(pred, v, start, peak, point=point_to_crop(sx, sy, boxes[start])):
+            for pos, lg in _propagate(
+                pred, v, start, peak, point=point_to_crop(sx, sy, boxes[start])
+            ):
                 masks[frames[pos]] = paste_logits(lg, boxes[pos], W, H)
             large_frames = len(frames)
             extra["boxes"] = np.array(boxes)
@@ -502,16 +580,27 @@ def run_child(spec: Dict) -> Dict:
             for pos, lg in _propagate(tiny, v, start, peak, masks=key_masks):
                 # keyframes keep large's mask as is (tiny's cond output would be
                 # that mask squeezed through 256 x 256)
-                masks[frames[pos]] = key_masks[pos] if pos in key_masks else (lg > 0).cpu().numpy()
+                masks[frames[pos]] = (
+                    key_masks[pos] if pos in key_masks else (lg > 0).cpu().numpy()
+                )
             tiny_frames = len(frames)
             extra["large_s"] = t_large
         else:
             raise ValueError(kind)
     track_s = time.perf_counter() - t0
     save_masks(Path(spec["out"]), masks, n, H, W, **extra)
-    meta = {"kind": kind, "load_s": round(load_s, 2), "track_s": round(track_s, 2),
-            "large_frames": large_frames, "tiny_frames": tiny_frames, "n": n, "H": H, "W": W,
-            "peak_mps_driver_mb": round(peak.mps / 2 ** 20), **{k: round(v) for k, v in footprint_mb().items()}}
+    meta = {
+        "kind": kind,
+        "load_s": round(load_s, 2),
+        "track_s": round(track_s, 2),
+        "large_frames": large_frames,
+        "tiny_frames": tiny_frames,
+        "n": n,
+        "H": H,
+        "W": W,
+        "peak_mps_driver_mb": round(peak.mps / 2**20),
+        **{k: round(v) for k, v in footprint_mb().items()},
+    }
     if "large_s" in extra:
         meta["large_s"] = round(float(extra["large_s"]), 2)
     return meta
@@ -521,9 +610,14 @@ def run_child(spec: Dict) -> Dict:
 # Orchestration (parent)
 # --------------------------------------------------------------------------
 
+
 @contextlib.contextmanager
-def gpu_lock(path: Optional[Path], wait_s: int = 60, max_wait_s: int = 45 * 60,
-             job: str = "refinement benchmark"):
+def gpu_lock(
+    path: Optional[Path],
+    wait_s: int = 60,
+    max_wait_s: int = 45 * 60,
+    job: str = "refinement benchmark",
+):
     """mkdir lock shared with other agents; held only around one model batch."""
     if path is None:
         yield
@@ -545,9 +639,16 @@ def gpu_lock(path: Optional[Path], wait_s: int = 60, max_wait_s: int = 45 * 60,
             waited += wait_s
     started = datetime.now(timezone.utc)
     owner = path / "owner"
-    identity = json.dumps({"who": "refine_bench", "pid": os.getpid(), "job": job,
-                           "started": started.isoformat(),
-                           "expected_end": (started + timedelta(minutes=45)).isoformat()}, indent=1)
+    identity = json.dumps(
+        {
+            "who": "refine_bench",
+            "pid": os.getpid(),
+            "job": job,
+            "started": started.isoformat(),
+            "expected_end": (started + timedelta(minutes=45)).isoformat(),
+        },
+        indent=1,
+    )
     try:
         owner.write_text(identity)
         yield
@@ -560,7 +661,9 @@ def gpu_lock(path: Optional[Path], wait_s: int = 60, max_wait_s: int = 45 * 60,
 
 def memory_free_pct() -> Optional[int]:
     try:
-        out = subprocess.run(["memory_pressure"], capture_output=True, text=True, timeout=30).stdout
+        out = subprocess.run(
+            ["memory_pressure"], capture_output=True, text=True, timeout=30
+        ).stdout
         m = re.search(r"free percentage:\s*(\d+)%", out)
         return int(m.group(1)) if m else None
     except Exception:
@@ -587,8 +690,13 @@ def child(spec: Dict, lock: Optional[Path], min_free: int) -> Dict:
     spec_path.write_text(json.dumps(spec))
     env = {**os.environ, "PYTORCH_ENABLE_MPS_FALLBACK": "1", "TQDM_DISABLE": "1"}
     with gpu_lock(lock, job=f"{spec['kind']}: {spec['out']}"):
-        r = subprocess.run([sys.executable, __file__, "--_child", str(spec_path)],
-                           capture_output=True, text=True, env=env, cwd=REPO)
+        r = subprocess.run(
+            [sys.executable, __file__, "--_child", str(spec_path)],
+            capture_output=True,
+            text=True,
+            env=env,
+            cwd=REPO,
+        )
     lines = [l for l in r.stdout.splitlines() if l.startswith("{")]
     if r.returncode != 0 or not lines:
         raise RuntimeError(f"child {spec['kind']} failed:\n{r.stderr[-3000:]}")
@@ -630,12 +738,20 @@ def plan_object(name: str, a, out: Path, lock: Optional[Path]) -> None:
     boxes = None
     if want & {"s2", "s3"}:
         if any(nonempty):
-            boxes = fill_boxes([mask_bbox(unpack(packed, f, H, W)) if nonempty[f] else None for f in frames])
+            boxes = fill_boxes(
+                [
+                    mask_bbox(unpack(packed, f, H, W)) if nonempty[f] else None
+                    for f in frames
+                ]
+            )
         else:
             for strategy in sorted(want & {"s2", "s3"}):
                 # An older successful crop must not appear in this run's report.
                 (d / f"{strategy}.json").unlink(missing_ok=True)
-                print(f"{name}: skipping {strategy}: no rough mask for a crop trajectory", flush=True)
+                print(
+                    f"{name}: skipping {strategy}: no rough mask for a crop trajectory",
+                    flush=True,
+                )
     base = {"frames": frames, "n": n, "H": H, "W": W}
     (d / "envelope.json").write_text(json.dumps({"frames": frames, "n": n}))
     if "s1" in want:
@@ -647,8 +763,19 @@ def plan_object(name: str, a, out: Path, lock: Optional[Path]) -> None:
         crops = adaptive_crops(boxes, W, H, win=a.smooth, min_side=a.min_side)
         run("s3", {"kind": "crop", "boxes": [list(c) for c in crops], **base})
     if "s4" in want:
-        keypos = sorted(set(range(0, len(frames), a.keyframe_every)) | {len(frames) - 1, frames.index(seed_f)})
-        run("s4", {"kind": "keyframe", "keypos": keypos, "cond_frames": a.s4_cond_frames, **base})
+        keypos = sorted(
+            set(range(0, len(frames), a.keyframe_every))
+            | {len(frames) - 1, frames.index(seed_f)}
+        )
+        run(
+            "s4",
+            {
+                "kind": "keyframe",
+                "keypos": keypos,
+                "cond_frames": a.s4_cond_frames,
+                **base,
+            },
+        )
 
 
 def edge_strength(frame: np.ndarray) -> torch.Tensor:
@@ -675,7 +802,11 @@ def score_object(name: str, strategies: Sequence[str], out: Path) -> List[Dict]:
     d = out / name
     if not all((d / f"reference.{ext}").exists() for ext in ("npz", "json")):
         return []
-    have = [s for s in strategies if (d / f"{s}.npz").exists() and (d / f"{s}.json").exists()]
+    have = [
+        s
+        for s in strategies
+        if (d / f"{s}.npz").exists() and (d / f"{s}.json").exists()
+    ]
     ref, info = load_masks(d / "reference.npz")
     n, H, W = info["n"], info["H"], info["W"]
     ref_meta = json.loads((d / "reference.json").read_text())
@@ -684,9 +815,22 @@ def score_object(name: str, strategies: Sequence[str], out: Path) -> List[Dict]:
         got, ginfo = load_masks(d / f"{s}.npz")
         boxes = {}
         if "boxes" in ginfo:
-            boxes = {int(f): tuple(int(v) for v in b) for f, b in zip(ginfo["box_frames"], ginfo["boxes"])}
-        runs[s] = {"got": got, "boxes": boxes, "meta": json.loads((d / f"{s}.json").read_text()),
-                   "iou": [], "f": [], "spill": 0, "missed": 0, "extra": 0, "edge": [], "edge_ref": []}
+            boxes = {
+                int(f): tuple(int(v) for v in b)
+                for f, b in zip(ginfo["box_frames"], ginfo["boxes"])
+            }
+        runs[s] = {
+            "got": got,
+            "boxes": boxes,
+            "meta": json.loads((d / f"{s}.json").read_text()),
+            "iou": [],
+            "f": [],
+            "spill": 0,
+            "missed": 0,
+            "extra": 0,
+            "edge": [],
+            "edge_ref": [],
+        }
     c = av.open(str(GALLERY / OBJECTS[name][0]))
     try:
         for f, fr in enumerate(c.decode(video=0)):
@@ -713,34 +857,67 @@ def score_object(name: str, strategies: Sequence[str], out: Path) -> List[Dict]:
     for s, st in runs.items():
         meta, ious = st["meta"], np.array(st["iou"])
         proc = meta["large_frames"] + meta["tiny_frames"]
-        rows.append({
-            "object": name, "strategy": s, "n": n, "ref_present": present,
-            "large_frames": meta["large_frames"], "tiny_frames": meta["tiny_frames"],
-            "track_s": meta["track_s"], "s_per_frame": round(meta["track_s"] / max(proc, 1), 3),
-            "time_vs_ref": round(meta["track_s"] / ref_meta["track_s"], 3),
-            "peak_mps_driver_mb": meta.get("peak_mps_driver_mb"),
-            "peak_footprint_mb": meta.get("peak_footprint_mb"), "peak_rss_mb": meta.get("peak_rss_mb"),
-            "iou_min": round(float(ious.min()), 4), "iou_p5": round(float(np.percentile(ious, 5)), 4),
-            "iou_mean": round(float(ious.mean()), 4), "f2_mean": round(float(np.mean(st["f"])), 4),
-            "below_0_9": int((ious < 0.9).sum()), "missed": st["missed"], "extra": st["extra"],
-            "crop_spill": st["spill"] if st["boxes"] else None,
-            "edge_vs_ref": round(float(np.nanmean(st["edge"]) / np.nanmean(st["edge_ref"])), 3)
-            if st["edge"] else None,
-        })
+        rows.append(
+            {
+                "object": name,
+                "strategy": s,
+                "n": n,
+                "ref_present": present,
+                "large_frames": meta["large_frames"],
+                "tiny_frames": meta["tiny_frames"],
+                "track_s": meta["track_s"],
+                "s_per_frame": round(meta["track_s"] / max(proc, 1), 3),
+                "time_vs_ref": round(meta["track_s"] / ref_meta["track_s"], 3),
+                "peak_mps_driver_mb": meta.get("peak_mps_driver_mb"),
+                "peak_footprint_mb": meta.get("peak_footprint_mb"),
+                "peak_rss_mb": meta.get("peak_rss_mb"),
+                "iou_min": round(float(ious.min()), 4),
+                "iou_p5": round(float(np.percentile(ious, 5)), 4),
+                "iou_mean": round(float(ious.mean()), 4),
+                "f2_mean": round(float(np.mean(st["f"])), 4),
+                "below_0_9": int((ious < 0.9).sum()),
+                "missed": st["missed"],
+                "extra": st["extra"],
+                "crop_spill": st["spill"] if st["boxes"] else None,
+                "edge_vs_ref": (
+                    round(float(np.nanmean(st["edge"]) / np.nanmean(st["edge_ref"])), 3)
+                    if st["edge"]
+                    else None
+                ),
+            }
+        )
     return rows
 
 
-COLS = [("object", "object"), ("strategy", "strategy"), ("large_frames", "large fr"), ("tiny_frames", "tiny fr"),
-        ("track_s", "track s"), ("s_per_frame", "s/frame"), ("time_vs_ref", "time vs ref"),
-        ("peak_mps_driver_mb", "MPS peak MB"), ("peak_footprint_mb", "footprint peak MB"),
-        ("iou_min", "IoU min"), ("iou_p5", "IoU p5"), ("iou_mean", "IoU mean"), ("f2_mean", "F@2px"),
-        ("below_0_9", "IoU<0.9"), ("missed", "missed"), ("extra", "extra"), ("crop_spill", "spill"), ("edge_vs_ref", "edge vs ref")]
+COLS = [
+    ("object", "object"),
+    ("strategy", "strategy"),
+    ("large_frames", "large fr"),
+    ("tiny_frames", "tiny fr"),
+    ("track_s", "track s"),
+    ("s_per_frame", "s/frame"),
+    ("time_vs_ref", "time vs ref"),
+    ("peak_mps_driver_mb", "MPS peak MB"),
+    ("peak_footprint_mb", "footprint peak MB"),
+    ("iou_min", "IoU min"),
+    ("iou_p5", "IoU p5"),
+    ("iou_mean", "IoU mean"),
+    ("f2_mean", "F@2px"),
+    ("below_0_9", "IoU<0.9"),
+    ("missed", "missed"),
+    ("extra", "extra"),
+    ("crop_spill", "spill"),
+    ("edge_vs_ref", "edge vs ref"),
+]
 
 
 def table(rows: List[Dict]) -> str:
     head = "| " + " | ".join(h for _, h in COLS) + " |"
     sep = "|" + "|".join("---" for _ in COLS) + "|"
-    body = ["| " + " | ".join("" if r.get(k) is None else str(r[k]) for k, _ in COLS) + " |" for r in rows]
+    body = [
+        "| " + " | ".join("" if r.get(k) is None else str(r[k]) for k, _ in COLS) + " |"
+        for r in rows
+    ]
     return "\n".join([head, sep, *body])
 
 
@@ -754,53 +931,122 @@ def totals(rows: List[Dict]) -> List[Dict]:
         ts = sum(r["track_s"] for r in rs)
         proc = sum(r["large_frames"] + r["tiny_frames"] for r in rs)
         ref_ts = sum(r["track_s"] / r["time_vs_ref"] for r in rs if r["time_vs_ref"])
-        out.append({
-            "object": f"all ({len(rs)})", "strategy": s, "large_frames": sum(r["large_frames"] for r in rs),
-            "tiny_frames": sum(r["tiny_frames"] for r in rs), "track_s": round(ts, 1),
-            "s_per_frame": round(ts / max(proc, 1), 3), "time_vs_ref": round(ts / ref_ts, 3) if ref_ts else None,
-            "peak_mps_driver_mb": max(r["peak_mps_driver_mb"] or 0 for r in rs),
-            "peak_footprint_mb": max(r["peak_footprint_mb"] or 0 for r in rs),
-            "iou_min": min(r["iou_min"] for r in rs), "iou_p5": min(r["iou_p5"] for r in rs),
-            "iou_mean": round(sum(r["iou_mean"] * r["n"] for r in rs) / frames, 4),
-            "f2_mean": round(sum(r["f2_mean"] * r["n"] for r in rs) / frames, 4),
-            "below_0_9": sum(r["below_0_9"] for r in rs), "missed": sum(r["missed"] for r in rs),
-            "extra": sum(r["extra"] for r in rs),
-            "crop_spill": sum(r["crop_spill"] for r in rs) if rs[0]["crop_spill"] is not None else None,
-            "edge_vs_ref": round(float(np.mean([r["edge_vs_ref"] for r in rs if r["edge_vs_ref"]])), 3),
-        })
+        out.append(
+            {
+                "object": f"all ({len(rs)})",
+                "strategy": s,
+                "large_frames": sum(r["large_frames"] for r in rs),
+                "tiny_frames": sum(r["tiny_frames"] for r in rs),
+                "track_s": round(ts, 1),
+                "s_per_frame": round(ts / max(proc, 1), 3),
+                "time_vs_ref": round(ts / ref_ts, 3) if ref_ts else None,
+                "peak_mps_driver_mb": max(r["peak_mps_driver_mb"] or 0 for r in rs),
+                "peak_footprint_mb": max(r["peak_footprint_mb"] or 0 for r in rs),
+                "iou_min": min(r["iou_min"] for r in rs),
+                "iou_p5": min(r["iou_p5"] for r in rs),
+                "iou_mean": round(sum(r["iou_mean"] * r["n"] for r in rs) / frames, 4),
+                "f2_mean": round(sum(r["f2_mean"] * r["n"] for r in rs) / frames, 4),
+                "below_0_9": sum(r["below_0_9"] for r in rs),
+                "missed": sum(r["missed"] for r in rs),
+                "extra": sum(r["extra"] for r in rs),
+                "crop_spill": (
+                    sum(r["crop_spill"] for r in rs)
+                    if rs[0]["crop_spill"] is not None
+                    else None
+                ),
+                "edge_vs_ref": round(
+                    float(np.mean([r["edge_vs_ref"] for r in rs if r["edge_vs_ref"]])),
+                    3,
+                ),
+            }
+        )
     return out
 
 
 def report(objects: List[str], out: Path) -> str:
     rows = [r for o in objects for r in score_object(o, STRATEGIES, out)]
     (out / "results.json").write_text(json.dumps(rows, indent=1))
-    text = table(rows) + "\n\nTotals per strategy (IoU mean and F weighted by frames; min and p5 are the worst object):\n\n" \
+    text = (
+        table(rows)
+        + "\n\nTotals per strategy (IoU mean and F weighted by frames; min and p5 are the worst object):\n\n"
         + table(totals(rows))
+    )
     (out / "results.md").write_text(text + "\n")
     return text
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--objects", nargs="*", default=list(OBJECTS), choices=list(OBJECTS))
-    ap.add_argument("--strategies", nargs="*", default=STRATEGIES, choices=STRATEGIES,
-                    help="rough always runs (the others need it)")
-    ap.add_argument("--out", default=str(Path(tempfile.gettempdir()) / "sam-ui-refine-bench"),
-                    help="mask cache and results (default %(default)s)")
-    ap.add_argument("--lock", default=str(Path.home() / "Movies/sam2-poc-data/.gpu-lock"),
-                    help="GPU lock directory, taken with mkdir around each model batch")
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument(
+        "--objects", nargs="*", default=list(OBJECTS), choices=list(OBJECTS)
+    )
+    ap.add_argument(
+        "--strategies",
+        nargs="*",
+        default=STRATEGIES,
+        choices=STRATEGIES,
+        help="rough always runs (the others need it)",
+    )
+    ap.add_argument(
+        "--out",
+        default=str(Path(tempfile.gettempdir()) / "sam-ui-refine-bench"),
+        help="mask cache and results (default %(default)s)",
+    )
+    ap.add_argument(
+        "--lock",
+        default=str(Path.home() / "Movies/sam2-poc-data/.gpu-lock"),
+        help="GPU lock directory, taken with mkdir around each model batch",
+    )
     ap.add_argument("--no-lock", action="store_true", help="do not take the GPU lock")
-    ap.add_argument("--min-free", type=int, default=20,
-                    help="wait (up to 30 min) until memory_pressure reports this free %% before a batch")
-    ap.add_argument("--env-pad", type=int, default=2, help="frames added on each side of an envelope interval")
-    ap.add_argument("--merge-gap", type=int, default=5, help="absent runs this short stay inside the envelope")
-    ap.add_argument("--pad", type=float, default=0.25, help="s2: share of the box added on EACH side")
-    ap.add_argument("--smooth", type=int, default=9, help="s2/s3: smoothing window, frames")
-    ap.add_argument("--min-side", type=int, default=256, help="s3: smallest crop side, px")
-    ap.add_argument("--keyframe-every", type=int, default=5, help="s4: large on every Nth envelope frame")
-    ap.add_argument("--s4-cond-frames", type=int, default=2,
-                    help="s4: keyframes tiny attends to per frame, the nearest ones (-1: all, upstream's default)")
-    ap.add_argument("--report-only", action="store_true", help="only rebuild the table from the cache")
+    ap.add_argument(
+        "--min-free",
+        type=int,
+        default=20,
+        help="wait (up to 30 min) until memory_pressure reports this free %% before a batch",
+    )
+    ap.add_argument(
+        "--env-pad",
+        type=int,
+        default=2,
+        help="frames added on each side of an envelope interval",
+    )
+    ap.add_argument(
+        "--merge-gap",
+        type=int,
+        default=5,
+        help="absent runs this short stay inside the envelope",
+    )
+    ap.add_argument(
+        "--pad",
+        type=float,
+        default=0.25,
+        help="s2: share of the box added on EACH side",
+    )
+    ap.add_argument(
+        "--smooth", type=int, default=9, help="s2/s3: smoothing window, frames"
+    )
+    ap.add_argument(
+        "--min-side", type=int, default=256, help="s3: smallest crop side, px"
+    )
+    ap.add_argument(
+        "--keyframe-every",
+        type=int,
+        default=5,
+        help="s4: large on every Nth envelope frame",
+    )
+    ap.add_argument(
+        "--s4-cond-frames",
+        type=int,
+        default=2,
+        help="s4: keyframes tiny attends to per frame, the nearest ones (-1: all, upstream's default)",
+    )
+    ap.add_argument(
+        "--report-only",
+        action="store_true",
+        help="only rebuild the table from the cache",
+    )
     ap.add_argument("--_child", help=argparse.SUPPRESS)
     a = ap.parse_args()
     if a._child:
