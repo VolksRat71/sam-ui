@@ -12,10 +12,7 @@ demo** that runs a small model with no install. Every object keeps its own cache
 track, so Track only re-runs the objects that are new or changed, and everything else
 stays as it was, including after a reload or a restart.
 
-<!-- DEMO VIDEOS: paste each GitHub-uploaded MP4 link on its own line under its comment. -->
-<!-- demo video: upload path (drag a clip in, track, export for After Effects) -->
-
-<!-- demo video: After Effects path (Media > Open from After Effects, track, Export to After Effects) -->
+https://github.com/user-attachments/assets/fbd8f37d-21ea-4036-98c0-7fe0a4ddefe1
 
 ![studio tracking a player and a ball on Meta's juggle sample](docs/images/studio.jpg)
 
