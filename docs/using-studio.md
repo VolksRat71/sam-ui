@@ -4,6 +4,8 @@
 How studio, sam-ui's web UI, works control by control, and how it compares with
 Meta's demo UI. Paths such as `src/...` and `e2e/...` are in `studio/`.
 
+![studio tracking a player and a ball on Meta's juggle sample](images/studio.jpg)
+
 ## Using it
 
 - **Objects.** Click the video to add an object and a positive point. Right

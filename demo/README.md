@@ -138,10 +138,10 @@ If you wish to run the frontend separately (useful for development), follow thes
 3. **Start the development server:**
 
    ```bash
-   VITE_API_ENDPOINT=http://localhost:7263 npm run dev -- --port 7262
+   npm run dev
    ```
 
-This will start the frontend development server on [http://localhost:7262](http://localhost:7262). See [`studio/README.md`](../studio/README.md) for its scripts and [`docs/using-studio.md`](../docs/using-studio.md) for its features.
+This will start the frontend development server on [http://localhost:7362](http://localhost:7362), against the backend on 7263. (Docker serves the same frontend on 7262.) See [`studio/README.md`](../studio/README.md) for its scripts and [`docs/using-studio.md`](../docs/using-studio.md) for its features.
 
 ## Docker Tips
 

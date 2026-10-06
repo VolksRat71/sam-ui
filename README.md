@@ -14,8 +14,6 @@ stays as it was, including after a reload or a restart.
 
 https://github.com/user-attachments/assets/fbd8f37d-21ea-4036-98c0-7fe0a4ddefe1
 
-![studio tracking a player and a ball on Meta's juggle sample](docs/images/studio.jpg)
-
 sam-ui began as a fork of Meta's SAM 2 web demo. The backend keeps Meta's model code
 and adds a track cache, a second engine (SAM 3), exports and a job system. The
 frontend, **studio**, replaces the demo UI with a compositing-style workspace.
