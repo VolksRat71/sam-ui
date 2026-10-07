@@ -13,8 +13,9 @@
 // binary (default: the macOS app).
 //
 // SMOKE=local runs the no-server check instead (e2e/smoke-local.mjs, headed
-// Chrome for WebGPU) against NO_SERVER_URL, a studio with no backend such as
-// the Pages build served under /sam-ui/; SMOKE=both runs the two:
+// Chrome for WebGPU, or whichever browser BROWSER names: see e2e/browser.mjs)
+// against NO_SERVER_URL, a studio with no backend such as the Pages build
+// served under /sam-ui/; SMOKE=both runs the two:
 //
 //   CLIP=... SMOKE=local NO_SERVER_URL=http://127.0.0.1:7390/sam-ui/ npm run smoke
 import {chromium} from 'playwright-core';
@@ -46,7 +47,7 @@ const check = (ok, what) => {
 };
 const MODE = process.env.SMOKE ?? 'server';
 const noServer = () =>
-  runNoServer({url: process.env.NO_SERVER_URL ?? 'http://127.0.0.1:7390/sam-ui/', clip: CLIP, out: OUT, chrome: CHROME, check});
+  runNoServer({url: process.env.NO_SERVER_URL ?? 'http://127.0.0.1:7390/sam-ui/', clip: CLIP, out: OUT, check});
 if (MODE === 'local') {
   await noServer();
   console.log(failed === 0 ? 'SMOKE OK' : `SMOKE FAILED (${failed})`);

@@ -1,20 +1,21 @@
 // sam-ui (Apache-2.0). New file, not from SAM 2.
 //
 // The no-server half of `npm run smoke` (NO_SERVER_URL set): studio with no
-// backend, e.g. the Pages build served under /sam-ui/. In headed Chrome
-// (the browser engine needs WebGPU), with a fresh profile each run, so the
+// backend, e.g. the Pages build served under /sam-ui/. In a headed browser
+// (Chrome unless BROWSER says otherwise, see browser.mjs; the browser engine
+// needs WebGPU), with a fresh profile each run, so the
 // 512 px model downloads each time (83 MB; with a reused profile Playwright
 // lost track of its downloads).
 // It opens the clip from disk, adds three objects, tracks them, reloads
 // (restored from OPFS), renames an object, exports mask videos, Vector
 // JSON and the roto working folder (zips, checked with unzip), and deletes
 // the video.
-import {chromium} from 'playwright-core';
 import {execFileSync} from 'node:child_process';
 import path from 'node:path';
+import {launch} from './browser.mjs';
 
-export async function runNoServer({url, clip, out, chrome, check}) {
-  const browser = await chromium.launch({executablePath: chrome, headless: false, args: ['--enable-unsafe-webgpu']});
+export async function runNoServer({url, clip, out, check}) {
+  const browser = await launch();
   const context = await browser.newContext({viewport: {width: 1440, height: 900}, acceptDownloads: true});
   const page = await context.newPage();
   const errors = [];
