@@ -178,3 +178,63 @@ def test_the_routes_need_the_desktop_token_and_serve_ranges(tmp_path):
     got.close()
     assert c.get(f"/linked-source?path={out['path']}").get_json()["source"]["aeItemId"] == 12
     assert c.get("/linked/.sources").status_code == 404
+
+
+def test_removing_a_linked_video_deletes_only_sam_uis_files_never_the_footage(tmp_path):
+    """deleteVideo on a linked video goes the way an upload's delete goes (refused
+    while open, then seeds and tracks purged), but removes the link, its record
+    and its poster, and leaves the footage the link points at byte for byte."""
+    import hashlib
+
+    from app_conf import DATA_PATH, POSTERS_PATH
+    from data.linked import _record_file, register
+    from data.store import get_videos
+    from inference.data_types import StartSessionRequest
+    from inference.predictor import InferenceAPI
+    from test_inference_api import StubPredictor
+    from test_media import delete
+
+    clip = moving_square(tmp_path / "hero.mov")
+    before = hashlib.sha256(clip.read_bytes()).hexdigest()
+    video, record = register(str(clip), source_for(clip))
+    link = Path(DATA_PATH) / video.path
+    poster = Path(POSTERS_PATH) / record["poster"]
+    assert record["poster"] and poster.is_file() and _record_file(link.name).is_file()
+
+    api = InferenceAPI(predictor=StubPredictor(), tracks_root=str(tmp_path / "tracks"))
+    tracks = tmp_path / "tracks" / record["videoHash"]
+    tracks.mkdir(parents=True)
+    (tracks / "seed.json").write_text("{}")
+    sid = api.start_session(StartSessionRequest(type="start_session", path=str(link))).session_id
+    r = delete(api, video.path)
+    assert r.errors and "open in a session" in r.errors[0].message and link.is_symlink()
+    api.session_states.pop(sid)
+
+    r = delete(api, video.path)
+    assert r.errors is None and r.data["deleteVideo"] == {"path": video.path, "purged": True}
+    assert not link.is_symlink() and not _record_file(link.name).exists() and not poster.exists()
+    assert not tracks.exists() and video.code not in get_videos()
+    assert hashlib.sha256(clip.read_bytes()).hexdigest() == before
+
+
+def test_removing_refuses_forged_and_path_like_ids_and_keeps_the_footage(tmp_path):
+    from app_conf import DATA_PATH
+    from data.linked import LINKED_PATH, register
+    from test_media import Api, delete
+
+    clip = moving_square(tmp_path / "keep.mp4")
+    video, _ = register(str(clip), source_for(clip), hash_file=lambda p: "h")
+    link = Path(DATA_PATH) / video.path
+    planted = LINKED_PATH / "planted.mp4"  # a real file, not a link sam-ui made
+    shutil.copy(clip, planted)
+    try:
+        api = Api()
+        for path in (str(clip), str(link), f"linked/../{video.path}", f"linked//{link.name}",
+                     f"linked/.sources/{link.stem}.json", "linked/.sources", "linked/..", "linked/",
+                     f"{video.path}\x00", "linked/planted.mp4", "linked/nope.mp4", f"gallery/../{video.path}"):
+            r = delete(api, path)
+            assert r.errors, path
+        assert api.purged == [] and link.is_symlink() and planted.is_file() and clip.is_file()
+        assert os.path.realpath(link) == os.path.realpath(clip)
+    finally:
+        planted.unlink()

@@ -184,14 +184,41 @@ def register(path: str, source: Dict, hash_file=None) -> Tuple[Video, Dict]:
     return video, record
 
 
+def link_file(path: str) -> Optional[Path]:
+    """Where the link for a linked video's API path (linked/<id>.<ext>) sits,
+    from the path's text alone (never following a link), or None for
+    anything else: a second folder level, a dot name, a NUL byte."""
+    parts = path.split("/")
+    if len(parts) != 2 or parts[0] != LINKED_PREFIX or parts[1].startswith(".") or "\x00" in path:
+        return None
+    return LINKED_PATH / parts[1]
+
+
+def unlink(link: Path) -> None:
+    """Remove sam-ui's own files for a linked video: the link itself (os.unlink
+    on a symlink removes the link, never the footage it points at), its source
+    record and its poster."""
+    record = _record_file(link.name)
+    try:
+        poster = json.loads(record.read_text()).get("poster")
+    except (OSError, ValueError, AttributeError):
+        poster = None
+    os.unlink(link)
+    record.unlink(missing_ok=True)
+    if poster:
+        from app_conf import POSTERS_PATH
+
+        (Path(POSTERS_PATH) / Path(poster).name).unlink(missing_ok=True)
+
+
 def source_of(path: str) -> Optional[Dict]:
     """The record of a linked video (its API path, linked/<id>.<ext>), with
     `changed` true when the file's size or mtime moved since it was linked,
     and `missing` when it is gone. None for anything that is not linked."""
-    parts = path.split("/")
-    if len(parts) != 2 or parts[0] != LINKED_PREFIX or ".." in parts or parts[1].startswith("."):
+    link = link_file(path)
+    if link is None:
         return None
-    f = _record_file(parts[1])
+    f = _record_file(link.name)
     if not f.is_file():
         return None
     record = json.loads(f.read_text())
