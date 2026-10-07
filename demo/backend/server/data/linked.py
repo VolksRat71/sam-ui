@@ -24,6 +24,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -184,12 +185,18 @@ def register(path: str, source: Dict, hash_file=None) -> Tuple[Video, Dict]:
     return video, record
 
 
+# exactly the names register() writes: link_id()'s 24 lowercase hex, a lowercased VIDEO_EXTS extension
+LINK_NAME = re.compile(r"[0-9a-f]{24}(%s)" % "|".join(re.escape(e) for e in sorted(VIDEO_EXTS)))
+
+
 def link_file(path: str) -> Optional[Path]:
     """Where the link for a linked video's API path (linked/<id>.<ext>) sits,
     from the path's text alone (never following a link), or None for
-    anything else: a second folder level, a dot name, a NUL byte."""
+    anything that is not exactly a name register() writes: so no second
+    folder level, dot name, NUL byte, backslash or drive letter, and no case
+    variant (on a case-insensitive disk one would reach the real link)."""
     parts = path.split("/")
-    if len(parts) != 2 or parts[0] != LINKED_PREFIX or parts[1].startswith(".") or "\x00" in path:
+    if len(parts) != 2 or parts[0] != LINKED_PREFIX or not LINK_NAME.fullmatch(parts[1]):
         return None
     return LINKED_PATH / parts[1]
 

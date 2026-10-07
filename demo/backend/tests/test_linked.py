@@ -238,3 +238,19 @@ def test_removing_refuses_forged_and_path_like_ids_and_keeps_the_footage(tmp_pat
         assert os.path.realpath(link) == os.path.realpath(clip)
     finally:
         planted.unlink()
+
+
+def test_a_case_variant_id_is_refused(tmp_path):
+    """On a case-insensitive disk (APFS) LINKED/<ID>.MP4 reaches the real link:
+    only the exact lowercase id register() writes may remove it."""
+    from app_conf import DATA_PATH
+    from data.linked import register
+    from data.store import get_videos
+    from test_media import Api, delete
+
+    clip = moving_square(tmp_path / "keep.mp4")
+    video, _ = register(str(clip), source_for(clip), hash_file=lambda p: "h")
+    link = Path(DATA_PATH) / video.path
+    r = delete(Api(), "linked/" + link.name.upper())
+    assert r.errors
+    assert link.is_symlink() and video.code in get_videos() and clip.is_file()
