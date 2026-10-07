@@ -12,12 +12,11 @@
 // the video.
 import {execFileSync} from 'node:child_process';
 import path from 'node:path';
-import {launch} from './browser.mjs';
+import {launch, newPage} from './browser.mjs';
 
 export async function runNoServer({url, clip, out, check}) {
   const browser = await launch();
-  const context = await browser.newContext({viewport: {width: 1440, height: 900}, acceptDownloads: true});
-  const page = await context.newPage();
+  const page = await newPage(browser, {width: 1440, height: 900});
   const errors = [];
   page.on('pageerror', e => errors.push(String(e)));
   const rows = () => page.$$eval('.object-row .object-title', rs => rs.map(r => r.innerText.replace(/\n/g, ' ')));

@@ -44,7 +44,7 @@ import {execFileSync, spawnSync} from 'node:child_process';
 import fs from 'node:fs';
 import {serve} from './static-server.mjs';
 import path from 'node:path';
-import {BROWSER, launch} from './browser.mjs';
+import {BROWSER, launch, newPage} from './browser.mjs';
 
 const SECONDS = Number(process.env.CLIP_SECONDS ?? 300);
 const OUT = process.env.OUT ?? '/private/tmp/sam-ui-memory';
@@ -259,8 +259,7 @@ let failed = false;
 try {
   console.log(`memory_pressure level ${pressure()} before launch`);
   browser = await launch(['--enable-precise-memory-info']);
-  const context = await browser.newContext({viewport: {width: 1400, height: 860}, acceptDownloads: true});
-  page = await context.newPage();
+  page = await newPage(browser, {width: 1400, height: 860});
   page.on('pageerror', e => errors.push(String(e)));
   page.on('console', m => m.type() === 'error' && consoleErrors.push(m.text()));
   await page.goto(URL_);

@@ -22,3 +22,20 @@ export function launch(chromeArgs = []) {
   return chromium.launch({executablePath: CHROME, headless: false, args: ['--enable-unsafe-webgpu', ...chromeArgs]});
 }
 
+/**
+ * A page in a fresh context, with the dock's Media section open: since the
+ * Compositing Suite layout (#42) it starts collapsed, which hides the
+ * dropzone and the delete buttons the runs click.
+ */
+export async function newPage(browser, viewport) {
+  const context = await browser.newContext({viewport, acceptDownloads: true});
+  await context.addInitScript(() => {
+    try {
+      const key = 'sam-ui-suite:sections-open';
+      localStorage.setItem(key, JSON.stringify({...JSON.parse(localStorage.getItem(key) ?? '{}'), media: true}));
+    } catch {
+      // no storage on this page (about:blank)
+    }
+  });
+  return context.newPage();
+}
