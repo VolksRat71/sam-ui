@@ -12,6 +12,7 @@
 // reverse pass both hit the cache. Callers get their own clone of a frame
 // and must close it; eviction closes only the cache's copy.
 import {ALL_FORMATS, BlobSource, EncodedPacketSink, Input, type InputVideoTrack, UrlSource, VideoSampleSink} from 'mediabunny';
+import {cloneFrame} from '@/common/codecs/WebCodecUtils';
 import {DECODED_FRAME_BYTES} from '~/budgets';
 
 /** Frames decoded per miss: enough to play ahead smoothly, few enough to decode fast. */
@@ -160,7 +161,17 @@ export class FrameStore {
           i++;
         }
         if (!this._closed && !this._cache.has(i)) {
-          this._put(i, sample.toVideoFrame());
+          // Cache an owned copy and close the decoder's frame at once: a clone
+          // would still hold its output buffer, and Chrome's hardware decoders
+          // on Android and Windows stop at a small pool of those (#1).
+          const decoded = sample.toVideoFrame();
+          sample.close();
+          const owned = await cloneFrame(decoded).finally(() => decoded.close());
+          if (this._closed) {
+            owned.close();
+          } else {
+            this._put(i, owned);
+          }
         }
         sample.close();
         if (i >= last) {
