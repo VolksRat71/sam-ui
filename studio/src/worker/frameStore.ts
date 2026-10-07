@@ -36,6 +36,9 @@ export class FrameStore {
     private readonly _budget: number,
   ) {}
 
+  // ponytail: the 1 GB budget now holds owned copies in the renderer (CPU
+  // buffers; RGBA rasters for 10-bit), not decoder buffers. It is sized for a
+  // 16 GB Mac; low-RAM Android may need a smaller one passed here.
   /** Open a video (a URL, or a blob: URL), reading only what it needs to index the frames. */
   static async open(url: string, budget = DECODED_FRAME_BYTES): Promise<FrameStore> {
     // a path ("/sam-ui/samples/x.mp4") is relative to the page; a worker has no base for it
@@ -166,7 +169,7 @@ export class FrameStore {
           // on Android and Windows stop at a small pool of those (#1).
           const decoded = sample.toVideoFrame();
           sample.close();
-          const owned = await cloneFrame(decoded).finally(() => decoded.close());
+          const owned = await ownedCopy(decoded).finally(() => decoded.close());
           if (this._closed) {
             owned.close();
           } else {
@@ -192,6 +195,24 @@ export class FrameStore {
     this._cache.clear();
     this._bytes = 0;
     this._input.dispose();
+  }
+}
+
+/**
+ * A copy of `f` that does not hold the decoder's buffer. A frame with no CPU
+ * format (Chrome's 10-bit hardware frames: HEVC Main10, VP9 profile 2) cannot
+ * be read with copyTo, so it is rasterized to RGBA at its display size, as
+ * drawImage would show it.
+ */
+async function ownedCopy(f: VideoFrame): Promise<VideoFrame> {
+  if (f.format != null) {
+    return cloneFrame(f);
+  }
+  const bitmap = await createImageBitmap(f);
+  try {
+    return new VideoFrame(bitmap, {timestamp: f.timestamp, duration: f.duration ?? undefined});
+  } finally {
+    bitmap.close();
   }
 }
 
