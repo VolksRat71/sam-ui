@@ -391,6 +391,7 @@ function ObjectRow({
       <div className="layer-controls">
         <div className="layer-summary" role="option" aria-selected={active} aria-label={`${name}, ${trackPresentation(o.state, o.running).label}`} data-layer-option={o.id} tabIndex={active ? 0 : -1}
           onKeyDown={e => {
+            if (e.target !== e.currentTarget) return; // Enter on the rename pencil is the pencil's
             const dir = stepKey(e);
             if (dir != null) { step(dir); return; }
             if (e.key === 'Enter' && inspector != null) {
@@ -406,7 +407,7 @@ function ObjectRow({
             }
           }}>
           <span className="layer-swatch" aria-hidden="true" />
-          <span className="layer-name" title={name}>{name}</span>
+          <ObjectName o={o} onRename={n => session.renameObject(o.id, n)} />
           <StateBadge o={o} />
           {active ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}
         </div>
