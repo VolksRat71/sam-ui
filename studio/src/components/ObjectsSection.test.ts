@@ -12,5 +12,5 @@ it("renames an object from its timeline lane, like a group's", () => {
   const html = renderToStaticMarkup(createElement(ObjectsSection, {session, renderLane: () => null}));
   const lane = html.slice(html.indexOf('class="layer-summary"'), html.indexOf('</div>', html.indexOf('class="layer-summary"')));
   expect(lane).toContain('title="Double-click to rename">Dog</span>');
-  expect(lane).toContain('aria-label="Rename Dog"');
+  expect(lane).toContain('tabindex="-1" class="icon-button small rename-button" title="Rename" aria-label="Rename Dog"'); // no Tab stop per lane
 });
