@@ -206,6 +206,8 @@ export default function useStudioSession(video: VideoItem) {
 
   const stateRef = useRef(state);
   stateRef.current = state;
+  const frameRef = useRef(frame);
+  frameRef.current = frame;
   const queue = useRef<Promise<unknown>>(Promise.resolve());
   const nextJobKey = useRef(1);
   const sessionIdRef = useRef<string | null>(null);
@@ -539,10 +541,12 @@ export default function useStudioSession(video: VideoItem) {
 
   /**
    * EXPERIMENTAL: look for a phrase across the whole clip (SAM 3) and mark
-   * each appearance as a candidate range of the object, then go to the first.
-   * Not queued behind clicks: the scan takes the model lock per frame it
-   * checks, so clicks keep working. Resolves with what was found, or null
-   * when the call failed (the warning says why).
+   * each appearance as a candidate range of the object, then go to the first
+   * if the object is still selected and the playhead has not moved since.
+   * An object deleted during the scan stays deleted. Not queued behind
+   * clicks: the scan takes the model lock per frame it checks, so clicks
+   * keep working. Resolves with what was found, or null when the call failed
+   * (the warning says why).
    */
   const discoverText = useCallback(
     async (objectId: number, text: string): Promise<DiscoverTextResult | null> => {
@@ -550,13 +554,16 @@ export default function useStudioSession(video: VideoItem) {
         return null;
       }
       const engine = stateRef.current.engine;
+      const startFrame = frameRef.current;
       try {
         const result = await bridge.call('discoverText', {objectId, text, engine});
-        if (result.object != null) {
-          dispatch({type: 'objectChanged', object: result.object});
+        const s = stateRef.current;
+        if (result.object == null || !s.objects.some(o => o.id === objectId)) {
+          return result;
         }
+        dispatch({type: 'objectChanged', object: result.object});
         const first = result.intervals[0];
-        if (first != null) {
+        if (first != null && s.activeId === objectId && frameRef.current === startFrame) {
           bridge.goToFrame(first.start);
         }
         return result;

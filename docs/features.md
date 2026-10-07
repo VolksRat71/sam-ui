@@ -22,9 +22,10 @@ Everything sam-ui does, area by area. How each control in studio works is in
   whole clip. SAM 3's detector checks every 12th frame and the last, then narrows
   each entry and exit to within 2 frames. Each appearance becomes a candidate range
   (source `text:<phrase>@sam3`, scored), so an object that leaves and comes back is
-  two candidates. Nothing is seeded or tracked and no track goes stale; review the
-  candidates with ] and [ and P, A or R. It runs as a background job and clicks keep
-  working. Desktop app only.
+  two candidates. Running a phrase again replaces its own candidates; where a scan
+  overlaps another phrase's candidates, the later scan paints over them. Nothing is
+  seeded or tracked and no track goes stale; review the candidates with ] and [ and
+  P, A or R. It runs as a background job and clicks keep working. Desktop app only.
 - **Keep working while it tracks.** Clicks come back in about 0.1 s while a job runs.
   Jobs can overlap, and each has its own cancel.
 - **Long clips.** Uploads take up to 5 minutes and 2 GB; a longer clip keeps its
