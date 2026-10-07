@@ -43,10 +43,14 @@ POST /discover_text {session_id, object_id, text, stride?, engine?}: EXPERIMENTA
   temporal text discovery (tracks/discovery.py): sample every stride-th frame
   (default 12) with the text engine's detector, group hits into appearances,
   tighten their edges by bisection, and write them as the object's candidate
-  ranges from source "text:<prompt>@<engine>" (a re-run replaces that
-  source's). Never a seed, mask or track. A job (kind "discover", holding no
-  object) that takes the model lock per detector call; /cancel_track and
-  cancelPropagateInVideo cancel it, and nothing is written. Answers
+  ranges from source "text:<prompt>@<engine>". A re-run replaces that
+  source's; candidates are one layer, so a later scan paints over the
+  overlapping candidates of other sources. Never a seed, mask or track. A job
+  (kind "discover", holding no object; frames_done counts detector calls)
+  that takes the model lock per detector call; /cancel_track and
+  cancelPropagateInVideo cancel it, and nothing is written. Nor is anything
+  written for an object removed (or a video cleared) during the scan: it
+  answers as canceled. Answers
   {"job_id", "object_id", "text", "engine", "source", "stride", "n_frames",
   "intervals": [{"start", "end", "score", "hits", "best": {"frame", "score",
   "box"}}], "calls", "seconds", "object"}, or {"canceled": true, ...}. 400 on
@@ -340,11 +344,14 @@ def make_blueprint(resolve: Callable[[str], TrackContext], service: Optional[Tra
         def step():
             with ctx.lock, ctx.autocast():
                 yield
-            job.frames_done += 1  # detector calls, for /track_jobs
+
+        def progress():  # detector calls, for /track_jobs
+            job.frames_done += 1
 
         try:
             out = ctx.service.discover_text(ctx.video, ctx.path, obj, data.get("text"), stride, engine,
-                                            _n_frames(ctx.video_handle), step, lambda: job.canceled, HANDOFF_S)
+                                            _n_frames(ctx.video_handle), step, lambda: job.canceled, HANDOFF_S,
+                                            progress)
         except Canceled:
             return jsonify({"canceled": True, "job_id": job.id, "object_id": obj, "intervals": []})
         except UnknownEngine:

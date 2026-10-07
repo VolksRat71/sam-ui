@@ -102,6 +102,33 @@ def test_boundaries_land_within_two_frames(truth):
     assert truth[0] <= a["start"] and a["end"] <= truth[1]  # the hit side: inside the truth
 
 
+def test_an_empty_clip_a_one_frame_clip_and_the_last_frame_alone():
+    assert run(0, present_on((0, 0))) == ([], [])
+    found, calls = run(1, present_on((0, 0)))
+    assert calls == [0] and [(a["start"], a["end"]) for a in found] == [(0, 0)]
+    assert run(1, present_on())[0] == []
+    found, calls = run(30, present_on((29, 29)))  # only the tail sample sees it
+    assert [(a["start"], a["end"]) for a in found] == [(29, 29)] and max(calls) == 29
+
+
+@pytest.mark.parametrize("stride", [1, 2, 3, 5, 12, 13, 60])
+def test_every_single_span_of_short_clips(stride):
+    """Every span [s, e] of every clip of 0-49 frames: no probe outside the
+    clip (run() also checks none twice), and what is found lies inside the
+    truth and within a frame of each edge. A span of at least `stride`
+    frames always holds a sample, so it is always found."""
+    for n in range(50):
+        for s in range(n):
+            for e in range(s, n):
+                found, calls = run(n, present_on((s, e)), stride=stride)
+                assert all(0 <= f < n for f in calls)
+                assert len(found) <= 1, (n, s, e)
+                if e - s + 1 >= stride:
+                    assert len(found) == 1, (n, s, e)
+                for a in found:
+                    assert s <= a["start"] <= s + 1 and e - 1 <= a["end"] <= e, (n, s, e, a)
+
+
 def test_one_missed_sample_does_not_split_an_appearance():
     truth = present_on((10, 200))
     found, _ = run(240, lambda f: truth(f) and f != 96)  # the detector blinks on sample 96
@@ -160,13 +187,15 @@ class Detector(FakeEngine):
     def __init__(self, spans, **kw):
         super().__init__(**kw)
         self.spans, self.prompts = spans, []
+        self.by_text = {}  # other phrases' frames, when a test needs them
         self.gate = None
 
     def segment_text(self, video_path, frame, text):
         if self.gate is not None:
             self.gate(frame)
         self.prompts.append(frame)
-        if text == "dog" and any(a <= frame <= b for a, b in self.spans):
+        spans = self.by_text.get(text, self.spans if text == "dog" else [])
+        if any(a <= frame <= b for a, b in spans):
             return TextMatch(mask=None, score=0.8, instances=1, box=[1, 2, 3, 4])
         return TextMatch(mask=None, score=0.05, instances=0, box=None)
 
@@ -212,6 +241,66 @@ def test_a_rerun_replaces_its_own_source_and_keeps_others(h):
     assert len(d["intervals"]) == 1
     got = sorted((c["source"], c["start"]) for c in h.service.seeds.annotations(h.video, 1))
     assert [g[0] for g in got] == ["clicks@sam2", "text:dog@fake3"]
+
+
+def test_a_later_scan_paints_over_other_sources_where_they_overlap(h):
+    """Candidates are one layer (#39): where two phrases' appearances overlap,
+    the later scan wins; a re-run replaces only its own source's."""
+    h.det.by_text = {"dog": [(30, 80)], "brown dog": [(25, 85)]}
+
+    def cands():
+        return [(c["source"], c["start"], c["end"]) for c in h.service.seeds.annotations(h.video, 1)]
+
+    discover(h)
+    discover(h, text="brown dog")
+    assert [c[0] for c in cands()] == ["text:brown dog@fake3"]  # it covered dog's, so dog's is gone
+    discover(h)
+    got = cands()
+    assert [c[0] for c in got] == ["text:brown dog@fake3", "text:dog@fake3", "text:brown dog@fake3"]
+    assert got[0][2] + 1 == got[1][1] and got[1][2] + 1 == got[2][1]  # dog splits brown dog around itself
+
+
+def test_removing_the_object_mid_scan_writes_nothing_back(h):
+    h.click(1)
+    h.click(2)
+
+    def gate(frame):
+        if len(h.det.prompts) == 3:
+            h.service.remove_object(h.video, 1)
+
+    h.det.gate = gate
+    d = discover(h).json
+    assert d["canceled"] is True and d["intervals"] == []
+    assert h.service.seeds.objects(h.video) == [2]  # not brought back by its candidates
+    assert h.service.jobs.running() == []
+
+
+def test_clearing_the_video_mid_scan_writes_nothing_back(h):
+    h.click(1)
+
+    def gate(frame):
+        if len(h.det.prompts) == 3:
+            h.service.clear_video(h.video)
+
+    h.det.gate = gate
+    assert discover(h).json["canceled"] is True
+    assert h.service.seeds.objects(h.video) == []
+
+
+def test_a_cancel_during_the_last_call_writes_nothing(h):
+    full = h.service.discover_text(h.video, str(h.video_path), 1, "dog", engine="fake3")
+    h.det.prompts = []
+    with pytest.raises(disc.Canceled):  # drive checks before each call; the write checks once more
+        h.service.discover_text(h.video, str(h.video_path), 2, "dog", engine="fake3",
+                                canceled=lambda: len(h.det.prompts) >= full["calls"])
+    assert len(h.det.prompts) == full["calls"] and h.service.seeds.annotations(h.video, 2) == []
+
+
+def test_frames_done_counts_detector_calls(h):
+    seen = []
+    h.det.gate = lambda frame: seen.append(h.service.jobs.running()[0]["frames_done"])
+    d = discover(h).json
+    assert seen == list(range(d["calls"]))  # no count for the frame count or the write
 
 
 def test_discovery_needs_text_a_stride_and_a_text_engine(h):
