@@ -297,29 +297,7 @@ class Sam3Engine:
     def segment_text(self, video_path: str, frame: int, text: str, threshold: float = THRESHOLD) -> TextMatch:
         """The phrase's best-scoring instance on one frame (mask at the video's
         size), how many instances reach `threshold`, and its box in pixels."""
-        import torch
-
-        with self._using("detector"):
-            proc, _, dev = self._load()
-            det, tok = self._load_detector()
-            frames = Sam3Frames(video_path, proc, dtype=self.dtype)
-            if not 0 <= frame < len(frames):
-                raise ValueError(f"frame {frame} is outside the video (0-{len(frames) - 1})")
-            h, w = frames.height, frames.width
-            with torch.inference_mode():
-                ids = tok(text, return_tensors="pt", padding="max_length", max_length=32, truncation=True).to(dev)
-                out = det(pixel_values=frames[frame][None].to(dev), input_ids=ids.input_ids,
-                          attention_mask=ids.attention_mask)
-                scores = out.pred_logits.sigmoid()[0]
-                if out.presence_logits is not None:
-                    scores = scores * out.presence_logits.sigmoid()[0]
-                best, n, score = pick(scores.float().cpu().tolist(), threshold)
-                if best is None:
-                    return TextMatch(mask=None, score=score, instances=0, box=None)
-                logits = torch.nn.functional.interpolate(out.pred_masks[0, best][None, None].float(), size=(h, w),
-                                                         mode="bilinear", align_corners=False)[0, 0]
-                box = (out.pred_boxes[0, best].float().cpu() * torch.tensor([w, h, w, h])).tolist()  # xyxy, 0-1
-                return TextMatch(mask=(logits > 0).cpu().numpy(), score=score, instances=n, box=box)
+        return TextScan(self, video_path, text, threshold)(frame, mask=True)
 
     def text_scanner(self, video_path: str, text: str, threshold: float = THRESHOLD) -> "TextScan":
         """segment_text for many frames of one clip and phrase (discovery,
@@ -392,9 +370,11 @@ class Sam3Engine:
 
 
 class TextScan:
-    """Sam3Engine.text_scanner: call it with a frame for a TextMatch with no
-    mask; len() is the clip's frame count. Each call is one use of the
-    engine (it may unload between calls when idle, and loads again)."""
+    """Sam3Engine.text_scanner: call it with a frame for a TextMatch (no
+    mask unless asked); len() is the clip's frame count. segment_text is a
+    one-frame scan, so a prompt and a discovery run share this path. Each
+    call is one use of the engine (it may unload between calls when idle, and
+    loads again; the decoded frames and the tokens stay)."""
 
     def __init__(self, engine: Sam3Engine, video_path: str, text: str, threshold: float = THRESHOLD):
         self.engine, self.video_path, self.text, self.threshold = engine, video_path, text, threshold
@@ -415,7 +395,11 @@ class TextScan:
             self._ready()
             return len(self._frames)
 
-    def __call__(self, frame: int) -> TextMatch:
+    def __call__(self, frame: int, mask: bool = False) -> TextMatch:
+        """The phrase on one frame, inside one prompt's use of the engine
+        (_using("detector"), issue #11: the detector shares the tracker's
+        backbone and unloads when idle). The mask, at the video's size, only
+        when asked (a text prompt); a scan needs score, count and box."""
         import torch
 
         with self.engine._using("detector"):
@@ -434,5 +418,10 @@ class TextScan:
                 best, n, score = pick(scores.float().cpu().tolist(), self.threshold)
                 if best is None:
                     return TextMatch(mask=None, score=score, instances=0, box=None)
-                box = (out.pred_boxes[0, best].float().cpu() * torch.tensor([w, h, w, h])).tolist()
-                return TextMatch(mask=None, score=score, instances=n, box=box)
+                box = (out.pred_boxes[0, best].float().cpu() * torch.tensor([w, h, w, h])).tolist()  # xyxy, 0-1
+                m = None
+                if mask:
+                    logits = torch.nn.functional.interpolate(out.pred_masks[0, best][None, None].float(), size=(h, w),
+                                                             mode="bilinear", align_corners=False)[0, 0]
+                    m = (logits > 0).cpu().numpy()
+                return TextMatch(mask=m, score=score, instances=n, box=box)

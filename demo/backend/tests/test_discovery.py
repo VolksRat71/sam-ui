@@ -273,6 +273,62 @@ def test_a_click_gets_the_lock_while_discovery_runs(h):
     assert at[0] < d["calls"]  # it got in while the scan still had calls to make
 
 
+def test_the_scan_shares_the_prompt_path_and_its_idle_unload(monkeypatch):
+    """A scan's calls are prompts (issue #11): each loads the detector onto
+    the tracker's backbone when it is not there, and the idle unload may drop
+    it between calls; the scan loads it again and still answers. segment_text
+    is the same path with a mask. No model loads here (stand-ins)."""
+    from types import SimpleNamespace
+
+    import torch
+    import transformers
+
+    from tracks import memory, sam3_engine
+
+    monkeypatch.setattr(memory, "release_cached", lambda: None)
+    monkeypatch.setattr(memory, "clear_lru_caches", lambda *a: 0)
+    backbones = []
+
+    def det(pixel_values, input_ids, attention_mask):
+        hit = float(pixel_values.mean()) > 0  # frames 5+ hold the phrase
+        return SimpleNamespace(pred_logits=torch.tensor([[4.0 if hit else -4.0, -4.0]]), presence_logits=None,
+                               pred_boxes=torch.tensor([[[0.0, 0.0, 0.5, 0.5], [0, 0, 1, 1]]]),
+                               pred_masks=torch.ones(1, 2, 2, 2))
+
+    def tok(text, **kw):
+        ids = SimpleNamespace(input_ids=None, attention_mask=None)
+        return SimpleNamespace(to=lambda dev: ids)
+
+    class Frames:
+        height, width = 8, 6
+
+        def __init__(self, *a, **kw):
+            pass
+
+        def __len__(self):
+            return 10
+
+        def __getitem__(self, i):
+            return torch.full((3, 4, 4), 1.0 if i >= 5 else -1.0)
+
+    monkeypatch.setattr(sam3_engine, "shared_detector", lambda bb, dev, dtype: backbones.append(bb) or det)
+    monkeypatch.setattr(transformers.AutoTokenizer, "from_pretrained", lambda *a, **kw: tok)
+    monkeypatch.setattr(sam3_engine, "Sam3Frames", Frames)
+    e = sam3_engine.Sam3Engine(device="cpu")
+    e._loaded = ("proc", SimpleNamespace(vision_encoder=SimpleNamespace(backbone="tracker-backbone")), "cpu")
+    e.idle_s, e.detector_idle_s = None, 0.0  # the detector unloads the moment a call ends
+    try:
+        scan = e.text_scanner("clip.mp4", "dog")
+        assert [scan(f).instances for f in (0, 6)] == [0, 1]
+        assert backbones == ["tracker-backbone"] * 2  # loaded again after the idle unload, on the shared backbone
+        assert not e.detector_loaded and e.loaded and e._busy == 0
+        m = e.segment_text("clip.mp4", 7, "dog")
+        assert m.mask.shape == (8, 6) and m.box == [0.0, 0.0, 3.0, 4.0] and scan(7).mask is None
+    finally:
+        if e._timer is not None:
+            e._timer.cancel()
+
+
 # -- the real model --------------------------------------------------------------
 
 @pytest.mark.slow
