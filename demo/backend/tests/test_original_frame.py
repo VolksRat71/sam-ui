@@ -67,6 +67,20 @@ def test_missing_and_symlink_asset_never_fall_back(tmp_path):
         reader.read_original_frame(record['asset_id'], 0, manifest['frame_table_hash'])
 
 
+def test_symlinked_ancestor_is_trusted(tmp_path):
+    from data.assets.original_frame import OriginalFrameReader
+    real = tmp_path / 'real'; real.mkdir()
+    root, record, manifest = asset(real)
+    data = tmp_path / 'data'; data.symlink_to(real, target_is_directory=True)
+    reader = OriginalFrameReader(data / 'assets')
+    assert reader.read_original_frame(record['asset_id'], 0, manifest['frame_table_hash']).index == 0
+    path = root / record['original_path']
+    path.unlink(); path.symlink_to(real / 'source.mp4')
+    with pytest.raises(ValueError, match='symlink_asset_path'):
+        OriginalFrameReader(data / 'assets').read_original_frame(
+            record['asset_id'], 0, manifest['frame_table_hash'])
+
+
 def test_budget_smaller_than_one_frame_does_not_cache(tmp_path):
     from data.assets.original_frame import OriginalFrameReader
     root, record, manifest = asset(tmp_path)
