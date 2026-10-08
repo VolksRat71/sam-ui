@@ -24,6 +24,7 @@ export default function DeleteVideoModal({video, isOpen, onDelete, onClose}: Pro
   const cancelRef = useRef<HTMLButtonElement>(null);
   const name = video.path.split('/').pop() ?? video.path;
   const linked = isAeVideo(video.path);
+  const verb = linked ? 'Remove' : 'Delete';
 
   useEffect(() => {
     cancelRef.current?.focus();
@@ -57,11 +58,11 @@ export default function DeleteVideoModal({video, isOpen, onDelete, onClose}: Pro
           <p>
             {purge ? (
               <>
-                This {linked ? 'removes' : 'deletes'} the video <code>{name}</code> <strong>and its objects, clicks and cached tracks</strong>.
+                This {verb.toLowerCase()}s the video <code>{name}</code> <strong>and its objects, clicks and cached tracks</strong>.
               </>
             ) : (
               <>
-                This {linked ? 'removes' : 'deletes'} the video <code>{name}</code> only. <strong>Its objects, clicks and cached tracks
+                This {verb.toLowerCase()}s the video <code>{name}</code> only. <strong>Its objects, clicks and cached tracks
                 are kept</strong> on the backend.
               </>
             )}{' '}
@@ -85,9 +86,9 @@ export default function DeleteVideoModal({video, isOpen, onDelete, onClose}: Pro
                 <span className="spinner small" /> Deleting…
               </>
             ) : purge ? (
-              `${linked ? 'Remove' : 'Delete'} video and tracks`
+              `${verb} video and tracks`
             ) : (
-              `${linked ? 'Remove' : 'Delete'} video, keep tracks`
+              `${verb} video, keep tracks`
             )}
           </button>
         </div>

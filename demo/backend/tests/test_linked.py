@@ -220,6 +220,7 @@ def test_removing_a_linked_video_deletes_only_sam_uis_files_never_the_footage(tm
 def test_removing_refuses_forged_and_path_like_ids_and_keeps_the_footage(tmp_path):
     from app_conf import DATA_PATH
     from data.linked import LINKED_PATH, register
+    from data.store import get_videos
     from test_media import Api, delete
 
     clip = moving_square(tmp_path / "keep.mp4")
@@ -231,26 +232,12 @@ def test_removing_refuses_forged_and_path_like_ids_and_keeps_the_footage(tmp_pat
         api = Api()
         for path in (str(clip), str(link), f"linked/../{video.path}", f"linked//{link.name}",
                      f"linked/.sources/{link.stem}.json", "linked/.sources", "linked/..", "linked/",
-                     f"{video.path}\x00", "linked/planted.mp4", "linked/nope.mp4", f"gallery/../{video.path}"):
+                     f"{video.path}\x00", "linked/planted.mp4", "linked/nope.mp4", f"gallery/../{video.path}",
+                     "linked/" + link.name.upper()):  # a case variant reaches the real link on APFS
             r = delete(api, path)
             assert r.errors, path
         assert api.purged == [] and link.is_symlink() and planted.is_file() and clip.is_file()
+        assert video.code in get_videos()
         assert os.path.realpath(link) == os.path.realpath(clip)
     finally:
         planted.unlink()
-
-
-def test_a_case_variant_id_is_refused(tmp_path):
-    """On a case-insensitive disk (APFS) LINKED/<ID>.MP4 reaches the real link:
-    only the exact lowercase id register() writes may remove it."""
-    from app_conf import DATA_PATH
-    from data.linked import register
-    from data.store import get_videos
-    from test_media import Api, delete
-
-    clip = moving_square(tmp_path / "keep.mp4")
-    video, _ = register(str(clip), source_for(clip), hash_file=lambda p: "h")
-    link = Path(DATA_PATH) / video.path
-    r = delete(Api(), "linked/" + link.name.upper())
-    assert r.errors
-    assert link.is_symlink() and video.code in get_videos() and clip.is_file()

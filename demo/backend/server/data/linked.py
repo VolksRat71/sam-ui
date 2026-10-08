@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import av
-from app_conf import DATA_PATH, POSTERS_PREFIX
+from app_conf import DATA_PATH, POSTERS_PATH, POSTERS_PREFIX
 from data.data_types import Video
 from flask import Blueprint, abort, jsonify, request, send_from_directory
 
@@ -213,8 +213,6 @@ def unlink(link: Path) -> None:
     os.unlink(link)
     record.unlink(missing_ok=True)
     if poster:
-        from app_conf import POSTERS_PATH
-
         (Path(POSTERS_PATH) / Path(poster).name).unlink(missing_ok=True)
 
 
