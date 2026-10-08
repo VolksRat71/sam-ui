@@ -178,3 +178,68 @@ def test_the_routes_need_the_desktop_token_and_serve_ranges(tmp_path):
     got.close()
     assert c.get(f"/linked-source?path={out['path']}").get_json()["source"]["aeItemId"] == 12
     assert c.get("/linked/.sources").status_code == 404
+
+
+def prores(clip: Path) -> Path:
+    """`clip` re-encoded to ProRes 422, as After Effects footage often is."""
+    out = clip.with_name(clip.stem + "-prores.mov")
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(clip), "-c:v", "prores_ks", "-profile:v", "2",
+                    "-pix_fmt", "yuv422p10le", str(out)], check=True)
+    return out
+
+
+def test_prores_gets_a_frame_exact_h264_preview_that_studio_is_served(tmp_path):
+    """Studio's browser decoder cannot play ProRes, so linking makes an H.264
+    preview with the same frame count, times and size, kept under sam-ui's
+    data, and GET /linked/<file> serves it. The link still points at the
+    original, which the backend tracks and exports from."""
+    import av
+    import numpy as np
+    from app_conf import DATA_PATH
+    from data.linked import LINKED_PATH, PREVIEWS_DIR, TOKEN_HEADER, make_blueprint
+
+    clip = prores(moving_square(tmp_path / "ae.mp4"))
+    app = Flask("prores")
+    app.register_blueprint(make_blueprint(token="t"))
+    c = app.test_client()
+    r = c.post("/linked", json={"path": str(clip), "source": source_for(clip)}, headers={TOKEN_HEADER: "t"})
+    assert r.status_code == 200, r.data
+    record = r.get_json()["record"]
+    assert record["native"]["codec"] == "prores" and record["preview"]
+    previews = LINKED_PATH / PREVIEWS_DIR
+    preview = previews / record["preview"]
+    assert previews.parent == Path(DATA_PATH) / "linked" and not list(previews.glob(".*.tmp"))
+    assert os.path.realpath(Path(DATA_PATH) / record["path"]) == os.path.realpath(clip)
+
+    def frames(path):
+        with av.open(str(path)) as cont:
+            vs = cont.streams.video[0]
+            return vs.codec_context.name, [(f.time, f.to_ndarray(format="rgb24")) for f in cont.decode(vs)]
+
+    src_codec, src = frames(clip)
+    out_codec, out = frames(preview)
+    assert (src_codec, out_codec) == ("prores", "h264")
+    assert len(out) == len(src) == N
+    for i, ((t0, _), (t1, img)) in enumerate(zip(src, out)):
+        assert abs(t0 - t1) < 1e-9 and img.shape[:2] == (H, W)
+        cols = np.where(img[120, :, 0] > 128)[0]
+        assert abs(cols.min() - 10 * i) <= 1 and abs(cols.max() - (10 * i + 39)) <= 1, i
+
+    got = c.get(f"/{record['path']}")
+    assert got.status_code == 200 and got.mimetype == "video/mp4" and got.data == preview.read_bytes()
+    got.close()
+
+
+def test_footage_studio_can_play_gets_no_preview(tmp_path):
+    from data.linked import TOKEN_HEADER, make_blueprint
+
+    clip = moving_square(tmp_path / "h264.mov")
+    app = Flask("h264")
+    app.register_blueprint(make_blueprint(token="t"))
+    c = app.test_client()
+    r = c.post("/linked", json={"path": str(clip), "source": source_for(clip)}, headers={TOKEN_HEADER: "t"})
+    record = r.get_json()["record"]
+    assert record["native"]["codec"] == "h264" and record["preview"] is None
+    got = c.get(f"/{record['path']}")
+    assert got.data == clip.read_bytes()  # the original itself
+    got.close()
