@@ -11,9 +11,11 @@
 // After Effects (ae-bridge.js, ae-roto.js) is reached from here only, never
 // from the page: its bridge refuses browser origins, and only this process
 // holds the token that lets the backend open a file in place.
+// Agents (MCP, mcp-server.js) are served from here too, on 127.0.0.1:8793, once
+// the person allows them (Agents menu).
 'use strict';
 
-const {app, BrowserWindow, Menu, Notification, dialog, ipcMain, shell} = require('electron');
+const {app, BrowserWindow, Menu, Notification, clipboard, dialog, ipcMain, shell} = require('electron');
 const {spawn} = require('node:child_process');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
@@ -24,6 +26,7 @@ const {createAeClient, describeError} = require('./ae-bridge');
 const roto = require('./ae-roto');
 const {downloadRepo, downloadVerified} = require('./hf-download');
 const {createJobNotifier, notifyEnabled} = require('./job-notify');
+const {DEFAULT_PORT: MCP_PORT, claudeAddCommand, createMcpServer} = require('./mcp-server');
 const {autoCheckEnabled, createUpdateChecker, fileLogger, fileStore, releasePageUrl} = require('./update-check');
 
 const CHECKPOINT_URL = 'https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_large.pt';
@@ -213,6 +216,45 @@ function stopBackend() {
   if (backend && backend.exitCode === null) backend.kill('SIGTERM');
 }
 
+// -- agents (mcp-server.js) ------------------------------------------------
+// Off until the person ticks Agents > Allow agents (MCP); the choice is kept.
+// The server's backend client has no link token: agents never open files in place.
+
+let mcp = null; // set before listen() resolves, so a second tick never starts a second server
+let agentsItem = null; // the menu checkbox, unticked when the server cannot start
+
+async function startMcp() {
+  if (mcp != null || backendPort == null) return;
+  let server = null;
+  try {
+    server = createMcpServer({
+      backend: roto.backendClient({port: backendPort}),
+      exportRoot: path.join(app.getPath('home'), 'Movies', 'sam-ui'),
+    });
+    mcp = server;
+    await server.listen();
+    if (mcp !== server) server.close(); // unticked while it was starting
+  } catch (err) {
+    if (mcp === server) mcp = null;
+    if (server != null) server.close();
+    writeSettings({allowAgents: false});
+    if (agentsItem != null) agentsItem.checked = false;
+    dialog.showErrorBox('sam-ui: agents could not connect',
+      `The MCP server could not start on 127.0.0.1:${MCP_PORT}: ${err.message}. Is another sam-ui, or a dev MCP server, running? Agents are switched off; tick Agents > Allow agents (MCP) to try again.`);
+  }
+}
+
+async function stopMcp() {
+  const server = mcp;
+  mcp = null;
+  if (server != null) await server.close();
+}
+
+function setAgents(on) {
+  writeSettings({allowAgents: on});
+  return on ? startMcp() : stopMcp();
+}
+
 // -- app -------------------------------------------------------------------
 
 function menu(p) {
@@ -264,6 +306,19 @@ function menu(p) {
         {label: 'Get SAM 3 weights (Hugging Face)', click: () => shell.openExternal('https://huggingface.co/facebook/sam3')},
       ],
     },
+    {
+      label: 'Agents',
+      submenu: [
+        {
+          id: 'allow-agents',
+          label: 'Allow agents (MCP)',
+          type: 'checkbox',
+          checked: readSettings().allowAgents === true,
+          click: item => setAgents(item.checked),
+        },
+        {label: 'Copy Claude Code setup command', click: () => clipboard.writeText(claudeAddCommand(MCP_PORT))},
+      ],
+    },
     {role: 'windowMenu'},
     {
       label: 'Help',
@@ -276,7 +331,9 @@ function menu(p) {
       ],
     },
   ];
-  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+  const built = Menu.buildFromTemplate(template);
+  agentsItem = built.getMenuItemById('allow-agents');
+  Menu.setApplicationMenu(built);
 }
 
 async function main() {
@@ -294,6 +351,7 @@ async function main() {
     backendPort = await freePort();
     backend = startBackend(p, backendPort);
     await waitHealthy(backendPort);
+    if (readSettings().allowAgents === true) startMcp(); // not awaited: a taken port says so in a dialog
   } catch (err) {
     dialog.showErrorBox('sam-ui could not start', `${err.message}\n\nThe log is at ${path.join(p.logDir, 'backend.log')}`);
     quitting = true;
@@ -505,6 +563,7 @@ aeHandle('ae:export', async (req, event) => {
 
 app.on('before-quit', () => {
   quitting = true;
+  stopMcp();
   stopBackend();
 });
 app.on('window-all-closed', () => app.quit());

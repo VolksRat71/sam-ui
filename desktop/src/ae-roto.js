@@ -311,9 +311,12 @@ async function runPlan(plan, client, {tmpDir, onProgress} = {}) {
 
 // -- the backend (only the main process can link a file: it has the token) --
 
-/** JSON over http to the local backend: no Origin, which its guard would check. */
+/**
+ * JSON over http to the local backend: no Origin, which its guard would check.
+ * Without `token` it cannot reach /linked (the MCP server's client, mcp-tools.js).
+ */
 function backendClient({port, token, host = '127.0.0.1'}) {
-  function request(method, pathname, body) {
+  function send(method, pathname, body, onResponse, timeoutMs) {
     const data = body == null ? null : Buffer.from(JSON.stringify(body));
     return new Promise((resolve, reject) => {
       const req = http.request(
@@ -325,27 +328,44 @@ function backendClient({port, token, host = '127.0.0.1'}) {
             ...(token ? {'X-Sam-Ui-Link-Token': token} : {}),
           },
         },
-        res => {
-          const chunks = [];
-          res.on('data', c => chunks.push(c));
-          res.on('end', () => {
-            const text = Buffer.concat(chunks).toString('utf8');
-            let json = null;
-            try {
-              json = JSON.parse(text);
-            } catch {
-              // not JSON (an HTML error page)
-            }
-            resolve({status: res.statusCode, json, text});
-          });
-        },
+        res => onResponse(res, resolve),
       );
-      req.setTimeout(600000, () => req.destroy(new Error('the backend did not answer')));
+      if (timeoutMs) req.setTimeout(timeoutMs, () => req.destroy(new Error('the backend did not answer')));
       req.on('error', reject);
       req.end(data ?? undefined);
     });
   }
+  function request(method, pathname, body) {
+    return send(method, pathname, body, (res, resolve) => {
+      const chunks = [];
+      res.on('data', c => chunks.push(c));
+      res.on('end', () => {
+        const text = Buffer.concat(chunks).toString('utf8');
+        let json = null;
+        try {
+          json = JSON.parse(text);
+        } catch {
+          // not JSON (an HTML error page)
+        }
+        resolve({status: res.statusCode, json, text});
+      });
+    }, 600000);
+  }
   return {
+    get: pathname => request('GET', pathname),
+    /** {status, json, text}: json is null when the reply is not JSON. */
+    post: (pathname, body) => request('POST', pathname, body),
+    /** GraphQL `data`, or an Error with the backend's messages. */
+    async graphql(query, variables) {
+      const r = await request('POST', '/graphql', {query, variables});
+      const errors = r.json?.errors;
+      if (r.status !== 200 || errors?.length || r.json?.data == null) {
+        throw new Error(errors?.map(e => e.message).join('; ') || `GraphQL failed (HTTP ${r.status})`);
+      }
+      return r.json.data;
+    },
+    /** The response itself, unread and with no timeout: a track stream lasts as long as its clip. */
+    stream: (pathname, body) => send('POST', pathname, body, (res, resolve) => resolve(res)),
     /** Link `file` in place with its source record: {path, posterPath, width, height, record}. */
     async link(file, source) {
       const r = await request('POST', '/linked', {path: file, source});

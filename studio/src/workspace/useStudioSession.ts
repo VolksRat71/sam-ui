@@ -79,6 +79,9 @@ import {
 } from '~/state/ranges';
 import type {DiscoverTextResult, EngineInfo, RunningJob, TextPromptResult, TrackletSummary} from '~/worker/protocol';
 
+// how long after this page's own job ends the follow path keeps quiet about its objects
+const TOLD_QUIET_MS = 10_000;
+
 /** Where two engines disagree on one object: frames under the IoU threshold. */
 export type ObjectDisagreement = {flagged: number[]; meanIou: number | null};
 
@@ -687,7 +690,9 @@ export default function useStudioSession(video: VideoItem) {
   // Ids of this page's ended jobs, already told (or kept quiet, for a cancel).
   // The backend can hold them a moment after the job ends, so the follow path
   // below may still see them tracking: it repaints them but says nothing.
-  const toldHere = useRef(new Set<number>());
+  // ponytail: by time, not by job: a job someone else (an agent) starts on the
+  // same object within TOLD_QUIET_MS of ours ending goes untold
+  const toldHere = useRef(new Map<number, number>()); // id -> when this page told it
 
   /**
    * Start a job for the dirty objects (`pick`: of them, the ones it keeps).
@@ -713,7 +718,7 @@ export default function useStudioSession(video: VideoItem) {
     const tell = (ok: boolean) => {
       const job = stateRef.current.jobs.find(j => j.key === key);
       const held = job?.ids ?? ids;
-      held.forEach(id => toldHere.current.add(id));
+      held.forEach(id => toldHere.current.set(id, Date.now()));
       if (!job?.canceling && held.length > 0) {
         tellJobDone(held, ok, engine);
       }
@@ -791,7 +796,7 @@ export default function useStudioSession(video: VideoItem) {
         const engine = stateRef.current.engine;
         const done = releasedOn(objects, watched, engine).ids;
         // each id once, and never one this page's own job already told
-        const news = releasedOn(objects, watched.filter(id => !told.has(id) && !toldHere.current.has(id)), engine);
+        const news = releasedOn(objects, watched.filter(id => !told.has(id) && !(Date.now() - (toldHere.current.get(id) ?? -Infinity) < TOLD_QUIET_MS)), engine);
         done.forEach(id => {
           told.add(id);
           toldHere.current.delete(id);
