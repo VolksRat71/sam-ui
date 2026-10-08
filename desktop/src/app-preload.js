@@ -22,6 +22,17 @@ contextBridge.exposeInMainWorld('samUiDesktop', {
     dismiss: version => ipcRenderer.send('updates:dismiss', version),
     openRelease: () => ipcRenderer.send('updates:open'),
   },
+  // job notifications (main.js, job-notify.js): studio says a job ended
+  // ({kind, ok, engine, objectIds, name}) and main decides whether to notify; a click
+  // on one comes back as {engine, objectIds} for studio to jump to
+  jobs: {
+    done: job => ipcRenderer.send('jobs:done', job),
+    onOpen: cb => {
+      const listener = (_e, job) => cb(job);
+      ipcRenderer.on('jobs:open', listener);
+      return () => ipcRenderer.removeListener('jobs:open', listener);
+    },
+  },
   setupSam3: () => ipcRenderer.send('app:setup-sam3'),
   ae: {
     status: () => ipcRenderer.invoke('ae:status'),

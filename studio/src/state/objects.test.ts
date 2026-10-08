@@ -16,6 +16,7 @@ import {
   jobProgress,
   nextObjectId,
   reducer,
+  releasedOn,
   seedFrames,
   staleIds,
 } from './objects';
@@ -531,5 +532,31 @@ describe('seed frames for "Gone for a while?"', () => {
     const o = byId(s, 0);
     expect(seedFrames(o)).toEqual([0, 30]);
     expect(absentUntilNextSeed(seedFrames(o), 20, 100)).toEqual([20, 29]);
+  });
+});
+
+describe('objects another job let go (the follow path)', () => {
+  // the top level is SAM 2's; SAM 3's state is only under tracks
+  const both = (objectId: number, sam2: string, sam3: string): ServerObject => ({
+    ...server(objectId, sam2),
+    tracks: [
+      {engine: 'sam2', state: sam2, nFrames: 24},
+      {engine: 'sam3', state: sam3, nFrames: 24},
+    ],
+  });
+
+  it("reads the watched engine's state, not the top level's", () => {
+    const objects = [both(1, 'tracked', 'tracking'), both(2, 'stale', 'tracking')];
+    expect(releasedOn(objects, [1, 2], 'sam3')).toEqual({ids: [], ok: true});
+    expect(releasedOn([both(1, 'stale', 'tracked'), both(2, 'tracking', 'tracking')], [1, 2], 'sam3')).toEqual({ids: [1], ok: true});
+  });
+
+  it('is ok only when every released object ended tracked', () => {
+    expect(releasedOn([both(1, 'tracked', 'tracked'), both(2, 'tracked', 'stale')], [1, 2], 'sam3')).toEqual({ids: [1, 2], ok: false});
+    expect(releasedOn([server(1, 'tracked')], [1], 'sam2')).toEqual({ids: [1], ok: true});
+  });
+
+  it('an object no longer there counts as released, not ok', () => {
+    expect(releasedOn([], [4], 'sam2')).toEqual({ids: [4], ok: false});
   });
 });

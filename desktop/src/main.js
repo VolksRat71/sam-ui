@@ -13,7 +13,7 @@
 // holds the token that lets the backend open a file in place.
 'use strict';
 
-const {app, BrowserWindow, Menu, dialog, ipcMain, shell} = require('electron');
+const {app, BrowserWindow, Menu, Notification, dialog, ipcMain, shell} = require('electron');
 const {spawn} = require('node:child_process');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
@@ -23,6 +23,7 @@ const path = require('node:path');
 const {createAeClient, describeError} = require('./ae-bridge');
 const roto = require('./ae-roto');
 const {downloadRepo, downloadVerified} = require('./hf-download');
+const {createJobNotifier, notifyEnabled} = require('./job-notify');
 const {autoCheckEnabled, createUpdateChecker, fileLogger, fileStore, releasePageUrl} = require('./update-check');
 
 const CHECKPOINT_URL = 'https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_large.pt';
@@ -216,7 +217,27 @@ function stopBackend() {
 
 function menu(p) {
   const template = [
-    {role: 'appMenu'},
+    {
+      role: 'appMenu',
+      submenu: [
+        {role: 'about'},
+        {type: 'separator'},
+        {
+          label: 'Notify When a Track Finishes',
+          type: 'checkbox',
+          checked: notifyEnabled(readSettings()),
+          click: item => writeSettings({notifyJobDone: item.checked}),
+        },
+        {type: 'separator'},
+        {role: 'services'},
+        {type: 'separator'},
+        {role: 'hide'},
+        {role: 'hideOthers'},
+        {role: 'unhide'},
+        {type: 'separator'},
+        {role: 'quit'},
+      ],
+    },
     {role: 'editMenu'},
     {role: 'viewMenu'},
     {
@@ -375,6 +396,18 @@ ipcMain.on('updates:dismiss', (event, version) => {
 ipcMain.on('updates:open', event => {
   const r = updates.pending();
   if (isMainWindow(event) && r != null) openRelease(r.url);
+});
+
+// -- job notifications (job-notify.js) -------------------------------------
+// Off unless the app menu's checkbox is on; studio says a job ended, main decides.
+
+const jobDone = createJobNotifier({
+  Notification,
+  enabled: () => notifyEnabled(readSettings()),
+  getWindow: () => (mainWindow != null && !mainWindow.isDestroyed() ? mainWindow : null),
+});
+ipcMain.on('jobs:done', (event, payload) => {
+  if (isMainWindow(event)) jobDone(payload);
 });
 
 // -- SAM 3 download --------------------------------------------------------
