@@ -74,7 +74,7 @@
 .group-filter { display: flex; align-items: center; gap: 8px; }
 .layer-controls { display: block; padding: 0; }
 .layer-summary { display: flex; align-items: center; gap: 8px; height: var(--lane-height); padding-inline: 8px; }
-.layer-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.layer-summary .object-name { flex: 1; }
 .layer-swatch { width: 8px; height: 12px; background: var(--lane-ink); flex: none; }
 .layer-summary .badge { flex: none; }
 .layer-details { padding: 8px; border-top: 1px solid var(--line); max-height: 220px; overflow: auto; }
@@ -168,7 +168,7 @@ input:not([type='checkbox']):not([type='radio']):not([type='range']) { min-heigh
 @media (max-width: 1023.98px) {
   .main { grid-template-rows: minmax(180px, .65fr) minmax(360px, 1.2fr) minmax(160px, .7fr); }
   .suite-lanes .group-header { min-height: 44px; }
-  .group-title .rename-button { display: none; }
+  .group-title .rename-button, .layer-summary .rename-button { display: none; }
   .group-options[open] .rename-button { display: inline-flex; }
   .section-tabs .section-badge { display: none; }
   .lane-footer:not(.open) { padding-block: 0; }

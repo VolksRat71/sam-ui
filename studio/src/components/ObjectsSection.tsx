@@ -61,16 +61,29 @@ function StateBadge({o}: {o: StudioObject}) {
   return <span className={`badge ${track.kind}`} title={track.detail}>{track.label}</span>;
 }
 
-/** The object's name; double-click it, or the pencil, to rename in place. */
-function ObjectName({o, onRename}: {o: StudioObject; onRename: (name: string) => void}) {
+/** After Enter / Escape closes a rename field, focus goes back to its pencil, or, when that is no Tab stop, to the lane or the group header's first shown control. */
+function refocusAfterRename(pencil: HTMLButtonElement | null) {
+  const shown = (e: Element) => e.getClientRects().length > 0;
+  if (pencil == null) return;
+  if (pencil.tabIndex >= 0 && shown(pencil)) pencil.focus();
+  else (pencil.closest<HTMLElement>('[data-layer-option]') ?? [...(pencil.closest('.group-header')?.querySelectorAll<HTMLElement>('button, summary') ?? [])].find(shown))?.focus();
+}
+
+/** The object's name; double-click it, or the pencil, to rename in place. In a lane the pencil is no Tab stop (the lane's Enter opens the inspector's). */
+function ObjectName({o, onRename, lane = false}: {o: StudioObject; onRename: (name: string) => void; lane?: boolean}) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const done = useRef(false);
+  const refocus = useRef(false);
   const input = useRef<HTMLInputElement>(null);
+  const pencil = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (editing) {
       input.current?.focus();
       input.current?.select();
+    } else if (refocus.current) {
+      refocus.current = false;
+      refocusAfterRename(pencil.current);
     }
   }, [editing]);
   const start = () => {
@@ -78,11 +91,12 @@ function ObjectName({o, onRename}: {o: StudioObject; onRename: (name: string) =>
     setDraft(o.name ?? objectName(o));
     setEditing(true);
   };
-  const finish = (save: boolean) => {
+  const finish = (save: boolean, keyboard = false) => {
     if (done.current) {
       return; // Enter, then the blur it causes
     }
     done.current = true;
+    refocus.current = keyboard;
     setEditing(false);
     if (save && draft.trim() !== (o.name ?? objectName(o))) {
       onRename(draft);
@@ -102,9 +116,10 @@ function ObjectName({o, onRename}: {o: StudioObject; onRename: (name: string) =>
         onKeyDown={e => {
           e.stopPropagation(); // not the video's shortcuts
           if (e.key === 'Enter') {
-            finish(true);
+            e.preventDefault(); // or its keypress clicks the pencil focus returns to
+            finish(true, true);
           } else if (e.key === 'Escape') {
-            finish(false);
+            finish(false, true);
           }
         }}
       />
@@ -122,6 +137,8 @@ function ObjectName({o, onRename}: {o: StudioObject; onRename: (name: string) =>
         {objectName(o)}
       </span>
       <button
+        ref={pencil}
+        tabIndex={lane ? -1 : undefined}
         className="icon-button small rename-button"
         title="Rename"
         aria-label={`Rename ${objectName(o)}`}
@@ -391,6 +408,7 @@ function ObjectRow({
       <div className="layer-controls">
         <div className="layer-summary" role="option" aria-selected={active} aria-label={`${name}, ${trackPresentation(o.state, o.running).label}`} data-layer-option={o.id} tabIndex={active ? 0 : -1}
           onKeyDown={e => {
+            if (e.target !== e.currentTarget) return; // Enter on the rename pencil is the pencil's
             const dir = stepKey(e);
             if (dir != null) { step(dir); return; }
             if (e.key === 'Enter' && inspector != null) {
@@ -406,7 +424,7 @@ function ObjectRow({
             }
           }}>
           <span className="layer-swatch" aria-hidden="true" />
-          <span className="layer-name" title={name}>{name}</span>
+          <ObjectName o={o} onRename={n => session.renameObject(o.id, n)} lane />
           <StateBadge o={o} />
           {active ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}
         </div>
@@ -512,11 +530,16 @@ function GroupName({group, onRename}: {group: ObjectGroup; onRename: (name: stri
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const done = useRef(false);
+  const refocus = useRef(false);
   const input = useRef<HTMLInputElement>(null);
+  const pencil = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (editing) {
       input.current?.focus();
       input.current?.select();
+    } else if (refocus.current) {
+      refocus.current = false;
+      refocusAfterRename(pencil.current);
     }
   }, [editing]);
   const start = () => {
@@ -524,11 +547,12 @@ function GroupName({group, onRename}: {group: ObjectGroup; onRename: (name: stri
     setDraft(group.name);
     setEditing(true);
   };
-  const finish = (save: boolean) => {
+  const finish = (save: boolean, keyboard = false) => {
     if (done.current) {
       return;
     }
     done.current = true;
+    refocus.current = keyboard;
     setEditing(false);
     if (save && draft.trim() !== group.name) {
       onRename(draft);
@@ -548,9 +572,10 @@ function GroupName({group, onRename}: {group: ObjectGroup; onRename: (name: stri
         onKeyDown={e => {
           e.stopPropagation();
           if (e.key === 'Enter') {
-            finish(true);
+            e.preventDefault(); // or its keypress clicks the pencil focus returns to
+            finish(true, true);
           } else if (e.key === 'Escape') {
-            finish(false);
+            finish(false, true);
           }
         }}
       />
@@ -561,7 +586,7 @@ function GroupName({group, onRename}: {group: ObjectGroup; onRename: (name: stri
       <span className="object-name-text" title="Double-click to rename" onDoubleClick={start}>
         {group.name}
       </span>
-      <button className="icon-button small rename-button" title="Rename" aria-label={`Rename group ${group.name}`} onClick={start}>
+      <button ref={pencil} className="icon-button small rename-button" title="Rename" aria-label={`Rename group ${group.name}`} onClick={start}>
         <Edit size={14} />
       </button>
     </span>
