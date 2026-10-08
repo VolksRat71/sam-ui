@@ -16,6 +16,13 @@ came from (the After Effects item, project and timing), its native metadata
 as measured here, and its size, mtime and content hash when it was linked,
 so an export can tell that the file changed underneath it.
 
+Studio decodes the video in the browser (WebCodecs), which plays H.264, HEVC,
+VP8/9 and AV1 but not ProRes, DNxHR, Animation and the other codecs After
+Effects footage often comes in. For those, linking also makes an H.264 preview
+under .previews/ (sam-ui's own data, never beside the footage) with the same
+frames at the same times and size, and GET /linked/<file> serves it to studio.
+The backend still tracks and exports from the original.
+
 Registering is not for the page: it would let a page name any file on disk.
 Only the desktop app's main process can, with the per-launch token it hands
 the backend in SAM_UI_LINK_TOKEN. Without that variable the route is off.
@@ -25,6 +32,8 @@ import hmac
 import json
 import os
 import re
+import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -37,8 +46,17 @@ from flask import Blueprint, abort, jsonify, request, send_from_directory
 LINKED_PREFIX = "linked"
 LINKED_PATH = DATA_PATH / LINKED_PREFIX
 SOURCES_DIR = ".sources"
+PREVIEWS_DIR = ".previews"
 # what studio's decoder (mediabunny) and the backend's (decord, PyAV) both read
 VIDEO_EXTS = {".mp4", ".mov", ".m4v"}
+# codecs (PyAV names) studio's WebCodecs decoder plays in desktop Chrome; anything else gets a preview
+# ponytail: HEVC counts as playable (macOS Chrome decodes it); on Windows it needs the HEVC extension
+BROWSER_CODECS = {"h264", "hevc", "vp8", "vp9", "av1"}
+PREVIEW_SWEEP_AGE = 3600  # seconds
+# one lock per preview, so two links of the same footage never encode it twice
+# ponytail: never dropped, one small lock per previewed clip for the process's life
+_PREVIEW_LOCKS: Dict[str, threading.Lock] = {}
+_PREVIEW_LOCKS_GUARD = threading.Lock()
 FPS_TOLERANCE = 1e-3
 # frames off a constant rate (plus a tick) before rate_drift calls it variable;
 # well under half a frame, since AE's lookup (floor or nearest) is unknown
@@ -70,6 +88,7 @@ def native_metadata(path: str) -> Dict:
             rate = vs.guessed_rate or vs.average_rate
             fps = float(rate) if rate else None
             width, height = vs.width, vs.height
+            codec = vs.codec_context.codec.canonical_name  # "av1", not the decoder's name ("libdav1d")
             start = vs.start_time or 0
             pts = [p.pts for p in cont.demux(vs) if p.pts is not None]
             frames = len(pts)
@@ -89,7 +108,7 @@ def native_metadata(path: str) -> Dict:
             f"the file has a variable frame rate ({where}), and the masks go back to After Effects keyed at "
             "frame / fps: conform it to a constant frame rate first (render a copy from After Effects, or "
             "ffmpeg -i in.mov -fps_mode cfr -r <fps> out.mov), then open that copy")
-    return {"width": width, "height": height, "fps": fps, "frames": frames, "duration": duration}
+    return {"width": width, "height": height, "fps": fps, "frames": frames, "duration": duration, "codec": codec}
 
 
 def rate_drift(pts: List[int]) -> Tuple[float, float]:
@@ -165,6 +184,98 @@ def _poster(real: str, stem: str) -> Optional[str]:
     return name if out.exists() else None
 
 
+def _preview(real: str, video_hash: str, native: Dict) -> Optional[str]:
+    """The H.264 preview studio plays in place of footage its browser decoder
+    cannot (ProRes and the like), as a file name under .previews/, or None
+    when studio plays the original. Made with the frame-exact proxy encoder
+    (data/assets, #32) at the native size: every frame at its own time, then
+    decoded again and checked frame for frame before it is kept. Named by the
+    original's content hash, so a changed file gets a new one.
+
+    This runs whether or not SAM_UI_GENERATE_FRAME_ACCURATE_PROXIES is set:
+    that flag holds back proxies as the upload path's inference and playback
+    input, while this one is only what studio shows, and without it the
+    footage cannot be shown at all. For the same reason it encodes faster
+    than #32 (x264 veryfast on every core) and tags its colour the way the
+    browser reads it. Raises ValueError when no exact preview can be made."""
+    if native["codec"] in BROWSER_CODECS:
+        return None
+    from data.assets.proxy_codec import encode_proxy, validate_proxy
+    from data.assets.proxy_contract import ProxyRecipe, SourceAsset, effective_recipe
+    from data.assets.retention import _fsync_directory
+    from data.assets.timing import inspect_source
+
+    name = f"{video_hash[:24]}.mp4"
+    out = LINKED_PATH / PREVIEWS_DIR / name
+    with _PREVIEW_LOCKS_GUARD:
+        lock = _PREVIEW_LOCKS.setdefault(name, threading.Lock())
+    # a retry of the same footage (the desktop app gave up waiting) waits for this encode and reuses it
+    with lock:
+        if _readable(out):  # published only after it validated (below)
+            os.utime(out)  # fresh, so a sweep before this link's record is written leaves it
+            return name
+        inspection = inspect_source(Path(real))
+        if inspection["timing_status"] != "valid":
+            raise ValueError(inspection["diagnostic_code"] or "unsupported_source_timing")
+        source = SourceAsset(Path(real), "", video_hash, "", inspection)
+        recipe = effective_recipe(source, ProxyRecipe(native["width"], native["height"]))
+        if recipe["geometry"]["proxy_raster"] != [native["width"], native["height"]]:
+            raise ValueError("odd_frame_size")  # H.264 4:2:0 needs even sides; studio sizes its canvas from this file
+        os.makedirs(out.parent, exist_ok=True)
+        fd, stage = tempfile.mkstemp(prefix=f".{name}.", suffix=".tmp", dir=out.parent)
+        os.close(fd)
+        stage = Path(stage)
+        try:
+            # ponytail: encodes in the link request. At 4K this path ran about 56 fps end to end on synthetic
+            # footage (#32's settings: 12.6 fps), so about 20 minutes of 24 fps 4K fits the desktop app's
+            # 10-minute wait, less for busy real footage; move to a background job if that bites
+            encode_proxy(source, recipe, stage, preset="veryfast", threads="0", tag_colour=True)
+            if validate_proxy(source, recipe, stage)["frame_count"] != native["frames"]:
+                raise ValueError("proxy_frame_count_mismatch")
+            fd = os.open(stage, os.O_RDONLY)
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+            os.replace(stage, out)
+            _fsync_directory(out.parent)
+        finally:
+            stage.unlink(missing_ok=True)
+    return name
+
+
+def _readable(path: Path) -> bool:
+    """A preview that is there, readable and not empty (an empty one is made again)."""
+    try:
+        with open(path, "rb") as f:
+            return bool(f.read(1))
+    except OSError:
+        return False
+
+
+def _sweep_previews() -> None:
+    """Delete previews that no record names (the footage changed and was
+    linked again, or its link was removed). Only files directly in .previews/,
+    and only ones untouched for PREVIEW_SWEEP_AGE, since a link in flight may
+    not have written its record yet. Any unreadable record stops the sweep."""
+    previews = LINKED_PATH / PREVIEWS_DIR
+    if not previews.is_dir():
+        return
+    named = set()
+    for f in _sources().glob("*.json"):
+        try:
+            named.add(json.loads(f.read_text()).get("preview"))
+        except (OSError, ValueError, AttributeError):
+            return
+    cutoff = time.time() - PREVIEW_SWEEP_AGE
+    for p in previews.iterdir():
+        try:
+            if p.name not in named and p.is_file() and not p.is_symlink() and p.stat().st_mtime < cutoff:
+                p.unlink()
+        except OSError:
+            continue
+
+
 def register(path: str, source: Dict, hash_file=None) -> Tuple[Video, Dict]:
     """Link `path` in place. `source` is what the caller knows about it (for
     After Effects: its item's id, project, size, rate and frame count); it is
@@ -182,6 +293,14 @@ def register(path: str, source: Dict, hash_file=None) -> Tuple[Video, Dict]:
     problems = check_native(source, native)
     if problems:
         raise LinkRefused("this footage would not line up frame for frame: " + "; ".join(problems))
+    if hash_file is None:
+        from tracks.seeds import video_key as hash_file  # the key seeds and tracks use
+    video_hash = hash_file(real)
+    try:
+        preview = _preview(real, video_hash, native)
+    except (ValueError, OSError, av.FFmpegError) as e:
+        raise LinkRefused(f"studio cannot play {native['codec']} footage, and sam-ui could not make "
+                          f"a frame-exact preview of it ({e})") from e
 
     lid = link_id(real)
     name = f"{lid}{ext}"
@@ -191,21 +310,32 @@ def register(path: str, source: Dict, hash_file=None) -> Tuple[Video, Dict]:
         if os.path.realpath(link) != real:
             link.unlink()
     if not link.is_symlink():
-        os.symlink(real, link)
+        try:
+            os.symlink(real, link)
+        except FileExistsError:  # a link of the same file at the same time (a retry) made it first
+            if os.path.realpath(link) != real:
+                raise
     st = os.stat(real)
-    if hash_file is None:
-        from tracks.seeds import video_key as hash_file  # the key seeds and tracks use
     record = {
         "version": 1,
         "path": f"{LINKED_PREFIX}/{name}",
         "source": {k: source.get(k) for k in SOURCE_FIELDS if k in source},
         "file": {"path": real, "size": st.st_size, "mtime": st.st_mtime},
-        "videoHash": hash_file(real),
+        "videoHash": video_hash,
         "native": native,
         "poster": _poster(real, lid),
+        "preview": preview,
         "linked": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     }
-    _record_file(name).write_text(json.dumps(record, indent=1))
+    # whole or not at all, even with a second link of the same file writing it at the same time
+    fd, tmp = tempfile.mkstemp(prefix=f".{name}.", suffix=".tmp", dir=_sources())
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(json.dumps(record, indent=1))
+        os.replace(tmp, _record_file(name))
+    finally:
+        Path(tmp).unlink(missing_ok=True)  # gone after the replace; left only when the write failed
+    _sweep_previews()
     video = _video(name, record)
     from data.store import get_videos
 
@@ -232,16 +362,33 @@ def link_file(path: str) -> Optional[Path]:
 def unlink(link: Path) -> None:
     """Remove sam-ui's own files for a linked video: the link itself (os.unlink
     on a symlink removes the link, never the footage it points at), its source
-    record and its poster."""
+    record, its poster and its preview (unless another link of the same bytes
+    still names it)."""
     record = _record_file(link.name)
     try:
-        poster = json.loads(record.read_text()).get("poster")
+        saved = json.loads(record.read_text())
+        poster, preview = saved.get("poster"), saved.get("preview")
     except (OSError, ValueError, AttributeError):
-        poster = None
+        poster = preview = None
     os.unlink(link)
     record.unlink(missing_ok=True)
     if poster:
         (Path(POSTERS_PATH) / Path(poster).name).unlink(missing_ok=True)
+    if preview:
+        name = Path(preview).name
+        with _PREVIEW_LOCKS_GUARD:
+            lock = _PREVIEW_LOCKS.setdefault(name, threading.Lock())
+        with lock:  # not while a link of the same footage is reusing it
+            if not any(_names(f) == name for f in _sources().glob("*.json")):
+                (LINKED_PATH / PREVIEWS_DIR / name).unlink(missing_ok=True)
+
+
+def _names(record: Path) -> Optional[str]:
+    """The preview a source record names, or None (unreadable counts as none)."""
+    try:
+        return json.loads(record.read_text()).get("preview")
+    except (OSError, ValueError, AttributeError):
+        return None
 
 
 def source_of(path: str) -> Optional[Dict]:
@@ -297,10 +444,10 @@ def preload() -> Dict[str, Video]:
 
 def make_blueprint(token: Optional[str] = None) -> Blueprint:
     """POST /linked (the desktop app's main process, with its token), GET
-    /linked/<file> (the video, with range requests, for studio's decoder) and
-    GET /linked-source?path= (the record; with &verify=1, which needs the
-    token too, the file is hashed again, so `changed` also covers a same-size,
-    same-mtime swap)."""
+    /linked/<file> (the video, or its preview when it has one, with range
+    requests, for studio's decoder) and GET /linked-source?path= (the record;
+    with &verify=1, which needs the token too, the file is hashed again, so
+    `changed` also covers a same-size, same-mtime swap)."""
     bp = Blueprint("linked", __name__)
     token = token if token is not None else os.environ.get("SAM_UI_LINK_TOKEN")
 
@@ -326,6 +473,15 @@ def make_blueprint(token: Optional[str] = None) -> Blueprint:
     def send_linked(name: str):
         if name.startswith(".") or os.path.splitext(name)[1].lower() not in VIDEO_EXTS:
             abort(404)
+        try:
+            preview = json.loads(_record_file(name).read_text()).get("preview")
+        except (OSError, ValueError, AttributeError):
+            preview = None
+        if preview:
+            if not _readable(LINKED_PATH / PREVIEWS_DIR / preview):
+                return jsonify({"error": "the preview studio plays for this footage is missing: open it from "
+                                         "After Effects again to make it again"}), 410
+            return send_from_directory(LINKED_PATH / PREVIEWS_DIR, preview)
         return send_from_directory(LINKED_PATH, name)
 
     @bp.route("/linked-source", methods=["GET"])
