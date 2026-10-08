@@ -64,6 +64,11 @@ POST /export {session_id, out_dir, objects?, include_stale?, frames?, force?, en
   gives out_dir back as asked and leaves out the source video's path (it stays
   in the export's notes/sam-ui-export.json).
   data/review.json carries the audit queue (flags: the studio's review flags).
+POST /capture {session_id, frames | start, end, count; object_ids?, engine?, long_edge?, sheet?}:
+  1 to 12 frames with the masks drawn on as studio shows them, one image or a
+  contact sheet, JPEG in base64 plus a legend (tracks/capture.py). For agents
+  (the desktop app's MCP server). Disk and the video file only, no model lock.
+  400 on a refusal, 404 for an unknown session.
 
 The routes get everything through `resolve(session_id)`, so tests can mount
 them with a fake engine and no model.
@@ -79,6 +84,7 @@ from flask import Blueprint, Response, jsonify, request
 
 from inference.multipart import MultipartResponseBuilder
 from tracks import rle
+from tracks.capture import CaptureError, capture, video_fps
 from tracks.export import ExportError, export
 from tracks.jobs import Job
 from tracks.layout import LayoutError
@@ -356,5 +362,22 @@ def make_blueprint(resolve: Callable[[str], TrackContext], service: Optional[Tra
         reply = {k: v for k, v in manifest.items() if k != "video_path"}
         reply["out_dir"] = data["out_dir"]
         return jsonify(reply)
+
+    @bp.route("/capture", methods=["POST"])
+    def capture_route() -> Response:
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict) or not isinstance(data.get("session_id"), str):
+            return jsonify({"error": "a JSON body with session_id"}), 400
+        try:
+            ctx = resolve(data["session_id"])
+        except RuntimeError as err:  # the predictor's "Cannot find session"
+            return jsonify({"error": str(err)}), 404
+        n_frames = _n_frames(ctx.video_handle)
+        if n_frames is None:
+            return jsonify({"error": "the session's video has no frame count"}), 400
+        try:
+            return jsonify(capture(ctx.service, ctx.video, ctx.path, data, n_frames, video_fps(ctx.path)))
+        except CaptureError as err:
+            return jsonify({"error": str(err)}), 400
 
     return bp
