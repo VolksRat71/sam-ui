@@ -362,16 +362,33 @@ def link_file(path: str) -> Optional[Path]:
 def unlink(link: Path) -> None:
     """Remove sam-ui's own files for a linked video: the link itself (os.unlink
     on a symlink removes the link, never the footage it points at), its source
-    record and its poster."""
+    record, its poster and its preview (unless another link of the same bytes
+    still names it)."""
     record = _record_file(link.name)
     try:
-        poster = json.loads(record.read_text()).get("poster")
+        saved = json.loads(record.read_text())
+        poster, preview = saved.get("poster"), saved.get("preview")
     except (OSError, ValueError, AttributeError):
-        poster = None
+        poster = preview = None
     os.unlink(link)
     record.unlink(missing_ok=True)
     if poster:
         (Path(POSTERS_PATH) / Path(poster).name).unlink(missing_ok=True)
+    if preview:
+        name = Path(preview).name
+        with _PREVIEW_LOCKS_GUARD:
+            lock = _PREVIEW_LOCKS.setdefault(name, threading.Lock())
+        with lock:  # not while a link of the same footage is reusing it
+            if not any(_names(f) == name for f in _sources().glob("*.json")):
+                (LINKED_PATH / PREVIEWS_DIR / name).unlink(missing_ok=True)
+
+
+def _names(record: Path) -> Optional[str]:
+    """The preview a source record names, or None (unreadable counts as none)."""
+    try:
+        return json.loads(record.read_text()).get("preview")
+    except (OSError, ValueError, AttributeError):
+        return None
 
 
 def source_of(path: str) -> Optional[Dict]:

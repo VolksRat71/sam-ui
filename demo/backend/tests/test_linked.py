@@ -581,3 +581,21 @@ def test_linking_sweeps_old_previews_no_record_names(tmp_path):
     _, record = register(str(clip), source_for(clip))
     assert not old.exists() and fresh.exists() and outside.exists()  # a link in flight may still name `fresh`
     assert (previews / record["preview"]).exists()
+
+
+def test_removing_a_previewed_link_deletes_its_preview_unless_another_link_names_it(tmp_path):
+    """#48 x #54: deleteVideo on a linked ProRes clip also removes its .previews/
+    file, but not while another link of the same bytes still plays it."""
+    from data.linked import LINKED_PATH, PREVIEWS_DIR, register
+    from inference.predictor import InferenceAPI
+    from test_inference_api import StubPredictor
+    from test_media import delete
+
+    clip = prores(moving_square(tmp_path / "pr.mp4"))
+    twin = shutil.copy(clip, tmp_path / "twin.mov")  # same bytes, so the same preview
+    a, rec = register(str(clip), source_for(clip))
+    b, _ = register(str(twin), source_for(Path(twin)))
+    preview = LINKED_PATH / PREVIEWS_DIR / rec["preview"]
+    api = InferenceAPI(predictor=StubPredictor(), tracks_root=str(tmp_path / "tracks"))
+    assert delete(api, a.path).errors is None and preview.is_file()
+    assert delete(api, b.path).errors is None and not preview.exists()
