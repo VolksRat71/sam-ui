@@ -48,9 +48,11 @@ Studio also runs with no backend at all, on the browser engine alone, when
 built with `VITE_API_ENDPOINT=none` (that is the only way: any other build
 waits for its backend, and shows an error with Retry if it never answers,
 rather than quietly turning into the browser demo). It needs Chrome or Edge
-on desktop (WebGPU). Firefox does not work yet (#4: ONNX Runtime Web's Pad
-shader fails there). Safari itself is untested; Playwright's WebKit build
-tracks (#3). What studio does then
+on desktop (WebGPU). Firefox works too, about 2.4 times slower, through the WGSL
+rewrites in `src/local/wgslShim.ts` and the read-back nudge in
+`src/local/mapNudge.ts` (#4). Safari itself is untested;
+Playwright's WebKit build tracks, with the teardown workaround in
+`src/local/model.worker.ts` (#3). What studio does then
 is in [Using studio](../docs/using-studio.md#the-browser-only-build).
 
 `npm run build:pages` makes that build for GitHub Pages: base `/sam-ui/`,
