@@ -39,13 +39,8 @@ SOURCES_DIR = ".sources"
 # what studio's decoder (mediabunny) and the backend's (decord, PyAV) both read
 VIDEO_EXTS = {".mp4", ".mov", ".m4v"}
 FPS_TOLERANCE = 1e-3
-# how far, in frames, a frame's timestamp may sit off a constant rate (plus a
-# tick of rounding) before the file counts as variable rate (rate_drift).
-# Capture-timestamped phone footage jitters by a millisecond or so, 0.03 of a
-# 30 fps frame, and sits well under this; a dropped or doubled frame measures
-# about 0.5. How After Effects picks a frame for a time from such a file
-# (floor or nearest) is not known here, so this stays well under the half
-# frame where a nearest lookup would move to a neighbouring frame.
+# frames off a constant rate (plus a tick) before rate_drift calls it variable;
+# well under half a frame, since AE's lookup (floor or nearest) is unknown
 VFR_TOLERANCE = 0.25
 TOKEN_HEADER = "X-Sam-Ui-Link-Token"
 # the source fields kept from the caller; anything else it sends is dropped
@@ -97,23 +92,10 @@ def native_metadata(path: str) -> Dict:
 
 
 def rate_drift(pts: List[int]) -> Tuple[float, float]:
-    """(drift, limit), both in frames; the file is variable rate when drift >
-    limit. Drift is how far the worst frame's timestamp sits from a constant
-    rate: frame i (display order, the decoders' frame i) against a line at the
-    clip's own average spacing (first to last timestamp), centred between the
-    furthest frames above and below it. sam-ui counts frames by index and After
-    Effects places them by time, so this offset is what would put the mask for
-    frame i on another frame.
-
-    Cumulative, so a held frame, a skipped or doubled timestamp or a slow drift
-    all grow it (one dropped or doubled frame measures about half a frame),
-    while rounding to integer ticks does not add up: it stays within about
-    one tick, which the limit allows on top of VFR_TOLERANCE. A tick is small
-    at most time scales but not all (QuickTime's 600 is 0.1 of a 59.94 fps
-    frame, 1/1000 is 0.24 of a 240 fps one). Measured against the timestamps
-    themselves, not the declared rate: a declared rate that differs from the
-    cadence is check_native's frame-rate comparison, and the container's
-    average_rate also counts the last frame's duration, which muxers round."""
+    """(drift, limit) in frames; variable rate when drift > limit. sam-ui
+    indexes frames, AE places them by time, so drift is how far frame i sits
+    from a centred line at the clip's own spacing (not the declared rate,
+    which check_native compares)."""
     pts = sorted(pts)
     if len(pts) < 2:
         return 0.0, VFR_TOLERANCE
@@ -121,10 +103,8 @@ def rate_drift(pts: List[int]) -> Tuple[float, float]:
     if step <= 0:
         return float("inf"), VFR_TOLERANCE  # every frame on one timestamp
     off = [(t - pts[0]) / step - i for i, t in enumerate(pts)]
-    # ponytail: the one-tick allowance hides a single dropped or doubled frame
-    # (about 0.5) once a tick nears a quarter of a frame, e.g. a 1/fps time
-    # base; if that footage turns up, test exact deltas when the rate is a
-    # whole number of ticks
+    # ponytail: a tick near a quarter frame (1/fps time base) hides one dropped
+    # frame; check exact deltas if such footage turns up
     return (max(off) - min(off)) / 2, VFR_TOLERANCE + 1 / step
 
 
@@ -318,12 +298,13 @@ def make_blueprint(token: Optional[str] = None) -> Blueprint:
 
     @bp.route("/linked-source", methods=["GET"])
     def linked_source():
-        if request.args.get("verify"):
+        verify = request.args.get("verify")
+        if verify:
             desktop_only("re-hash a linked file")  # a whole-file read: not for any page to trigger
         record = source_of(request.args.get("path", ""))
         if record is None:
             abort(404)
-        if request.args.get("verify") and not record["changed"]:
+        if verify and not record["changed"]:
             record["changed"] = content_changed(record)
         return jsonify(record)
 
