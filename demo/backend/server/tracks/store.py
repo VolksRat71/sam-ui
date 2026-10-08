@@ -93,7 +93,8 @@ class TrackStore:
         return meta
 
     def track_dir(self, video: str, obj_id: int, engine: str) -> Path:
-        return self._dir(video, obj_id, engine)
+        """The current track's dir: the .old one after a crash mid-swap, as meta() reads."""
+        return self._live(self._dir(video, obj_id, engine))
 
     @staticmethod
     def _swap(final: Path, tmp: Path) -> None:
@@ -102,31 +103,61 @@ class TrackStore:
             old = final.with_name(f".{final.name}.old-{uuid.uuid4().hex}")
             os.replace(final, old)
         os.replace(tmp, final)
-        if old is not None:
-            shutil.rmtree(old, ignore_errors=True)
+        if old is not None:  # out of the .old- name first: a half-deleted one must never look live
+            trash = final.with_name(f".{final.name}.trash-{uuid.uuid4().hex}")
+            os.replace(old, trash)
+            shutil.rmtree(trash, ignore_errors=True)
+
+    @staticmethod
+    def _live(final: Path) -> Path:
+        """Where the current track is, read-only: `final`, or, between save()'s
+        two renames (mid-swap, or a crash there), the .old dir it was moved to.
+        Readers take no lock, so they must never rename: one that put .old back
+        mid-swap would make the save's second rename fail."""
+        if final.exists():
+            return final
+        try:
+            olds = sorted(final.parent.glob(f".{final.name}.old-*"), key=lambda p: p.stat().st_mtime)
+        except FileNotFoundError:  # the swap finished and removed it: final is in place
+            return final
+        return olds[-1] if olds else final
 
     def _recover(self, final: Path) -> None:
         """Undo a crash between save()'s two renames: the previous track sits
-        in an .old dir and nothing in its place. Put it back."""
-        if final.exists() or not final.parent.is_dir():
-            return
-        olds = sorted(final.parent.glob(f".{final.name}.old-*"), key=lambda p: p.stat().st_mtime)
-        if olds:
-            os.replace(olds[-1], final)
+        in an .old dir and nothing in its place. Put it back. Writers only (they
+        hold the inference lock); readers use _live."""
+        live = self._live(final)
+        if live != final:
+            os.replace(live, final)
+
+    def _open(self, final: Path, name: str):
+        """Open `name` in the current track, or None. A swap can move the dir
+        between resolving and opening it (to .old-, then .trash-), so a miss
+        resolves again; a miss on the same dir twice means there is no track."""
+        last = None
+        while True:
+            d = self._live(final)
+            try:
+                return open(d / name)
+            except FileNotFoundError:
+                if d == last:
+                    return None
+                last = d
 
     def meta(self, video: str, obj_id: int, engine: str) -> Optional[Dict]:
-        self._recover(self._dir(video, obj_id, engine))
-        p = self._dir(video, obj_id, engine) / "track.json"
-        return json.loads(p.read_text()) if p.exists() else None
+        f = self._open(self._dir(video, obj_id, engine), "track.json")
+        if f is None:
+            return None
+        with f:
+            return json.load(f)
 
     def masks(self, video: str, obj_id: int, engine: str) -> Iterator[Tuple[int, Dict]]:
         """(frame, rle) for every stored frame, in order. RLE stays encoded: the
         stream sends it as is."""
-        self._recover(self._dir(video, obj_id, engine))
-        p = self._dir(video, obj_id, engine) / "masks.jsonl"
-        if not p.exists():
+        f = self._open(self._dir(video, obj_id, engine), "masks.jsonl")
+        if f is None:
             return
-        with open(p) as f:
+        with f:
             for line in f:
                 d = json.loads(line)
                 yield d["frame"], {"size": d["size"], "counts": d["counts"]}
