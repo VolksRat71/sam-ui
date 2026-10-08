@@ -1,7 +1,7 @@
 // sam-ui (Apache-2.0). New file, not from SAM 2.
 import {describe, expect, it} from 'vitest';
 import type {EngineInfo} from '~/worker/protocol';
-import {BROWSER_ENGINE, engineLabel, pickerEngines, RELEASES_URL, textPromptNote, textPrompts, unavailableReason} from './engines';
+import {BROWSER_ENGINE, discoverTextNote, engineLabel, pickerEngines, RELEASES_URL, textPromptNote, textPrompts, unavailableReason} from './engines';
 
 const sam2: EngineInfo = {name: 'sam2', model: 'sam2.1_hiera_large', default: true, available: true, reason: null, loaded: true};
 const sam3: EngineInfo = {name: 'sam3', model: 'sam3', default: false, available: false, reason: 'no weights', loaded: false};
@@ -90,5 +90,22 @@ describe('textPromptNote', () => {
   });
   it('says when nothing matched', () => {
     expect(textPromptNote({...r, matched: false, instances: 0, score: 0.02})).toBe('No "dog" found on frame 12. Try other words, or click the object.');
+  });
+});
+
+describe('discoverTextNote', () => {
+  const hit = (start: number, end: number) => ({start, end, score: 0.95, hits: 5, best: {frame: start, score: 0.97, box: null}});
+  const r = {text: 'dog', intervals: [hit(40, 99), hit(180, 268)], calls: 38, seconds: 29.9, canceled: false};
+  it('lists the appearances from frame 1, and how to walk them', () => {
+    expect(discoverTextNote(r)).toBe(
+      'Found "dog" 2 times: frames 41–100, 181–269 (38 frames checked in 30 s). Marked as candidates: ] and [ walk them, P or A confirms, R rejects.',
+    );
+    expect(discoverTextNote({...r, intervals: [hit(0, 9)]})).toMatch(/^Found "dog" once: frames 1–10 .*a candidate:/);
+  });
+  it('says when nothing was found, or the scan was stopped', () => {
+    expect(discoverTextNote({...r, intervals: [], calls: 26})).toBe(
+      'No "dog" found anywhere in the clip (26 frames checked in 30 s). Try other words, or click the object.',
+    );
+    expect(discoverTextNote({...r, canceled: true})).toBe('Stopped looking for "dog". Nothing was marked.');
   });
 });

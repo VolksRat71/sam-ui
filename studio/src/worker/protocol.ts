@@ -70,6 +70,33 @@ export type TextPromptResult = {
   instances: number;
 };
 
+/** One appearance POST /discover_text found: frames start-end (from 0), now a candidate range. */
+export type DiscoveredInterval = {
+  start: number;
+  end: number;
+  /** The mean detector score of its hits. */
+  score: number;
+  hits: number;
+  /** Its best hit: a suggested seed frame (not stored). */
+  best: {frame: number; score: number; box: number[] | null};
+};
+
+/** POST /discover_text's answer (EXPERIMENTAL): where in the clip `text` is, written as candidates. */
+export type DiscoverTextResult = {
+  objectId: number;
+  text: string;
+  engine: string;
+  source: string;
+  intervals: DiscoveredInterval[];
+  /** Detector calls the scan made, and how long it took. */
+  calls: number;
+  seconds: number;
+  /** Canceled: nothing was written. */
+  canceled: boolean;
+  /** The object as it is now, its new candidates in its ranges (null when canceled). */
+  object: ServerObject | null;
+};
+
 /** POST /track_disagreement's answer. */
 export type Disagreement = {
   engines: [string, string];
@@ -123,6 +150,8 @@ export type StudioMethods = {
   };
   /** Seed one frame of an object from a phrase (SAM 3); its best match becomes the frame's mask. */
   textPrompt: {args: {objectId: number; frameIndex: number; text: string; engine: string | null}; result: TextPromptResult};
+  /** EXPERIMENTAL: look for a phrase across the whole clip (SAM 3) and write each appearance as a candidate range. */
+  discoverText: {args: {objectId: number; text: string; engine: string}; result: DiscoverTextResult};
   removeObject: {args: {objectId: number}; result: void};
   clearTrack: {args: {objectId: number; engine: string | null}; result: ServerObject};
   /**

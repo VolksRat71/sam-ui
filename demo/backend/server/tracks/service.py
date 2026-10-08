@@ -52,6 +52,7 @@ from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 import numpy as np
 
 from tracks import audit
+from tracks import discovery as disc
 from tracks import bounded as bnd
 from tracks import review as rv
 from tracks import rle
@@ -280,11 +281,13 @@ class TrackService:
             self.seeds.paint_range(video, obj_id, start, end, state, source, score, clear)
         return self.object_info(video, obj_id)
 
-    def write_candidates(self, video: str, obj_id: int, candidates: List[Dict], replace: bool = False) -> Dict:
+    def write_candidates(self, video: str, obj_id: int, candidates: List[Dict], replace: bool = False,
+                         replace_source: Optional[str] = None) -> Dict:
         """Write candidate ranges in bulk, each {"start", "end", "source",
         "score"?} (a discovery job's results); `replace` drops the object's
-        old candidates. All or nothing (ValueError). Never a seed change."""
-        self.seeds.write_candidates(video, obj_id, candidates, replace)
+        old candidates, `replace_source` only that source's. All or nothing
+        (ValueError). Never a seed change."""
+        self.seeds.write_candidates(video, obj_id, candidates, replace, replace_source)
         return self.object_info(video, obj_id)
 
     def end_absence_at(self, video: str, obj_id: int, frame: int) -> None:
@@ -304,6 +307,62 @@ class TrackService:
                 # not the user's absence, and annotations are outside the undo record
                 self.seeds.paint_range(video, obj_id, frame, r["end"], None, clear=[ABSENT])
                 return
+
+    def discover_text(self, video: str, path: str, obj_id: int, text: str, stride: Optional[int] = None,
+                      engine: Optional[str] = None, n_frames: Optional[int] = None,
+                      step: Callable[[], contextlib.AbstractContextManager] = contextlib.nullcontext,
+                      canceled: Callable[[], bool] = lambda: False, handoff_s: float = 0.0,
+                      progress: Callable[[], None] = lambda: None) -> Dict:
+        """Temporal text discovery (draft 4, tracks/discovery.py): where in the
+        clip the phrase is, written as the object's candidate ranges from
+        source "text:<prompt>@<engine>". A re-run replaces that source's old
+        ones; candidates are one layer, so where a scan overlaps another
+        source's candidates the later scan wins (#39). Nothing else is
+        touched: no seed, mask or track. Each detector call runs inside
+        `step()` (the model lock) and then calls `progress()`; `canceled` is
+        checked between calls and once more before the write
+        (discovery.Canceled, and nothing is written). An object removed during
+        the scan (or its video cleared) is not written back either:
+        Canceled. ValueError on no text or a clip with no frames;
+        UnknownEngine as text_prompt."""
+        text = normalize_text(text)
+        stride = disc.DEFAULT_STRIDE if stride is None else int(stride)
+        if stride < 1:
+            raise ValueError(f"stride must be at least 1, got {stride}")
+        e = self.text_engine(engine)
+        if hasattr(e, "text_scanner"):  # one decoder and tokenization for the whole scan
+            scanner = e.text_scanner(path, text)
+        else:
+            def scanner(f, e=e):
+                return e.segment_text(path, f, text)
+        if n_frames is None:
+            with step():
+                n_frames = len(scanner) if hasattr(scanner, "__len__") else getattr(e, "n_frames", None)
+        if not n_frames:
+            raise ValueError("discovery needs the clip's frame count")
+
+        existed = obj_id in self.seeds.objects(video)
+
+        def detect(f: int) -> disc.Probe:
+            m = scanner(f)
+            progress()
+            return disc.Probe(hit=int(m.instances) > 0, score=float(m.score),
+                              box=None if m.box is None else [round(float(v), 1) for v in m.box])
+
+        t0 = time.perf_counter()
+        found, calls = disc.drive(disc.scan(n_frames, stride), detect, step, canceled, handoff_s)
+        src = disc.source(text, e.name)
+        with step():  # a consistent write, as a text prompt's
+            # a cancel during the last call, or an object (or video) removed
+            # mid-scan: writing would bring it back, so nothing is written
+            if canceled() or (existed and obj_id not in self.seeds.objects(video)):
+                raise disc.Canceled()
+            info = self.write_candidates(video, obj_id, [{"start": a["start"], "end": a["end"], "source": src,
+                                                          "score": a["score"]} for a in found],
+                                         replace_source=src)
+        return {"object_id": obj_id, "text": text, "engine": e.name, "source": src, "stride": stride,
+                "n_frames": n_frames, "intervals": found, "calls": calls,
+                "seconds": round(time.perf_counter() - t0, 2), "object": info}
 
     def is_absent(self, video: str, obj_id: int, frame: int) -> bool:
         return absent_at(self.seeds.ranges(video, obj_id), frame)
