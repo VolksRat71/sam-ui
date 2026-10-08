@@ -53,7 +53,8 @@ pass would have nowhere to start) or, on SAM 2, a real seed became cleared
 (or the track does not say whether it was cleared), the window's bounds
 changed (a range was edited; a range that only cut a window down, taking none
 of its seeds, keeps its frames and runs nothing, TrackService._cut_down), the
-object was tracked and is asked for again ("re-track all"), the job asks for a full re-track, or the engine has no track_stretch (SAM 3 today).
+object was tracked and is asked for again ("re-track all"), the job asks for
+a full re-track, or the engine has no track_stretch (SAM 3 today).
 
 Provenance, in track.json:
   "passes": [{"id", "kind": "full" | "bounded" | "empty", "seeds_hash", "created", ...}]

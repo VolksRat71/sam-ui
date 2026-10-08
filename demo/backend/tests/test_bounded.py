@@ -11,7 +11,7 @@ from test_api import Harness, parse, parse_all
 from test_engine import _StubPredictor
 from tracks import rle
 from tracks.bounded import AGREE_IOU, AGREE_RUN, Agreement, Stretch, changed_frames, frame_passes, seed_keys
-from tracks.engine import FakeEngine, Sam2Engine
+from tracks.engine import FakeEngine, Sam2Engine, plan_units
 from tracks.ranges import ABSENT
 from tracks.service import EngineSpec
 from tracks.store import STALE, TRACKED
@@ -268,9 +268,24 @@ def test_a_bounded_pass_stops_at_the_window_edge_and_never_enters_a_gap(h):
     assert sorted(by_frame(frames)) == list(range(N)) and h.state(1) == TRACKED
 
 
-def test_an_absent_range_that_takes_no_seed_runs_no_model(h):
+class _Sam2Like(FakeEngine):
+    """Plans like SAM 2: a pass per first seed, so each object starts from its own."""
+
+    splits_by_first_seed = True
+
+    def plan(self, objects, windows=None):
+        return plan_units(objects, windows)
+
+
+@pytest.fixture
+def hs(tmp_path):
+    return Harness(tmp_path, engine=_Sam2Like(n_frames=N, influence=INFLUENCE))
+
+
+def test_an_absent_range_that_takes_no_seed_runs_no_model(hs):
     # the tail (the 2026-10-07 acceptance run: 0-89 tracked, 78-89 marked
     # absent, and the re-track ran all of 0-77 again), then the middle
+    h = hs
     h.click(1, frame=0), h.click(1, frame=10)
     h.track()
     for lo, hi in ((48, 59), (20, 29)):
@@ -287,7 +302,8 @@ def test_an_absent_range_that_takes_no_seed_runs_no_model(h):
         assert stored(h) == after  # what a full re-track makes
 
 
-def test_an_absent_range_that_takes_a_seed_reruns_both_sides_from_their_own_seeds(h):
+def test_an_absent_range_that_takes_a_seed_reruns_both_sides_from_their_own_seeds(hs):
+    h = hs
     h.click(1, frame=0), h.click(1, frame=40)
     h.track()
     mark = len(h.engine.units)
@@ -297,20 +313,32 @@ def test_an_absent_range_that_takes_a_seed_reruns_both_sides_from_their_own_seed
     assert h.engine.units[mark:] == [(0, 19, {1: [0]}), (30, None, {1: [40]})] and not h.engine.stretches
 
 
-def test_an_absent_range_close_after_the_first_seed_reruns_the_frames_before_it(h):
+def test_an_absent_range_close_after_the_first_seed_reruns_the_frames_before_it(hs):
     # going back from the first seed, the model reads the pass forward's
-    # object pointers up to PRIME frames ahead: an end that close changes them
+    # object pointers up to REACH (14) frames past it: an end before that changes them
+    h = hs
     h.click(1, frame=30)
     h.track()
     mark = len(h.engine.units)
-    h.service.set_range(h.video, 1, 50, 59, ABSENT)  # ends 19 after the seed: kept
+    h.service.set_range(h.video, 1, 45, 59, ABSENT)  # ends on 44, the seed + REACH: kept
     h.track()
     h.service.set_range(h.video, 1, 0, 9, ABSENT)  # a later start: kept
     h.track()
     assert h.engine.units[mark:] == []
-    h.service.set_range(h.video, 1, 40, 49, ABSENT)  # ends 9 after it, with frames before it: runs
+    h.service.set_range(h.video, 1, 44, 44, ABSENT)  # ends on 43, with frames before the seed: runs
     h.track()
-    assert h.engine.units[mark:] == [(10, 39, {1: [30]})]
+    assert h.engine.units[mark:] == [(10, 43, {1: [30]})]
+
+
+def test_an_engine_that_runs_a_window_from_its_earliest_seed_reruns_a_cut_down_window(h):
+    # like SAM 3: objects 1 (seed 0) and 2 (seed 30) share one pass from frame
+    # 0, so object 2's frames 0-29 came from it, not from a pass back from 30
+    h.click(1, frame=0), h.click(2, frame=30)
+    h.track()
+    assert h.engine.calls == [[1, 2]]  # one pass over the clip, for both
+    h.service.set_range(h.video, 2, 50, 59, ABSENT)  # ends 20 past object 2's seed
+    h.track()
+    assert h.engine.units == [(0, 49, {2: [30]})]  # runs again, from 30 now
 
 
 def test_two_corrections_near_each_other_recompute_each_frame_once(h):

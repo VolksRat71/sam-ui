@@ -116,6 +116,11 @@ class _Bounded:
 
 CLICKS_ONLY = "this engine takes clicks only; text prompts need SAM 3"
 
+# How far past the first seed the pass back reads: frame t reads the object
+# pointers of t+1 to t+15 (sam2/modeling/sam2_base.py, the t_diff loop over
+# max_obj_ptrs_in_encoder = 16), so from frame start-1 up to start+14.
+REACH = 14
+
 
 @dataclass
 class _ObjectPlan:
@@ -642,15 +647,23 @@ class TrackService:
         old frames again, so they are kept and no model runs. Forward from the
         first seed a frame reads only the seeds and the frames before it, and
         back from it only the frames after it, so a later start changes
-        nothing. An earlier end changes the frames before the first seed when
-        it comes within PRIME frames of it: the pass back reads the forward
-        pass's object pointers that far ahead."""
+        nothing. An end before first seed + REACH changes the frames before
+        that seed: the pass back reads the forward pass's object pointers up
+        to there.
+
+        Only on an engine that runs each object from its own first seed
+        (splits_by_first_seed: SAM 2). SAM 3 runs a window's objects in one
+        session from the earliest seed of any of them, so an object's frames
+        before its own first seed came from that shared pass, which a re-track
+        of its cut-down window alone would not repeat."""
+        if not getattr(e, "splits_by_first_seed", False):
+            return False
         for seg in meta.get("windows") or []:
             lo, hi = seg["start"], seg["end"]
             inside = lo <= w[0] and (hi is None or (w[1] is not None and w[1] <= hi))
             if inside and window_key((lo, hi), seeds) == seg["key"]:
                 start = min(u.start for u in e.plan({0: seeds}, {0: [w]}))
-                return w[1] == hi or start == w[0] or w[1] >= start + bnd.PRIME
+                return w[1] == hi or start == w[0] or w[1] >= start + REACH
         return False
 
     @staticmethod
