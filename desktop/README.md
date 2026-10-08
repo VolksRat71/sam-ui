@@ -41,8 +41,8 @@ app. To add it:
 4. Restart when it says so. The SAM 3 switch in studio is then available.
 
 If you already have the weights, **SAM 3 → Choose SAM 3 weights folder…** uses that
-folder instead. With SAM 2.1 large beside it, SAM 3 peaks at about 6.7 GB of the
-app's memory at full precision, or about 5.7 GB at half precision (fp16), which SAM 3
+folder instead. With SAM 2.1 large beside it, SAM 3 peaks at about 6.9 GB of the
+app's memory at full precision, or about 6.1 GB at half precision (fp16), which SAM 3
 uses by default and which moves masks a little. For full precision, run
 `launchctl setenv SAM_UI_SAM3_DTYPE fp32` and restart the app.
 SAM 3 unloads itself after 10 idle minutes. See [Hardware](../docs/hardware.md).
