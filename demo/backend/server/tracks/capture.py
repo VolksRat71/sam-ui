@@ -187,10 +187,25 @@ def capture(service, video: str, path: str, body: Dict, n_frames: int, fps: Opti
     legend_objects = [{"id": o, "name": names.get(o), "colour": colour(o),
                        "state": service.object_info(video, o, engine)["state"]} for o in ids]
 
-    images, legend_frames = [], []
+    if not sheet and len(frames) != 1:
+        raise CaptureError("one frame without a sheet; set sheet true for several")
+    edge = _edge("long_edge", body.get("long_edge"), CELL_EDGE if sheet else FRAME_EDGE)
+    cols = math.ceil(math.sqrt(len(frames)))
+    rows = math.ceil(len(frames) / cols)
+
+    # each frame is drawn as soon as it is read and only its downscaled image is kept:
+    # a sheet of 4K frames never holds more than one at full size
+    cells, legend_frames, size = [], [], None
     for f in frames:
         pixels = (read_frame or read_working_frame)(path, f)
         fh, fw = pixels.shape[:2]
+        if size is None:
+            cw, ch = _scale_to(fw, fh, edge)
+            if sheet:  # the whole sheet fits SHEET_MAX on both sides: shrink the cells if it would not
+                fit = min(1.0, (SHEET_MAX - GAP * (cols + 1)) / (cols * cw),
+                          (SHEET_MAX - GAP * (rows + 1)) / (rows * (ch + LABEL_H)))
+                cw, ch = max(1, int(cw * fit)), max(1, int(ch * fit))
+            size = (cw, ch)
         layers, points, drawn = [], [], []
         for o in ids:
             seeds, ranges, track = per_obj[o]
@@ -209,30 +224,21 @@ def capture(service, video: str, path: str, body: Dict, n_frames: int, fps: Opti
                 for p, l in zip(seeds.get(f, {}).get("points", []), seeds.get(f, {}).get("labels", [])):
                     points.append((o, p[0], p[1], int(l)))
             drawn.append(entry)
-        images.append((f, pixels, layers, points))
+        cells.append((f, _draw(pixels, layers, size, points)))
+        del pixels, layers
         legend_frames.append({"frame": f, "objects": drawn})
 
-    fh, fw = images[0][1].shape[:2]
     if not sheet:
-        if len(frames) != 1:
-            raise CaptureError("one frame without a sheet; set sheet true for several")
-        f, pixels, layers, points = images[0]
-        img = _draw(pixels, layers, _scale_to(fw, fh, _edge("long_edge", body.get("long_edge"), FRAME_EDGE)), points)
+        img = cells[0][1]
     else:
-        cols = math.ceil(math.sqrt(len(images)))
-        rows = math.ceil(len(images) / cols)
-        cw, ch = _scale_to(fw, fh, _edge("long_edge", body.get("long_edge"), CELL_EDGE))
-        # the whole sheet fits SHEET_MAX on both sides: shrink the cells if it would not
-        fit = min(1.0, (SHEET_MAX - GAP * (cols + 1)) / (cols * cw),
-                  (SHEET_MAX - GAP * (rows + 1)) / (rows * (ch + LABEL_H)))
-        cw, ch = max(1, int(cw * fit)), max(1, int(ch * fit))
+        cw, ch = size
         img = Image.new("RGB", (cols * cw + GAP * (cols + 1), rows * (ch + LABEL_H) + GAP * (rows + 1)), GREY)
         d = ImageDraw.Draw(img)
-        for k, (f, pixels, layers, points) in enumerate(images):
+        for k, (f, cell) in enumerate(cells):
             x = GAP + (k % cols) * (cw + GAP)
             y = GAP + (k // cols) * (ch + LABEL_H + GAP)
             d.text((x, y + 2), f"frame {f}", fill=(0, 0, 0))
-            img.paste(_draw(pixels, layers, (cw, ch), points), (x, y + LABEL_H))
+            img.paste(cell, (x, y + LABEL_H))
 
     buf = io.BytesIO()
     img.save(buf, format="JPEG", quality=80)

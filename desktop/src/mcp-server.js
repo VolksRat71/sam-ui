@@ -36,8 +36,16 @@ const tokenDir = () => process.env.SAM_UI_TOKEN_DIR || path.join(os.homedir(), '
 const tokenFile = () => path.join(tokenDir(), 'token');
 const wellFormed = t => typeof t === 'string' && /^[0-9a-f]{64}$/.test(t);
 
+/** Ours and nobody else's: owned by this user, no group or other access, not a link. */
+function isPrivate(p) {
+  const st = fs.lstatSync(p);
+  return (st.isFile() || st.isDirectory()) && st.uid === process.getuid() && (st.mode & 0o077) === 0;
+}
+
+/** The token, or null when there is none or its file or folder could be someone else's. */
 function readToken() {
   try {
+    if (!isPrivate(tokenDir()) || !isPrivate(tokenFile())) return null;
     const t = fs.readFileSync(tokenFile(), 'utf8').trim();
     return wellFormed(t) ? t : null;
   } catch {
@@ -53,6 +61,10 @@ function loadOrCreateToken() {
   const existing = readToken();
   if (existing) return existing;
   fs.mkdirSync(tokenDir(), {recursive: true, mode: 0o700});
+  if (fs.lstatSync(tokenDir()).uid !== process.getuid() || !fs.lstatSync(tokenDir()).isDirectory()) {
+    throw new Error(`${tokenDir()} is not a folder of this user's; the agents' token cannot live there`);
+  }
+  fs.chmodSync(tokenDir(), 0o700);
   const candidate = crypto.randomBytes(32).toString('hex');
   try {
     fs.writeFileSync(tokenFile(), candidate, {mode: 0o600, flag: 'wx'});
@@ -61,9 +73,9 @@ function loadOrCreateToken() {
     if (err.code !== 'EEXIST') throw err;
     const winner = readToken();
     if (winner) return winner;
-    // there, but not a token: replace it
-    fs.writeFileSync(tokenFile(), candidate, {mode: 0o600});
-    fs.chmodSync(tokenFile(), 0o600);
+    // there, but not a token, or open to others, or a link: replace it (rm takes a link, not its target)
+    fs.rmSync(tokenFile(), {force: true});
+    fs.writeFileSync(tokenFile(), candidate, {mode: 0o600, flag: 'wx'});
     return candidate;
   }
 }
@@ -106,10 +118,13 @@ const rpcError = (id, code, message) => ({jsonrpc: '2.0', id, error: {code, mess
 function createRpc({tools, callTool}) {
   async function one(msg) {
     if (msg == null || msg.jsonrpc !== '2.0' || typeof msg.method !== 'string') {
-      return rpcError(msg?.id ?? null, -32600, 'Not a JSON-RPC 2.0 request');
+      return rpcError(null, -32600, 'Not a JSON-RPC 2.0 request');
     }
     const {id, method, params} = msg;
-    const notification = id === undefined; // never answered
+    if (id !== undefined && id !== null && typeof id !== 'string' && typeof id !== 'number') {
+      return rpcError(null, -32600, 'id must be a string, a number or null'); // never echoed: it could be anything
+    }
+    if (id === undefined) return null; // a notification: never answered, and nothing here acts on one
     try {
       switch (method) {
         case 'initialize': {
@@ -122,17 +137,17 @@ function createRpc({tools, callTool}) {
           });
         }
         case 'ping':
-          return notification ? null : rpcResult(id, {});
+          return rpcResult(id, {});
         case 'tools/list':
           return rpcResult(id, {tools});
         case 'tools/call':
           if (typeof params?.name !== 'string') return rpcError(id, -32602, 'tools/call requires a name');
           return rpcResult(id, await callTool(params.name, params.arguments ?? {}));
         default:
-          return notification ? null : rpcError(id, -32601, `Unknown method: ${method}`);
+          return rpcError(id, -32601, `Unknown method: ${method}`);
       }
     } catch (err) {
-      return notification ? null : rpcError(id, -32603, String(err?.message ?? err));
+      return rpcError(id, -32603, String(err?.message ?? err));
     }
   }
   return async function handle(raw) {
@@ -142,9 +157,9 @@ function createRpc({tools, callTool}) {
     } catch {
       return rpcError(null, -32700, 'Invalid JSON');
     }
-    if (!Array.isArray(msg)) return one(msg);
-    const out = (await Promise.all(msg.map(one))).filter(Boolean);
-    return out.length ? out : null;
+    // MCP 2025-06-18 dropped JSON-RPC batches; one call per request also keeps /capture one at a time
+    if (Array.isArray(msg)) return rpcError(null, -32600, 'Batches are not supported: send one request per POST');
+    return one(msg);
   };
 }
 
@@ -159,7 +174,15 @@ function createMcpServer({backend, port = DEFAULT_PORT, exportRoot, log = () => 
   const rpc = createRpc(tools);
   const token = loadOrCreateToken();
 
-  const server = http.createServer(async (req, res) => {
+  const server = http.createServer((req, res) => {
+    serve(req, res).catch(err => {
+      log(`request failed: ${err?.message ?? err}`);
+      if (res.headersSent) res.destroy();
+      else json(res, 500, {error: 'internal error'});
+    });
+  });
+
+  async function serve(req, res) {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     if (req.headers.origin !== undefined) {
       json(res, 403, {error: 'Requests from a web page are not accepted.'});
@@ -172,7 +195,7 @@ function createMcpServer({backend, port = DEFAULT_PORT, exportRoot, log = () => 
     }
     const supplied = /^Bearer (\S+)$/.exec(String(req.headers.authorization ?? ''))?.[1] ?? '';
     if (!sameToken(supplied, readToken() ?? token)) {
-      json(res, 401, {error: `Missing or wrong bearer token. It is in ${tokenFile()}.`});
+      json(res, 401, {error: 'Missing or wrong bearer token. It is in ~/.sam-ui/token; sam-ui\'s Agents menu copies the setup command.'});
       return;
     }
     const url = req.url.split('?')[0];
@@ -199,9 +222,9 @@ function createMcpServer({backend, port = DEFAULT_PORT, exportRoot, log = () => 
       res.end();
       return;
     }
-    if (!Array.isArray(reply) && reply.result?.isError) log(`tool error: ${reply.result.content?.[0]?.text}`);
+    if (reply.result?.isError) log(`tool error: ${reply.result.content?.[0]?.text}`);
     json(res, 200, reply);
-  });
+  }
 
   return {
     server,
@@ -214,6 +237,7 @@ function createMcpServer({backend, port = DEFAULT_PORT, exportRoot, log = () => 
       });
     },
     close() {
+      tools.close(); // held track streams: their jobs are cancelled
       return new Promise(resolve => {
         server.close(() => resolve());
         server.closeAllConnections?.();

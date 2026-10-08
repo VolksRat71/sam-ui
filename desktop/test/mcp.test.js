@@ -346,3 +346,87 @@ test('the backend never sees the link token or an Origin', () => {
     assert.notStrictEqual(s.url, '/linked');
   }
 });
+
+// -- review follow-up --------------------------------------------------------
+
+test('a deeply nested id is refused, never echoed, and the server stays up', async () => {
+  const deep = '['.repeat(200000) + ']'.repeat(200000);
+  for (const id of [deep, '{}', 'true']) {
+    const r = await raw({body: `{"jsonrpc":"2.0","id":${id},"method":"ping"}`});
+    assert.strictEqual(r.status, 200);
+    assert.deepStrictEqual(JSON.parse(r.body), {jsonrpc: '2.0', id: null, error: {code: -32600, message: 'id must be a string, a number or null'}});
+  }
+  assert.deepStrictEqual((await rpc('ping')).result, {});
+});
+
+test('batches are refused without calling anything', async () => {
+  const before = seen.length;
+  const one = {jsonrpc: '2.0', id: 1, method: 'tools/call', params: {name: 'sam_capture', arguments: {command: 'frame', session_id: 's1', frame: 0}}};
+  for (const body of [[one, {...one, id: 2}], []]) {
+    const r = await raw({body: JSON.stringify(body)});
+    assert.strictEqual(r.status, 200);
+    assert.strictEqual(JSON.parse(r.body).error.code, -32600);
+  }
+  assert.strictEqual(seen.length, before);
+});
+
+test('a notification gets no reply and does nothing', async () => {
+  const before = seen.length;
+  for (const method of ['tools/call', 'initialize', 'ping', 'nope']) {
+    const r = await raw({body: JSON.stringify({jsonrpc: '2.0', method, params: {name: 'sam_query', arguments: {command: 'videos'}}})});
+    assert.strictEqual(r.status, 202, method);
+    assert.strictEqual(r.body, '');
+  }
+  assert.strictEqual(seen.length, before);
+});
+
+test('tool names do not reach Object.prototype', async () => {
+  for (const name of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) {
+    const r = await call(name, {command: 'videos'});
+    assert.strictEqual(r.isError, true, name);
+    assert.match(r.content[0].text, /^Unknown tool/);
+  }
+});
+
+test('the 401 names no absolute path', async () => {
+  const r = await raw({auth: null});
+  assert.strictEqual(r.status, 401);
+  assert.ok(!r.body.includes(path.dirname(tokenFile())));
+  assert.match(r.body, /~\/\.sam-ui\/token/);
+});
+
+test('a token file or folder open to others, or a link, is replaced, never trusted', () => {
+  const saved = process.env.SAM_UI_TOKEN_DIR; // sync from here to the finally: the live server reads this too
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sam-ui-mcp-perm-'));
+  process.env.SAM_UI_TOKEN_DIR = path.join(root, 'tok');
+  try {
+    const first = loadOrCreateToken();
+    fs.chmodSync(tokenFile(), 0o644);
+    const second = loadOrCreateToken();
+    assert.notStrictEqual(second, first);
+    assert.strictEqual(fs.statSync(tokenFile()).mode & 0o777, 0o600);
+    fs.chmodSync(path.dirname(tokenFile()), 0o755);
+    assert.strictEqual(loadOrCreateToken(), second); // the folder is closed again, the token kept
+    assert.strictEqual(fs.statSync(path.dirname(tokenFile())).mode & 0o777, 0o700);
+    const elsewhere = path.join(root, 'elsewhere');
+    fs.writeFileSync(elsewhere, 'b'.repeat(64), {mode: 0o600});
+    fs.rmSync(tokenFile());
+    fs.symlinkSync(elsewhere, tokenFile());
+    assert.notStrictEqual(loadOrCreateToken(), 'b'.repeat(64));
+    assert.ok(!fs.lstatSync(tokenFile()).isSymbolicLink());
+    assert.strictEqual(fs.readFileSync(elsewhere, 'utf8'), 'b'.repeat(64)); // the link's target untouched
+  } finally {
+    process.env.SAM_UI_TOKEN_DIR = saved;
+  }
+});
+
+test('closing the tools drops held track streams', async () => {
+  const start = textOf(await call('sam_track', {command: 'start', session_id: 's1'}));
+  assert.strictEqual(start.job_id, 'job-1');
+  const dropped = new Promise(r => track.once('close', r));
+  app.tools.close();
+  await dropped; // the backend sees its reader go, which cancels the job
+  track = null; // as the real backend does: a cancelled job leaves /track_jobs
+  const r = await call('sam_track', {command: 'status', session_id: 's1', job_id: 'job-1'});
+  assert.strictEqual(r.isError, true);
+});

@@ -270,8 +270,14 @@ function createTools({backend, exportRoot = path.join(os.homedir(), 'Movies', 's
   /** job_id -> {sessionId, objects, result: null until the stream ends, endedAt, done: Promise} */
   const held = new Map();
 
+  /** Drop results older than 30 minutes, and streams silent that long (destroyed: the backend cancels their jobs). */
   function sweep() {
-    for (const [id, job] of held) if (job.result != null && now() - job.endedAt > HELD_MS) held.delete(id);
+    for (const [id, job] of held) {
+      if (now() - (job.result != null ? job.endedAt : job.lastAt) > HELD_MS) {
+        job.res.destroy();
+        held.delete(id);
+      }
+    }
   }
 
   async function post(pathname, body) {
@@ -302,6 +308,7 @@ function createTools({backend, exportRoot = path.join(os.homedir(), 'Movies', 's
   // -- track jobs ---------------------------------------------------------
 
   async function startTrack(args) {
+    sweep();
     const sid = sessionId(args);
     const body = {session_id: sid};
     const ids = objectIds(args);
@@ -324,11 +331,12 @@ function createTools({backend, exportRoot = path.join(os.homedir(), 'Movies', 's
     const jobId = res.headers['job-id'];
     const objs = String(res.headers['objects-tracked'] ?? '').split(',').filter(Boolean).map(Number);
     const bounded = String(res.headers['objects-bounded'] ?? '').split(',').filter(Boolean).map(Number);
-    const job = {sessionId: sid, objects: objs, result: null, endedAt: null};
+    const job = {sessionId: sid, objects: objs, result: null, endedAt: null, lastAt: now(), res};
     job.done = new Promise(resolve => {
       let tail = '';
       res.setEncoding('latin1'); // bytes as they are; only the last part is decoded
       res.on('data', chunk => {
+        job.lastAt = now();
         tail += chunk;
         const at = tail.lastIndexOf(BOUNDARY);
         if (at > 0) tail = tail.slice(at);
@@ -561,7 +569,7 @@ function createTools({backend, exportRoot = path.join(os.homedir(), 'Movies', 's
     try {
       if (args == null || typeof args !== 'object' || Array.isArray(args)) throw new ToolError('arguments must be an object');
       if (name === 'sam_export') return await exportTool(args);
-      const table = commands[name];
+      const table = Object.hasOwn(commands, name) ? commands[name] : null;
       if (!table) return failure(`Unknown tool: ${name}`);
       const fn = Object.hasOwn(table, args.command) ? table[args.command] : null;
       if (!fn) return failure(`${name}: command must be one of ${Object.keys(table).join(', ')}`);
@@ -571,7 +579,13 @@ function createTools({backend, exportRoot = path.join(os.homedir(), 'Movies', 's
     }
   }
 
-  return {tools: TOOLS, callTool};
+  /** Destroy every held stream (the backend cancels a job whose reader goes) and forget them. */
+  function close() {
+    for (const job of held.values()) job.res.destroy();
+    held.clear();
+  }
+
+  return {tools: TOOLS, callTool, close};
 }
 
 /** The closing {"done": ...} part of a track stream's last text, or a failure when there is none. */

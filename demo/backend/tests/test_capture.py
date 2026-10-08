@@ -152,6 +152,18 @@ def test_refusals(h, body, status, words):
     assert r.status_code == status and words in r.json["error"]
 
 
+def test_each_frame_is_drawn_before_the_next_is_read(h, monkeypatch):
+    """A sheet never holds more than one full-size frame: read, draw, read, draw."""
+    h.click(1)
+    h.track()
+    events, draw = [], cap._draw
+    monkeypatch.setattr(cap, "read_working_frame",
+                        lambda path, i: events.append("read") or np.full((H, W, 3), GREY, np.uint8))
+    monkeypatch.setattr(cap, "_draw", lambda *a: events.append("draw") or draw(*a))
+    image(post(h, frames=[0, 2, 4]))
+    assert events == ["read", "draw"] * 3
+
+
 def test_an_unknown_session_is_a_404(h):
     r = h.client.post("/capture", json={"session_id": "nope", "frames": [0]})
     assert r.status_code == 404 and "Cannot find session" in r.json["error"]

@@ -219,20 +219,27 @@ function stopBackend() {
 // Off until the person ticks Agents > Allow agents (MCP); the choice is kept.
 // The server's backend client has no link token: agents never open files in place.
 
-let mcp = null;
+let mcp = null; // set before listen() resolves, so a second tick never starts a second server
+let agentsItem = null; // the menu checkbox, unticked when the server cannot start
 
 async function startMcp() {
   if (mcp != null || backendPort == null) return;
-  const server = createMcpServer({
-    backend: roto.backendClient({port: backendPort}),
-    exportRoot: path.join(app.getPath('home'), 'Movies', 'sam-ui'),
-  });
+  let server = null;
   try {
-    await server.listen();
+    server = createMcpServer({
+      backend: roto.backendClient({port: backendPort}),
+      exportRoot: path.join(app.getPath('home'), 'Movies', 'sam-ui'),
+    });
     mcp = server;
+    await server.listen();
+    if (mcp !== server) server.close(); // unticked while it was starting
   } catch (err) {
+    if (mcp === server) mcp = null;
+    if (server != null) server.close();
+    writeSettings({allowAgents: false});
+    if (agentsItem != null) agentsItem.checked = false;
     dialog.showErrorBox('sam-ui: agents could not connect',
-      `The MCP server could not listen on 127.0.0.1:${MCP_PORT} (${err.message}). Is another sam-ui, or a dev MCP server, running?`);
+      `The MCP server could not start on 127.0.0.1:${MCP_PORT}: ${err.message}. Is another sam-ui, or a dev MCP server, running? Agents are switched off; tick Agents > Allow agents (MCP) to try again.`);
   }
 }
 
@@ -282,6 +289,7 @@ function menu(p) {
       label: 'Agents',
       submenu: [
         {
+          id: 'allow-agents',
           label: 'Allow agents (MCP)',
           type: 'checkbox',
           checked: readSettings().allowAgents === true,
@@ -302,7 +310,9 @@ function menu(p) {
       ],
     },
   ];
-  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+  const built = Menu.buildFromTemplate(template);
+  agentsItem = built.getMenuItemById('allow-agents');
+  Menu.setApplicationMenu(built);
 }
 
 async function main() {

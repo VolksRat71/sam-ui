@@ -76,6 +76,7 @@ them with a fake engine and no model.
 import contextlib
 import json
 import logging
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Callable, Iterator, Optional
@@ -91,6 +92,7 @@ from tracks.layout import LayoutError
 from tracks.service import FrameRle, JobResult, TrackService, UnknownEngine
 
 BOUNDARY = "frame"
+CAPTURES = threading.BoundedSemaphore(2)  # each capture decodes full-size frames: at most two at once
 HANDOFF_S = 0.002  # after a step with no frame, time for a waiting click to take the model lock
 logger = logging.getLogger(__name__)
 
@@ -376,7 +378,8 @@ def make_blueprint(resolve: Callable[[str], TrackContext], service: Optional[Tra
         if n_frames is None:
             return jsonify({"error": "the session's video has no frame count"}), 400
         try:
-            return jsonify(capture(ctx.service, ctx.video, ctx.path, data, n_frames, video_fps(ctx.path)))
+            with CAPTURES:
+                return jsonify(capture(ctx.service, ctx.video, ctx.path, data, n_frames, video_fps(ctx.path)))
         except CaptureError as err:
             return jsonify({"error": str(err)}), 400
 
