@@ -354,7 +354,30 @@ export default function Timeline({session, actions, inspector}: Props) {
         )}
       </div>
       </div>
-      <div className="lanes suite-lanes" style={{'--label-width': `${labelWidth}px`} as CSSProperties}>
+      <div className="lanes suite-lanes" style={{'--label-width': `${labelWidth}px`} as CSSProperties}
+        onKeyDown={e => {
+          // a layer's list option and its frame lane share these keys, so the lane and its Actions need no Tab stop of their own
+          const el = e.target as HTMLElement;
+          const id = el.dataset.layerOption ?? el.dataset.lane;
+          const o = id == null ? undefined : state.objects.find(x => x.id === Number(id));
+          if (o == null || e.altKey || e.ctrlKey || e.metaKey) return;
+          if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
+            e.preventDefault(); e.stopPropagation();
+            e.currentTarget.querySelector<HTMLButtonElement>(`[data-lane="${o.id}"] .lane-actions button`)?.click();
+          } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+            e.preventDefault(); e.stopPropagation();
+            const next = Math.max(0, Math.min(n - 1, frame + (e.key === 'ArrowRight' ? 1 : -1)));
+            session.selectObject(o.id);
+            if (e.shiftKey) setSelection({id: o.id, start: selection?.id === o.id ? selection.start : frame, end: next});
+            seek(next);
+          } else if (e.key.toLowerCase() === 'k') {
+            e.preventDefault(); e.stopPropagation();
+            const keys = seedFrames(o).sort((a, b) => a - b);
+            const next = e.shiftKey ? keys.filter(f => f < frame).at(-1) : keys.find(f => f > frame);
+            if (next != null) seek(next);
+            session.selectObject(o.id);
+          }
+        }}>
         <div className="suite-ruler">
           <div className="lane-label scrub-label">Layer / keyframes</div>
           <div className="lane-tracks" ref={trackRef}>
@@ -411,25 +434,10 @@ export default function Timeline({session, actions, inspector}: Props) {
               <div
                 key={o.id}
                 className={`swimlane${o.id === state.activeId ? ' active' : ''}${o.state === 'stale' ? ' changed' : ''}${o.running || o.state === 'tracking' ? ' updating' : ''}`}
-                tabIndex={0}
+                tabIndex={-1}
+                data-lane={o.id}
                 role="group"
                 aria-label={`${objectName(o)} frame lane. Left and Right step frames, Shift selects a span; K and Shift K step keyframes.`}
-                onKeyDown={e => {
-                  if (e.target !== e.currentTarget || e.altKey || e.ctrlKey || e.metaKey) return;
-                  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
-                    e.preventDefault(); e.stopPropagation();
-                    const next = Math.max(0, Math.min(n - 1, frame + (e.key === 'ArrowRight' ? 1 : -1)));
-                    session.selectObject(o.id);
-                    if (e.shiftKey) setSelection({id: o.id, start: selection?.id === o.id ? selection.start : frame, end: next});
-                    seek(next);
-                  } else if (e.key.toLowerCase() === 'k') {
-                    e.preventDefault(); e.stopPropagation();
-                    const keys = seedFrames(o).sort((a, b) => a - b);
-                    const next = e.shiftKey ? keys.filter(f => f < frame).at(-1) : keys.find(f => f > frame);
-                    if (next != null) seek(next);
-                    session.selectObject(o.id);
-                  }
-                }}
                 onPointerCancel={() => { laneDrag.current = null; }}
                 onLostPointerCapture={() => { laneDrag.current = null; }}
                 onPointerDown={e => {

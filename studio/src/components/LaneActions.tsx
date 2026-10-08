@@ -36,7 +36,7 @@ export default function LaneActions({name, disabled, onAbsent}: Props) {
     return () => document.removeEventListener('pointerdown', outside);
   }, [open]);
   return <span className="lane-actions" onPointerDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}>
-    <button ref={trigger} type="button" className="button subtle compact" aria-label={`Actions for ${name}`} aria-haspopup="menu" aria-expanded={open} disabled={disabled}
+    <button ref={trigger} type="button" tabIndex={-1} className="button subtle compact" aria-label={`Actions for ${name}`} aria-haspopup="menu" aria-expanded={open} disabled={disabled}
       onClick={() => setOpen(v => !v)} onKeyDown={e => { if (e.key === 'ArrowDown') { e.preventDefault(); setOpen(true); } }}>
       <OverflowMenuHorizontal size={16} />
     </button>
