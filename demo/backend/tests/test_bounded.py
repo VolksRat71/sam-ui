@@ -268,11 +268,6 @@ def test_a_bounded_pass_stops_at_the_window_edge_and_never_enters_a_gap(h):
     assert sorted(by_frame(frames)) == list(range(N)) and h.state(1) == TRACKED
 
 
-def ran_since(h, mark):
-    """What the engine ran after `mark` (len of calls, stretches)."""
-    return h.engine.calls[mark[0]:], h.engine.stretches[mark[1]:]
-
-
 def test_an_absent_range_that_takes_no_seed_runs_no_model(h):
     # the tail (the 2026-10-07 acceptance run: 0-89 tracked, 78-89 marked
     # absent, and the re-track ran all of 0-77 again), then the middle
@@ -283,7 +278,7 @@ def test_an_absent_range_that_takes_no_seed_runs_no_model(h):
         h.service.set_range(h.video, 1, lo, hi, ABSENT)
         assert h.state(1) == STALE
         _, frames = h.track()
-        assert ran_since(h, mark) == ([], [])  # no model ran
+        assert h.engine.calls[mark[0]:] == [] and h.engine.stretches[mark[1]:] == []  # no model ran
         after = stored(h)
         assert sorted(by_frame(frames)) == list(range(N)) and h.state(1) == TRACKED
         assert all(after[f] == before[f] for f in range(N) if f < lo)  # kept, byte for byte
