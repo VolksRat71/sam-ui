@@ -123,6 +123,126 @@ def test_a_file_trimmed_with_an_edit_list_is_refused(tmp_path):
     assert native_metadata(str(full))["frames"] == N
 
 
+def test_a_variable_frame_rate_file_is_refused_and_a_constant_one_links(tmp_path):
+    """Frames 0-14 at 30 fps, then 15-29 at 15 fps: still 30 frames, but frame
+    20 is at 0.83 s, not 20/30 s, so a key at 20/30 s in After Effects would
+    land on another frame."""
+    from data.linked import LinkRefused, register
+
+    cfr = moving_square(tmp_path / "cfr.mp4")
+    vfr = tmp_path / "vfr.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(cfr), "-vf", "setpts='if(lt(N,15),N/30,0.5+(N-15)/15)/TB'",
+                    "-fps_mode", "passthrough", "-c:v", "libx264", str(vfr)], check=True)
+    with pytest.raises(LinkRefused, match="variable frame rate.*conform it to a constant frame rate"):
+        register(str(vfr), source_for(vfr), hash_file=lambda p: "h")
+    _, record = register(str(cfr), source_for(cfr), hash_file=lambda p: "h")
+    assert record["native"]["frames"] == N
+
+
+def cfr_pts(fps, timescale, n, jitter=None):
+    """Integer timestamps a muxer would write for n frames at `fps` in a
+    1/timescale time base, each rounded to a tick, plus an optional per-frame
+    offset in seconds."""
+    return [round((i / fps + (jitter(i) if jitter else 0)) * timescale) for i in range(n)]
+
+
+def drift_ok(pts):
+    from data.linked import rate_drift
+
+    drift, limit = rate_drift(pts)
+    return drift <= limit
+
+
+@pytest.mark.parametrize("timescale", [600, 1000])
+@pytest.mark.parametrize("fps", [24000 / 1001, 30000 / 1001, 60000 / 1001, 120000 / 1001, 240])
+def test_constant_rate_rounded_to_coarse_ticks_is_not_variable(fps, timescale):
+    """Rounding to a coarse tick (a quarter of a 240 fps frame at 1/1000) never
+    reads as variable rate, over a long clip."""
+    for n in (351, 2000, 9000):
+        assert drift_ok(cfr_pts(fps, timescale, n)), (fps, timescale, n)
+
+
+@pytest.mark.parametrize("fps, timescale", [(30000 / 1001, 600), (30, 15360), (60000 / 1001, 60000)])
+def test_phone_style_capture_jitter_is_not_variable(fps, timescale):
+    """Capture timestamps wobble by about a millisecond around a steady rate."""
+    import random
+
+    rnd = random.Random(1)
+    assert drift_ok(cfr_pts(fps, timescale, 3000, jitter=lambda i: rnd.uniform(-1e-3, 1e-3)))
+    assert drift_ok(cfr_pts(fps, timescale, 3000, jitter=lambda i: rnd.gauss(0, 1e-3)))
+
+
+@pytest.mark.parametrize("fps, timescale", [(30000 / 1001, 600), (30000 / 1001, 30000), (30, 15360), (25, 12800)])
+def test_a_dropped_or_doubled_frame_is_variable(fps, timescale):
+    pts = cfr_pts(fps, timescale, 601)
+    assert drift_ok(pts)
+    assert not drift_ok(pts[:300] + pts[301:])  # frame 300 dropped: everything after it a frame early
+    assert not drift_ok(pts[:300] + [pts[299]] + pts[300:-1])  # frame 299's timestamp twice
+    assert not drift_ok(pts[:5] + pts[6:])  # near an end too
+
+
+def test_the_tolerance_sits_between_jitter_and_a_frame_held_too_long():
+    """A step of 0.4 frame part-way through measures 0.2 (allowed); one of
+    0.6 measures 0.3 (refused). A threshold loosened to half a frame would let
+    the second through; one tightened to 0.1 would refuse the first."""
+    from data.linked import rate_drift
+
+    def stepped(by):
+        return [round((i + (by if i >= 300 else 0)) * 1001) for i in range(600)]  # 29.97 fps at 1/30000
+
+    assert drift_ok(stepped(0.4)) and abs(rate_drift(stepped(0.4))[0] - 0.2) < 0.01
+    assert not drift_ok(stepped(0.6)) and abs(rate_drift(stepped(0.6))[0] - 0.3) < 0.01
+
+
+def test_too_few_frames_or_one_timestamp():
+    from data.linked import rate_drift
+
+    assert rate_drift([])[0] == 0 and rate_drift([5])[0] == 0 and rate_drift([0, 512])[0] == 0
+    assert not drift_ok([7, 7, 7])
+
+
+def test_an_export_check_catches_a_same_size_same_mtime_swap(tmp_path):
+    """The cheap check (size, mtime) cannot see bytes swapped in place with the
+    mtime put back; ?verify=1 re-hashes and can. Re-hashing is desktop only."""
+    from data.linked import TOKEN_HEADER, make_blueprint, register
+
+    clip = moving_square(tmp_path / "swap.mp4")
+    video, record = register(str(clip), source_for(clip))  # the real content hash
+    c = Flask("verify")
+    c.register_blueprint(make_blueprint(token="t"))
+    c = c.test_client()
+    verify = f"/linked-source?path={video.path}&verify=1"
+    desktop = {TOKEN_HEADER: "t"}
+    assert c.get(verify).status_code == 403 and c.get(verify, headers={TOKEN_HEADER: "x"}).status_code == 403
+    assert c.get(verify, headers=desktop).get_json()["changed"] is False
+
+    st = os.stat(clip)
+    data = bytearray(clip.read_bytes())
+    data[len(data) // 2] ^= 0xFF
+    clip.write_bytes(bytes(data))
+    os.utime(clip, ns=(st.st_atime_ns, st.st_mtime_ns))
+    assert os.stat(clip).st_size == record["file"]["size"]
+    assert c.get(f"/linked-source?path={video.path}").get_json()["changed"] is False  # what the cheap check sees
+    assert c.get(verify, headers=desktop).get_json()["changed"] is True
+
+
+def test_a_file_that_cannot_be_read_counts_as_changed(tmp_path):
+    from data.linked import TOKEN_HEADER, make_blueprint, register
+
+    clip = moving_square(tmp_path / "locked.mp4")
+    video, _ = register(str(clip), source_for(clip))
+    app = Flask("locked")
+    app.register_blueprint(make_blueprint(token="t"))
+    os.chmod(clip, 0)
+    try:
+        if os.access(clip, os.R_OK):
+            pytest.skip("running as a user that reads past permissions")
+        got = app.test_client().get(f"/linked-source?path={video.path}&verify=1", headers={TOKEN_HEADER: "t"})
+        assert got.status_code == 200 and got.get_json()["changed"] is True
+    finally:
+        os.chmod(clip, 0o644)
+
+
 def test_what_cannot_be_linked_says_why(tmp_path):
     from data.linked import LinkRefused, register
 
