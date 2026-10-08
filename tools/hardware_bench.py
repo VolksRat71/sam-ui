@@ -55,6 +55,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "tools"))
+sys.path.insert(1, str(REPO))  # this tree's sam2, not the venv's editable install (a worktree, a baseline copy)
 GALLERY = Path(os.environ.get("SAM_UI_GALLERY", REPO / "demo/data/gallery"))
 if not GALLERY.is_dir():  # a worktree without the gallery: the main checkout's
     GALLERY = REPO.parents[2] / "demo/data/gallery"
@@ -397,9 +398,9 @@ def _load_masks(d: Path) -> dict:
 def compare(a: Path, b: Path) -> None:
     """Per-run IoU of b's masks against a's (frame, object by frame, object)."""
     print(
-        "| run | frames | objects | IoU min | IoU mean | masks < 0.98 | masks < 0.995 |"
+        "| run | frames | objects | IoU min | IoU mean | masks < 0.9 | masks < 0.98 | masks < 0.995 |"
     )
-    print("|---|---|---|---|---|---|---|")
+    print("|---|---|---|---|---|---|---|---|")
     for da in sorted(p for p in a.iterdir() if (p / "masks.npz").exists()):
         db = b / da.name
         if not (db / "masks.npz").exists():
@@ -414,7 +415,7 @@ def compare(a: Path, b: Path) -> None:
             continue
         print(
             f"| {da.name} | {len({k[0] for k in ma})} | {len({k[1] for k in ma})} | {min(ious):.4f} | "
-            f"{sum(ious) / len(ious):.4f} | {sum(i < 0.98 for i in ious)} | {sum(i < 0.995 for i in ious)} |"
+            f"{sum(ious) / len(ious):.4f} | {sum(i < 0.9 for i in ious)} | {sum(i < 0.98 for i in ious)} | {sum(i < 0.995 for i in ious)} |"
         )
 
 

@@ -19,7 +19,17 @@ def test_precision_names(monkeypatch):
         assert precision.dtype_name("SAM_UI_SAM3_DTYPE") == want
     monkeypatch.setenv("SAM_UI_SAM3_DTYPE", "int8")
     with pytest.raises(ValueError, match="fp32, bf16 or fp16"):
-        precision.sam3_dtype()
+        precision.sam3_dtype("mps")
+
+
+def test_sam3_defaults_to_fp16_on_mps_only(monkeypatch):
+    import torch
+
+    monkeypatch.delenv("SAM_UI_SAM3_DTYPE", raising=False)
+    assert precision.sam3_dtype("mps") == torch.float16
+    assert precision.sam3_dtype("cuda") == precision.sam3_dtype("cpu") == torch.float32
+    monkeypatch.setenv("SAM_UI_SAM3_DTYPE", "fp32")
+    assert precision.sam3_dtype("mps") == torch.float32
 
 
 def test_sam2_autocast_is_off_unless_asked(monkeypatch):
