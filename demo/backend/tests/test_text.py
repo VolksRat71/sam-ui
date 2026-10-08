@@ -638,6 +638,7 @@ def test_real_sam3_half_precision_track_stays_close_to_fp32(dtype, monkeypatch, 
     `dtype` and compares every mask (tools/hardware_bench.py --compare gives
     whole-clip numbers)."""
     from tracks import sam3_engine
+    from tracks.bounded import mask_iou
 
     why = sam3_engine.available()
     if why:
@@ -657,8 +658,7 @@ def test_real_sam3_half_precision_track_stays_close_to_fp32(dtype, monkeypatch, 
 
     want, got = run("fp32"), run(dtype)
     assert sorted(got) == sorted(want) == list(range(48))
-    ious = [float((want[f][o] & got[f][o]).sum() / max(1, (want[f][o] | got[f][o]).sum()))
-            for f in want for o in want[f]]
+    ious = [mask_iou(want[f][o], got[f][o]) for f in want for o in want[f]]  # both empty agree (1.0)
     print(f"\nsam3 {dtype} vs fp32, 01_dog, 48 frames x 2 objects: IoU mean {np.mean(ious):.4f}, min {min(ious):.4f}")
     # measured on an M4 Max: fp16 mean 0.9986, min 0.9754; bf16 mean 0.9931, min 0.9776
     assert np.mean(ious) > 0.98 and min(ious) > 0.9

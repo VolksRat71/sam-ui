@@ -4,22 +4,12 @@ app, the tests and tools/hardware_bench.py run the same code:
 
   SAM_UI_SAM3_DTYPE  fp16 (the default on MPS), fp32 (the default elsewhere)
                      or bf16: SAM 3's weights, frames and activations, tracker
-                     and detector alike. On an M4 Max fp16 takes SAM 3's peak
-                     footprint while tracking from 5.3-5.5 to 3.7-4.7 GB and
-                     its time a frame from 1.33 to about 0.8 s, and every mask
-                     on the gallery and synthetic clips stays at IoU 0.96 or
-                     more against fp32 (mean 0.995 to 0.999). bf16 saves the
-                     same but moves masks more (lowest 0.92). fp32 is set
-                     explicitly to get full precision back. CUDA keeps fp32
-                     until it is measured there.
+                     and detector alike.
   SAM_UI_SAM2_DTYPE  fp32 (default), fp16 or bf16: autocast for SAM 2 on MPS.
-                     Twice as fast, but no smaller (the weights stay fp32 and
-                     autocast keeps cast copies), and bf16 lost the dog on one
-                     frame of the gallery clip, so it stays opt-in. On CUDA
-                     SAM 2 always runs under bf16 autocast, as upstream.
+                     On CUDA SAM 2 always runs under bf16 autocast, as upstream.
 
-docs/hardware.md has the measurements; test_text.py's slow
-test_real_sam3_half_precision_track_stays_close_to_fp32 checks them.
+docs/hardware.md has the measurements behind these defaults; test_text.py's
+slow test_real_sam3_half_precision_track_stays_close_to_fp32 checks them.
 """
 import contextlib
 import os

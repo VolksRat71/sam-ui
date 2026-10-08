@@ -11,9 +11,8 @@ copied into this repository.
 
 Measured on the synthetic squares (MPS, fp32): IoU min 0.989 against SAM 2's
 0.974, at 1.43 s/frame against SAM 2's 0.61. Hence opt-in, per track job.
-Memory (issue #11, tools/hardware_bench.py, M4 Max): a 5.5 GB peak physical
-footprint tracking at fp32, 3.7 to 4.7 GB at fp16, the default on MPS
-(SAM_UI_SAM3_DTYPE=fp32 for full precision, see tracks/precision.py).
+Precision (issue #11): fp16 by default on MPS, SAM_UI_SAM3_DTYPE=fp32 for
+full precision (tracks/precision.py; measurements in docs/hardware.md).
 
 Absent ranges (issue #20): each window of frames between them gets a session
 of its own, seeded only from its seeds, so nothing crosses a gap.
