@@ -105,25 +105,38 @@ class TrackStore:
         if old is not None:
             shutil.rmtree(old, ignore_errors=True)
 
+    @staticmethod
+    def _live(final: Path) -> Path:
+        """Where the current track is, read-only: `final`, or, between save()'s
+        two renames (mid-swap, or a crash there), the .old dir it was moved to.
+        Readers take no lock, so they must never rename: one that put .old back
+        mid-swap would make the save's second rename fail."""
+        if final.exists():
+            return final
+        try:
+            olds = sorted(final.parent.glob(f".{final.name}.old-*"), key=lambda p: p.stat().st_mtime)
+        except FileNotFoundError:  # the swap finished and removed it: final is in place
+            return final
+        return olds[-1] if olds else final
+
     def _recover(self, final: Path) -> None:
         """Undo a crash between save()'s two renames: the previous track sits
-        in an .old dir and nothing in its place. Put it back."""
-        if final.exists() or not final.parent.is_dir():
+        in an .old dir and nothing in its place. Put it back. Writers only (they
+        hold the inference lock); readers use _live."""
+        if not final.parent.is_dir():
             return
-        olds = sorted(final.parent.glob(f".{final.name}.old-*"), key=lambda p: p.stat().st_mtime)
-        if olds:
-            os.replace(olds[-1], final)
+        live = self._live(final)
+        if live != final:
+            os.replace(live, final)
 
     def meta(self, video: str, obj_id: int, engine: str) -> Optional[Dict]:
-        self._recover(self._dir(video, obj_id, engine))
-        p = self._dir(video, obj_id, engine) / "track.json"
+        p = self._live(self._dir(video, obj_id, engine)) / "track.json"
         return json.loads(p.read_text()) if p.exists() else None
 
     def masks(self, video: str, obj_id: int, engine: str) -> Iterator[Tuple[int, Dict]]:
         """(frame, rle) for every stored frame, in order. RLE stays encoded: the
         stream sends it as is."""
-        self._recover(self._dir(video, obj_id, engine))
-        p = self._dir(video, obj_id, engine) / "masks.jsonl"
+        p = self._live(self._dir(video, obj_id, engine)) / "masks.jsonl"
         if not p.exists():
             return
         with open(p) as f:

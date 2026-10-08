@@ -149,3 +149,47 @@ def test_video_key_is_the_file_sha256(tmp_path):
     p.write_bytes(os.urandom(3_000_000))  # spans several read chunks
     import hashlib
     assert video_key(str(p)) == hashlib.sha256(p.read_bytes()).hexdigest()
+
+
+def _between_the_renames(monkeypatch, run):
+    """Call `run()` after save's first rename (the old track moved aside),
+    before its second (the new one moved in)."""
+    real = os.replace
+
+    def replace(src, dst):
+        real(src, dst)
+        if ".old-" in str(dst):
+            run()
+
+    monkeypatch.setattr("tracks.store.os.replace", replace)
+
+
+def test_a_reader_mid_save_neither_breaks_it_nor_sees_a_gap(tmp_path, monkeypatch):
+    t = TrackStore(tmp_path)
+    t.save(V, 1, "sam2", "m", "h1", {0: square()}, 0.1)
+    reader, seen = TrackStore(tmp_path), []
+    _between_the_renames(monkeypatch, lambda: seen.append(
+        (reader.meta(V, 1, "sam2")["seeds_hash"], len(list(reader.masks(V, 1, "sam2"))))))
+    t.save(V, 1, "sam2", "m", "h2", {0: square(), 1: square()}, 0.1)
+    assert seen == [("h1", 1)]  # the previous track, whole
+    assert t.meta(V, 1, "sam2")["seeds_hash"] == "h2" and len(list(t.masks(V, 1, "sam2"))) == 2
+    assert [p.name for p in (tmp_path / V / "1").iterdir() if p.name.startswith(".")] == []
+
+
+def test_a_crash_between_the_renames_recovers_on_next_access(tmp_path, monkeypatch):
+    t = TrackStore(tmp_path)
+    t.save(V, 1, "sam2", "m", "h1", {0: square()}, 0.1)
+
+    def die():
+        raise SystemExit("killed")  # the old track aside, nothing in its place
+
+    _between_the_renames(monkeypatch, die)
+    with pytest.raises(SystemExit):
+        t.save(V, 1, "sam2", "m", "h2", {0: square()}, 0.1)
+    monkeypatch.undo()
+    assert not (tmp_path / V / "1" / "sam2").exists()
+    after = TrackStore(tmp_path)  # the next process
+    assert after.meta(V, 1, "sam2")["seeds_hash"] == "h1" and len(list(after.masks(V, 1, "sam2"))) == 1
+    after.save(V, 1, "sam2", "m", "h3", {0: square()}, 0.1)  # the next writer puts it back, then saves
+    assert after.meta(V, 1, "sam2")["seeds_hash"] == "h3"
+    assert [p.name for p in (tmp_path / V / "1").iterdir() if p.name.startswith(".")] == []
