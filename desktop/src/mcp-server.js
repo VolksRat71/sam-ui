@@ -172,7 +172,7 @@ function createRpc({tools, callTool}) {
 function createMcpServer({backend, port = DEFAULT_PORT, exportRoot, log = () => {}}) {
   const tools = createTools({backend, exportRoot});
   const rpc = createRpc(tools);
-  const token = loadOrCreateToken();
+  loadOrCreateToken();
 
   const server = http.createServer((req, res) => {
     serve(req, res).catch(err => {
@@ -194,7 +194,8 @@ function createMcpServer({backend, port = DEFAULT_PORT, exportRoot, log = () => 
       return;
     }
     const supplied = /^Bearer (\S+)$/.exec(String(req.headers.authorization ?? ''))?.[1] ?? '';
-    if (!sameToken(supplied, readToken() ?? token)) {
+    const expected = readToken(); // read each time, so deleting the file revokes it
+    if (expected == null || !sameToken(supplied, expected)) {
       json(res, 401, {error: 'Missing or wrong bearer token. It is in ~/.sam-ui/token; sam-ui\'s Agents menu copies the setup command.'});
       return;
     }

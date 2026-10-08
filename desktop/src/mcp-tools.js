@@ -329,6 +329,10 @@ function createTools({backend, exportRoot = path.join(os.homedir(), 'Movies', 's
       throw new ToolError(`Tracking was refused: ${msg}`);
     }
     const jobId = res.headers['job-id'];
+    if (!jobId) {
+      res.destroy(); // a job nothing holds would outlive close() and sweep()
+      throw new ToolError('Tracking started without a job id; nothing to follow.');
+    }
     const objs = String(res.headers['objects-tracked'] ?? '').split(',').filter(Boolean).map(Number);
     const bounded = String(res.headers['objects-bounded'] ?? '').split(',').filter(Boolean).map(Number);
     const job = {sessionId: sid, objects: objs, result: null, endedAt: null, lastAt: now(), res};
@@ -351,8 +355,8 @@ function createTools({backend, exportRoot = path.join(os.homedir(), 'Movies', 's
       res.on('error', err => finish({done: false, error: `the stream broke: ${err.message}`}));
       res.on('close', () => finish({done: false, error: 'the stream closed early'}));
     });
-    if (jobId) held.set(jobId, job);
-    return {job_id: jobId ?? null, objects: objs, bounded};
+    held.set(jobId, job);
+    return {job_id: jobId, objects: objs, bounded};
   }
 
   async function jobStatus(sid, jobId) {

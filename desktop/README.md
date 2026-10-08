@@ -63,7 +63,7 @@ drawn on, walk the review queue and export. It is off until you tick
 **Agents → Allow agents (MCP)**, which the app remembers. The server listens on
 `127.0.0.1:8793` only, wants the bearer token in `~/.sam-ui/token` (made on
 first use, readable only by you), and refuses any request from a web page.
-Agents can't upload, delete or open files in place, and export only to
+Agents can remove an object and its tracks, but can't upload or delete files or open them in place, and export only to
 `~/Movies/sam-ui/<name>`, never over an existing export. **Agents → Copy Claude
 Code setup command** copies this line:
 

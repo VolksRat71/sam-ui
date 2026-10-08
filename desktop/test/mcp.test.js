@@ -430,3 +430,15 @@ test('closing the tools drops held track streams', async () => {
   const r = await call('sam_track', {command: 'status', session_id: 's1', job_id: 'job-1'});
   assert.strictEqual(r.isError, true);
 });
+
+test('deleting the token file revokes the token, and "null" never passes', async () => {
+  const saved = fs.readFileSync(tokenFile(), 'utf8');
+  fs.rmSync(tokenFile());
+  try {
+    assert.strictEqual((await raw({})).status, 401);
+    assert.strictEqual((await raw({auth: 'Bearer null'})).status, 401);
+  } finally {
+    fs.writeFileSync(tokenFile(), saved, {mode: 0o600});
+  }
+  assert.notStrictEqual((await raw({})).status, 401);
+});
