@@ -11,9 +11,11 @@
 // After Effects (ae-bridge.js, ae-roto.js) is reached from here only, never
 // from the page: its bridge refuses browser origins, and only this process
 // holds the token that lets the backend open a file in place.
+// Agents (MCP, mcp-server.js) are served from here too, on 127.0.0.1:8793, once
+// the person allows them (Agents menu).
 'use strict';
 
-const {app, BrowserWindow, Menu, dialog, ipcMain, shell} = require('electron');
+const {app, BrowserWindow, Menu, clipboard, dialog, ipcMain, shell} = require('electron');
 const {spawn} = require('node:child_process');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
@@ -23,6 +25,7 @@ const path = require('node:path');
 const {createAeClient, describeError} = require('./ae-bridge');
 const roto = require('./ae-roto');
 const {downloadRepo, downloadVerified} = require('./hf-download');
+const {DEFAULT_PORT: MCP_PORT, claudeAddCommand, createMcpServer} = require('./mcp-server');
 const {autoCheckEnabled, createUpdateChecker, fileLogger, fileStore, releasePageUrl} = require('./update-check');
 
 const CHECKPOINT_URL = 'https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_large.pt';
@@ -212,6 +215,38 @@ function stopBackend() {
   if (backend && backend.exitCode === null) backend.kill('SIGTERM');
 }
 
+// -- agents (mcp-server.js) ------------------------------------------------
+// Off until the person ticks Agents > Allow agents (MCP); the choice is kept.
+// The server's backend client has no link token: agents never open files in place.
+
+let mcp = null;
+
+async function startMcp() {
+  if (mcp != null || backendPort == null) return;
+  const server = createMcpServer({
+    backend: roto.backendClient({port: backendPort}),
+    exportRoot: path.join(app.getPath('home'), 'Movies', 'sam-ui'),
+  });
+  try {
+    await server.listen();
+    mcp = server;
+  } catch (err) {
+    dialog.showErrorBox('sam-ui: agents could not connect',
+      `The MCP server could not listen on 127.0.0.1:${MCP_PORT} (${err.message}). Is another sam-ui, or a dev MCP server, running?`);
+  }
+}
+
+async function stopMcp() {
+  const server = mcp;
+  mcp = null;
+  if (server != null) await server.close();
+}
+
+function setAgents(on) {
+  writeSettings({allowAgents: on});
+  return on ? startMcp() : stopMcp();
+}
+
 // -- app -------------------------------------------------------------------
 
 function menu(p) {
@@ -241,6 +276,18 @@ function menu(p) {
         },
         {label: 'Download SAM 3 with a Hugging Face token…', click: () => openSam3Window()},
         {label: 'Get SAM 3 weights (Hugging Face)', click: () => shell.openExternal('https://huggingface.co/facebook/sam3')},
+      ],
+    },
+    {
+      label: 'Agents',
+      submenu: [
+        {
+          label: 'Allow agents (MCP)',
+          type: 'checkbox',
+          checked: readSettings().allowAgents === true,
+          click: item => setAgents(item.checked),
+        },
+        {label: 'Copy Claude Code setup command', click: () => clipboard.writeText(claudeAddCommand(MCP_PORT))},
       ],
     },
     {role: 'windowMenu'},
@@ -273,6 +320,7 @@ async function main() {
     backendPort = await freePort();
     backend = startBackend(p, backendPort);
     await waitHealthy(backendPort);
+    if (readSettings().allowAgents === true) startMcp(); // not awaited: a taken port says so in a dialog
   } catch (err) {
     dialog.showErrorBox('sam-ui could not start', `${err.message}\n\nThe log is at ${path.join(p.logDir, 'backend.log')}`);
     quitting = true;
@@ -472,6 +520,7 @@ aeHandle('ae:export', async (req, event) => {
 
 app.on('before-quit', () => {
   quitting = true;
+  stopMcp();
   stopBackend();
 });
 app.on('window-all-closed', () => app.quit());
