@@ -141,6 +141,17 @@ proxy.build_proxy(Path(sys.argv[1]),Path(sys.argv[2]),ProxyRecipe(64,32),100)
     assert all(p.exists() for p in debris), 'retry must not remove another attempt staging'
 
 
+def test_symlinked_ancestor_is_trusted(tmp_path,enabled):
+    real=tmp_path/'real';real.mkdir();directory=asset(real)
+    data=tmp_path/'data';data.symlink_to(real,target_is_directory=True)
+    record=build(data/'assets'/directory.name,data/'proxies')
+    assert (real/'proxies'/record['proxy_id']/'video.mp4').is_file()
+    variant=real/'proxies'/record['proxy_id'];moved=tmp_path/'elsewhere';variant.rename(moved)
+    variant.symlink_to(moved,target_is_directory=True)
+    with pytest.raises(ValueError,match='symlink_asset_path'):
+        build(data/'assets'/directory.name,data/'proxies')
+
+
 def test_symlink_variant_refused(tmp_path,enabled):
     directory=asset(tmp_path);root=tmp_path/'proxies';record=build(directory,root)
     variant=root/record['proxy_id'];moved=tmp_path/'elsewhere';variant.rename(moved)
