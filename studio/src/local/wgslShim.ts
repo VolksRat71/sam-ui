@@ -6,7 +6,8 @@
 //     do not compile (gfx-rs/wgpu#8896). ORT unpacks f16 uniforms that way, so
 //     the fp16 models' Pad shader fails and the first mask never comes.
 //     unpack2x16float does the same unpacking, and the f16 -> f32 -> f16
-//     round trip is exact.
+//     round trip is exact for every value (a signalling NaN's payload bits
+//     may be quieted).
 //   - on Metal, two aliases of the same array type become two distinct types,
 //     so passing one where the other is expected fails when the pipeline is
 //     made. ORT's indices aliases for rank > 4 tensors (input_0_indices_t =
@@ -16,7 +17,7 @@
 // ponytail: remove once Firefox's naga fixes both (check by deleting this and
 // running the juggle sample in Firefox).
 
-const BITCAST = /bitcast\s*<\s*vec2\s*<\s*f16\s*>\s*>\s*\(/g;
+const BITCAST = /\bbitcast\s*<\s*vec2\s*<\s*f16\s*>\s*>\s*\(/g;
 
 /** `code` with every bitcast<vec2<f16>>(x) written as vec2<f16>(unpack2x16float(bitcast<u32>(x))). */
 export function rewriteF16Bitcasts(code: string): string {
@@ -50,6 +51,8 @@ export function inlineArrayAliases(code: string): string {
   if (aliases.size === 0) {
     return code;
   }
+  // ponytail: replaces whole-word matches anywhere, so a member or variable named like an alias would be clobbered
+  // (ORT's *_indices_t names don't collide today), and an alias of an alias is only partly inlined.
   return stripped.replace(new RegExp(`\\b(${[...aliases.keys()].join('|')})\\b`, 'g'), name => aliases.get(name)!);
 }
 

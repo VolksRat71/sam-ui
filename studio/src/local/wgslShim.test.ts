@@ -21,6 +21,13 @@ describe('inlineArrayAliases', () => {
     );
     expect(inlineArrayAliases('alias a = vec4<u32>;')).toBe('alias a = vec4<u32>;');
   });
+
+  it('inlines uses before the declaration and constructor calls, and is idempotent', () => {
+    const code = 'fn f() { var i = output_indices_t(0u, 1u, 2u, 3u, 4u); }\nalias output_indices_t = array<u32, 5>;';
+    const once = inlineArrayAliases(code);
+    expect(once).toBe('fn f() { var i = array<u32, 5>(0u, 1u, 2u, 3u, 4u); }\n');
+    expect(inlineArrayAliases(once)).toBe(once);
+  });
 });
 
 describe('rewriteF16Bitcasts', () => {
@@ -40,6 +47,18 @@ describe('rewriteF16Bitcasts', () => {
     const plain = 'let a = bitcast<f32>(u); let b = bitcast<vec4<f16>>(v);';
     expect(rewriteF16Bitcasts(plain)).toBe(plain);
     expect(rewriteF16Bitcasts('bitcast<vec2<f16>>(x')).toBe('bitcast<vec2<f16>>(x');
+    expect(rewriteF16Bitcasts('mybitcast<vec2<f16>>(x)')).toBe('mybitcast<vec2<f16>>(x)');
+  });
+
+  it('rewrites the Clip form, spaced-out forms and two on one line, and is idempotent', () => {
+    const clip = 'vec4<f16>(bitcast<vec2<f16>>(uniforms.attr)[0])';
+    expect(rewriteF16Bitcasts(clip)).toBe('vec4<f16>(vec2<f16>(unpack2x16float(bitcast<u32>(uniforms.attr)))[0])');
+    expect(rewriteF16Bitcasts('bitcast< vec2< f16 > >\n( x )')).toBe('vec2<f16>(unpack2x16float(bitcast<u32>( x )))');
+    expect(rewriteF16Bitcasts('let a = bitcast<vec2<f16>>(u.a)[0]; let b = bitcast<vec2<f16>>(u.b)[1];')).toBe(
+      'let a = vec2<f16>(unpack2x16float(bitcast<u32>(u.a)))[0]; let b = vec2<f16>(unpack2x16float(bitcast<u32>(u.b)))[1];',
+    );
+    const once = rewriteF16Bitcasts(clip);
+    expect(rewriteF16Bitcasts(once)).toBe(once);
   });
 
   it('patches createShaderModule', () => {
