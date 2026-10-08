@@ -5,6 +5,7 @@ from pathlib import Path
 import struct
 
 import av
+from av.video.reformatter import ColorRange, Colorspace, VideoReformatter
 
 from .proxy_contract import SourceAsset, fraction
 from .retention import _hash
@@ -33,6 +34,13 @@ def _check_display_data(frame) -> None:
     for side in frame.side_data:
         kind = side.type.name
         if kind == 'PANSCAN':
+            # FFmpeg's MPEG-2 decoder attaches one to every frame (XDCAM, IMX); an
+            # empty or whole-frame rectangle at no offset crops nothing.
+            data = bytes(side)
+            if len(data) >= 24:
+                _id,width,height,*position = struct.unpack('=3i6h',data[:24])
+                if not any(position) and (width,height) in ((0,0),(frame.width*16,frame.height*16)):
+                    continue
             raise ValueError('unsupported_display_crop')
         if kind == 'DISPLAYMATRIX':
             matrix = struct.unpack('=9i',bytes(side))
@@ -45,7 +53,30 @@ def _check_display_data(frame) -> None:
                 raise ValueError('unsupported_display_transform')
 
 
-def encode_proxy(source: SourceAsset, recipe: dict, output: Path) -> None:
+def _bt709(src, dst, reformatter: VideoReformatter):
+    """For display (`tag_colour`): tag the output the way a browser will read
+    it. RGB sources (Animation, PNG) are converted with the BT.709 matrix and
+    tagged BT.709; YUV sources keep their matrix and pass on the tags they
+    have. Full-range input is scaled to limited range, which the H.264 says."""
+    ctx = src.codec_context
+    rgb = ctx.format is not None and ctx.format.is_rgb
+    out = dst.codec_context
+    out.color_range = ColorRange.MPEG
+    for name in ('colorspace','color_primaries','color_trc'):
+        value = 1 if rgb else getattr(ctx,name)  # 1 is BT.709 in all three enums
+        if value not in (None,2):  # 2: unspecified
+            setattr(out,name,value)
+
+    def convert(frame, w, h):
+        return reformatter.reformat(frame,width=w,height=h,format='yuv420p',interpolation='BICUBIC',
+                                    dst_colorspace=Colorspace.ITU709 if rgb else None,
+                                    src_color_range=None if rgb else frame.color_range,
+                                    dst_color_range=ColorRange.MPEG)
+    return convert
+
+
+def encode_proxy(source: SourceAsset, recipe: dict, output: Path, *, preset: str = 'medium',
+                 threads: str = '1', tag_colour: bool = False) -> None:
     rows = source.inspection['frames']
     origin = fraction(rows[0]['pts'])
     base = time_base_for(source)
@@ -67,7 +98,8 @@ def encode_proxy(source: SourceAsset, recipe: dict, output: Path) -> None:
         stream.pix_fmt = 'yuv420p'
         stream.time_base = stream.codec_context.time_base = base
         stream.codec_context.sample_aspect_ratio = sar
-        stream.options = {'crf':'23','preset':'medium','threads':'1','bf':'0'}
+        stream.options = {'crf':'23','preset':preset,'threads':threads,'bf':'0'}
+        convert = _bt709(selected,stream,VideoReformatter()) if tag_colour else None
         seen = set()
         def mux(packet):
             stamp = Fraction(packet.pts)*packet.time_base
@@ -91,7 +123,8 @@ def encode_proxy(source: SourceAsset, recipe: dict, output: Path) -> None:
             if [frame.width,frame.height] != recipe['geometry']['source_raster']:
                 raise ValueError('source_geometry_mismatch')
             _check_display_data(frame)
-            resized = frame.reformat(width=w,height=h,format='yuv420p',interpolation='BICUBIC')
+            resized = (convert(frame,w,h) if convert else
+                       frame.reformat(width=w,height=h,format='yuv420p',interpolation='BICUBIC'))
             resized.pts,resized.time_base = ticks[i],base
             for packet in stream.encode(resized):mux(packet)
             count += 1
