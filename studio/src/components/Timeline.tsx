@@ -79,6 +79,12 @@ type Selection = {id: number; start: number; end: number};
 /** A candidate picked for review, by its object and span. */
 type Picked = {id: number; start: number; end: number};
 
+/** Open (never toggle shut) a layer's lane Actions menu: a key and the contextmenu it may also fire both land here. */
+function openLaneActions(lanes: HTMLElement, id: number) {
+  const button = lanes.querySelector<HTMLButtonElement>(`[data-lane="${id}"] .lane-actions button`);
+  if (button?.getAttribute('aria-expanded') !== 'true') button?.click();
+}
+
 function candidatesOf(o: StudioObject | undefined): Mark[] {
   return o?.marks.filter(m => m.state === CANDIDATE) ?? [];
 }
@@ -355,6 +361,14 @@ export default function Timeline({session, actions, inspector}: Props) {
       </div>
       </div>
       <div className="lanes suite-lanes" style={{'--label-width': `${labelWidth}px`} as CSSProperties}
+        onContextMenu={e => {
+          // right-click, a touch long press, or VoiceOver's VO Shift M on a layer or its lane: its Actions, not the browser's menu
+          const id = (e.target as HTMLElement).closest<HTMLElement>('[data-layer-option], [data-lane]')?.dataset;
+          const key = id?.layerOption ?? id?.lane;
+          if (key == null) return;
+          e.preventDefault();
+          openLaneActions(e.currentTarget, Number(key));
+        }}
         onKeyDown={e => {
           // a layer's list option and its frame lane share these keys, so the lane and its Actions need no Tab stop of their own
           const el = e.target as HTMLElement;
@@ -363,7 +377,7 @@ export default function Timeline({session, actions, inspector}: Props) {
           if (o == null || e.altKey || e.ctrlKey || e.metaKey) return;
           if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
             e.preventDefault(); e.stopPropagation();
-            e.currentTarget.querySelector<HTMLButtonElement>(`[data-lane="${o.id}"] .lane-actions button`)?.click();
+            openLaneActions(e.currentTarget, o.id);
           } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
             e.preventDefault(); e.stopPropagation();
             const next = Math.max(0, Math.min(n - 1, frame + (e.key === 'ArrowRight' ? 1 : -1)));

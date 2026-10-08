@@ -12,7 +12,7 @@ const shortcuts = [
   ['Alt Up / Alt Down', 'Reorder the focused layer or group'],
   ['K / Shift K', 'Next or previous keyframe while a layer or its frame lane has focus'],
   ['Shift Left / Shift Right', 'Select a frame span while a layer or its frame lane has focus'],
-  ['Shift F10', 'Open the focused layer’s lane actions'],
+  ['Shift F10 · right-click', 'Open a layer’s lane actions (Fn Shift F10 on Mac laptops)'],
   ['. / ,', 'Next or previous review marker, in priority order'],
   ['Y', 'Mark the current review stop as looking right'],
   ['F', 'Toggle a correction marker on the current frame'],

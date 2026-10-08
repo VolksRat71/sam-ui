@@ -27,4 +27,5 @@ it('gives the Layers list one Tab stop: lanes and their Actions are reached from
   expect(lanes.every(l => l.includes('tabindex="-1"'))).toBe(true);
   expect(actions.every(a => a.includes('tabindex="-1"'))).toBe(true);
   expect(options.filter(o => o.includes('tabindex="0"'))).toHaveLength(1); // the selected layer's, roving
+  expect(options.every(o => o.includes('aria-keyshortcuts="Shift+F10"'))).toBe(true); // the way to its Actions
 });
