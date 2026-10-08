@@ -281,7 +281,11 @@ def register(path: str, source: Dict, hash_file=None) -> Tuple[Video, Dict]:
         if os.path.realpath(link) != real:
             link.unlink()
     if not link.is_symlink():
-        os.symlink(real, link)
+        try:
+            os.symlink(real, link)
+        except FileExistsError:  # a link of the same file at the same time (a retry) made it first
+            if os.path.realpath(link) != real:
+                raise
     st = os.stat(real)
     record = {
         "version": 1,
@@ -294,7 +298,11 @@ def register(path: str, source: Dict, hash_file=None) -> Tuple[Video, Dict]:
         "preview": preview,
         "linked": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     }
-    _record_file(name).write_text(json.dumps(record, indent=1))
+    # whole or not at all, even with a second link of the same file writing it at the same time
+    fd, tmp = tempfile.mkstemp(prefix=f".{name}.", suffix=".tmp", dir=_sources())
+    with os.fdopen(fd, "w") as f:
+        f.write(json.dumps(record, indent=1))
+    os.replace(tmp, _record_file(name))
     _sweep_previews()
     video = _video(name, record)
     from data.store import get_videos
