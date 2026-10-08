@@ -60,7 +60,7 @@ export type AeBridge = {
 };
 
 /** A job that ended, as studio tells the desktop app. Main writes the notification's words. */
-export type JobDone = {kind: 'track'; ok: boolean; objectIds: number[]; name: string};
+export type JobDone = {kind: 'track'; ok: boolean; engine: string; objectIds: number[]; name: string};
 
 /**
  * Job notifications (desktop/src/job-notify.js): studio says a job ended and
@@ -92,8 +92,9 @@ export function jobsBridge(): JobsBridge | null {
   return jobs != null && typeof jobs.done === 'function' && typeof jobs.onOpen === 'function' ? jobs : null;
 }
 
-/** A clicked notification's object ids, or null for anything else. */
-export function asJobOpen(x: unknown): number[] | null {
-  const ids = (x as {objectIds?: unknown} | null)?.objectIds;
-  return Array.isArray(ids) && ids.length > 0 && ids.every(id => Number.isSafeInteger(id) && id >= 0) ? ids : null;
+/** A clicked notification's engine and object ids, or null for anything else. */
+export function asJobOpen(x: unknown): {engine: string; objectIds: number[]} | null {
+  const {engine, objectIds} = (x ?? {}) as {engine?: unknown; objectIds?: unknown};
+  const idsOk = Array.isArray(objectIds) && objectIds.length > 0 && objectIds.every(id => Number.isSafeInteger(id) && id >= 0);
+  return idsOk && typeof engine === 'string' ? {engine, objectIds} : null;
 }

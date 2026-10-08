@@ -275,6 +275,25 @@ export function seedFrames(o: StudioObject): number[] {
   return [...frames].sort((a, b) => a - b);
 }
 
+/**
+ * Of the watched objects (another job holds them on `engine`), the ones it has
+ * let go, from objectTracks' answer. The top-level state is the default
+ * engine's, so this reads `engine`'s own. `ok`: every one of them ended tracked.
+ * An object the answer no longer has counts as let go, and not ok.
+ */
+export function releasedOn(
+  objects: ReadonlyArray<ServerObject>,
+  watched: ReadonlyArray<number>,
+  engine: string,
+): {ids: number[]; ok: boolean} {
+  const states = watched.map(id => {
+    const o = objects.find(x => x.objectId === id);
+    return [id, o == null ? null : fromServer(o, engine).state] as const;
+  });
+  const released = states.filter(([, st]) => st !== 'tracking');
+  return {ids: released.map(([id]) => id), ok: released.every(([, st]) => st === 'tracked')};
+}
+
 /** Held by a running job on the current engine, this page's or another's. */
 export function isTracking(o: StudioObject): boolean {
   return o.running || o.state === 'tracking';

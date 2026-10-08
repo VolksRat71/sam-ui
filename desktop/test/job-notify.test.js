@@ -23,6 +23,10 @@ function fakeNotificationClass() {
     show() {
       this.shown = true;
     }
+    close() {
+      this.closed = true;
+      this.handlers.close?.();
+    }
     click() {
       this.handlers.click();
     }
@@ -52,11 +56,12 @@ function setup({on = true, win = fakeWindow()} = {}) {
   if (win != null) win.webContents.owner = win;
   const Notification = fakeNotificationClass();
   let enabled = on;
-  const jobDone = createJobNotifier({Notification, enabled: () => enabled, getWindow: () => win});
-  return {jobDone, Notification, win, setEnabled: v => (enabled = v)};
+  const clock = {t: 1000000};
+  const jobDone = createJobNotifier({Notification, enabled: () => enabled, getWindow: () => win, now: () => clock.t});
+  return {jobDone, Notification, win, clock, setEnabled: v => (enabled = v)};
 }
 
-const done = (extra = {}) => ({kind: 'track', ok: true, objectIds: [2, 0], name: 'Dog', ...extra});
+const done = (extra = {}) => ({kind: 'track', ok: true, engine: 'sam3', objectIds: [2, 0], name: 'Dog', ...extra});
 
 describe('when it notifies', () => {
   test('off by default: only "notifyJobDone": true turns it on', () => {
@@ -107,7 +112,7 @@ describe('a click', () => {
     assert.deepStrictEqual(win.calls, []); // nothing until the click
     Notification.made[0].click();
     assert.deepStrictEqual(win.calls, ['show', 'focus', 'send']);
-    assert.deepStrictEqual(win.sent, [{channel: 'jobs:open', payload: {kind: 'track', objectIds: [2, 0]}}]);
+    assert.deepStrictEqual(win.sent, [{channel: 'jobs:open', payload: {kind: 'track', engine: 'sam3', objectIds: [2, 0]}}]);
   });
 
   test('restores a minimized window first', () => {
@@ -115,6 +120,39 @@ describe('a click', () => {
     jobDone(done());
     Notification.made[0].click();
     assert.deepStrictEqual(win.calls, ['restore', 'show', 'focus', 'send']);
+  });
+});
+
+describe('one at a time', () => {
+  test('the one on screen is kept until it is clicked', () => {
+    const {jobDone, Notification} = setup();
+    jobDone(done());
+    assert.strictEqual(jobDone.showing(), Notification.made[0]);
+    Notification.made[0].click();
+    assert.strictEqual(jobDone.showing(), null);
+  });
+
+  test('or closed', () => {
+    const {jobDone, Notification} = setup();
+    jobDone(done());
+    Notification.made[0].close();
+    assert.strictEqual(jobDone.showing(), null);
+  });
+
+  test('a flood shows one, and a later job replaces it', () => {
+    const {jobDone, Notification, clock} = setup();
+    let shown = 0;
+    for (let i = 0; i < 100; i++) {
+      shown += jobDone(done({objectIds: [i]})) ? 1 : 0;
+      clock.t += 10;
+    }
+    assert.strictEqual(shown, 1);
+    assert.strictEqual(Notification.made.length, 1);
+    clock.t += 5000;
+    assert.strictEqual(jobDone(done({ok: false})), true);
+    assert.strictEqual(Notification.made.length, 2);
+    assert.ok(Notification.made[0].closed); // replaced, not piled up
+    assert.strictEqual(jobDone.showing(), Notification.made[1]);
   });
 });
 
@@ -142,6 +180,8 @@ describe('payload validation', () => {
       [],
       done({kind: 'refine'}),
       done({kind: '__proto__'}),
+      done({engine: undefined}),
+      done({engine: 'gpt'}),
       done({ok: 'yes'}),
       done({ok: undefined}),
       done({objectIds: []}),
@@ -159,6 +199,6 @@ describe('payload validation', () => {
   });
 
   test('extra fields are dropped, never shown', () => {
-    assert.deepStrictEqual(parseJobDone(done({title: 'pwned', body: 'pwned'})), {kind: 'track', ok: true, objectIds: [2, 0], name: 'Dog'});
+    assert.deepStrictEqual(parseJobDone(done({title: 'pwned', body: 'pwned'})), {kind: 'track', ok: true, engine: 'sam3', objectIds: [2, 0], name: 'Dog'});
   });
 });
