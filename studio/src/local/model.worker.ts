@@ -22,9 +22,11 @@ ort.env.logLevel = 'error';
 // worker, and its teardown reads the worker's freed inspector (issue #3).
 // onnxruntime-web sets that listener only to report errors, so in WebKit the
 // setter ignores it.
+// ponytail: remove once WebKit fixes GPUDevice teardown with an uncapturederror
+// listener (not filed upstream yet); recheck with the reload repro under Playwright WebKit
 const ua = self.navigator.userAgent;
 const GpuDevice = (self as unknown as {GPUDevice?: {prototype: object}}).GPUDevice;
-if (/AppleWebKit/.test(ua) && !/Chrome|Chromium|Edg/.test(ua) && GpuDevice != null) {
+if (/AppleWebKit/.test(ua) && !/Chrome\//.test(ua) && GpuDevice != null) {
   Object.defineProperty(GpuDevice.prototype, 'onuncapturederror', {configurable: true, get: () => null, set: () => {}});
 }
 
