@@ -507,30 +507,29 @@ function ObjectRow({
   );
 }
 
-/** A group's name; double-click it, or the pencil, to rename in place. */
-function GroupName({group, onRename}: {group: ObjectGroup; onRename: (name: string) => void}) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState('');
+/** A group's name; double-click it, the pencil, or Actions > Rename edits it in place. */
+function GroupName({group, editing, setEditing, onRename}: {group: ObjectGroup; editing: boolean; setEditing: (on: boolean) => void; onRename: (name: string) => void}) {
+  const [draft, setDraft] = useState<string | null>(null);
   const done = useRef(false);
+  const opener = useRef<HTMLElement | null>(null);
   const input = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (editing) {
+      done.current = false;
+      opener.current = document.activeElement as HTMLElement | null;
       input.current?.focus();
       input.current?.select();
     }
   }, [editing]);
-  const start = () => {
-    done.current = false;
-    setDraft(group.name);
-    setEditing(true);
-  };
+  const start = () => setEditing(true);
   const finish = (save: boolean) => {
     if (done.current) {
       return;
     }
     done.current = true;
     setEditing(false);
-    if (save && draft.trim() !== group.name) {
+    setDraft(null);
+    if (save && draft != null && draft.trim() !== group.name) {
       onRename(draft);
     }
   };
@@ -539,7 +538,7 @@ function GroupName({group, onRename}: {group: ObjectGroup; onRename: (name: stri
       <input
         ref={input}
         className="object-name-input"
-        value={draft}
+        value={draft ?? group.name}
         maxLength={GROUP_NAME_MAX}
         aria-label={`Rename group ${group.name}`}
         onClick={e => e.stopPropagation()}
@@ -547,10 +546,11 @@ function GroupName({group, onRename}: {group: ObjectGroup; onRename: (name: stri
         onBlur={() => finish(true)}
         onKeyDown={e => {
           e.stopPropagation();
-          if (e.key === 'Enter') {
-            finish(true);
-          } else if (e.key === 'Escape') {
-            finish(false);
+          if (e.key === 'Enter' || e.key === 'Escape') {
+            e.preventDefault(); // or the Enter also toggles the Actions button focus lands on
+            finish(e.key === 'Enter');
+            // back to what opened the edit (Actions > Rename leaves focus on the Actions button)
+            opener.current?.focus();
           }
         }}
       />
@@ -586,6 +586,7 @@ function GroupBlock({
 }) {
   const {state, busy} = session;
   const [drop, setDrop] = useState<'into' | 'before' | null>(null);
+  const [renaming, setRenaming] = useState(false);
   const members = group.members.map(id => state.objects.find(o => o.id === id)).filter((o): o is StudioObject => o != null);
   const toTrack = groupDirtyIds(state, group.id);
   const clearable = members.filter(o => clearTarget(o, state.engine) != null);
@@ -641,7 +642,7 @@ function GroupBlock({
             {group.collapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
           </button>
           <span className="layer-swatch" style={{background: group.color}} aria-hidden="true" />
-          <GroupName group={group} onRename={name => session.updateGroup(group.id, {name})} />
+          <GroupName group={group} editing={renaming} setEditing={setRenaming} onRename={name => session.updateGroup(group.id, {name})} />
           <span className="muted small">{count}</span>
           <button
             className="icon-button small"
@@ -661,6 +662,20 @@ function GroupBlock({
             title="Group colour"
             onChange={e => session.updateGroup(group.id, {color: e.target.value})}
           />
+          <button
+            className="link-button"
+            title="Rename the group"
+            onClick={e => {
+              // close the menu and park focus on its button, where Enter / Escape in the name field return
+              const menu = e.currentTarget.closest('details');
+              if (menu != null) {
+                menu.open = false;
+                menu.querySelector('summary')?.focus();
+              }
+              setRenaming(true);
+            }}>
+            <Edit size={14} /> Rename
+          </button>
 
           <button
             className="link-button"
