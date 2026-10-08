@@ -116,7 +116,7 @@ export async function runNoServer({url, clip, out, check}) {
   await settle();
   await page.reload();
   await ready();
-  const names = await page.$$eval('.object-row .layer-name', ns => ns.map(n => n.innerText));
+  const names = await page.$$eval('.object-row .layer-summary :is(.layer-name, .object-name-text)', ns => ns.map(n => n.innerText));
   check(names[0] === 'Red disc' && (await rows()).every(r => /Tracked/.test(r)), `no-server: rename persists and leaves tracks (${names.join(', ')})`);
 
   // exports
