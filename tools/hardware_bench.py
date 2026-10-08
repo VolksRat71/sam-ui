@@ -56,7 +56,8 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "tools"))
-sys.path.insert(1, str(REPO))  # this tree's sam2, not the venv's editable install (a worktree, a baseline copy)
+# this tree's sam2, not the venv's editable install (a worktree, a baseline copy)
+sys.path.insert(1, str(REPO))
 GALLERY = Path(os.environ.get("SAM_UI_GALLERY", REPO / "demo/data/gallery"))
 if not GALLERY.is_dir():  # a worktree without the gallery: the main checkout's
     GALLERY = REPO.parents[2] / "demo/data/gallery"
