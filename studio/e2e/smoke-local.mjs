@@ -19,7 +19,7 @@ export async function runNoServer({url, clip, out, check}) {
   const page = await newPage(browser, {width: 1440, height: 900});
   const errors = [];
   page.on('pageerror', e => errors.push(String(e)));
-  const rows = () => page.$$eval('.object-row .object-title', rs => rs.map(r => r.innerText.replace(/\n/g, ' ')));
+  const rows = () => page.$$eval('.object-row .layer-summary', rs => rs.map(r => r.innerText.replace(/\n/g, ' ')));
   const clickAt = async (nx, ny) => {
     const b = await page.$eval('.click-layer', e => {
       const r = e.getBoundingClientRect();
@@ -54,6 +54,14 @@ export async function runNoServer({url, clip, out, check}) {
   };
 
   await page.goto(url);
+  // start from an empty OPFS: Playwright's WebKit keeps it across profile folders
+  await page.evaluate(async () => {
+    const root = await navigator.storage.getDirectory();
+    for await (const name of root.keys()) {
+      await root.removeEntry(name, {recursive: true}).catch(() => {}); // a leftover then fails the samples check
+    }
+  });
+  await page.reload();
   await page.waitForSelector('.dropzone', {timeout: 60000});
   // it shows once the first video's session is up
   const banner = await page.waitForSelector('.demo-banner', {timeout: 60000}).catch(() => null);
@@ -79,32 +87,37 @@ export async function runNoServer({url, clip, out, check}) {
   // three objects (the model downloads on the first click)
   await clickAt(0.1875, 0.375);
   await settle();
-  await page.click('button:has-text("Add object")');
+  await page.click('button:has-text("Add layer")');
   await clickAt(0.766, 0.729);
   await settle();
-  await page.click('button:has-text("Add object")');
+  await page.click('button:has-text("Add layer")');
   await clickAt(0.781, 0.25);
   await settle();
   await page.waitForFunction(() => document.querySelectorAll('.object-row').length === 3, null, {timeout: 60000});
   await page.click('.cta');
   await idle();
-  check((await rows()).every(r => /tracked/i.test(r)), `no-server: track ${JSON.stringify(await rows())}`);
+  check((await rows()).every(r => /Tracked/.test(r)), `no-server: track ${JSON.stringify(await rows())}`);
 
   // reload: objects and tracks come back from OPFS
   await page.reload();
   await ready();
   await page.waitForFunction(() => document.querySelectorAll('.swimlane-segment').length >= 3, null, {timeout: 60000});
-  check((await rows()).length === 3 && (await rows()).every(r => /tracked/i.test(r)), `no-server: reload restores from OPFS ${JSON.stringify(await rows())}`);
+  check((await rows()).length === 3 && (await rows()).every(r => /Tracked/.test(r)), `no-server: reload restores from OPFS ${JSON.stringify(await rows())}`);
 
   // rename, and the name survives a reload
-  await page.dblclick('.object-row >> nth=0 >> .object-name-text');
+  // the name is edited in Layer info, for the selected layer
+  const first = page.locator('.object-row').first();
+  if (!(await first.evaluate(r => r.classList.contains('active')))) {
+    await first.locator('.layer-summary').click();
+  }
+  await page.dblclick('.layer-details .object-name-text');
   await page.fill('.object-name-input', 'Red disc');
   await page.keyboard.press('Enter');
   await settle();
   await page.reload();
   await ready();
-  const names = await page.$$eval('.object-row .object-name-text', ns => ns.map(n => n.innerText));
-  check(names[0] === 'Red disc' && (await rows()).every(r => /tracked/i.test(r)), `no-server: rename persists and leaves tracks (${names.join(', ')})`);
+  const names = await page.$$eval('.object-row .layer-name', ns => ns.map(n => n.innerText));
+  check(names[0] === 'Red disc' && (await rows()).every(r => /Tracked/.test(r)), `no-server: rename persists and leaves tracks (${names.join(', ')})`);
 
   // exports
   const stem = path.basename(clip).replace(/\.[^.]+$/, '');

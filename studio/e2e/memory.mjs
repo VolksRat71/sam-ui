@@ -299,7 +299,7 @@ try {
   phase = 'tracked';
   await page.waitForTimeout(3000);
   summary.tracked = await sample();
-  const row = await page.$eval('.object-row .object-title', e => e.innerText.replace(/\n/g, ' ')).catch(() => '');
+  const row = await page.$eval('.object-row .layer-summary', e => e.innerText.replace(/\n/g, ' ')).catch(() => '');
   summary.objectRow = row;
 
   const track = rows.filter(r => r.phase === 'tracking' && r.frame !== '');

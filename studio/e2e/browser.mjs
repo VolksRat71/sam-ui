@@ -6,18 +6,29 @@
 //   firefox: the installed Firefox over WebDriver BiDi, FIREFOX its binary
 //     (default /Applications/Firefox.app);
 //   webkit: Playwright's WebKit build. It is the engine behind Safari, not
-//     Safari itself, so a pass here says nothing certain about Safari.
+//     Safari itself, so a pass here says nothing certain about Safari. Its
+//     ephemeral contexts have no OPFS (getDirectory() fails), so it runs in
+//     a persistent context on a fresh profile folder, which launch() returns
+//     in place of a browser (both have newPage(), addInitScript() and close()).
 import {chromium, firefox, webkit} from 'playwright-core';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 export const BROWSER = process.env.BROWSER ?? 'chrome';
 const CHROME = process.env.CHROME ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 
 export function launch(chromeArgs = []) {
   if (BROWSER === 'firefox') {
-    return firefox.launch({channel: 'moz-firefox', executablePath: process.env.FIREFOX, headless: false});
+    // studio asks for persistent storage; Firefox asks the user, and these
+    // test-profile prefs answer Allow so an unattended run is not left with a prompt
+    const firefoxUserPrefs = {'dom.storageManager.prompt.testing': true, 'dom.storageManager.prompt.testing.allow': true};
+    return firefox.launch({channel: 'moz-firefox', executablePath: process.env.FIREFOX, headless: false, firefoxUserPrefs});
   }
   if (BROWSER === 'webkit') {
-    return webkit.launch({headless: false});
+    // ponytail: the profile folder is left in the temp dir
+    const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'sam-ui-webkit-'));
+    return webkit.launchPersistentContext(profile, {headless: false, acceptDownloads: true});
   }
   return chromium.launch({executablePath: CHROME, headless: false, args: ['--enable-unsafe-webgpu', ...chromeArgs]});
 }
@@ -28,7 +39,7 @@ export function launch(chromeArgs = []) {
  * dropzone and the delete buttons the runs click.
  */
 export async function newPage(browser, viewport) {
-  const context = await browser.newContext({viewport, acceptDownloads: true});
+  const context = BROWSER === 'webkit' ? browser : await browser.newContext({viewport, acceptDownloads: true});
   await context.addInitScript(() => {
     try {
       const key = 'sam-ui-suite:sections-open';
@@ -37,5 +48,7 @@ export async function newPage(browser, viewport) {
       // no storage on this page (about:blank)
     }
   });
-  return context.newPage();
+  const page = await context.newPage();
+  await page.setViewportSize(viewport);
+  return page;
 }
