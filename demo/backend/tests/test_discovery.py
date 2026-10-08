@@ -458,3 +458,17 @@ def test_real_sam3_discovers_a_dog_that_leaves_and_comes_back():
     assert len(found) == len(spans)
     for a, (s, e_) in zip(found, spans):
         assert abs(a["start"] - s) <= 3 and abs(a["end"] - e_) <= 3
+
+
+def test_closing_the_session_cancels_its_scan(tmp_path):
+    """/discover_text is a plain request, not a stream: closing the tab must
+    stop it, or a stray scan runs to the end of the clip."""
+    from inference.data_types import CloseSessionRequest
+    from inference.predictor import InferenceAPI
+    from test_inference_api import StubPredictor
+
+    a = InferenceAPI(predictor=StubPredictor(), tracks_root=str(tmp_path / "tracks"))
+    mine = a.tracks.jobs.claim("tab", "v", [1], kind="discover")
+    other = a.tracks.jobs.claim("other", "v", [2], kind="discover")
+    a.close_session(CloseSessionRequest(type="close_session", session_id="tab"))
+    assert mine.canceled and not other.canceled
