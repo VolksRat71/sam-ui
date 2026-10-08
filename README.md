@@ -56,8 +56,8 @@ and the app's SAM 2.1 large and SAM 3 give much better masks. Or [run it from so
 Each links to its section in [Features](docs/features.md); how studio works control by
 control is in [Using studio](docs/using-studio.md).
 
-- **[Track](docs/features.md#track):** click an object or describe it (SAM 3), and track
-  it with SAM 2.1 large, SAM 3 or SAM 2.1 tiny in the browser.
+- **[Track](docs/features.md#track):** click an object, describe it, or find it across the
+  clip (SAM 3), and track it with SAM 2.1 large, SAM 3 or SAM 2.1 tiny in the browser.
 - **[Correct](docs/features.md#correct):** fix any frame, re-track only around the fix
   (SAM 2), mark where an object is absent, undo, and go back to kept versions.
 - **[Review](docs/features.md#review):** a short, ranked list of stops worth a look on
@@ -66,6 +66,8 @@ control is in [Using studio](docs/using-studio.md).
   object, and layouts for phones and tablets.
 - **[Export and After Effects](docs/features.md#export-and-after-effects):** mask videos,
   Vector JSON, a roto folder with PNG mattes, an MP4 with effects, or an AE comp.
+- **[Desktop app](docs/features.md#desktop-app):** a notification when a track finishes,
+  and an MCP server so agents can run sam-ui, both off by default.
 - **[Experimental](docs/features.md#experimental):** Refine Detail, for small details on
   one frame, off by default.
 
