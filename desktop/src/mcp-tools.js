@@ -514,7 +514,7 @@ function createTools({backend, exportRoot = path.join(os.homedir(), 'Movies', 's
     sam_capture: {
       async frame(args) {
         return pictured(await post('/capture', {
-          session_id: sessionId(args), frames: [need(args, 'frame', isNat, 'a frame number (from 0)')], sheet: false,
+          session_id: sessionId(args), frames: [need(args, 'frame', isNat, 'a frame number (from 0)')],
           ...common(args),
         }));
       },

@@ -191,7 +191,7 @@ const MAPPING = [
   ['sam_review', {command: 'mark', session_id: 's1', object_id: 1, frame: 4, span: [3, 5]}, '/set_reviewed',
     {session_id: 's1', object_id: 1, frame: 4, span: [3, 5]}],
   ['sam_capture', {command: 'frame', session_id: 's1', frame: 7, long_edge: 1024}, '/capture',
-    {session_id: 's1', frames: [7], sheet: false, long_edge: 1024}],
+    {session_id: 's1', frames: [7], sheet: undefined, long_edge: 1024}],
   ['sam_capture', {command: 'sheet', session_id: 's1', start: 0, end: 9, count: 4, object_ids: [1]}, '/capture',
     {session_id: 's1', sheet: true, start: 0, end: 9, count: 4, object_ids: [1]}],
   ['sam_track', {command: 'status', session_id: 's1'}, '/track_jobs', {session_id: 's1'}],

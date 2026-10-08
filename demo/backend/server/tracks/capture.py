@@ -21,7 +21,7 @@ import math
 from typing import Callable, Dict, List, Optional
 
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image, ImageColor, ImageDraw
 
 from tracks import rle
 from tracks.detail_preview import read_working_frame
@@ -45,10 +45,6 @@ class CaptureError(ValueError):
 
 def colour(obj_id: int) -> str:
     return THEME_COLORS[obj_id % len(THEME_COLORS)]
-
-
-def _rgb(hex_colour: str):
-    return tuple(int(hex_colour[i:i + 2], 16) for i in (1, 3, 5))
 
 
 def video_fps(path: str) -> Optional[float]:
@@ -219,7 +215,7 @@ def capture(service, video: str, path: str, body: Dict, n_frames: int, fps: Opti
                     entry["area"] = round(100 * float(mask.mean()), 2)
                     entry["box"] = [round(xs.min() / fw, 4), round(ys.min() / fh, 4),
                                     round((xs.max() + 1) / fw, 4), round((ys.max() + 1) / fh, 4)]
-                layers.append((o, mask, _rgb(colour(o))))
+                layers.append((o, mask, ImageColor.getrgb(colour(o))))
             if kind != "absent":
                 for p, l in zip(seeds.get(f, {}).get("points", []), seeds.get(f, {}).get("labels", [])):
                     points.append((o, p[0], p[1], int(l)))
