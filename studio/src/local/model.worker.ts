@@ -21,6 +21,20 @@ installMapNudge();
 ort.env.wasm.numThreads = 1;
 ort.env.logLevel = 'error';
 
+// WebKit (Safari's engine) crashes the whole page when this worker is torn
+// down (on a reload, say) while a Web Inspector is attached, as one is under
+// Playwright: a GPUDevice with an uncapturederror listener outlives the
+// worker, and its teardown reads the worker's freed inspector (issue #3).
+// onnxruntime-web sets that listener only to report errors, so in WebKit the
+// setter ignores it.
+// ponytail: remove once WebKit fixes GPUDevice teardown with an uncapturederror
+// listener (not filed upstream yet); recheck with the reload repro under Playwright WebKit
+const ua = self.navigator.userAgent;
+const GpuDevice = (self as unknown as {GPUDevice?: {prototype: object}}).GPUDevice;
+if (/AppleWebKit/.test(ua) && !/Chrome\//.test(ua) && GpuDevice != null) {
+  Object.defineProperty(GpuDevice.prototype, 'onuncapturederror', {configurable: true, get: () => null, set: () => {}});
+}
+
 const post = (m: FromWorker, transfer: Transferable[] = []) => self.postMessage(m, transfer);
 
 let models: OrtSam2Models | null = null;
