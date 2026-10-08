@@ -123,6 +123,44 @@ def test_a_file_trimmed_with_an_edit_list_is_refused(tmp_path):
     assert native_metadata(str(full))["frames"] == N
 
 
+def test_a_variable_frame_rate_file_is_refused_and_a_constant_one_links(tmp_path):
+    """Frames 0-14 at 30 fps, then 15-29 at 15 fps: still 30 frames, but frame
+    20 is at 0.83 s, not 20/30 s, so a key at 20/30 s in After Effects would
+    land on another frame."""
+    from data.linked import LinkRefused, register
+
+    cfr = moving_square(tmp_path / "cfr.mp4")
+    vfr = tmp_path / "vfr.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(cfr), "-vf", "setpts='if(lt(N,15),N/30,0.5+(N-15)/15)/TB'",
+                    "-fps_mode", "passthrough", "-c:v", "libx264", str(vfr)], check=True)
+    with pytest.raises(LinkRefused, match="variable frame rate.*conform it to a constant frame rate"):
+        register(str(vfr), source_for(vfr), hash_file=lambda p: "h")
+    _, record = register(str(cfr), source_for(cfr), hash_file=lambda p: "h")
+    assert record["native"]["frames"] == N
+
+
+def test_an_export_check_catches_a_same_size_same_mtime_swap(tmp_path):
+    """The cheap check (size, mtime) cannot see bytes swapped in place with the
+    mtime put back; ?verify=1 re-hashes and can."""
+    from data.linked import make_blueprint, register
+
+    clip = moving_square(tmp_path / "swap.mp4")
+    video, record = register(str(clip), source_for(clip))  # the real content hash
+    c = Flask("verify")
+    c.register_blueprint(make_blueprint(token="t"))
+    c = c.test_client()
+    assert c.get(f"/linked-source?path={video.path}&verify=1").get_json()["changed"] is False
+
+    st = os.stat(clip)
+    data = bytearray(clip.read_bytes())
+    data[len(data) // 2] ^= 0xFF
+    clip.write_bytes(bytes(data))
+    os.utime(clip, ns=(st.st_atime_ns, st.st_mtime_ns))
+    assert os.stat(clip).st_size == record["file"]["size"]
+    assert c.get(f"/linked-source?path={video.path}").get_json()["changed"] is False  # what the cheap check sees
+    assert c.get(f"/linked-source?path={video.path}&verify=1").get_json()["changed"] is True
+
+
 def test_what_cannot_be_linked_says_why(tmp_path):
     from data.linked import LinkRefused, register
 

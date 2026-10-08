@@ -13,8 +13,8 @@ reads the original file's own frames at its own size and rate.
 
 Beside each link, .sources/<id>.json keeps the source record: where the file
 came from (the After Effects item, project and timing), its native metadata
-as measured here, and its size and mtime when it was linked, so an export
-can tell that the file changed underneath it.
+as measured here, and its size, mtime and content hash when it was linked,
+so an export can tell that the file changed underneath it.
 
 Registering is not for the page: it would let a page name any file on disk.
 Only the desktop app's main process can, with the per-launch token it hands
@@ -39,6 +39,10 @@ SOURCES_DIR = ".sources"
 # what studio's decoder (mediabunny) and the backend's (decord, PyAV) both read
 VIDEO_EXTS = {".mp4", ".mov", ".m4v"}
 FPS_TOLERANCE = 1e-3
+# how far, in frames, a frame's timestamp may sit off a constant rate before
+# the file counts as variable rate (rate_drift): above timestamp rounding,
+# well below the half frame where a lookup by time picks a neighbouring frame
+VFR_TOLERANCE = 0.1
 TOKEN_HEADER = "X-Sam-Ui-Link-Token"
 # the source fields kept from the caller; anything else it sends is dropped
 SOURCE_FIELDS = ("kind", "aeItemId", "aeProjectPath", "name", "path", "width", "height", "pixelAspect",
@@ -77,7 +81,35 @@ def native_metadata(path: str) -> Dict:
         raise LinkRefused(
             f"the file was trimmed without re-encoding ({before} frames before its start are hidden by an edit list), "
             "so decoders disagree on which frame is which: re-encode or re-export it, then link it again")
+    drift = rate_drift(pts)
+    if drift > VFR_TOLERANCE:
+        raise LinkRefused(
+            f"the file has a variable frame rate (a frame sits {drift:.2f} frames off a constant rate), and the masks "
+            "go back to After Effects keyed at frame / fps: conform it to a constant frame rate first (render a copy "
+            "from After Effects, or ffmpeg -i in.mov -fps_mode cfr -r <fps> out.mov), then open that copy")
     return {"width": width, "height": height, "fps": fps, "frames": frames, "duration": duration}
+
+
+def rate_drift(pts: List[int]) -> float:
+    """The furthest any frame's timestamp sits, in frames, from where the
+    clip's own average spacing (first to last timestamp) puts it: frame i in
+    display order, the decoders' frame i, at first + i * spacing. sam-ui counts
+    frames by index and After Effects places them by time, so this offset is
+    what would put the mask for frame i on another frame.
+
+    Cumulative, so timestamp rounding stays under a tick (0.05 of a frame on
+    QuickTime's coarse 600 time scale) while a frame held long, a skipped
+    timestamp or a slow drift all grow it. Measured against the timestamps
+    themselves, not the declared rate: a declared rate that differs from the
+    cadence is check_native's frame-rate comparison, and the container's
+    average_rate also counts the last frame's duration, which muxers round."""
+    pts = sorted(pts)
+    if len(pts) < 2:
+        return 0.0
+    step = (pts[-1] - pts[0]) / (len(pts) - 1)
+    if step <= 0:
+        return float("inf")  # every frame on one timestamp
+    return max(abs((t - pts[0]) / step - i) for i, t in enumerate(pts))
 
 
 def check_native(source: Dict, native: Dict) -> List[str]:
@@ -204,6 +236,20 @@ def source_of(path: str) -> Optional[Dict]:
     return record
 
 
+def content_changed(record: Dict) -> bool:
+    """Whether the file's bytes differ from those hashed when it was linked.
+    Size and mtime catch an ordinary edit for free; a file replaced in place at
+    the same size with its mtime put back passes them, so an export, which
+    would put masks on whatever the file now holds, hashes it again (as long
+    as reading the file once)."""
+    from tracks.seeds import video_key  # what register() hashed with
+
+    try:
+        return video_key(record["file"]["path"]) != record["videoHash"]
+    except OSError:
+        return True
+
+
 def preload() -> Dict[str, Video]:
     """Linked videos whose file is still there, for the videos list at start-up."""
     out: Dict[str, Video] = {}
@@ -224,7 +270,8 @@ def preload() -> Dict[str, Video]:
 def make_blueprint(token: Optional[str] = None) -> Blueprint:
     """POST /linked (the desktop app's main process, with its token), GET
     /linked/<file> (the video, with range requests, for studio's decoder) and
-    GET /linked-source?path= (the record)."""
+    GET /linked-source?path= (the record; with &verify=1 the file is hashed
+    again, so `changed` also covers a same-size, same-mtime swap)."""
     bp = Blueprint("linked", __name__)
     token = token if token is not None else os.environ.get("SAM_UI_LINK_TOKEN")
 
@@ -254,6 +301,8 @@ def make_blueprint(token: Optional[str] = None) -> Blueprint:
         record = source_of(request.args.get("path", ""))
         if record is None:
             abort(404)
+        if request.args.get("verify") and not record["changed"]:
+            record["changed"] = content_changed(record)
         return jsonify(record)
 
     return bp
