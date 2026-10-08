@@ -142,6 +142,12 @@ exports mask videos, Vector JSON and the roto zip, and deletes the video.
 CLIP=e2e/out/clip.mp4 SMOKE=local NO_SERVER_URL=http://127.0.0.1:7390/sam-ui/ npm run smoke
 ```
 
+`BROWSER=firefox` (the installed Firefox, driven over WebDriver BiDi) or
+`BROWSER=webkit` (Playwright's WebKit build, which is not Safari; fetch the
+build playwright-core expects with `npx playwright-core install webkit`) runs
+the no-server smoke test and the memory test in that browser instead of
+Chrome. See `e2e/browser.mjs`.
+
 Memory over a long track, in the browser-only build (headed Chrome, macOS).
 `npm run memory` makes a synthetic clip with ffmpeg (720p, 24 fps, a red
 square over a grid) and opens it. It clicks the square on frame 0 and tracks
