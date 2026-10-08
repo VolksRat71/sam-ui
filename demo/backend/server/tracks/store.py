@@ -126,8 +126,6 @@ class TrackStore:
         """Undo a crash between save()'s two renames: the previous track sits
         in an .old dir and nothing in its place. Put it back. Writers only (they
         hold the inference lock); readers use _live."""
-        if not final.parent.is_dir():
-            return
         live = self._live(final)
         if live != final:
             os.replace(live, final)
