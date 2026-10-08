@@ -1,16 +1,18 @@
 // sam-ui (Apache-2.0). New file, not from SAM 2.
 //
 // Which videos may be deleted, and what to show once one is gone. The backend
-// deletes uploads only (the gallery can hold source footage) and checks the
+// deletes uploads and removes linked videos (their link only, never the
+// footage), never the gallery (it can hold source footage), and checks the
 // same rules; the UI never offers Remove where the backend would refuse.
 
 /**
  * A video that may be deleted: an upload the backend will delete (under
- * uploads/), or, with no backend, a file opened into this browser (local/).
+ * uploads/), footage opened in place from After Effects that it will unlink
+ * (linked/), or, with no backend, a file opened into this browser (local/).
  * Never the gallery or the bundled samples, and no path tricks.
  */
 export function isDeletable(path: string): boolean {
-  const prefix = ['uploads/', 'local/'].find(p => path.startsWith(p));
+  const prefix = ['uploads/', 'linked/', 'local/'].find(p => path.startsWith(p));
   return prefix != null && !path.split('/').includes('..') && path.length > prefix.length;
 }
 

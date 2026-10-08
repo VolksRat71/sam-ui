@@ -3,8 +3,11 @@ import {describe, expect, it} from 'vitest';
 import {afterDelete, isDeletable} from './media';
 
 describe('isDeletable', () => {
-  it('allows uploads only', () => {
+  it('allows uploads and linked footage only', () => {
     expect(isDeletable('uploads/abc.mp4')).toBe(true);
+    expect(isDeletable('linked/abc.mov')).toBe(true);
+    expect(isDeletable('linked/../gallery/clip.mp4')).toBe(false);
+    expect(isDeletable('linked/')).toBe(false);
     expect(isDeletable('local/abc.mp4')).toBe(true);
     expect(isDeletable('samples/05_default_juggle.mp4')).toBe(false);
     expect(isDeletable('gallery/clip.mp4')).toBe(false);

@@ -167,8 +167,9 @@ class Mutation:
 
     @strawberry.mutation
     def delete_video(self, input: DeleteVideoInput, info: strawberry.Info) -> DeleteVideo:
-        """sam-ui: delete an uploaded video, and with purgeTracks its seeds and
-        tracks. Refused for gallery videos and for a video open in a session."""
+        """sam-ui: delete an uploaded video, or remove a linked one (its link,
+        record and poster; never the footage), and with purgeTracks its seeds
+        and tracks. Refused for gallery videos and for a video open in a session."""
         from data.uploads import delete_upload
 
         inference_api: InferenceAPI = info.context["inference_api"]

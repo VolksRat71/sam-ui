@@ -24,12 +24,13 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import av
-from app_conf import DATA_PATH, POSTERS_PREFIX
+from app_conf import DATA_PATH, POSTERS_PATH, POSTERS_PREFIX
 from data.data_types import Video
 from flask import Blueprint, abort, jsonify, request, send_from_directory
 
@@ -184,14 +185,45 @@ def register(path: str, source: Dict, hash_file=None) -> Tuple[Video, Dict]:
     return video, record
 
 
+# exactly the names register() writes: link_id()'s 24 lowercase hex, a lowercased VIDEO_EXTS extension
+LINK_NAME = re.compile(r"[0-9a-f]{24}(%s)" % "|".join(re.escape(e) for e in sorted(VIDEO_EXTS)))
+
+
+def link_file(path: str) -> Optional[Path]:
+    """Where the link for a linked video's API path (linked/<id>.<ext>) sits,
+    from the path's text alone (never following a link), or None for
+    anything that is not exactly a name register() writes: so no second
+    folder level, dot name, NUL byte, backslash or drive letter, and no case
+    variant (on a case-insensitive disk one would reach the real link)."""
+    parts = path.split("/")
+    if len(parts) != 2 or parts[0] != LINKED_PREFIX or not LINK_NAME.fullmatch(parts[1]):
+        return None
+    return LINKED_PATH / parts[1]
+
+
+def unlink(link: Path) -> None:
+    """Remove sam-ui's own files for a linked video: the link itself (os.unlink
+    on a symlink removes the link, never the footage it points at), its source
+    record and its poster."""
+    record = _record_file(link.name)
+    try:
+        poster = json.loads(record.read_text()).get("poster")
+    except (OSError, ValueError, AttributeError):
+        poster = None
+    os.unlink(link)
+    record.unlink(missing_ok=True)
+    if poster:
+        (Path(POSTERS_PATH) / Path(poster).name).unlink(missing_ok=True)
+
+
 def source_of(path: str) -> Optional[Dict]:
     """The record of a linked video (its API path, linked/<id>.<ext>), with
     `changed` true when the file's size or mtime moved since it was linked,
     and `missing` when it is gone. None for anything that is not linked."""
-    parts = path.split("/")
-    if len(parts) != 2 or parts[0] != LINKED_PREFIX or ".." in parts or parts[1].startswith("."):
+    link = link_file(path)
+    if link is None:
         return None
-    f = _record_file(parts[1])
+    f = _record_file(link.name)
     if not f.is_file():
         return None
     record = json.loads(f.read_text())
