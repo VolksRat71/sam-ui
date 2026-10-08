@@ -150,6 +150,7 @@ class Sam3Engine:
     name = "sam3"
     model = "sam3-tracker"
     skips_cleared = False  # SAM 3 conditions on a cleared seed safely (engine.strip_cleared)
+    splits_by_first_seed = False  # one session per window, from its earliest seed of any object
 
     def __init__(self, device: Optional[str] = None):
         self.device = device

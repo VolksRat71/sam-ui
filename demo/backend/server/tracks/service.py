@@ -14,7 +14,8 @@ never change a track or the seeds hash, so they are not seed changes either.
 Absent ranges (issue #20, tracks/ranges.py) split an object's timeline into
 windows. A job tracks each window with a seed on its own, and stores every
 other frame as an empty mask, so a track always covers the whole clip. A
-stale track keeps the windows whose inputs did not change (window_key): only
+stale track keeps the windows whose inputs did not change (window_key), and
+the windows a range only cut down without taking a seed (_cut_down): only
 the windows a range or seed edit touched run again.
 
 Inside a window a seed edit touched, a correction re-tracks only the stretch
@@ -114,6 +115,11 @@ class _Bounded:
 
 
 CLICKS_ONLY = "this engine takes clicks only; text prompts need SAM 3"
+
+# How far past the first seed the pass back reads: frame t reads the object
+# pointers of t+1 to t+15 (sam2/modeling/sam2_base.py, the t_diff loop over
+# max_obj_ptrs_in_encoder = 16), so from frame start-1 up to start+14.
+REACH = 14
 
 
 @dataclass
@@ -610,7 +616,8 @@ class TrackService:
         if n is None or meta is None or meta["model"] != e.model or meta["seeds_hash"] == h:
             return {}, {}
         old_keys = {seg["key"] for seg in meta.get("windows") or []}
-        keep = [w for w, k in wins if k in old_keys]
+        mine = dict(seeded)
+        keep = [w for w, k in wins if k in old_keys or self._cut_down(e, w, mine[w], meta)]
         touched: Dict[Window, List[int]] = {}
         if callable(getattr(e, "track_stretch", None)) and meta.get("seed_keys") is not None:
             old_bounds = {(seg["start"], seg["end"]) for seg in meta.get("windows") or []}
@@ -629,10 +636,35 @@ class TrackService:
             got = {f: frames[f] for f in window_frames(w, n) if f in frames}
             if len(got) == len(window_frames(w, n)):  # all of it, or run it again
                 whole[w] = got
-        mine = dict(seeded)
         reuse = {w: whole[w] for w in keep if w in whole}
         bounded = {w: _Bounded(touched[w], mine[w], whole[w]) for w in touched if w in whole}
         return reuse, bounded
+
+    @staticmethod
+    def _cut_down(e: Engine, w: Window, seeds: Seeds, meta: Dict) -> bool:
+        """True when an absent range cut one of the old track's windows down
+        to `w` and took none of its seeds: a full pass of `w` would make the
+        old frames again, so they are kept and no model runs. Forward from the
+        first seed a frame reads only the seeds and the frames before it, and
+        back from it only the frames after it, so a later start changes
+        nothing. An end before first seed + REACH changes the frames before
+        that seed: the pass back reads the forward pass's object pointers up
+        to there.
+
+        Only on an engine that runs each object from its own first seed
+        (splits_by_first_seed: SAM 2). SAM 3 runs a window's objects in one
+        session from the earliest seed of any of them, so an object's frames
+        before its own first seed came from that shared pass, which a re-track
+        of its cut-down window alone would not repeat."""
+        if not getattr(e, "splits_by_first_seed", False):
+            return False
+        for seg in meta.get("windows") or []:
+            lo, hi = seg["start"], seg["end"]
+            inside = lo <= w[0] and (hi is None or (w[1] is not None and w[1] <= hi))
+            if inside and window_key((lo, hi), seeds) == seg["key"]:
+                start = min(u.start for u in e.plan({0: seeds}, {0: [w]}))
+                return w[1] == hi or start == w[0] or w[1] >= start + REACH
+        return False
 
     @staticmethod
     def _uncleared_removal(e: Engine, meta: Dict, seeds: Seeds, changed: List[int]) -> bool:
