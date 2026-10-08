@@ -11,6 +11,16 @@ import tempfile
 from .timing import canonical_json, inspect_source
 
 
+def _anchored(path: Path) -> Path:
+    """Resolve symlinks above ``path``; ``path`` and its descendants stay checked.
+
+    Ancestors are the operator's choice (macOS /var and /tmp, a data folder on
+    another drive). The refusals below guard the tree sam-ui manages, not them.
+    """
+    path = Path(path)
+    return Path(os.path.realpath(path.parent)) / path.name
+
+
 def _directory(path: Path) -> None:
     # Managed descendants may never redirect writes through symlinks.
     if any(part.is_symlink() for part in (path, *path.parents)):
@@ -104,6 +114,7 @@ def retain_upload(source_path: Path, *, root: Path, working_copy_sha256: str,
         raise ValueError('invalid_working_range')
     stage = None
     try:
+        root = _anchored(root)
         _directory(root)
         stage = Path(tempfile.mkdtemp(prefix='.stage-', dir=root))
         original = stage / 'original.bin'

@@ -14,7 +14,8 @@ never change a track or the seeds hash, so they are not seed changes either.
 Absent ranges (issue #20, tracks/ranges.py) split an object's timeline into
 windows. A job tracks each window with a seed on its own, and stores every
 other frame as an empty mask, so a track always covers the whole clip. A
-stale track keeps the windows whose inputs did not change (window_key): only
+stale track keeps the windows whose inputs did not change (window_key), and
+the windows a range only cut down without taking a seed (_cut_down): only
 the windows a range or seed edit touched run again.
 
 Inside a window a seed edit touched, a correction re-tracks only the stretch
@@ -51,6 +52,7 @@ from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 import numpy as np
 
 from tracks import audit
+from tracks import discovery as disc
 from tracks import bounded as bnd
 from tracks import review as rv
 from tracks import rle
@@ -114,6 +116,11 @@ class _Bounded:
 
 
 CLICKS_ONLY = "this engine takes clicks only; text prompts need SAM 3"
+
+# How far past the first seed the pass back reads: frame t reads the object
+# pointers of t+1 to t+15 (sam2/modeling/sam2_base.py, the t_diff loop over
+# max_obj_ptrs_in_encoder = 16), so from frame start-1 up to start+14.
+REACH = 14
 
 
 @dataclass
@@ -274,11 +281,13 @@ class TrackService:
             self.seeds.paint_range(video, obj_id, start, end, state, source, score, clear)
         return self.object_info(video, obj_id)
 
-    def write_candidates(self, video: str, obj_id: int, candidates: List[Dict], replace: bool = False) -> Dict:
+    def write_candidates(self, video: str, obj_id: int, candidates: List[Dict], replace: bool = False,
+                         replace_source: Optional[str] = None) -> Dict:
         """Write candidate ranges in bulk, each {"start", "end", "source",
         "score"?} (a discovery job's results); `replace` drops the object's
-        old candidates. All or nothing (ValueError). Never a seed change."""
-        self.seeds.write_candidates(video, obj_id, candidates, replace)
+        old candidates, `replace_source` only that source's. All or nothing
+        (ValueError). Never a seed change."""
+        self.seeds.write_candidates(video, obj_id, candidates, replace, replace_source)
         return self.object_info(video, obj_id)
 
     def end_absence_at(self, video: str, obj_id: int, frame: int) -> None:
@@ -298,6 +307,62 @@ class TrackService:
                 # not the user's absence, and annotations are outside the undo record
                 self.seeds.paint_range(video, obj_id, frame, r["end"], None, clear=[ABSENT])
                 return
+
+    def discover_text(self, video: str, path: str, obj_id: int, text: str, stride: Optional[int] = None,
+                      engine: Optional[str] = None, n_frames: Optional[int] = None,
+                      step: Callable[[], contextlib.AbstractContextManager] = contextlib.nullcontext,
+                      canceled: Callable[[], bool] = lambda: False, handoff_s: float = 0.0,
+                      progress: Callable[[], None] = lambda: None) -> Dict:
+        """Temporal text discovery (draft 4, tracks/discovery.py): where in the
+        clip the phrase is, written as the object's candidate ranges from
+        source "text:<prompt>@<engine>". A re-run replaces that source's old
+        ones; candidates are one layer, so where a scan overlaps another
+        source's candidates the later scan wins (#39). Nothing else is
+        touched: no seed, mask or track. Each detector call runs inside
+        `step()` (the model lock) and then calls `progress()`; `canceled` is
+        checked between calls and once more before the write
+        (discovery.Canceled, and nothing is written). An object removed during
+        the scan (or its video cleared) is not written back either:
+        Canceled. ValueError on no text or a clip with no frames;
+        UnknownEngine as text_prompt."""
+        text = normalize_text(text)
+        stride = disc.DEFAULT_STRIDE if stride is None else int(stride)
+        if stride < 1:
+            raise ValueError(f"stride must be at least 1, got {stride}")
+        e = self.text_engine(engine)
+        if hasattr(e, "text_scanner"):  # one decoder and tokenization for the whole scan
+            scanner = e.text_scanner(path, text)
+        else:
+            def scanner(f, e=e):
+                return e.segment_text(path, f, text)
+        if n_frames is None:
+            with step():
+                n_frames = len(scanner) if hasattr(scanner, "__len__") else getattr(e, "n_frames", None)
+        if not n_frames:
+            raise ValueError("discovery needs the clip's frame count")
+
+        existed = obj_id in self.seeds.objects(video)
+
+        def detect(f: int) -> disc.Probe:
+            m = scanner(f)
+            progress()
+            return disc.Probe(hit=int(m.instances) > 0, score=float(m.score),
+                              box=None if m.box is None else [round(float(v), 1) for v in m.box])
+
+        t0 = time.perf_counter()
+        found, calls = disc.drive(disc.scan(n_frames, stride), detect, step, canceled, handoff_s)
+        src = disc.source(text, e.name)
+        with step():  # a consistent write, as a text prompt's
+            # a cancel during the last call, or an object (or video) removed
+            # mid-scan: writing would bring it back, so nothing is written
+            if canceled() or (existed and obj_id not in self.seeds.objects(video)):
+                raise disc.Canceled()
+            info = self.write_candidates(video, obj_id, [{"start": a["start"], "end": a["end"], "source": src,
+                                                          "score": a["score"]} for a in found],
+                                         replace_source=src)
+        return {"object_id": obj_id, "text": text, "engine": e.name, "source": src, "stride": stride,
+                "n_frames": n_frames, "intervals": found, "calls": calls,
+                "seconds": round(time.perf_counter() - t0, 2), "object": info}
 
     def is_absent(self, video: str, obj_id: int, frame: int) -> bool:
         return absent_at(self.seeds.ranges(video, obj_id), frame)
@@ -610,7 +675,8 @@ class TrackService:
         if n is None or meta is None or meta["model"] != e.model or meta["seeds_hash"] == h:
             return {}, {}
         old_keys = {seg["key"] for seg in meta.get("windows") or []}
-        keep = [w for w, k in wins if k in old_keys]
+        mine = dict(seeded)
+        keep = [w for w, k in wins if k in old_keys or self._cut_down(e, w, mine[w], meta)]
         touched: Dict[Window, List[int]] = {}
         if callable(getattr(e, "track_stretch", None)) and meta.get("seed_keys") is not None:
             old_bounds = {(seg["start"], seg["end"]) for seg in meta.get("windows") or []}
@@ -629,10 +695,35 @@ class TrackService:
             got = {f: frames[f] for f in window_frames(w, n) if f in frames}
             if len(got) == len(window_frames(w, n)):  # all of it, or run it again
                 whole[w] = got
-        mine = dict(seeded)
         reuse = {w: whole[w] for w in keep if w in whole}
         bounded = {w: _Bounded(touched[w], mine[w], whole[w]) for w in touched if w in whole}
         return reuse, bounded
+
+    @staticmethod
+    def _cut_down(e: Engine, w: Window, seeds: Seeds, meta: Dict) -> bool:
+        """True when an absent range cut one of the old track's windows down
+        to `w` and took none of its seeds: a full pass of `w` would make the
+        old frames again, so they are kept and no model runs. Forward from the
+        first seed a frame reads only the seeds and the frames before it, and
+        back from it only the frames after it, so a later start changes
+        nothing. An end before first seed + REACH changes the frames before
+        that seed: the pass back reads the forward pass's object pointers up
+        to there.
+
+        Only on an engine that runs each object from its own first seed
+        (splits_by_first_seed: SAM 2). SAM 3 runs a window's objects in one
+        session from the earliest seed of any of them, so an object's frames
+        before its own first seed came from that shared pass, which a re-track
+        of its cut-down window alone would not repeat."""
+        if not getattr(e, "splits_by_first_seed", False):
+            return False
+        for seg in meta.get("windows") or []:
+            lo, hi = seg["start"], seg["end"]
+            inside = lo <= w[0] and (hi is None or (w[1] is not None and w[1] <= hi))
+            if inside and window_key((lo, hi), seeds) == seg["key"]:
+                start = min(u.start for u in e.plan({0: seeds}, {0: [w]}))
+                return w[1] == hi or start == w[0] or w[1] >= start + REACH
+        return False
 
     @staticmethod
     def _uncleared_removal(e: Engine, meta: Dict, seeds: Seeds, changed: List[int]) -> bool:

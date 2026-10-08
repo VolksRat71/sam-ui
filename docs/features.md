@@ -16,8 +16,16 @@ Everything sam-ui does, area by area. How each control in studio works is in
 - **Find by text (SAM 3).** Type a phrase ("dog", "the red cup") and SAM 3's
   detector segments it **on the frame on screen**. The best match becomes that
   frame's mask, as if clicked, and the object tracks from it with any engine. It is
-  a seed for one frame, not a search of the whole clip. When several things match it
-  says how many and takes the best. SAM 2 and the browser engine take clicks only.
+  a seed for one frame. When several things match it says how many and takes the
+  best. SAM 2 and the browser engine take clicks only.
+- **Find in clip (SAM 3, experimental).** The same phrase, looked for across the
+  whole clip. SAM 3's detector checks every 12th frame and the last, then narrows
+  each entry and exit to within 2 frames. Each appearance becomes a candidate range
+  (source `text:<phrase>@sam3`, scored), so an object that leaves and comes back is
+  two candidates. Running a phrase again replaces its own candidates; where a scan
+  overlaps another phrase's candidates, the later scan paints over them. Nothing is
+  seeded or tracked and no track goes stale; review the candidates with ] and [ and
+  P, A or R. It runs as a background job and clicks keep working. Desktop app only.
 - **Keep working while it tracks.** Clicks come back in about 0.1 s while a job runs.
   Jobs can overlap, and each has its own cancel.
 - **Long clips.** Uploads take up to 5 minutes and 2 GB; a longer clip keeps its
@@ -62,8 +70,8 @@ Everything sam-ui does, area by area. How each control in studio works is in
 - **Candidate, present and absent.** Each frame of an object is unknown, a candidate
   (a tool thinks the object is there, with its source and score), confirmed present,
   or confirmed absent. Review a candidate as Present, Absent or Reject (P, A, R). Only
-  absent changes tracking. Candidates are written through the API
-  (`setObjectCandidates`); sam-ui does not yet find objects across a clip on its own.
+  absent changes tracking. Candidates come from Find in clip, or through the API
+  (`setObjectCandidates`).
 
 ## Organise
 

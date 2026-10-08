@@ -24,12 +24,14 @@ class Job:
     n_frames: Optional[int] = None
     engine: str = ""
     bounded: List[int] = field(default_factory=list)  # objects re-tracked in bounded passes (issue #19)
+    kind: str = "track"  # or "discover": a text discovery run (tracks/discovery.py), which claims no object
     frames_done: int = 0
     started: float = field(default_factory=time.time)
     canceled: bool = False
 
     def info(self) -> Dict:
-        return {"job_id": self.id, "engine": self.engine, "objects": self.objects, "bounded": self.bounded,
+        return {"job_id": self.id, "kind": self.kind, "engine": self.engine, "objects": self.objects,
+                "bounded": self.bounded,
                 "frames_done": self.frames_done,
                 "n_frames": self.n_frames, "elapsed_s": round(time.time() - self.started, 1)}
 
@@ -41,7 +43,7 @@ class JobRegistry:
         self._ids = itertools.count(1)
 
     def claim(self, session_id: str, video: str, wanted: Iterable[int], n_frames: Optional[int] = None,
-              engine: str = "", bounded: Iterable[int] = ()) -> Job:
+              engine: str = "", bounded: Iterable[int] = (), kind: str = "track") -> Job:
         """Register a job for the objects in `wanted` that no running job on the
         same engine holds. Claim and check happen under one lock, so two jobs of
         one engine never share an object (two engines may track it at once)."""
@@ -49,7 +51,7 @@ class JobRegistry:
             held = self._held(video, engine)
             objs = sorted(o for o in set(wanted) if o not in held)
             job = Job(f"job-{next(self._ids)}", session_id, video, objs, n_frames, engine,
-                      sorted(o for o in set(bounded) if o in objs))
+                      sorted(o for o in set(bounded) if o in objs), kind=kind)
             self._jobs[job.id] = job
             return job
 

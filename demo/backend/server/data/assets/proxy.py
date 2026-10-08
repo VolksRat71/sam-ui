@@ -13,7 +13,7 @@ import av
 
 from .proxy_codec import encode_proxy, validate_proxy
 from .proxy_contract import ProxyRecipe, effective_recipe, load_source, proxy_id, safe_path
-from .retention import _directory, _fsync_directory, _hash, _read, _write
+from .retention import _anchored, _directory, _fsync_directory, _hash, _read, _write
 from .timing import canonical_json
 
 
@@ -57,10 +57,12 @@ def build_proxy(asset_dir: Path, proxy_root: Path, recipe: ProxyRecipe,
     _enabled()
     stage = None
     try:
-        source = load_source(Path(asset_dir),max_frames=max_frames)
+        # asset_dir is <retention root>/<sha256>: both stay subject to symlink refusal.
+        asset_dir = _anchored(Path(asset_dir).parent)/Path(asset_dir).name
+        source = load_source(asset_dir,max_frames=max_frames)
         effective = effective_recipe(source,recipe)
         identity = proxy_id(source,effective)
-        proxy_root = Path(proxy_root)
+        proxy_root = _anchored(proxy_root)
         safe_path(proxy_root)
         destination = proxy_root/identity
         if destination.exists() or destination.is_symlink():
