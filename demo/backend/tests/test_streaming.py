@@ -14,6 +14,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -396,12 +397,30 @@ def test_objects_first_seeded_on_different_frames_run_as_separate_groups():
     assert [sorted(g) for g in groups_by_first_seed(objects)] == [[1, 3], [2]]  # 4 has no points
 
 
+def _settled_growth(sample, limit: float, tries: int = 3, wait: float = 1.0) -> list:
+    """Footprint growth readings, taken again (up to `tries` more, `wait` s
+    apart) while the latest is over `limit`. The footprint is the whole
+    process's, so something outside the code under test can push one reading
+    over (seen once in about 200 full runs: 183 MB against a steady 78 to 81);
+    a decoder that holds the clip holds it on every reading."""
+    got = [sample()]
+    while got[-1] >= limit and len(got) <= tries:
+        time.sleep(wait)
+        got.append(sample())
+    return got
+
+
+def test_a_footprint_spike_that_passes_is_not_a_held_clip():
+    spike, held = iter([183, 79]), iter([300] * 10)
+    assert _settled_growth(lambda: next(spike), 150, wait=0) == [183, 79]
+    assert _settled_growth(lambda: next(held), 150, wait=0) == [300] * 4  # still over: the caller fails
+
+
 @pytest.mark.skipif(sys.platform != "darwin", reason="counts decoded-frame blocks with macOS vmmap")
 def test_decoding_never_keeps_the_whole_clip(tmp_path):
     """Sam2Frames must only ever hold about one run of decoded frames, however
     far tracking has moved. (decord's reader, once read, decoded the whole clip
     in a background thread and kept every frame; this caught it.)"""
-    import time
 
     def vmmap():
         return subprocess.run(["vmmap", "-summary", str(os.getpid())], capture_output=True, text=True).stdout
@@ -426,10 +445,12 @@ def test_decoding_never_keeps_the_whole_clip(tmp_path):
     for i in list(range(0, 40)) + list(range(80, 60, -1)):  # forward, then a reverse stretch
         f[i]
     time.sleep(3)  # long enough for a background decoder to reach the other 50 frames
-    held, grown = blocks() - before, footprint_mb() - fp_before
-    print(f"decoded-frame blocks held: {held}; physical footprint grew {grown:.0f} MB")
+    held = blocks() - before
+    readings = _settled_growth(lambda: footprint_mb() - fp_before, 150)
+    print(f"decoded-frame blocks held: {held}; physical footprint grew "
+          + ", then ".join(f"{g:.0f}" for g in readings) + " MB")
     assert held <= RUN + 2, held
     # The whole clip at 1024x1024 is 90 x 3 MiB = 270 MiB decoded. One run (48 MiB)
-    # plus KEEP_DECODED normalised frames (12 MiB each) is under 100 MiB; about 45 MB
-    # is measured.
-    assert grown < 150, grown
+    # plus KEEP_DECODED normalised frames (12 MiB each) is under 100 MiB; about 55 MB
+    # is measured alone, about 80 MB in the full suite.
+    assert readings[-1] < 150, readings
