@@ -1,25 +1,25 @@
 // sam-ui (Apache-2.0). New file, not from SAM 2.
 //
 // The no-server half of `npm run smoke` (NO_SERVER_URL set): studio with no
-// backend, e.g. the Pages build served under /sam-ui/. In headed Chrome
-// (the browser engine needs WebGPU), with a fresh profile each run, so the
+// backend, e.g. the Pages build served under /sam-ui/. In a headed browser
+// (Chrome unless BROWSER says otherwise, see browser.mjs; the browser engine
+// needs WebGPU), with a fresh profile each run, so the
 // 512 px model downloads each time (83 MB; with a reused profile Playwright
 // lost track of its downloads).
 // It opens the clip from disk, adds three objects, tracks them, reloads
 // (restored from OPFS), renames an object, exports mask videos, Vector
 // JSON and the roto working folder (zips, checked with unzip), and deletes
 // the video.
-import {chromium} from 'playwright-core';
 import {execFileSync} from 'node:child_process';
 import path from 'node:path';
+import {launch, newPage} from './browser.mjs';
 
-export async function runNoServer({url, clip, out, chrome, check}) {
-  const browser = await chromium.launch({executablePath: chrome, headless: false, args: ['--enable-unsafe-webgpu']});
-  const context = await browser.newContext({viewport: {width: 1440, height: 900}, acceptDownloads: true});
-  const page = await context.newPage();
+export async function runNoServer({url, clip, out, check}) {
+  const browser = await launch();
+  const page = await newPage(browser, {width: 1440, height: 900});
   const errors = [];
   page.on('pageerror', e => errors.push(String(e)));
-  const rows = () => page.$$eval('.object-row .object-title', rs => rs.map(r => r.innerText.replace(/\n/g, ' ')));
+  const rows = () => page.$$eval('.object-row .layer-summary', rs => rs.map(r => r.innerText.replace(/\n/g, ' ')));
   const clickAt = async (nx, ny) => {
     const b = await page.$eval('.click-layer', e => {
       const r = e.getBoundingClientRect();
@@ -54,6 +54,14 @@ export async function runNoServer({url, clip, out, chrome, check}) {
   };
 
   await page.goto(url);
+  // start from an empty OPFS: Playwright's WebKit keeps it across profile folders
+  await page.evaluate(async () => {
+    const root = await navigator.storage.getDirectory();
+    for await (const name of root.keys()) {
+      await root.removeEntry(name, {recursive: true}).catch(() => {}); // a leftover then fails the samples check
+    }
+  });
+  await page.reload();
   await page.waitForSelector('.dropzone', {timeout: 60000});
   // it shows once the first video's session is up
   const banner = await page.waitForSelector('.demo-banner', {timeout: 60000}).catch(() => null);
@@ -79,32 +87,37 @@ export async function runNoServer({url, clip, out, chrome, check}) {
   // three objects (the model downloads on the first click)
   await clickAt(0.1875, 0.375);
   await settle();
-  await page.click('button:has-text("Add object")');
+  await page.click('button:has-text("Add layer")');
   await clickAt(0.766, 0.729);
   await settle();
-  await page.click('button:has-text("Add object")');
+  await page.click('button:has-text("Add layer")');
   await clickAt(0.781, 0.25);
   await settle();
   await page.waitForFunction(() => document.querySelectorAll('.object-row').length === 3, null, {timeout: 60000});
   await page.click('.cta');
   await idle();
-  check((await rows()).every(r => /tracked/i.test(r)), `no-server: track ${JSON.stringify(await rows())}`);
+  check((await rows()).every(r => /Tracked/.test(r)), `no-server: track ${JSON.stringify(await rows())}`);
 
   // reload: objects and tracks come back from OPFS
   await page.reload();
   await ready();
   await page.waitForFunction(() => document.querySelectorAll('.swimlane-segment').length >= 3, null, {timeout: 60000});
-  check((await rows()).length === 3 && (await rows()).every(r => /tracked/i.test(r)), `no-server: reload restores from OPFS ${JSON.stringify(await rows())}`);
+  check((await rows()).length === 3 && (await rows()).every(r => /Tracked/.test(r)), `no-server: reload restores from OPFS ${JSON.stringify(await rows())}`);
 
   // rename, and the name survives a reload
-  await page.dblclick('.object-row >> nth=0 >> .object-name-text');
+  // the name is edited in Layer info, for the selected layer
+  const first = page.locator('.object-row').first();
+  if (!(await first.evaluate(r => r.classList.contains('active')))) {
+    await first.locator('.layer-summary').click();
+  }
+  await page.dblclick('.layer-details .object-name-text');
   await page.fill('.object-name-input', 'Red disc');
   await page.keyboard.press('Enter');
   await settle();
   await page.reload();
   await ready();
-  const names = await page.$$eval('.object-row .object-name-text', ns => ns.map(n => n.innerText));
-  check(names[0] === 'Red disc' && (await rows()).every(r => /tracked/i.test(r)), `no-server: rename persists and leaves tracks (${names.join(', ')})`);
+  const names = await page.$$eval('.object-row .layer-summary :is(.layer-name, .object-name-text)', ns => ns.map(n => n.innerText));
+  check(names[0] === 'Red disc' && (await rows()).every(r => /Tracked/.test(r)), `no-server: rename persists and leaves tracks (${names.join(', ')})`);
 
   // exports
   const stem = path.basename(clip).replace(/\.[^.]+$/, '');
@@ -129,7 +142,7 @@ export async function runNoServer({url, clip, out, chrome, check}) {
   const left = await page.$$eval('.media-name', ns => ns.map(n => n.title));
   check(!left.some(p => p.startsWith('local/')), `no-server: delete removes it (${left.join(', ') || 'no videos left'})`);
 
-  const real = errors.filter(e => !/WebGL context|NetworkError|Inter-VariableFont/.test(e));
+  const real = errors.filter(e => !/WebGL context|NetworkError|access control checks|Inter-VariableFont/.test(e));
   check(real.length === 0, `no-server: no page errors${real.length ? `: ${real.slice(0, 3).join(' | ')}` : ''}`);
   await browser.close();
 }

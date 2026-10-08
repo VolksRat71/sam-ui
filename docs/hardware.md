@@ -124,8 +124,8 @@ python tools/hardware_bench.py --compare /tmp/a /tmp/b
 | **After Effects round trip** | Desktop app on macOS, with AE MCP Vision v2.2.0 |
 | **Browser demo**, Chrome on macOS | Tested |
 | Browser demo, Chrome or Edge on Windows | Untested ([#2](https://github.com/VolksRat71/sam-ui/issues/2)) |
-| Browser demo, Safari 26 | Untested ([#3](https://github.com/VolksRat71/sam-ui/issues/3)) |
-| Browser demo, Firefox | WebGPU only on some versions; untested ([#4](https://github.com/VolksRat71/sam-ui/issues/4)) |
+| Browser demo, Safari 26 | Untested in Safari itself. Playwright's WebKit 26.6 build, the engine behind Safari, opens, tracks and reloads from OPFS, with masks within 0.97 IoU of Chrome's on every frame of the juggle sample; in the smoke test a later reload, after a rename, crashed its page (3 of 3 runs, cause not found) ([#3](https://github.com/VolksRat71/sam-ui/issues/3)) |
+| Browser demo, Firefox | Does not work yet. Tested on Firefox 157, macOS 26: WebGPU is found and videos open and play, but the first click fails because Firefox rejects a shader in ONNX Runtime Web (its Pad operator) ([#4](https://github.com/VolksRat71/sam-ui/issues/4)) |
 | Browser demo, Android Chrome | Known issue: blank preview ([#1](https://github.com/VolksRat71/sam-ui/issues/1)) |
 
 Details and progress: [Platform support, #16](https://github.com/VolksRat71/sam-ui/issues/16).
