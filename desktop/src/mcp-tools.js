@@ -279,10 +279,6 @@ function createTools({backend, exportRoot = path.join(os.homedir(), 'Movies', 's
     return r.json;
   }
 
-  async function capture(body) {
-    return post('/capture', body);
-  }
-
   async function names(sid) {
     return (await post('/object_names', {session_id: sid})).names ?? {};
   }
@@ -386,6 +382,12 @@ function createTools({backend, exportRoot = path.join(os.homedir(), 'Movies', 's
     return jobStatus(sid, jobId);
   }
 
+  async function history(name, args) {
+    const sid = sessionId(args);
+    return text(await objectChange({name, input: 'SeedHistoryInput'},
+      {sessionId: sid, objectId: need(args, 'object_id', isNat, 'an object id')}, sid));
+  }
+
   // -- the commands -------------------------------------------------------
 
   const commands = {
@@ -414,7 +416,7 @@ function createTools({backend, exportRoot = path.join(os.homedir(), 'Movies', 's
         const sid = data.startSession.sessionId;
         const n = await names(sid);
         const list = data.startSession.objects.map(o => objectSummary(o, n));
-        const cap = await capture({session_id: sid, frames: [0]});
+        const cap = await post('/capture', {session_id: sid, frames: [0]});
         return pictured(cap, {session_id: sid, video_id: videoId, n_frames: cap.legend.n_frames, fps: cap.legend.fps,
           objects: list, next_id: nextId(list)});
       },
@@ -438,7 +440,7 @@ function createTools({backend, exportRoot = path.join(os.homedir(), 'Movies', 's
         }});
         const done = {object_id: obj, frame, clicks: points.length};
         if (args.capture === false) return text(done);
-        return pictured(await capture({session_id: sid, frames: [frame], ...(e ? {engine: e} : {})}), done);
+        return pictured(await post('/capture', {session_id: sid, frames: [frame], ...(e ? {engine: e} : {})}), done);
       },
       async text(args) {
         const sid = sessionId(args);
@@ -449,7 +451,7 @@ function createTools({backend, exportRoot = path.join(os.homedir(), 'Movies', 's
         const r = await post('/text_prompt', {session_id: sid, object_id: obj, frame_index: frame, text: phrase, ...(e ? {engine: e} : {})});
         const {mask: _mask, ...out} = r;
         if (args.capture === false || !r.matched) return text(out);
-        return pictured(await capture({session_id: sid, frames: [frame]}), out);
+        return pictured(await post('/capture', {session_id: sid, frames: [frame]}), out);
       },
       async range(args) {
         const sid = sessionId(args);
@@ -460,16 +462,8 @@ function createTools({backend, exportRoot = path.join(os.homedir(), 'Movies', 's
         return text(await objectChange({name: 'setObjectRange', input: 'SetObjectRangeInput'},
           {sessionId: sid, objectId: obj, start, end, state: state === 'clear' ? null : state}, sid));
       },
-      async undo(args) {
-        const sid = sessionId(args);
-        return text(await objectChange({name: 'undoSeeds', input: 'SeedHistoryInput'},
-          {sessionId: sid, objectId: need(args, 'object_id', isNat, 'an object id')}, sid));
-      },
-      async redo(args) {
-        const sid = sessionId(args);
-        return text(await objectChange({name: 'redoSeeds', input: 'SeedHistoryInput'},
-          {sessionId: sid, objectId: need(args, 'object_id', isNat, 'an object id')}, sid));
-      },
+      undo: args => history('undoSeeds', args),
+      redo: args => history('redoSeeds', args),
       async remove(args) {
         const obj = need(args, 'object_id', isNat, 'an object id');
         await backend.graphql('mutation($i: RemoveObjectInput!) { removeObject(input: $i) { frameIndex } }',
@@ -508,7 +502,7 @@ function createTools({backend, exportRoot = path.join(os.homedir(), 'Movies', 's
     },
     sam_capture: {
       async frame(args) {
-        return pictured(await capture({
+        return pictured(await post('/capture', {
           session_id: sessionId(args), frames: [need(args, 'frame', isNat, 'a frame number (from 0)')], sheet: false,
           ...common(args),
         }));
@@ -522,7 +516,7 @@ function createTools({backend, exportRoot = path.join(os.homedir(), 'Movies', 's
           body.end = need(args, 'end', isNat, 'a frame number');
           body.count = need(args, 'count', v => isInt(v) && v >= 1 && v <= 12, '1 to 12');
         }
-        return pictured(await capture(body));
+        return pictured(await post('/capture', body));
       },
     },
   };
@@ -564,7 +558,7 @@ function createTools({backend, exportRoot = path.join(os.homedir(), 'Movies', 's
     }
   }
 
-  return {tools: TOOLS, callTool, held};
+  return {tools: TOOLS, callTool};
 }
 
 /** The closing {"done": ...} part of a track stream's last text, or a failure when there is none. */

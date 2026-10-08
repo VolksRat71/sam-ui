@@ -128,10 +128,6 @@ function createRpc({tools, callTool}) {
         case 'tools/call':
           if (typeof params?.name !== 'string') return rpcError(id, -32602, 'tools/call requires a name');
           return rpcResult(id, await callTool(params.name, params.arguments ?? {}));
-        case 'resources/list':
-          return rpcResult(id, {resources: []});
-        case 'prompts/list':
-          return rpcResult(id, {prompts: []});
         default:
           return notification ? null : rpcError(id, -32601, `Unknown method: ${method}`);
       }
@@ -231,7 +227,7 @@ function claudeAddCommand(port = DEFAULT_PORT) {
   return `claude mcp add --transport http --scope user sam-ui http://127.0.0.1:${port}/mcp --header "Authorization: Bearer $(cat ${tokenFile()})"`;
 }
 
-module.exports = {DEFAULT_PORT, claudeAddCommand, createMcpServer, createRpc, loadOrCreateToken, tokenFile};
+module.exports = {DEFAULT_PORT, claudeAddCommand, createMcpServer, loadOrCreateToken, tokenFile};
 
 if (require.main === module) {
   const arg = name => {
