@@ -13,8 +13,8 @@ reads the original file's own frames at its own size and rate.
 
 Beside each link, .sources/<id>.json keeps the source record: where the file
 came from (the After Effects item, project and timing), its native metadata
-as measured here, and its size and mtime when it was linked, so an export
-can tell that the file changed underneath it.
+as measured here, and its size, mtime and content hash when it was linked,
+so an export can tell that the file changed underneath it.
 
 Studio decodes the video in the browser (WebCodecs), which plays H.264, HEVC,
 VP8/9 and AV1 but not ProRes, DNxHR, Animation and the other codecs After
@@ -31,6 +31,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import tempfile
 import threading
 import time
@@ -38,7 +39,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import av
-from app_conf import DATA_PATH, POSTERS_PREFIX
+from app_conf import DATA_PATH, POSTERS_PATH, POSTERS_PREFIX
 from data.data_types import Video
 from flask import Blueprint, abort, jsonify, request, send_from_directory
 
@@ -57,6 +58,9 @@ PREVIEW_SWEEP_AGE = 3600  # seconds
 _PREVIEW_LOCKS: Dict[str, threading.Lock] = {}
 _PREVIEW_LOCKS_GUARD = threading.Lock()
 FPS_TOLERANCE = 1e-3
+# frames off a constant rate (plus a tick) before rate_drift calls it variable;
+# well under half a frame, since AE's lookup (floor or nearest) is unknown
+VFR_TOLERANCE = 0.25
 TOKEN_HEADER = "X-Sam-Ui-Link-Token"
 # the source fields kept from the caller; anything else it sends is dropped
 SOURCE_FIELDS = ("kind", "aeItemId", "aeProjectPath", "name", "path", "width", "height", "pixelAspect",
@@ -96,7 +100,32 @@ def native_metadata(path: str) -> Dict:
         raise LinkRefused(
             f"the file was trimmed without re-encoding ({before} frames before its start are hidden by an edit list), "
             "so decoders disagree on which frame is which: re-encode or re-export it, then link it again")
+    drift, limit = rate_drift(pts)
+    if drift > limit:
+        where = ("its frames share one timestamp" if drift == float("inf")
+                 else f"a frame sits {drift:.2f} frames off a constant rate")
+        raise LinkRefused(
+            f"the file has a variable frame rate ({where}), and the masks go back to After Effects keyed at "
+            "frame / fps: conform it to a constant frame rate first (render a copy from After Effects, or "
+            "ffmpeg -i in.mov -fps_mode cfr -r <fps> out.mov), then open that copy")
     return {"width": width, "height": height, "fps": fps, "frames": frames, "duration": duration, "codec": codec}
+
+
+def rate_drift(pts: List[int]) -> Tuple[float, float]:
+    """(drift, limit) in frames; variable rate when drift > limit. sam-ui
+    indexes frames, AE places them by time, so drift is how far frame i sits
+    from a centred line at the clip's own spacing (not the declared rate,
+    which check_native compares)."""
+    pts = sorted(pts)
+    if len(pts) < 2:
+        return 0.0, VFR_TOLERANCE
+    step = (pts[-1] - pts[0]) / (len(pts) - 1)  # ticks per frame
+    if step <= 0:
+        return float("inf"), VFR_TOLERANCE  # every frame on one timestamp
+    off = [(t - pts[0]) / step - i for i, t in enumerate(pts)]
+    # ponytail: a tick near a quarter frame (1/fps time base) hides one dropped
+    # frame; check exact deltas if such footage turns up
+    return (max(off) - min(off)) / 2, VFR_TOLERANCE + 1 / step
 
 
 def check_native(source: Dict, native: Dict) -> List[str]:
@@ -314,14 +343,45 @@ def register(path: str, source: Dict, hash_file=None) -> Tuple[Video, Dict]:
     return video, record
 
 
+# exactly the names register() writes: link_id()'s 24 lowercase hex, a lowercased VIDEO_EXTS extension
+LINK_NAME = re.compile(r"[0-9a-f]{24}(%s)" % "|".join(re.escape(e) for e in sorted(VIDEO_EXTS)))
+
+
+def link_file(path: str) -> Optional[Path]:
+    """Where the link for a linked video's API path (linked/<id>.<ext>) sits,
+    from the path's text alone (never following a link), or None for
+    anything that is not exactly a name register() writes: so no second
+    folder level, dot name, NUL byte, backslash or drive letter, and no case
+    variant (on a case-insensitive disk one would reach the real link)."""
+    parts = path.split("/")
+    if len(parts) != 2 or parts[0] != LINKED_PREFIX or not LINK_NAME.fullmatch(parts[1]):
+        return None
+    return LINKED_PATH / parts[1]
+
+
+def unlink(link: Path) -> None:
+    """Remove sam-ui's own files for a linked video: the link itself (os.unlink
+    on a symlink removes the link, never the footage it points at), its source
+    record and its poster."""
+    record = _record_file(link.name)
+    try:
+        poster = json.loads(record.read_text()).get("poster")
+    except (OSError, ValueError, AttributeError):
+        poster = None
+    os.unlink(link)
+    record.unlink(missing_ok=True)
+    if poster:
+        (Path(POSTERS_PATH) / Path(poster).name).unlink(missing_ok=True)
+
+
 def source_of(path: str) -> Optional[Dict]:
     """The record of a linked video (its API path, linked/<id>.<ext>), with
     `changed` true when the file's size or mtime moved since it was linked,
     and `missing` when it is gone. None for anything that is not linked."""
-    parts = path.split("/")
-    if len(parts) != 2 or parts[0] != LINKED_PREFIX or ".." in parts or parts[1].startswith("."):
+    link = link_file(path)
+    if link is None:
         return None
-    f = _record_file(parts[1])
+    f = _record_file(link.name)
     if not f.is_file():
         return None
     record = json.loads(f.read_text())
@@ -332,6 +392,20 @@ def source_of(path: str) -> Optional[Dict]:
     except OSError:
         record["missing"], record["changed"] = True, True
     return record
+
+
+def content_changed(record: Dict) -> bool:
+    """Whether the file's bytes differ from those hashed when it was linked.
+    Size and mtime catch an ordinary edit for free; a file replaced in place at
+    the same size with its mtime put back passes them, so an export, which
+    would put masks on whatever the file now holds, hashes it again (as long
+    as reading the file once)."""
+    from tracks.seeds import video_key  # what register() hashed with
+
+    try:
+        return video_key(record["file"]["path"]) != record["videoHash"]
+    except OSError:
+        return True
 
 
 def preload() -> Dict[str, Video]:
@@ -354,17 +428,22 @@ def preload() -> Dict[str, Video]:
 def make_blueprint(token: Optional[str] = None) -> Blueprint:
     """POST /linked (the desktop app's main process, with its token), GET
     /linked/<file> (the video, or its preview when it has one, with range
-    requests, for studio's decoder) and GET /linked-source?path= (the record)."""
+    requests, for studio's decoder) and GET /linked-source?path= (the record;
+    with &verify=1, which needs the token too, the file is hashed again, so
+    `changed` also covers a same-size, same-mtime swap)."""
     bp = Blueprint("linked", __name__)
     token = token if token is not None else os.environ.get("SAM_UI_LINK_TOKEN")
 
-    @bp.route(f"/{LINKED_PREFIX}", methods=["POST"])
-    def link_video():
+    def desktop_only(what: str):
         if not token:
             abort(404)
         sent = request.headers.get(TOKEN_HEADER, "")
         if not hmac.compare_digest(sent.encode(), token.encode()):
-            abort(403, description="only the desktop app can open files in place")
+            abort(403, description=f"only the desktop app can {what}")
+
+    @bp.route(f"/{LINKED_PREFIX}", methods=["POST"])
+    def link_video():
+        desktop_only("open files in place")
         body = request.get_json(silent=True) or {}
         try:
             video, record = register(body.get("path"), body.get("source") or {})
@@ -390,9 +469,14 @@ def make_blueprint(token: Optional[str] = None) -> Blueprint:
 
     @bp.route("/linked-source", methods=["GET"])
     def linked_source():
+        verify = request.args.get("verify")
+        if verify:
+            desktop_only("re-hash a linked file")  # a whole-file read: not for any page to trigger
         record = source_of(request.args.get("path", ""))
         if record is None:
             abort(404)
+        if verify and not record["changed"]:
+            record["changed"] = content_changed(record)
         return jsonify(record)
 
     return bp

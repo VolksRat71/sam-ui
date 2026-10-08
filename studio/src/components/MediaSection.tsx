@@ -10,6 +10,7 @@ import {useRef, useState} from 'react';
 import {aeBridge} from '~/lib/desktop';
 import {videoDisplayName} from '~/lib/uploadNames';
 import type {UploadApi} from '~/media/uploads';
+import {isAeVideo} from '~/state/aeBridge';
 import {RELEASES_URL} from '~/state/engines';
 import {isDeletable} from '~/state/media';
 import type {VideoItem} from '~/workspace/useStudioSession';
@@ -141,7 +142,15 @@ export default function MediaSection({videos, current, locked, offline, onSelect
                   className="icon-button media-remove"
                   disabled={locked && selected}
                   onClick={() => onDelete(v)}
-                  title={locked && selected ? 'Wait for the running track jobs' : offline ? 'Delete it from this browser' : 'Delete this upload'}
+                  title={
+                    locked && selected
+                      ? 'Wait for the running track jobs'
+                      : offline
+                        ? 'Delete it from this browser'
+                        : isAeVideo(v.path)
+                          ? 'Remove from sam-ui (the footage stays)'
+                          : 'Delete this upload'
+                  }
                   aria-label={`Delete ${videoDisplayName(v.path)}`}>
                   <TrashCan size={16} />
                 </button>

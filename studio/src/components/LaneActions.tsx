@@ -15,9 +15,13 @@ export default function LaneActions({name, disabled, onAbsent}: Props) {
   const trigger = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState({left: 8, top: 8, width: 288, maxHeight: 100});
-  const close = () => { setOpen(false); trigger.current?.focus({preventScroll: true}); };
+  // focus goes back to what opened the menu (the layer, on Shift F10), else the trigger, which is no Tab stop
+  const opener = useRef<HTMLElement | null>(null);
+  const close = () => { setOpen(false); (opener.current?.isConnected ? opener.current : trigger.current)?.focus({preventScroll: true}); };
   useLayoutEffect(() => {
     if (!open) return;
+    const from = document.activeElement;
+    opener.current = from instanceof HTMLElement && from !== trigger.current && from !== document.body ? from : null;
     const place = () => {
       if (trigger.current && menu.current) setPosition(placePopover(trigger.current.getBoundingClientRect(), 288, menu.current.scrollHeight + 2, {width: innerWidth, height: innerHeight}));
     };
@@ -36,7 +40,7 @@ export default function LaneActions({name, disabled, onAbsent}: Props) {
     return () => document.removeEventListener('pointerdown', outside);
   }, [open]);
   return <span className="lane-actions" onPointerDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}>
-    <button ref={trigger} type="button" className="button subtle compact" aria-label={`Actions for ${name}`} aria-haspopup="menu" aria-expanded={open} disabled={disabled}
+    <button ref={trigger} type="button" tabIndex={-1} className="button subtle compact" aria-label={`Actions for ${name}`} aria-haspopup="menu" aria-expanded={open} disabled={disabled}
       onClick={() => setOpen(v => !v)} onKeyDown={e => { if (e.key === 'ArrowDown') { e.preventDefault(); setOpen(true); } }}>
       <OverflowMenuHorizontal size={16} />
     </button>

@@ -13,6 +13,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+// Modified by sam-ui: the copyTo fallback warns once (below).
+let warnedClone = false;
+
 // https://github.com/w3c/webcodecs/issues/88
 // https://issues.chromium.org/issues/40725065
 // https://webcodecs-blogpost-demo.glitch.me/
@@ -34,6 +37,11 @@ export async function cloneFrame(frame: VideoFrame): Promise<VideoFrame> {
     // The VideoFrame#copyTo on x64 builds on macOS fails. The workaround here
     // is to clone the frame.
     // https://stackoverflow.com/questions/77898766/inconsistent-behavior-of-webcodecs-copyto-method-across-different-browsers-an
+    // sam-ui: a clone still holds the decoder's buffer (#1), so say so once
+    if (!warnedClone) {
+      warnedClone = true;
+      console.warn('cloneFrame: copyTo failed; using a clone, which still holds the decoder buffer', error);
+    }
     return frame.clone();
   }
   return new VideoFrame(data, {
