@@ -10,6 +10,11 @@ import type {FromWorker, ModelMethod, ModelMethods, ToWorker, VideoShape} from '
 import {type Quality, VARIANTS} from './sam2/config';
 import {OrtSam2Models, type Pixels} from './sam2/ortModels';
 import {Sam2Tracker} from './sam2/tracker';
+import {installMapNudge} from './mapNudge';
+import {installWgslShim} from './wgslShim';
+
+installWgslShim();
+installMapNudge();
 
 // GitHub Pages cannot send the headers that cross-origin isolation (and so
 // wasm threads) needs; WebGPU does the work anyway.
