@@ -54,7 +54,7 @@ option in studio stays disabled, with the reason shown, until they're found.
 | `SAM_UI_SESSION_TTL_MIN` | 30 | idle sessions are freed after this long (0 keeps them) |
 | `SAM_UI_EXPORT_ROOT` | `~/Movies/sam-ui` (the desktop app sets your home folder) | rotoscoping exports may only write under this folder |
 | `SAM_UI_SAM3_WEIGHTS` | `~/.cache/rotoscoping-video-subjects/weights/sam3-hf` | where the SAM 3 weights are |
-| `SAM_UI_SAM3_DTYPE` | `fp32` | SAM 3's precision: `fp16` or `bf16` cut its memory and time, and move masks a little (see [Hardware](hardware.md)) |
+| `SAM_UI_SAM3_DTYPE` | `fp16` on Apple Silicon, `fp32` elsewhere | SAM 3's precision: `fp32` for full precision, at about 1.6 times the time and 0.6 to 2.1 GB more memory; `bf16` moves masks more than `fp16` (see [Hardware](hardware.md)) |
 | `SAM_UI_SAM2_DTYPE` | `fp32` | SAM 2's autocast on MPS: `fp16` or `bf16` halve its time, save no memory and move masks a little |
 | `SAM_UI_SAM3_IDLE_S` | 600 | seconds before an unused SAM 3 is unloaded (`never` keeps it) |
 | `SAM_UI_SAM3_DETECTOR_IDLE_S` | 300 | seconds before SAM 3's unused text detector is unloaded (`never` keeps it) |

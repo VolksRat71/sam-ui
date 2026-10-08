@@ -11,9 +11,8 @@ copied into this repository.
 
 Measured on the synthetic squares (MPS, fp32): IoU min 0.989 against SAM 2's
 0.974, at 1.43 s/frame against SAM 2's 0.61. Hence opt-in, per track job.
-Memory (issue #11, tools/hardware_bench.py, M4 Max): a 5.5 GB peak physical
-footprint tracking at fp32, 3.5 GB at fp16 or bf16 (SAM_UI_SAM3_DTYPE,
-opt-in: masks move, see tracks/precision.py).
+Precision (issue #11): fp16 by default on MPS, SAM_UI_SAM3_DTYPE=fp32 for
+full precision (tracks/precision.py; measurements in docs/hardware.md).
 
 Absent ranges (issue #20): each window of frames between them gets a session
 of its own, seeded only from its seeds, so nothing crosses a gap.
@@ -181,7 +180,7 @@ class Sam3Engine:
                 from transformers import Sam3TrackerVideoModel, Sam3TrackerVideoProcessor
 
                 dev = self._device()
-                self.dtype = precision.sam3_dtype()
+                self.dtype = precision.sam3_dtype(torch.device(dev).type)
                 proc = Sam3TrackerVideoProcessor.from_pretrained(str(weights_path()))
                 model = Sam3TrackerVideoModel.from_pretrained(str(weights_path()), dtype=self.dtype).to(dev).eval()
                 self._loaded = (proc, model, dev)

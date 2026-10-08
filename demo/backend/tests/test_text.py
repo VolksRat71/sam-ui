@@ -527,7 +527,7 @@ def test_real_sam3_text_prompt_finds_the_dog_and_tracks_it(request):
 
 @pytest.mark.slow
 @pytest.mark.skipif(os.environ.get("SAM_UI_SLOW") != "1", reason="set SAM_UI_SLOW=1 (and have the SAM 3 weights)")
-def test_real_sam3_text_detector_loaded_alone_is_from_pretrained_bit_for_bit(request):
+def test_real_sam3_text_detector_loaded_alone_is_from_pretrained_bit_for_bit(request, monkeypatch):
     """shared_detector reads only the detector's own weights onto the device
     (issue #11). It must be the model Sam3Model.from_pretrained makes, with the
     tracker's backbone swapped in: the same weights, and the same outputs."""
@@ -537,8 +537,7 @@ def test_real_sam3_text_detector_loaded_alone_is_from_pretrained_bit_for_bit(req
     why = sam3_engine.available() or sam3_engine.text_available()
     if why:
         pytest.skip(why)
-    if os.environ.get("SAM_UI_SAM3_DTYPE", "fp32") not in ("", "fp32"):
-        pytest.skip("compares against fp32 from_pretrained")
+    monkeypatch.setenv("SAM_UI_SAM3_DTYPE", "fp32")  # compares against fp32 from_pretrained (MPS defaults to fp16)
     from transformers import Sam3Model
 
     clip = GALLERY / "01_dog.mp4"
@@ -611,7 +610,7 @@ def test_real_sam3_text_and_track_ignore_sam2s_autocast(monkeypatch, request):
     clip = GALLERY / "01_dog.mp4"
     if not clip.exists():
         pytest.skip(f"no gallery clip at {clip}")
-    monkeypatch.delenv("SAM_UI_SAM3_DTYPE", raising=False)
+    monkeypatch.setenv("SAM_UI_SAM3_DTYPE", "fp32")
     monkeypatch.setenv("SAM_UI_SAM2_DTYPE", "fp16")
     e = sam3_engine.Sam3Engine()
     request.addfinalizer(e.unload)
@@ -628,3 +627,38 @@ def test_real_sam3_text_and_track_ignore_sam2s_autocast(monkeypatch, request):
     assert sorted(got) == sorted(want) == list(range(8))
     for f in want:
         assert np.array_equal(got[f][1], want[f][1]), f
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(os.environ.get("SAM_UI_SLOW") != "1", reason="set SAM_UI_SLOW=1 (and have the SAM 3 weights)")
+@pytest.mark.parametrize("dtype", ["fp16", "bf16"])
+def test_real_sam3_half_precision_track_stays_close_to_fp32(dtype, monkeypatch, request):
+    """Issue #11: SAM_UI_SAM3_DTYPE=fp16 (the default on MPS) or bf16 moves
+    masks, but only a little. Tracks the dog and the woman's jeans for 48 frames at fp32 and at
+    `dtype` and compares every mask (tools/hardware_bench.py --compare gives
+    whole-clip numbers)."""
+    from tracks import sam3_engine
+    from tracks.bounded import mask_iou
+
+    why = sam3_engine.available()
+    if why:
+        pytest.skip(why)
+    clip = GALLERY / "01_dog.mp4"
+    if not clip.exists():
+        pytest.skip(f"no gallery clip at {clip}")
+    seeds = {1: {0: {"points": [[0.484, 0.611]], "labels": [1]}}, 2: {0: {"points": [[0.242, 0.583]], "labels": [1]}}}
+
+    def run(dt):
+        monkeypatch.setenv("SAM_UI_SAM3_DTYPE", dt)
+        e = sam3_engine.Sam3Engine()
+        request.addfinalizer(e.unload)
+        out = dict(e.track(str(clip), seeds, windows={o: [(0, 47)] for o in seeds}))
+        e.unload()
+        return out
+
+    want, got = run("fp32"), run(dtype)
+    assert sorted(got) == sorted(want) == list(range(48))
+    ious = [mask_iou(want[f][o], got[f][o]) for f in want for o in want[f]]  # both empty agree (1.0)
+    print(f"\nsam3 {dtype} vs fp32, 01_dog, 48 frames x 2 objects: IoU mean {np.mean(ious):.4f}, min {min(ious):.4f}")
+    # measured on an M4 Max: fp16 mean 0.9986, min 0.9754; bf16 mean 0.9931, min 0.9776
+    assert np.mean(ious) > 0.98 and min(ious) > 0.9
