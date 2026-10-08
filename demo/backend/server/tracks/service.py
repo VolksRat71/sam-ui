@@ -14,7 +14,8 @@ never change a track or the seeds hash, so they are not seed changes either.
 Absent ranges (issue #20, tracks/ranges.py) split an object's timeline into
 windows. A job tracks each window with a seed on its own, and stores every
 other frame as an empty mask, so a track always covers the whole clip. A
-stale track keeps the windows whose inputs did not change (window_key): only
+stale track keeps the windows whose inputs did not change (window_key), and
+the windows a range only cut down without taking a seed (_cut_down): only
 the windows a range or seed edit touched run again.
 
 Inside a window a seed edit touched, a correction re-tracks only the stretch
@@ -610,7 +611,8 @@ class TrackService:
         if n is None or meta is None or meta["model"] != e.model or meta["seeds_hash"] == h:
             return {}, {}
         old_keys = {seg["key"] for seg in meta.get("windows") or []}
-        keep = [w for w, k in wins if k in old_keys]
+        mine = dict(seeded)
+        keep = [w for w, k in wins if k in old_keys or self._cut_down(e, w, mine[w], meta)]
         touched: Dict[Window, List[int]] = {}
         if callable(getattr(e, "track_stretch", None)) and meta.get("seed_keys") is not None:
             old_bounds = {(seg["start"], seg["end"]) for seg in meta.get("windows") or []}
@@ -629,10 +631,27 @@ class TrackService:
             got = {f: frames[f] for f in window_frames(w, n) if f in frames}
             if len(got) == len(window_frames(w, n)):  # all of it, or run it again
                 whole[w] = got
-        mine = dict(seeded)
         reuse = {w: whole[w] for w in keep if w in whole}
         bounded = {w: _Bounded(touched[w], mine[w], whole[w]) for w in touched if w in whole}
         return reuse, bounded
+
+    @staticmethod
+    def _cut_down(e: Engine, w: Window, seeds: Seeds, meta: Dict) -> bool:
+        """True when an absent range cut one of the old track's windows down
+        to `w` and took none of its seeds: a full pass of `w` would make the
+        old frames again, so they are kept and no model runs. Forward from the
+        first seed a frame reads only the seeds and the frames before it, and
+        back from it only the frames after it, so a later start changes
+        nothing. An earlier end changes the frames before the first seed when
+        it comes within PRIME frames of it: the pass back reads the forward
+        pass's object pointers that far ahead."""
+        for seg in meta.get("windows") or []:
+            lo, hi = seg["start"], seg["end"]
+            inside = lo <= w[0] and (hi is None or (w[1] is not None and w[1] <= hi))
+            if inside and window_key((lo, hi), seeds) == seg["key"]:
+                start = min(u.start for u in e.plan({0: seeds}, {0: [w]}))
+                return w[1] == hi or start == w[0] or w[1] >= start + bnd.PRIME
+        return False
 
     @staticmethod
     def _uncleared_removal(e: Engine, meta: Dict, seeds: Seeds, changed: List[int]) -> bool:

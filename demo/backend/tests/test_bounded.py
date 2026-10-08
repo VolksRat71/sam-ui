@@ -268,6 +268,56 @@ def test_a_bounded_pass_stops_at_the_window_edge_and_never_enters_a_gap(h):
     assert sorted(by_frame(frames)) == list(range(N)) and h.state(1) == TRACKED
 
 
+def ran_since(h, mark):
+    """What the engine ran after `mark` (len of calls, stretches)."""
+    return h.engine.calls[mark[0]:], h.engine.stretches[mark[1]:]
+
+
+def test_an_absent_range_that_takes_no_seed_runs_no_model(h):
+    # the tail (the 2026-10-07 acceptance run: 0-89 tracked, 78-89 marked
+    # absent, and the re-track ran all of 0-77 again), then the middle
+    h.click(1, frame=0), h.click(1, frame=10)
+    h.track()
+    for lo, hi in ((48, 59), (20, 29)):
+        before, mark = stored(h), (len(h.engine.calls), len(h.engine.stretches))
+        h.service.set_range(h.video, 1, lo, hi, ABSENT)
+        assert h.state(1) == STALE
+        _, frames = h.track()
+        assert ran_since(h, mark) == ([], [])  # no model ran
+        after = stored(h)
+        assert sorted(by_frame(frames)) == list(range(N)) and h.state(1) == TRACKED
+        assert all(after[f] == before[f] for f in range(N) if f < lo)  # kept, byte for byte
+        assert not any(rle.decode(after[f]).any() for f in range(lo, N))  # absent, or a window with no seed
+        h.track([1])  # a tracked object asked for again: re-tracked whole
+        assert stored(h) == after  # what a full re-track makes
+
+
+def test_an_absent_range_that_takes_a_seed_reruns_both_sides_from_their_own_seeds(h):
+    h.click(1, frame=0), h.click(1, frame=40)
+    h.track()
+    mark = len(h.engine.units)
+    h.service.set_range(h.video, 1, 20, 29, ABSENT)
+    h.track()
+    # each side lost the other's seed, so each is a new window (issue #20)
+    assert h.engine.units[mark:] == [(0, 19, {1: [0]}), (30, None, {1: [40]})] and not h.engine.stretches
+
+
+def test_an_absent_range_close_after_the_first_seed_reruns_the_frames_before_it(h):
+    # going back from the first seed, the model reads the pass forward's
+    # object pointers up to PRIME frames ahead: an end that close changes them
+    h.click(1, frame=30)
+    h.track()
+    mark = len(h.engine.units)
+    h.service.set_range(h.video, 1, 50, 59, ABSENT)  # ends 19 after the seed: kept
+    h.track()
+    h.service.set_range(h.video, 1, 0, 9, ABSENT)  # a later start: kept
+    h.track()
+    assert h.engine.units[mark:] == []
+    h.service.set_range(h.video, 1, 40, 49, ABSENT)  # ends 9 after it, with frames before it: runs
+    h.track()
+    assert h.engine.units[mark:] == [(10, 39, {1: [30]})]
+
+
 def test_two_corrections_near_each_other_recompute_each_frame_once(h):
     h.click(1, frame=0)
     h.track()
