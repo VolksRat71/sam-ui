@@ -1,5 +1,6 @@
 # sam-ui (Apache-2.0). New file, not from SAM 2.
 import os
+import shutil
 
 import numpy as np
 import pytest
@@ -193,3 +194,36 @@ def test_a_crash_between_the_renames_recovers_on_next_access(tmp_path, monkeypat
     after.save(V, 1, "sam2", "m", "h3", {0: square()}, 0.1)  # the next writer puts it back, then saves
     assert after.meta(V, 1, "sam2")["seeds_hash"] == "h3"
     assert [p.name for p in (tmp_path / V / "1").iterdir() if p.name.startswith(".")] == []
+
+
+def test_a_swap_between_resolving_and_opening_is_read_again(tmp_path, monkeypatch):
+    t = TrackStore(tmp_path)
+    t.save(V, 1, "sam2", "m", "h1", {0: square()}, 0.1)
+    final, aside = tmp_path / V / "1" / "sam2", tmp_path / V / "1" / ".sam2.old-x"
+    real = TrackStore._live
+
+    def live(f):
+        d = real(f)
+        if d == final:
+            os.replace(final, aside)  # the save's first rename lands right after the resolve
+        return d
+
+    monkeypatch.setattr(TrackStore, "_live", staticmethod(live))
+    assert t.meta(V, 1, "sam2")["seeds_hash"] == "h1"
+    os.replace(aside, final)
+    assert len(list(t.masks(V, 1, "sam2"))) == 1
+    assert t.meta(V, 2, "sam2") is None and list(t.masks(V, 2, "sam2")) == []  # no track still reads as none
+
+
+def test_a_half_deleted_old_track_is_never_taken_for_the_live_one(tmp_path, monkeypatch):
+    t = TrackStore(tmp_path)
+    t.save(V, 1, "sam2", "m", "h1", {0: square()}, 0.1)
+    monkeypatch.setattr("tracks.store.shutil.rmtree", lambda *a, **k: None)  # the process dies mid-delete
+    t.save(V, 1, "sam2", "m", "h2", {0: square()}, 0.1)
+    monkeypatch.undo()
+    obj = tmp_path / V / "1"
+    assert [p.name.split("-")[0] for p in obj.iterdir() if p.name.startswith(".")] == [".sam2.trash"]
+    shutil.rmtree(obj / "sam2")  # even with no current track, the trash is not brought back
+    assert t.meta(V, 1, "sam2") is None
+    t.save(V, 1, "sam2", "m", "h3", {0: square()}, 0.1)  # and the next save sweeps it
+    assert [p.name for p in obj.iterdir() if p.name.startswith(".")] == []

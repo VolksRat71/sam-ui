@@ -93,7 +93,8 @@ class TrackStore:
         return meta
 
     def track_dir(self, video: str, obj_id: int, engine: str) -> Path:
-        return self._dir(video, obj_id, engine)
+        """The current track's dir: the .old one after a crash mid-swap, as meta() reads."""
+        return self._live(self._dir(video, obj_id, engine))
 
     @staticmethod
     def _swap(final: Path, tmp: Path) -> None:
@@ -102,8 +103,10 @@ class TrackStore:
             old = final.with_name(f".{final.name}.old-{uuid.uuid4().hex}")
             os.replace(final, old)
         os.replace(tmp, final)
-        if old is not None:
-            shutil.rmtree(old, ignore_errors=True)
+        if old is not None:  # out of the .old- name first: a half-deleted one must never look live
+            trash = final.with_name(f".{final.name}.trash-{uuid.uuid4().hex}")
+            os.replace(old, trash)
+            shutil.rmtree(trash, ignore_errors=True)
 
     @staticmethod
     def _live(final: Path) -> Path:
@@ -129,17 +132,34 @@ class TrackStore:
         if live != final:
             os.replace(live, final)
 
+    def _open(self, final: Path, name: str):
+        """Open `name` in the current track, or None. A swap can move the dir
+        between resolving and opening it (to .old-, then .trash-), so a miss
+        resolves again; a miss on the same dir twice means there is no track."""
+        last = None
+        while True:
+            d = self._live(final)
+            try:
+                return open(d / name)
+            except FileNotFoundError:
+                if d == last:
+                    return None
+                last = d
+
     def meta(self, video: str, obj_id: int, engine: str) -> Optional[Dict]:
-        p = self._live(self._dir(video, obj_id, engine)) / "track.json"
-        return json.loads(p.read_text()) if p.exists() else None
+        f = self._open(self._dir(video, obj_id, engine), "track.json")
+        if f is None:
+            return None
+        with f:
+            return json.load(f)
 
     def masks(self, video: str, obj_id: int, engine: str) -> Iterator[Tuple[int, Dict]]:
         """(frame, rle) for every stored frame, in order. RLE stays encoded: the
         stream sends it as is."""
-        p = self._live(self._dir(video, obj_id, engine)) / "masks.jsonl"
-        if not p.exists():
+        f = self._open(self._dir(video, obj_id, engine), "masks.jsonl")
+        if f is None:
             return
-        with open(p) as f:
+        with f:
             for line in f:
                 d = json.loads(line)
                 yield d["frame"], {"size": d["size"], "counts": d["counts"]}
