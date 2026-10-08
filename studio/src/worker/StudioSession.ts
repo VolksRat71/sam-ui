@@ -958,14 +958,14 @@ export default class StudioSession {
    * appearance as a candidate range of the object. No seed, mask or track
    * changes. cancelPropagateInVideo cancels it (nothing is then written).
    */
-  async discoverText(objectId: number, text: string, engine: string, stride?: number): Promise<DiscoverTextResult> {
+  async discoverText(objectId: number, text: string, engine: string): Promise<DiscoverTextResult> {
     if (this._offline != null) {
       throw new Error('finding by text needs SAM 3 in the desktop app');
     }
     const response = await fetch(`${this._endpoint}/discover_text`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({session_id: this.sessionId, object_id: objectId, text, engine, ...(stride != null ? {stride} : {})}),
+      body: JSON.stringify({session_id: this.sessionId, object_id: objectId, text, engine}),
     });
     const body = (await response.json().catch(() => ({}))) as {
       error?: string;

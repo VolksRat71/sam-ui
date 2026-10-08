@@ -151,7 +151,7 @@ export type StudioMethods = {
   /** Seed one frame of an object from a phrase (SAM 3); its best match becomes the frame's mask. */
   textPrompt: {args: {objectId: number; frameIndex: number; text: string; engine: string | null}; result: TextPromptResult};
   /** EXPERIMENTAL: look for a phrase across the whole clip (SAM 3) and write each appearance as a candidate range. */
-  discoverText: {args: {objectId: number; text: string; engine: string; stride?: number}; result: DiscoverTextResult};
+  discoverText: {args: {objectId: number; text: string; engine: string}; result: DiscoverTextResult};
   removeObject: {args: {objectId: number}; result: void};
   clearTrack: {args: {objectId: number; engine: string | null}; result: ServerObject};
   /**

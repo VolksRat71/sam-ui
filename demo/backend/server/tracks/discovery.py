@@ -59,7 +59,6 @@ def sample_frames(n_frames: int, stride: int) -> List[int]:
     """Every stride-th frame from 0, and the last frame, so the tail is seen."""
     if n_frames <= 0:
         return []
-    stride = max(1, int(stride))
     out = list(range(0, n_frames, stride))
     if out[-1] != n_frames - 1:
         out.append(n_frames - 1)
@@ -85,22 +84,22 @@ def group(hits: Sequence[bool], gap: int = GAP) -> List[Tuple[int, int]]:
     return out
 
 
-def bisect(miss: int, hit: int, tol: int = DEFAULT_TOL) -> Generator[int, bool, int]:
-    """Yield frames between a miss and a hit (either order) to probe, each
-    sent back as hit or not, halving until they are at most `tol` apart.
-    Returns the hit side: the first frame of an entry, the last of an exit."""
-    tol = max(1, int(tol))
+def bisect(miss: int, hit: int, probe: Callable[[int], Generator[int, Probe, Probe]],
+           tol: int = DEFAULT_TOL) -> Generator[int, Probe, int]:
+    """Probe frames between a miss and a hit (either order) through `probe`
+    (scan's: yields the frame, returns its Probe), halving until they are at
+    most `tol` (at least 1) apart. Returns the hit side: the first frame of an
+    entry, the last of an exit."""
     while abs(hit - miss) > tol:
         mid = (miss + hit) // 2
-        if (yield mid):
+        if (yield from probe(mid)).hit:
             hit = mid
         else:
             miss = mid
     return hit
 
 
-def scan(n_frames: int, stride: int = DEFAULT_STRIDE, tol: int = DEFAULT_TOL,
-         gap: int = GAP) -> Generator[int, Probe, List[Dict]]:
+def scan(n_frames: int, stride: int = DEFAULT_STRIDE, tol: int = DEFAULT_TOL) -> Generator[int, Probe, List[Dict]]:
     """The discovery plan: yields each frame to probe (never one twice) and is
     sent its Probe. Returns the appearances, in frame order, each
     {"start", "end", "score", "hits", "best": {"frame", "score", "box"}}."""
@@ -114,28 +113,14 @@ def scan(n_frames: int, stride: int = DEFAULT_STRIDE, tol: int = DEFAULT_TOL,
     samples = sample_frames(n_frames, stride)
     for f in samples:
         yield from probe(f)
-    runs = group([seen[f].hit for f in samples], gap)
+    runs = group([seen[f].hit for f in samples])
     out = []
     for i, j in runs:
         start, end = samples[i], samples[j]
         if i > 0:  # tighten the entry: between the miss before and the first hit
-            b = bisect(samples[i - 1], start, tol)
-            try:
-                f = next(b)
-                while True:
-                    p = yield from probe(f)
-                    f = b.send(p.hit)
-            except StopIteration as stop:
-                start = stop.value
+            start = yield from bisect(samples[i - 1], start, probe, tol)
         if j < len(samples) - 1:  # and the exit: between the last hit and the miss after
-            b = bisect(samples[j + 1], end, tol)
-            try:
-                f = next(b)
-                while True:
-                    p = yield from probe(f)
-                    f = b.send(p.hit)
-            except StopIteration as stop:
-                end = stop.value
+            end = yield from bisect(samples[j + 1], end, probe, tol)
         hits = sorted(f for f, p in seen.items() if p.hit and start <= f <= end)
         best = max(hits, key=lambda f: seen[f].score)
         out.append({"start": start, "end": end,

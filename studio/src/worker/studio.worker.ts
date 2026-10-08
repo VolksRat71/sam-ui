@@ -113,7 +113,7 @@ const handlers: Handlers = {
   setPoints: ({objectId, frameIndex, points, engine}) =>
     session.setPoints(objectId, frameIndex, points, engine),
   textPrompt: ({objectId, frameIndex, text, engine}) => session.textPrompt(objectId, frameIndex, text, engine),
-  discoverText: ({objectId, text, engine, stride}) => session.discoverText(objectId, text, engine, stride),
+  discoverText: ({objectId, text, engine}) => session.discoverText(objectId, text, engine),
   removeObject: ({objectId}) => session.removeObject(objectId),
   clearTrack: ({objectId, engine}) => session.clearTrack(objectId, engine),
   setRange: ({objectId, start, end, state, source, score, clear}) => session.setRange(objectId, start, end, state, {source, score, clear}),

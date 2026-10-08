@@ -338,7 +338,9 @@ def make_blueprint(resolve: Callable[[str], TrackContext], service: Optional[Tra
             raise
         except (ValueError, KeyError, TypeError) as err:
             return jsonify({"error": str(err)}), 400
-        job = ctx.service.jobs.start_discovery(ctx.session_id, ctx.video, engine)
+        # listed and cancellable like a track job, but holding no object: it writes
+        # only candidate ranges, so clicks, undo and tracking go on around it
+        job = ctx.service.jobs.claim(ctx.session_id, ctx.video, [], None, engine, kind="discover")
 
         @contextlib.contextmanager
         def step():

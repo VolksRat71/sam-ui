@@ -43,7 +43,6 @@ def test_samples_are_every_stride_and_the_last_frame():
     assert disc.sample_frames(30, 12) == [0, 12, 24, 29]
     assert disc.sample_frames(1, 12) == [0]
     assert disc.sample_frames(0, 12) == []
-    assert disc.sample_frames(5, 0) == [0, 1, 2, 3, 4]  # a stride below 1 is 1
 
 
 def test_grouping_allows_one_missed_sample_and_no_more():
@@ -55,26 +54,25 @@ def test_grouping_allows_one_missed_sample_and_no_more():
     assert disc.group([T, F, F, T], gap=2) == [(0, 3)]
 
 
+def bisected(miss, hit, truth):
+    """bisect() with a probe that answers at once: (frames probed in order, result)."""
+    order = []
+
+    def probe(f):
+        order.append(f)
+        return disc.Probe(truth(f), 0.9)
+        yield  # a generator, as scan's probe is
+
+    with pytest.raises(StopIteration) as stop:
+        next(disc.bisect(miss, hit, probe, tol=2))
+    return order, stop.value.value
+
+
 def test_bisection_halves_towards_the_boundary_in_order():
     # entry: miss at 12, hit at 24, the object arrives at frame 17
-    b = disc.bisect(12, 24, tol=2)
-    order, f = [], next(b)
-    try:
-        while True:
-            order.append(f)
-            f = b.send(f >= 17)
-    except StopIteration as stop:
-        got = stop.value
-    assert order == [18, 15, 16] and got == 18  # the hit side, one frame late at most
+    assert bisected(12, 24, lambda f: f >= 17) == ([18, 15, 16], 18)  # the hit side, one frame late at most
     # exit: hit at 24, miss at 36, the object's last frame is 29
-    b = disc.bisect(36, 24, tol=2)
-    order, f = [], next(b)
-    try:
-        while True:
-            order.append(f)
-            f = b.send(f <= 29)
-    except StopIteration as stop:
-        got = stop.value
+    order, got = bisected(36, 24, lambda f: f <= 29)
     assert order == [30, 27, 28] and 28 <= got <= 29
 
 

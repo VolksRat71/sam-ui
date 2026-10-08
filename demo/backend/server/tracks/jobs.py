@@ -43,7 +43,7 @@ class JobRegistry:
         self._ids = itertools.count(1)
 
     def claim(self, session_id: str, video: str, wanted: Iterable[int], n_frames: Optional[int] = None,
-              engine: str = "", bounded: Iterable[int] = ()) -> Job:
+              engine: str = "", bounded: Iterable[int] = (), kind: str = "track") -> Job:
         """Register a job for the objects in `wanted` that no running job on the
         same engine holds. Claim and check happen under one lock, so two jobs of
         one engine never share an object (two engines may track it at once)."""
@@ -51,16 +51,7 @@ class JobRegistry:
             held = self._held(video, engine)
             objs = sorted(o for o in set(wanted) if o not in held)
             job = Job(f"job-{next(self._ids)}", session_id, video, objs, n_frames, engine,
-                      sorted(o for o in set(bounded) if o in objs))
-            self._jobs[job.id] = job
-            return job
-
-    def start_discovery(self, session_id: str, video: str, engine: str = "") -> Job:
-        """Register a discovery run: listed and cancellable like a track job,
-        but holding no object (it writes only candidate ranges, so clicks,
-        undo and tracking go on around it)."""
-        with self._lock:
-            job = Job(f"job-{next(self._ids)}", session_id, video, [], None, engine, kind="discover")
+                      sorted(o for o in set(bounded) if o in objs), kind=kind)
             self._jobs[job.id] = job
             return job
 
