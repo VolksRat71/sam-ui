@@ -363,6 +363,7 @@ export default function Timeline({session, actions, inspector}: Props) {
       <div className="lanes suite-lanes" style={{'--label-width': `${labelWidth}px`} as CSSProperties}
         onContextMenu={e => {
           // right-click, a touch long press, or VoiceOver's VO Shift M on a layer or its lane: its Actions, not the browser's menu
+          if ((e.target as HTMLElement).closest('input, textarea')) return; // a text field (a rename) keeps its own menu
           const id = (e.target as HTMLElement).closest<HTMLElement>('[data-layer-option], [data-lane]')?.dataset;
           const key = id?.layerOption ?? id?.lane;
           if (key == null) return;
