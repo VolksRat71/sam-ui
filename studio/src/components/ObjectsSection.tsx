@@ -407,6 +407,7 @@ function ObjectRow({
       onClick={() => session.selectObject(active ? null : o.id)}>
       <div className="layer-controls">
         <div className="layer-summary" role="option" aria-selected={active} aria-label={`${name}, ${trackPresentation(o.state, o.running).label}`} data-layer-option={o.id} tabIndex={active ? 0 : -1}
+          aria-keyshortcuts="Shift+F10"
           onKeyDown={e => {
             if (e.target !== e.currentTarget) return; // Enter on the rename pencil is the pencil's
             const dir = stepKey(e);
