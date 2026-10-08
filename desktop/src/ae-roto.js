@@ -14,7 +14,8 @@
 //        object, with its outlines as hold mask-path keys (pieces as Add
 //        masks, holes as Subtract masks below them). Before anything is
 //        written the source is listed again and must still be the same item,
-//        file, size, rate and frame count.
+//        file, size, rate and frame count, and the file's bytes must still
+//        hash to what they did when it was opened.
 //
 // Timing: Vector JSON index i is clip frame i + 1, shown from comp time i/fps
 // (frame 1 starts at 0). Keys go at i / frameRate with AE's own frameRate,
@@ -310,9 +311,12 @@ async function runPlan(plan, client, {tmpDir, onProgress} = {}) {
 
 // -- the backend (only the main process can link a file: it has the token) --
 
-/** JSON over http to the local backend: no Origin, which its guard would check. */
+/**
+ * JSON over http to the local backend: no Origin, which its guard would check.
+ * Without `token` it cannot reach /linked (the MCP server's client, mcp-tools.js).
+ */
 function backendClient({port, token, host = '127.0.0.1'}) {
-  function request(method, pathname, body) {
+  function send(method, pathname, body, onResponse, timeoutMs) {
     const data = body == null ? null : Buffer.from(JSON.stringify(body));
     return new Promise((resolve, reject) => {
       const req = http.request(
@@ -324,36 +328,57 @@ function backendClient({port, token, host = '127.0.0.1'}) {
             ...(token ? {'X-Sam-Ui-Link-Token': token} : {}),
           },
         },
-        res => {
-          const chunks = [];
-          res.on('data', c => chunks.push(c));
-          res.on('end', () => {
-            const text = Buffer.concat(chunks).toString('utf8');
-            let json = null;
-            try {
-              json = JSON.parse(text);
-            } catch {
-              // not JSON (an HTML error page)
-            }
-            resolve({status: res.statusCode, json, text});
-          });
-        },
+        res => onResponse(res, resolve),
       );
-      req.setTimeout(600000, () => req.destroy(new Error('the backend did not answer')));
+      if (timeoutMs) req.setTimeout(timeoutMs, () => req.destroy(new Error('the backend did not answer')));
       req.on('error', reject);
       req.end(data ?? undefined);
     });
   }
+  function request(method, pathname, body) {
+    return send(method, pathname, body, (res, resolve) => {
+      const chunks = [];
+      res.on('data', c => chunks.push(c));
+      res.on('end', () => {
+        const text = Buffer.concat(chunks).toString('utf8');
+        let json = null;
+        try {
+          json = JSON.parse(text);
+        } catch {
+          // not JSON (an HTML error page)
+        }
+        resolve({status: res.statusCode, json, text});
+      });
+    }, 600000);
+  }
   return {
+    get: pathname => request('GET', pathname),
+    /** {status, json, text}: json is null when the reply is not JSON. */
+    post: (pathname, body) => request('POST', pathname, body),
+    /** GraphQL `data`, or an Error with the backend's messages. */
+    async graphql(query, variables) {
+      const r = await request('POST', '/graphql', {query, variables});
+      const errors = r.json?.errors;
+      if (r.status !== 200 || errors?.length || r.json?.data == null) {
+        throw new Error(errors?.map(e => e.message).join('; ') || `GraphQL failed (HTTP ${r.status})`);
+      }
+      return r.json.data;
+    },
+    /** The response itself, unread and with no timeout: a track stream lasts as long as its clip. */
+    stream: (pathname, body) => send('POST', pathname, body, (res, resolve) => resolve(res)),
     /** Link `file` in place with its source record: {path, posterPath, width, height, record}. */
     async link(file, source) {
       const r = await request('POST', '/linked', {path: file, source});
       if (r.status === 200 && r.json) return r.json;
       throw new AeBridgeError(r.status === 422 ? 'mismatch' : 'backend', r.json?.error ?? `The backend refused the file (HTTP ${r.status}).`);
     },
-    /** A linked video's record, or null when the video was not opened in place. */
-    async sourceOf(videoPath) {
-      const r = await request('GET', `/linked-source?path=${encodeURIComponent(videoPath)}`);
+    /**
+     * A linked video's record, or null when the video was not opened in place.
+     * With verify, `changed` also covers bytes that differ from those hashed at
+     * link time (the backend reads the whole file, only when size and mtime match).
+     */
+    async sourceOf(videoPath, {verify = false} = {}) {
+      const r = await request('GET', `/linked-source?path=${encodeURIComponent(videoPath)}${verify ? '&verify=1' : ''}`);
       if (r.status === 404) return null;
       if (r.status === 200 && r.json) return r.json;
       throw new AeBridgeError('backend', `The backend could not read the video's source (HTTP ${r.status}).`);
@@ -378,7 +403,8 @@ async function openFromAe({client, backend, itemId}) {
  * `studio` is what studio decoded ({frames, width, height}).
  */
 async function exportToAe({client, backend, videoPath, objects, studio, tmpDir, onProgress}) {
-  const record = await backend.sourceOf(videoPath);
+  // verified: a file swapped in place at the same size and mtime must not get these masks
+  const record = await backend.sourceOf(videoPath, {verify: true});
   if (record == null || record.source?.kind !== 'afterEffects') {
     throw new AeBridgeError('not-from-ae', 'This video was not opened from After Effects. Use Open from After Effects in Media first.');
   }

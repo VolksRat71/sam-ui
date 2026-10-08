@@ -39,6 +39,9 @@ into Applications.
 - The app checks GitHub for a newer release at most once a day and shows a banner
   with a link; **Help > Check for Updates…** checks now. It never downloads or
   installs anything itself.
+- **sam-ui > Notify When a Track Finishes** (off by default) shows a system
+  notification when a track ends while the app is in the background; clicking it
+  opens the track's first unreviewed review stop.
 
 **Or try it in the browser:** [volksrat71.github.io/sam-ui](https://volksrat71.github.io/sam-ui/)
 runs SAM 2.1 tiny on WebGPU with no install, no server and nothing uploaded (your

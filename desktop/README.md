@@ -58,6 +58,23 @@ no CORS headers, and refuses any request whose `Host` or `Origin` isn't the app'
 own page, so other websites can't reach it. The app's windows are sandboxed, and
 links open in your browser.
 
+**Agents (MCP).** Claude Code, Codex or any MCP client can drive sam-ui: open a
+gallery clip, click or describe objects, track, look at frames with the masks
+drawn on, walk the review queue and export. It is off until you tick
+**Agents → Allow agents (MCP)**, which the app remembers. The server listens on
+`127.0.0.1:8793` only, wants the bearer token in `~/.sam-ui/token` (made on
+first use, readable only by you), and refuses any request from a web page.
+Agents can remove an object and its tracks, but can't upload or delete files or open them in place, and export only to
+`~/Movies/sam-ui/<name>`, never over an existing export. **Agents → Copy Claude
+Code setup command** copies this line:
+
+```sh
+claude mcp add --transport http --scope user sam-ui http://127.0.0.1:8793/mcp --header "Authorization: Bearer $(cat ~/.sam-ui/token)"
+```
+
+Claude Desktop connects through `mcp-remote` with the same URL and header. The
+tools are listed in [docs/development.md](../docs/development.md#agents-mcp).
+
 ## Develop
 
 ```sh

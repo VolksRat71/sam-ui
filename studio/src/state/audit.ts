@@ -527,6 +527,29 @@ export function stepQueue(
   return null;
 }
 
+/**
+ * Where a finished job's notification lands: its objects' first unreviewed
+ * stop in rank order, else the first of them still here, on its first seed.
+ */
+export function jobLanding(
+  queue: ReadonlyArray<Pick<QueueEntry, 'objectId' | 'frame' | 'reviewed'>>,
+  objectIds: ReadonlyArray<number>,
+  firstSeed: (objectId: number) => number | undefined,
+): {objectId: number; frame: number} | null {
+  const ids = new Set(objectIds);
+  const stop = queue.find(e => ids.has(e.objectId) && !e.reviewed);
+  if (stop != null) {
+    return {objectId: stop.objectId, frame: stop.frame};
+  }
+  for (const objectId of objectIds) {
+    const frame = firstSeed(objectId);
+    if (frame != null) {
+      return {objectId, frame};
+    }
+  }
+  return null;
+}
+
 /** A location's reasons in words, for a title or a list (never told by colour alone). */
 export function describeStop(l: Pick<Location, 'frame' | 'start' | 'end' | 'reasons' | 'score'>): string {
   const where = l.start === l.end ? `frame ${l.frame + 1}` : `frame ${l.frame + 1} (frames ${l.start + 1}-${l.end + 1})`;

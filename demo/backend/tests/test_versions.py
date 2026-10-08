@@ -367,6 +367,25 @@ def test_a_track_from_before_versions_loads_and_is_kept_on_the_next_change(h):
     assert info["state"] == TRACKED and masks_bytes(h) == original
 
 
+def test_a_track_a_crash_left_mid_swap_is_kept_on_the_next_change(h):
+    h.click(1, frame=0)
+    hash_ = h.service.seeds.hash(h.video, 1)
+    masks = {f: FakeEngine.mask(1, f) for f in range(N)}
+    h.service.tracks.save(h.video, 1, "fake", "fake-1", hash_, masks, 0.1)  # a track with no version
+    obj = h.root / h.video / "1"
+    (obj / "history.json").unlink()
+    shutil.rmtree(obj / "versions")
+    original = masks_bytes(h)
+    os.replace(obj / "fake", obj / ".fake.old-x")  # a re-track died between the swap's renames
+    h.new_service()
+    assert h.state(1) == TRACKED
+    accident(h)  # a seed edit keeps the track first, out of .old
+    h.track()
+    assert len(history(h)["versions"]) == 2
+    info = h.service.undo(h.video, 1)
+    assert info["state"] == TRACKED and masks_bytes(h) == original
+
+
 # -- locks -------------------------------------------------------------------------------
 
 def test_undo_is_refused_while_a_job_holds_the_object(h):

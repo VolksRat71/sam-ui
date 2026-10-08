@@ -87,7 +87,8 @@ desktop (Electron): runs the backend, serves studio, talks to After Effects
   (`src/worker/protocol.ts`), which the browser engine (`src/local/`) implements too.
   Meta's demo code it reuses is vendored under `src/meta/`.
 - **`desktop/`.** The Electron app. `src/ae-bridge.js` and `src/ae-roto.js` are the
-  After Effects round trip; `src/update-check.js` the update notice.
+  After Effects round trip; `src/update-check.js` the update notice; `src/mcp-server.js`
+  and `src/mcp-tools.js` the [MCP server](#agents-mcp) for agents.
 
 ### API, in brief
 
@@ -95,7 +96,38 @@ desktop (Electron): runs the backend, serves studio, talks to After Effects
 | --- | --- |
 | GraphQL, `POST /graphql` | `startSession` (returns the objects already known for the video), `addPoints` (points normalised 0 to 1), `clearPointsInFrame`, `removeObject`, `clearPointsInVideo`, `objectTracks` (with each object's `history`: undo, redo, kept versions, and its `ranges` by state), `clearTrack`, `setObjectRange` (absent, present, or candidate with `source` and `score`; null clears, `clear` limits which states), `setObjectCandidates` (candidates in bulk), `undoSeeds`, `redoSeeds`, `restoreVersion`, `moveClicks`, `uploadVideo`, `deleteVideo`, `videos`, `defaultVideo` |
 | Streams, `multipart/x-savi-stream` | `POST /track_objects {session_id, object_ids?, engine?}` streams one part per frame and ends with a `done` or `error` part. `POST /track_masks` streams cached tracks. |
-| JSON | `GET /engines` (every engine, with why one can't run), `GET /limits` (upload length and size), `POST /cancel_track`, `POST /track_jobs`, `POST /track_disagreement`, `POST /track_provenance`, `POST /review_queue`, `POST /set_reviewed`, `POST /text_prompt`, `POST /rename_object`, `POST /object_names`, `POST /object_layout`, `POST /set_object_layout`, `POST /export`, `GET /linked-source` |
+| JSON | `GET /engines` (every engine, with why one can't run), `GET /limits` (upload length and size), `POST /cancel_track`, `POST /track_jobs`, `POST /track_disagreement`, `POST /track_provenance`, `POST /review_queue`, `POST /set_reviewed`, `POST /text_prompt`, `POST /discover_text` (find a phrase across the clip, written as candidates), `POST /rename_object`, `POST /object_names`, `POST /object_layout`, `POST /set_object_layout`, `POST /export`, `POST /capture` (1 to 12 frames with the masks drawn on, as JPEG plus a legend, for agents), `GET /linked-source` |
+
+### Agents (MCP)
+
+`desktop/src/mcp-server.js` serves MCP (streamable HTTP, JSON replies) on
+`127.0.0.1:8793/mcp` with the bearer token in `~/.sam-ui/token`
+(`SAM_UI_TOKEN_DIR` moves it, for tests). The desktop app starts it when
+**Agents → Allow agents (MCP)** is ticked. Against a dev backend it runs on its own,
+on the same port, with the same token:
+
+```sh
+node desktop/src/mcp-server.js --backend http://127.0.0.1:7263
+claude mcp add --transport http --scope user sam-ui http://127.0.0.1:8793/mcp --header "Authorization: Bearer $(cat ~/.sam-ui/token)"
+```
+
+Only one of the two can hold the port; the second says so and stops. The tools
+(`desktop/src/mcp-tools.js`) are a thin layer over the API above, and name
+videos, objects and jobs by id, never by path:
+
+| Tool | Commands |
+| --- | --- |
+| `sam_query` | `videos`, `engines`, `objects` |
+| `sam_session` | `open` (a video_id such as `gallery/01_dog.mp4`; answers with frame 0 drawn), `close` |
+| `sam_edit` | `points`, `text` (both answer with the frame drawn), `range`, `undo`, `redo`, `remove` |
+| `sam_track` | `start`, `wait` (up to 50 s, called again until done), `status`, `cancel` |
+| `sam_review` | `queue`, `mark` |
+| `sam_capture` | `frame`, `sheet` (`POST /capture`) |
+| `sam_export` | a folder `name`, written to `~/Movies/sam-ui/<name>`; never `force` |
+
+The server holds a track's stream open itself (a dropped reader cancels the job)
+and keeps a finished job's result for 30 minutes. Its backend client never sends
+the link token, so agents can't open files in place.
 
 ## Tests
 
@@ -108,7 +140,7 @@ cd studio && npm test && npm run lint && npm run build
 npm run smoke                                        # end to end in headless Chrome
 SMOKE=both npm run smoke                             # + the browser-only build (headed Chrome, WebGPU)
 CLIP_SECONDS=300 SERVE=dist-pages npm run memory     # browser build: memory and IoU over a long track
-(cd desktop && npm test)                             # desktop: downloads, update check, AE bridge and export
+(cd desktop && npm test)                             # desktop: downloads, update check, AE bridge, export and MCP
 python tools/memory_bench.py --seconds 10 60 180     # peak memory against clip length
 python tools/hardware_bench.py --runs sam2 sam3 sam3-text --clips gallery:01_dog   # the Hardware figures
 python tools/track_cache_e2e.py --api http://127.0.0.1:7373   # live backend (use a scratch one)

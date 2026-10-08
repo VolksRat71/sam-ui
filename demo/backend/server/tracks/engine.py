@@ -41,6 +41,9 @@ class Engine(Protocol):
     # True when a cleared seed never conditions the engine, so it is output
     # only: its frame is blanked (strip_cleared) and nothing else moves.
     skips_cleared: bool
+    # True when plan() gives each object a pass from its own first seed
+    # (plan_units' by_first_seed), never from another object's earlier one.
+    splits_by_first_seed: bool
 
     def plan(self, objects: Dict[int, Seeds], windows: Optional[Windows] = None) -> List["Unit"]:
         """The passes a job over `objects` makes, in order (see plan_units)."""
@@ -121,6 +124,7 @@ class Sam2Engine:
 
     name = "sam2"
     skips_cleared = True
+    splits_by_first_seed = True
 
     def __init__(self, predictor, model: str, offload_video_to_cpu: bool = False,
                  autocast: Callable[[], contextlib.AbstractContextManager] = contextlib.nullcontext,
@@ -335,6 +339,7 @@ class FakeEngine:
 
     name = "fake"
     skips_cleared = False
+    splits_by_first_seed = False  # plans like SAM 3
 
     def __init__(self, n_frames: int = 5, shape=(24, 32), model: str = "fake-1", influence: int = 0):
         self.n_frames = n_frames
