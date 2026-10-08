@@ -348,15 +348,18 @@ class SeedStore:
         return self.timeline(video, obj_id)
 
     def write_candidates(self, video: str, obj_id: int, candidates: Iterable[Dict],
-                         replace: bool = False) -> List[Dict]:
+                         replace: bool = False, replace_source: Optional[str] = None) -> List[Dict]:
         """Write many candidate ranges at once (what a discovery job makes),
         each {"start", "end", "source", "score"?}, in order: a later one wins
-        where two overlap. `replace` drops the object's candidates first.
+        where two overlap. `replace` drops the object's candidates first;
+        `replace_source` only those from that source (a discovery re-run).
         All or nothing: one bad candidate (ValueError) writes none.
         Confirmed ranges stay and still win. Answers timeline()."""
         notes = self.annotations(video, obj_id)
         if replace:
             notes = [r for r in notes if r["state"] != rng.CANDIDATE]
+        elif replace_source is not None:
+            notes = [r for r in notes if not (r["state"] == rng.CANDIDATE and r.get("source") == replace_source)]
         for c in candidates:
             if c.get("state", rng.CANDIDATE) != rng.CANDIDATE:
                 raise ValueError(f"write_candidates writes candidates only, got a {c.get('state')!r} range")

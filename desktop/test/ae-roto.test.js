@@ -199,7 +199,11 @@ test('an export that no longer matches writes nothing; one that does builds the 
     e => e.code === 'mismatch' && /Nothing was written/.test(e.message) && /301 frames/.test(e.message),
   );
   assert.deepStrictEqual(moved.calls, [{op: 'media'}]); // listed, never written
-  await assert.rejects(roto.exportToAe({client: fakeClient(), backend: {sourceOf: async () => ({...record, changed: true})}, videoPath: 'x', objects}), /changed on disk/);
+  // the backend re-hashes only when asked: a same-size, same-mtime swap shows up as changed
+  const swapped = fakeClient();
+  const verifying = {sourceOf: async (p, {verify} = {}) => ({...record, changed: verify === true})};
+  await assert.rejects(roto.exportToAe({client: swapped, backend: verifying, videoPath: 'x', objects}), /changed on disk/);
+  assert.deepStrictEqual(swapped.calls, []); // not even listed: nothing written
   await assert.rejects(roto.exportToAe({client: fakeClient(), backend: {sourceOf: async () => null}, videoPath: 'uploads/x.mp4', objects}), /not opened from After Effects/);
   const ok = fakeClient();
   const out = await roto.exportToAe({client: ok, backend, videoPath: 'linked/x.mov', objects, studio: {frames: 300, width: 1920, height: 1080}});
@@ -241,6 +245,8 @@ test('the backend client sends the link token and no Origin, and reads refusals'
     await assert.rejects(b.link('/f/a.mov', {frames: 1}), e => e.code === 'mismatch' && /frame count/.test(e.message));
     assert.strictEqual(await b.sourceOf('uploads/x.mp4'), null);
     assert.strictEqual(seen.at(-1).url, '/linked-source?path=uploads%2Fx.mp4');
+    await b.sourceOf('linked/x.mov', {verify: true});
+    assert.strictEqual(seen.at(-1).url, '/linked-source?path=linked%2Fx.mov&verify=1');
   } finally {
     server.close();
   }

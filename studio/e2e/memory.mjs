@@ -35,12 +35,16 @@
 // IOU_EVERY (240 frames), MIN_IOU (0.9), EXPORT (1; 0 skips the export and
 // the IoU), MASK (score a mask video exported earlier against the clip,
 // with no browser), OPEN_ONLY (1 stops once the clip is open: no model, no WebGPU
-// work, for checking the build and the sampler), CHROME (the macOS app).
-import {chromium} from 'playwright-core';
+// work, for checking the build and the sampler), CLICK (x,y of the click on
+// frame 0 as fractions of the frame, for a CLIP of your own), BROWSER and
+// CHROME / FIREFOX (see browser.mjs). Outside Chrome the footprint covers the
+// browser processes this run started (not WebKit's XPC services), unsplit,
+// and js_heap_mb is blank.
 import {execFileSync, spawnSync} from 'node:child_process';
 import fs from 'node:fs';
 import {serve} from './static-server.mjs';
 import path from 'node:path';
+import {BROWSER, launch, newPage} from './browser.mjs';
 
 const SECONDS = Number(process.env.CLIP_SECONDS ?? 300);
 const OUT = process.env.OUT ?? '/private/tmp/sam-ui-memory';
@@ -50,14 +54,13 @@ const IOU_EVERY = Number(process.env.IOU_EVERY ?? 240);
 const MIN_IOU = Number(process.env.MIN_IOU ?? 0.9);
 const EXPORT = process.env.EXPORT !== '0';
 const OPEN_ONLY = process.env.OPEN_ONLY === '1';
-const CHROME = process.env.CHROME ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const FPS = 24;
 // the synthetic clip: the square's top-left corner at time t (ffmpeg expressions)
 const SQUARE = {size: 160, x: '400+300*sin(t/3)', y: '280+120*cos(t/4)'};
 const SYNTHETIC = process.env.CLIP == null;
 const CLIP = process.env.CLIP ?? path.join(OUT, `clip${SECONDS}-720.mp4`);
 // the square's centre on frame 0, as a fraction of the 1280x720 frame
-const CLICK = [(400 + SQUARE.size / 2) / 1280, (280 + 120 + SQUARE.size / 2) / 720];
+const CLICK = process.env.CLICK?.split(',').map(Number) ?? [(400 + SQUARE.size / 2) / 1280, (280 + 120 + SQUARE.size / 2) / 720];
 const STEM = path.join(OUT, `memory-${path.basename(CLIP).replace(/\.[^.]+$/, '')}`);
 
 fs.mkdirSync(OUT, {recursive: true});
@@ -87,6 +90,7 @@ const ps = () =>
       return {pid: Number(m[1]), ppid: Number(m[2]), cmd: m[3]};
     });
 const VT = /VTDecoderXPCService/;
+const PROCESS = {chrome: /Google Chrome/, firefox: /Firefox\.app/, webkit: /Playwright\.app/}[BROWSER];
 const vtBefore = new Set(ps().filter(p => VT.test(p.cmd)).map(p => p.pid));
 
 /** Physical footprint in MB of Chrome processes started by this run, and the new VideoToolbox services. */
@@ -102,7 +106,7 @@ function memory() {
       }
     }
   }
-  const chrome = all.filter(p => mine.has(p.pid) && /Google Chrome/.test(p.cmd));
+  const chrome = all.filter(p => mine.has(p.pid) && PROCESS.test(p.cmd));
   const vt = all.filter(p => VT.test(p.cmd) && !vtBefore.has(p.pid));
   const pids = [...chrome, ...vt].map(p => String(p.pid));
   const mb = {};
@@ -248,15 +252,16 @@ const median = xs => {
 class Stop extends Error {}
 
 let browser = null;
-const summary = {clip: CLIP, seconds: SECONDS, frames: nFrames, url: URL_, started: new Date().toISOString()};
+const summary = {browser: BROWSER, clip: CLIP, seconds: SECONDS, frames: nFrames, url: URL_, started: new Date().toISOString()};
 const errors = [];
+const consoleErrors = [];
 let failed = false;
 try {
   console.log(`memory_pressure level ${pressure()} before launch`);
-  browser = await chromium.launch({executablePath: CHROME, headless: false, args: ['--enable-unsafe-webgpu', '--enable-precise-memory-info']});
-  const context = await browser.newContext({viewport: {width: 1400, height: 860}, acceptDownloads: true});
-  page = await context.newPage();
+  browser = await launch(['--enable-precise-memory-info']);
+  page = await newPage(browser, {width: 1400, height: 860});
   page.on('pageerror', e => errors.push(String(e)));
+  page.on('console', m => m.type() === 'error' && consoleErrors.push(m.text()));
   await page.goto(URL_);
   await page.waitForSelector('.dropzone', {timeout: 60000});
   phase = 'idle';
@@ -294,7 +299,7 @@ try {
   phase = 'tracked';
   await page.waitForTimeout(3000);
   summary.tracked = await sample();
-  const row = await page.$eval('.object-row .object-title', e => e.innerText.replace(/\n/g, ' ')).catch(() => '');
+  const row = await page.$eval('.object-row .layer-summary', e => e.innerText.replace(/\n/g, ' ')).catch(() => '');
   summary.objectRow = row;
 
   const track = rows.filter(r => r.phase === 'tracking' && r.frame !== '');
@@ -369,7 +374,8 @@ try {
   }
 } finally {
   summary.criticalPressure = critical;
-  summary.pageErrors = errors.filter(e => !/WebGL context|NetworkError|Inter-VariableFont/.test(e)).slice(0, 5);
+  summary.pageErrors = errors.filter(e => !/WebGL context|NetworkError|access control checks|Inter-VariableFont/.test(e)).slice(0, 5);
+  summary.consoleErrors = consoleErrors.slice(0, 10);
   summary.samples = rows.length;
   summary.csv = csv;
   fs.writeFileSync(`${STEM}.json`, JSON.stringify(summary, null, 1));

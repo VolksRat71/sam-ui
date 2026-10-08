@@ -22,6 +22,7 @@ import {
   TrashCan,
   Reset,
   Search,
+  SearchLocate,
   Undo,
   View,
   ViewOff,
@@ -30,8 +31,8 @@ import {trackPresentation} from './trackPresentation';
 import {createPortal} from 'react-dom';
 import {highlightEffects, moreEffects} from '@/common/components/effects/EffectsUtils';
 import {useEffect, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent, type ReactNode} from 'react';
-import {OBJECT_LIMIT} from '~/config';
-import {BROWSER_ENGINE, engineLabel, textPromptNote} from '~/state/engines';
+import {NO_BACKEND_BUILD, OBJECT_LIMIT} from '~/config';
+import {BROWSER_ENGINE, discoverTextNote, engineLabel, textPromptNote} from '~/state/engines';
 import {NAME_MAX, objectName} from '~/state/fileNames';
 import {moveTargets, parseCreated, undoBlock, versionLabel} from '~/state/history';
 import {
@@ -61,16 +62,29 @@ function StateBadge({o}: {o: StudioObject}) {
   return <span className={`badge ${track.kind}`} title={track.detail}>{track.label}</span>;
 }
 
-/** The object's name; double-click it, or the pencil, to rename in place. */
-function ObjectName({o, onRename}: {o: StudioObject; onRename: (name: string) => void}) {
+/** After Enter / Escape closes a rename field, focus goes back to its pencil, or, when that is no Tab stop, to the lane or the group header's first shown control. */
+function refocusAfterRename(pencil: HTMLButtonElement | null) {
+  const shown = (e: Element) => e.getClientRects().length > 0;
+  if (pencil == null) return;
+  if (pencil.tabIndex >= 0 && shown(pencil)) pencil.focus();
+  else (pencil.closest<HTMLElement>('[data-layer-option]') ?? [...(pencil.closest('.group-header')?.querySelectorAll<HTMLElement>('button, summary') ?? [])].find(shown))?.focus();
+}
+
+/** The object's name; double-click it, or the pencil, to rename in place. In a lane the pencil is no Tab stop (the lane's Enter opens the inspector's). */
+function ObjectName({o, onRename, lane = false}: {o: StudioObject; onRename: (name: string) => void; lane?: boolean}) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const done = useRef(false);
+  const refocus = useRef(false);
   const input = useRef<HTMLInputElement>(null);
+  const pencil = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (editing) {
       input.current?.focus();
       input.current?.select();
+    } else if (refocus.current) {
+      refocus.current = false;
+      refocusAfterRename(pencil.current);
     }
   }, [editing]);
   const start = () => {
@@ -78,11 +92,12 @@ function ObjectName({o, onRename}: {o: StudioObject; onRename: (name: string) =>
     setDraft(o.name ?? objectName(o));
     setEditing(true);
   };
-  const finish = (save: boolean) => {
+  const finish = (save: boolean, keyboard = false) => {
     if (done.current) {
       return; // Enter, then the blur it causes
     }
     done.current = true;
+    refocus.current = keyboard;
     setEditing(false);
     if (save && draft.trim() !== (o.name ?? objectName(o))) {
       onRename(draft);
@@ -102,9 +117,10 @@ function ObjectName({o, onRename}: {o: StudioObject; onRename: (name: string) =>
         onKeyDown={e => {
           e.stopPropagation(); // not the video's shortcuts
           if (e.key === 'Enter') {
-            finish(true);
+            e.preventDefault(); // or its keypress clicks the pencil focus returns to
+            finish(true, true);
           } else if (e.key === 'Escape') {
-            finish(false);
+            finish(false, true);
           }
         }}
       />
@@ -122,6 +138,8 @@ function ObjectName({o, onRename}: {o: StudioObject; onRename: (name: string) =>
         {objectName(o)}
       </span>
       <button
+        ref={pencil}
+        tabIndex={lane ? -1 : undefined}
         className="icon-button small rename-button"
         title="Rename"
         aria-label={`Rename ${objectName(o)}`}
@@ -236,13 +254,14 @@ function describe(o: StudioObject): string {
   return [clicks, texts.join(', '), track].filter(x => x !== '').join(' · ');
 }
 
-/** "Find by text" for the selected object, on the frame on screen. */
+/** "Find by text" for the selected object: on the frame on screen, or across the clip as candidates. */
 function TextPrompt({o, session}: {o: StudioObject; session: StudioSessionApi}) {
   const [draft, setDraft] = useState('');
   const [note, setNote] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
+  const [scanning, setScanning] = useState(false);
   const {ok, why} = session.textSupport;
-  const disabled = !ok || session.busy || running || isTracking(o);
+  const disabled = !ok || session.busy || running || scanning || isTracking(o);
   const submit = () => {
     const text = draft.trim();
     if (disabled || text === '') {
@@ -254,6 +273,20 @@ function TextPrompt({o, session}: {o: StudioObject; session: StudioSessionApi}) 
       setRunning(false);
       if (r != null) {
         setNote(textPromptNote(r));
+      }
+    });
+  };
+  const findInClip = () => {
+    const text = draft.trim();
+    if (disabled || text === '') {
+      return;
+    }
+    setScanning(true);
+    setNote(null);
+    void session.discoverText(o.id, text).then(r => {
+      setScanning(false);
+      if (r != null) {
+        setNote(discoverTextNote(r));
       }
     });
   };
@@ -279,6 +312,16 @@ function TextPrompt({o, session}: {o: StudioObject; session: StudioSessionApi}) 
         <button className="button small" type="submit" disabled={disabled || draft.trim() === ''}>
           {running ? <span className="spinner small" /> : <Search size={14} />} Find
         </button>
+        {!NO_BACKEND_BUILD && ( // SAM 3 on the backend only: the browser build has no text engine
+          <button
+            className="button small"
+            type="button"
+            disabled={disabled || draft.trim() === ''}
+            title={why ?? 'Look for these words across the whole clip and mark where they appear as candidates (experimental)'}
+            onClick={findInClip}>
+            {scanning ? <span className="spinner small" /> : <SearchLocate size={14} />} Find in clip
+          </button>
+        )}
       </form>
       {why != null && <div className="object-meta text-prompt-why">{why}</div>}
       {why == null && note != null && <div className="object-meta">{note}</div>}
@@ -390,7 +433,9 @@ function ObjectRow({
       onClick={() => session.selectObject(active ? null : o.id)}>
       <div className="layer-controls">
         <div className="layer-summary" role="option" aria-selected={active} aria-label={`${name}, ${trackPresentation(o.state, o.running).label}`} data-layer-option={o.id} tabIndex={active ? 0 : -1}
+          aria-keyshortcuts="Shift+F10"
           onKeyDown={e => {
+            if (e.target !== e.currentTarget) return; // Enter on the rename pencil is the pencil's
             const dir = stepKey(e);
             if (dir != null) { step(dir); return; }
             if (e.key === 'Enter' && inspector != null) {
@@ -406,7 +451,7 @@ function ObjectRow({
             }
           }}>
           <span className="layer-swatch" aria-hidden="true" />
-          <span className="layer-name" title={name}>{name}</span>
+          <ObjectName o={o} onRename={n => session.renameObject(o.id, n)} lane />
           <StateBadge o={o} />
           {active ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}
         </div>
@@ -511,22 +556,30 @@ function ObjectRow({
 function GroupName({group, editing, setEditing, onRename}: {group: ObjectGroup; editing: boolean; setEditing: (on: boolean) => void; onRename: (name: string) => void}) {
   const [draft, setDraft] = useState<string | null>(null);
   const done = useRef(false);
+  const refocus = useRef(false);
   const opener = useRef<HTMLElement | null>(null);
   const input = useRef<HTMLInputElement>(null);
+  const pencil = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (editing) {
       done.current = false;
       opener.current = document.activeElement as HTMLElement | null;
       input.current?.focus();
       input.current?.select();
+    } else if (refocus.current) {
+      refocus.current = false;
+      // Actions > Rename parks focus on the menu's summary: go back there, else the pencil (or the header's first shown control)
+      if (opener.current?.isConnected && opener.current.matches('.group-options > summary')) opener.current.focus();
+      else refocusAfterRename(pencil.current);
     }
   }, [editing]);
   const start = () => setEditing(true);
-  const finish = (save: boolean) => {
+  const finish = (save: boolean, keyboard = false) => {
     if (done.current) {
       return;
     }
     done.current = true;
+    refocus.current = keyboard;
     setEditing(false);
     setDraft(null);
     if (save && draft != null && draft.trim() !== group.name) {
@@ -546,11 +599,11 @@ function GroupName({group, editing, setEditing, onRename}: {group: ObjectGroup; 
         onBlur={() => finish(true)}
         onKeyDown={e => {
           e.stopPropagation();
-          if (e.key === 'Enter' || e.key === 'Escape') {
-            e.preventDefault(); // or the Enter also toggles the Actions button focus lands on
-            finish(e.key === 'Enter');
-            // back to what opened the edit (Actions > Rename leaves focus on the Actions button)
-            opener.current?.focus();
+          if (e.key === 'Enter') {
+            e.preventDefault(); // or its keypress clicks the pencil or Actions summary focus returns to
+            finish(true, true);
+          } else if (e.key === 'Escape') {
+            finish(false, true);
           }
         }}
       />
@@ -561,7 +614,7 @@ function GroupName({group, editing, setEditing, onRename}: {group: ObjectGroup; 
       <span className="object-name-text" title="Double-click to rename" onDoubleClick={start}>
         {group.name}
       </span>
-      <button className="icon-button small rename-button" title="Rename" aria-label={`Rename group ${group.name}`} onClick={start}>
+      <button ref={pencil} className="icon-button small rename-button" title="Rename" aria-label={`Rename group ${group.name}`} onClick={start}>
         <Edit size={14} />
       </button>
     </span>

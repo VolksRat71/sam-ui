@@ -187,6 +187,8 @@ class InferenceAPI:
             return StartSessionResponse(session_id=session_id)
 
     def close_session(self, request: CloseSessionRequest) -> CloseSessionResponse:
+        # sam-ui: a closed tab stops its jobs too (a text scan isn't a stream, so nothing else would)
+        self.tracks.jobs.cancel_session(request.session_id)
         is_successful = self.__clear_session_state(request.session_id)
         return CloseSessionResponse(success=is_successful)
 

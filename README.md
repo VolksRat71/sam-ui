@@ -39,12 +39,17 @@ into Applications.
 - The app checks GitHub for a newer release at most once a day and shows a banner
   with a link; **Help > Check for Updates…** checks now. It never downloads or
   installs anything itself.
+- **sam-ui > Notify When a Track Finishes** (off by default) shows a system
+  notification when a track ends while the app is in the background; clicking it
+  opens the track's first unreviewed review stop.
 
 **Or try it in the browser:** [volksrat71.github.io/sam-ui](https://volksrat71.github.io/sam-ui/)
 runs SAM 2.1 tiny on WebGPU with no install, no server and nothing uploaded (your
-video stays in the browser). Chrome or Edge on desktop; Safari and Firefox are
-untested. It is a demo: clips up to 5 minutes, and the app's SAM 2.1 large and SAM 3
-give much better masks. Or [run it from source](docs/development.md#run-from-source).
+video stays in the browser). Chrome or Edge on desktop. Firefox does not work yet
+([#4](https://github.com/VolksRat71/sam-ui/issues/4)). Safari itself is untested, though its
+engine tracks correctly in Playwright's WebKit build
+([#3](https://github.com/VolksRat71/sam-ui/issues/3)). It is a demo: clips up to 5 minutes,
+and the app's SAM 2.1 large and SAM 3 give much better masks. Or [run it from source](docs/development.md#run-from-source).
 
 ## Features
 

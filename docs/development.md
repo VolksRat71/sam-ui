@@ -54,7 +54,7 @@ option in studio stays disabled, with the reason shown, until they're found.
 | `SAM_UI_SESSION_TTL_MIN` | 30 | idle sessions are freed after this long (0 keeps them) |
 | `SAM_UI_EXPORT_ROOT` | `~/Movies/sam-ui` (the desktop app sets your home folder) | rotoscoping exports may only write under this folder |
 | `SAM_UI_SAM3_WEIGHTS` | `~/.cache/rotoscoping-video-subjects/weights/sam3-hf` | where the SAM 3 weights are |
-| `SAM_UI_SAM3_DTYPE` | `fp32` | SAM 3's precision: `fp16` or `bf16` cut its memory and time, and move masks a little (see [Hardware](hardware.md)) |
+| `SAM_UI_SAM3_DTYPE` | `fp16` on Apple Silicon, `fp32` elsewhere | SAM 3's precision: `fp32` for full precision, at about 1.6 times the time and 0.6 to 2.1 GB more memory; `bf16` moves masks more than `fp16` (see [Hardware](hardware.md)) |
 | `SAM_UI_SAM2_DTYPE` | `fp32` | SAM 2's autocast on MPS: `fp16` or `bf16` halve its time, save no memory and move masks a little |
 | `SAM_UI_SAM3_IDLE_S` | 600 | seconds before an unused SAM 3 is unloaded (`never` keeps it) |
 | `SAM_UI_SAM3_DETECTOR_IDLE_S` | 300 | seconds before SAM 3's unused text detector is unloaded (`never` keeps it) |
@@ -87,7 +87,8 @@ desktop (Electron): runs the backend, serves studio, talks to After Effects
   (`src/worker/protocol.ts`), which the browser engine (`src/local/`) implements too.
   Meta's demo code it reuses is vendored under `src/meta/`.
 - **`desktop/`.** The Electron app. `src/ae-bridge.js` and `src/ae-roto.js` are the
-  After Effects round trip; `src/update-check.js` the update notice.
+  After Effects round trip; `src/update-check.js` the update notice; `src/mcp-server.js`
+  and `src/mcp-tools.js` the [MCP server](#agents-mcp) for agents.
 
 ### API, in brief
 
@@ -95,7 +96,38 @@ desktop (Electron): runs the backend, serves studio, talks to After Effects
 | --- | --- |
 | GraphQL, `POST /graphql` | `startSession` (returns the objects already known for the video), `addPoints` (points normalised 0 to 1), `clearPointsInFrame`, `removeObject`, `clearPointsInVideo`, `objectTracks` (with each object's `history`: undo, redo, kept versions, and its `ranges` by state), `clearTrack`, `setObjectRange` (absent, present, or candidate with `source` and `score`; null clears, `clear` limits which states), `setObjectCandidates` (candidates in bulk), `undoSeeds`, `redoSeeds`, `restoreVersion`, `moveClicks`, `uploadVideo`, `deleteVideo`, `videos`, `defaultVideo` |
 | Streams, `multipart/x-savi-stream` | `POST /track_objects {session_id, object_ids?, engine?}` streams one part per frame and ends with a `done` or `error` part. `POST /track_masks` streams cached tracks. |
-| JSON | `GET /engines` (every engine, with why one can't run), `GET /limits` (upload length and size), `POST /cancel_track`, `POST /track_jobs`, `POST /track_disagreement`, `POST /track_provenance`, `POST /review_queue`, `POST /set_reviewed`, `POST /text_prompt`, `POST /rename_object`, `POST /object_names`, `POST /object_layout`, `POST /set_object_layout`, `POST /export`, `GET /linked-source` |
+| JSON | `GET /engines` (every engine, with why one can't run), `GET /limits` (upload length and size), `POST /cancel_track`, `POST /track_jobs`, `POST /track_disagreement`, `POST /track_provenance`, `POST /review_queue`, `POST /set_reviewed`, `POST /text_prompt`, `POST /discover_text` (find a phrase across the clip, written as candidates), `POST /rename_object`, `POST /object_names`, `POST /object_layout`, `POST /set_object_layout`, `POST /export`, `POST /capture` (1 to 12 frames with the masks drawn on, as JPEG plus a legend, for agents), `GET /linked-source` |
+
+### Agents (MCP)
+
+`desktop/src/mcp-server.js` serves MCP (streamable HTTP, JSON replies) on
+`127.0.0.1:8793/mcp` with the bearer token in `~/.sam-ui/token`
+(`SAM_UI_TOKEN_DIR` moves it, for tests). The desktop app starts it when
+**Agents → Allow agents (MCP)** is ticked. Against a dev backend it runs on its own,
+on the same port, with the same token:
+
+```sh
+node desktop/src/mcp-server.js --backend http://127.0.0.1:7263
+claude mcp add --transport http --scope user sam-ui http://127.0.0.1:8793/mcp --header "Authorization: Bearer $(cat ~/.sam-ui/token)"
+```
+
+Only one of the two can hold the port; the second says so and stops. The tools
+(`desktop/src/mcp-tools.js`) are a thin layer over the API above, and name
+videos, objects and jobs by id, never by path:
+
+| Tool | Commands |
+| --- | --- |
+| `sam_query` | `videos`, `engines`, `objects` |
+| `sam_session` | `open` (a video_id such as `gallery/01_dog.mp4`; answers with frame 0 drawn), `close` |
+| `sam_edit` | `points`, `text` (both answer with the frame drawn), `range`, `undo`, `redo`, `remove` |
+| `sam_track` | `start`, `wait` (up to 50 s, called again until done), `status`, `cancel` |
+| `sam_review` | `queue`, `mark` |
+| `sam_capture` | `frame`, `sheet` (`POST /capture`) |
+| `sam_export` | a folder `name`, written to `~/Movies/sam-ui/<name>`; never `force` |
+
+The server holds a track's stream open itself (a dropped reader cancels the job)
+and keeps a finished job's result for 30 minutes. Its backend client never sends
+the link token, so agents can't open files in place.
 
 ## Tests
 
@@ -108,7 +140,7 @@ cd studio && npm test && npm run lint && npm run build
 npm run smoke                                        # end to end in headless Chrome
 SMOKE=both npm run smoke                             # + the browser-only build (headed Chrome, WebGPU)
 CLIP_SECONDS=300 SERVE=dist-pages npm run memory     # browser build: memory and IoU over a long track
-(cd desktop && npm test)                             # desktop: downloads, update check, AE bridge and export
+(cd desktop && npm test)                             # desktop: downloads, update check, AE bridge, export and MCP
 python tools/memory_bench.py --seconds 10 60 180     # peak memory against clip length
 python tools/hardware_bench.py --runs sam2 sam3 sam3-text --clips gallery:01_dog   # the Hardware figures
 python tools/track_cache_e2e.py --api http://127.0.0.1:7373   # live backend (use a scratch one)
@@ -141,6 +173,12 @@ exports mask videos, Vector JSON and the roto zip, and deletes the video.
 ```sh
 CLIP=e2e/out/clip.mp4 SMOKE=local NO_SERVER_URL=http://127.0.0.1:7390/sam-ui/ npm run smoke
 ```
+
+`BROWSER=firefox` (the installed Firefox, driven over WebDriver BiDi) or
+`BROWSER=webkit` (Playwright's WebKit build, which is not Safari; fetch the
+build playwright-core expects with `npx playwright-core install webkit`) runs
+the no-server smoke test and the memory test in that browser instead of
+Chrome. See `e2e/browser.mjs`.
 
 Memory over a long track, in the browser-only build (headed Chrome, macOS).
 `npm run memory` makes a synthetic clip with ffmpeg (720p, 24 fps, a red

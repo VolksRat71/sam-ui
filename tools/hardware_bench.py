@@ -5,6 +5,7 @@ so each peak is its own.
 
 Runs (--runs, any of):
   sam2        SAM 2.1 large tracking (tracks.engine.Sam2Engine), as the app runs it
+  sam2-tiny   the same with SAM 2.1 tiny (the app's MODEL_SIZE=tiny)
   sam3        SAM 3 tracking (tracks.sam3_engine.Sam3Engine)
   sam3-text   SAM 3 text prompt (#22): first prompt (loads the detector), then warm
   app         the desktop app's worst case: SAM 2.1 large loaded and tracking, then
@@ -55,11 +56,16 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "tools"))
+# this tree's sam2, not the venv's editable install (a worktree, a baseline copy)
+sys.path.insert(1, str(REPO))
 GALLERY = Path(os.environ.get("SAM_UI_GALLERY", REPO / "demo/data/gallery"))
 if not GALLERY.is_dir():  # a worktree without the gallery: the main checkout's
     GALLERY = REPO.parents[2] / "demo/data/gallery"
 WEIGHTS = Path.home() / ".cache/rotoscoping-video-subjects/weights"
-SAM2_LARGE = ("sam2.1_hiera_large.pt", "configs/sam2.1/sam2.1_hiera_l.yaml")
+SAM2 = {
+    "large": ("sam2.1_hiera_large.pt", "configs/sam2.1/sam2.1_hiera_l.yaml"),
+    "tiny": ("sam2.1_hiera_tiny.pt", "configs/sam2.1/sam2.1_hiera_t.yaml"),
+}
 
 # normalised (x, y) clicks on frame 0, one object each
 SEEDS = {
@@ -191,7 +197,7 @@ def _device():
     )
 
 
-def _sam2_engine(cache_gb: float):
+def _sam2_engine(cache_gb: float, size: str = "large"):
     sys.path.insert(0, str(REPO / "demo/backend/server"))
     from sam2.build_sam import build_sam2_video_predictor
 
@@ -199,11 +205,12 @@ def _sam2_engine(cache_gb: float):
     from tracks.features import FeatureCache, install as install_feature_cache
     from tracks.streaming import install_sam2_streaming
 
-    ckpt = REPO / "checkpoints" / SAM2_LARGE[0]
+    name, cfg = SAM2[size]
+    ckpt = REPO / "checkpoints" / name
     if not ckpt.exists():
-        ckpt = WEIGHTS / SAM2_LARGE[0]
+        ckpt = WEIGHTS / name
     dev = _device()
-    pred = build_sam2_video_predictor(SAM2_LARGE[1], str(ckpt), device=dev)
+    pred = build_sam2_video_predictor(cfg, str(ckpt), device=dev)
     install_sam2_streaming()
     if cache_gb > 0:
         install_feature_cache(pred, FeatureCache(int(cache_gb * GB)))
@@ -219,7 +226,7 @@ def _sam2_engine(cache_gb: float):
 
     return Sam2Engine(
         pred,
-        model="large",
+        model=size,
         offload_video_to_cpu=dev == "mps",
         autocast=lambda: sam2_autocast(dev),
     )
@@ -253,8 +260,8 @@ def run_child(
     row = {"run": run, "clip": clip}
     masks = {}
     t0 = time.perf_counter()
-    if run in ("sam2", "app"):
-        e = _sam2_engine(cache_gb)
+    if run in ("sam2", "sam2-tiny", "app"):
+        e = _sam2_engine(cache_gb, "tiny" if run == "sam2-tiny" else "large")
     else:
         from tracks.sam3_engine import Sam3Engine
 
@@ -329,7 +336,7 @@ def run_child(
             meter.sample()
     else:
         seeds = clip_seeds(clip)
-        handle = _sam2_session(e, path, cache_gb) if run == "sam2" else None
+        handle = _sam2_session(e, path, cache_gb) if run.startswith("sam2") else None
         n, t0 = 0, time.perf_counter()
         for f, m in e.track(str(path), seeds, video_handle=handle):
             n += 1
@@ -397,9 +404,9 @@ def _load_masks(d: Path) -> dict:
 def compare(a: Path, b: Path) -> None:
     """Per-run IoU of b's masks against a's (frame, object by frame, object)."""
     print(
-        "| run | frames | objects | IoU min | IoU mean | masks < 0.98 | masks < 0.995 |"
+        "| run | frames | objects | IoU min | IoU mean | masks < 0.9 | masks < 0.98 | masks < 0.995 |"
     )
-    print("|---|---|---|---|---|---|---|")
+    print("|---|---|---|---|---|---|---|---|")
     for da in sorted(p for p in a.iterdir() if (p / "masks.npz").exists()):
         db = b / da.name
         if not (db / "masks.npz").exists():
@@ -414,7 +421,7 @@ def compare(a: Path, b: Path) -> None:
             continue
         print(
             f"| {da.name} | {len({k[0] for k in ma})} | {len({k[1] for k in ma})} | {min(ious):.4f} | "
-            f"{sum(ious) / len(ious):.4f} | {sum(i < 0.98 for i in ious)} | {sum(i < 0.995 for i in ious)} |"
+            f"{sum(ious) / len(ious):.4f} | {sum(i < 0.9 for i in ious)} | {sum(i < 0.98 for i in ious)} | {sum(i < 0.995 for i in ious)} |"
         )
 
 
@@ -476,7 +483,7 @@ def main():
         "--runs",
         nargs="*",
         default=["sam2", "sam3", "sam3-text"],
-        choices=["sam2", "sam3", "sam3-text", "app", "sam3-idle"],
+        choices=["sam2", "sam2-tiny", "sam3", "sam3-text", "app", "sam3-idle"],
     )
     ap.add_argument("--clips", nargs="*", default=["synth:10"])
     ap.add_argument(

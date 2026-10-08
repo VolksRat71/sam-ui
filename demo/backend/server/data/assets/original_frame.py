@@ -14,7 +14,7 @@ import av
 import numpy as np
 
 from .proxy_contract import fraction, load_source, safe_path
-from .retention import _read
+from .retention import _anchored, _read
 from .timing import rational
 
 
@@ -33,7 +33,7 @@ class OriginalFrameReader:
             raise ValueError('invalid_cache_budget')
         if type(max_frames) is not int or max_frames < 1:
             raise ValueError('invalid_frame_budget')
-        self.root = Path(root)
+        self.root = _anchored(root)
         self.max_cache_bytes = max_cache_bytes
         self.max_frames = max_frames
         self._cache = OrderedDict()

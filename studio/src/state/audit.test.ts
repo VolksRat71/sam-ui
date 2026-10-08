@@ -18,6 +18,7 @@ import {
   reviews,
   round3,
   frameStats,
+  jobLanding,
   locations,
   markValid,
   maskFingerprint,
@@ -312,6 +313,28 @@ describe('stepping through the queue', () => {
   it('skips reviewed stops when asked', () => {
     expect(stepQueue(q, 0, 1, true)).toBe(2);
     expect(stepQueue([{reviewed: true}], null, 1, true)).toBeNull();
+  });
+});
+
+describe('where a finished job lands', () => {
+  const q = [
+    {objectId: 3, frame: 50, reviewed: false},
+    {objectId: 1, frame: 30, reviewed: true},
+    {objectId: 2, frame: 12, reviewed: false},
+    {objectId: 1, frame: 9, reviewed: false},
+  ];
+  const seeds: Record<number, number> = {1: 4, 2: 0};
+  const firstSeed = (id: number) => seeds[id];
+
+  it("on the job's first unreviewed stop, in rank order", () => {
+    expect(jobLanding(q, [1, 2], firstSeed)).toEqual({objectId: 2, frame: 12});
+    expect(jobLanding(q, [1], firstSeed)).toEqual({objectId: 1, frame: 9});
+  });
+
+  it('else on the first object still here, at its first seed', () => {
+    expect(jobLanding([], [7, 1], firstSeed)).toEqual({objectId: 1, frame: 4});
+    expect(jobLanding([{objectId: 1, frame: 30, reviewed: true}], [1], firstSeed)).toEqual({objectId: 1, frame: 4});
+    expect(jobLanding(q, [7], firstSeed)).toBeNull();
   });
 });
 

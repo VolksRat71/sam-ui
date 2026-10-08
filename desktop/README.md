@@ -9,8 +9,8 @@ the app, and studio is served by it, so nothing else needs installing.
 
 Any M-series Mac (M1 or later). macOS 14 is the floor because the bundled
 PyTorch needs it. Memory: 16 GB recommended. SAM 2.1 large may run on 8 GB with
-the feature cache off, and SAM 3 on 12 GB at half precision (both estimates from
-measured footprints). See [Hardware](../docs/hardware.md).
+the feature cache off, and SAM 3 on 12 GB at half precision, its default (both
+estimates from measured footprints). See [Hardware](../docs/hardware.md).
 
 1. Download `sam-ui-<version>-arm64.dmg` from the
    [releases](https://github.com/VolksRat71/sam-ui/releases) and drag **sam-ui**
@@ -41,9 +41,10 @@ app. To add it:
 4. Restart when it says so. The SAM 3 switch in studio is then available.
 
 If you already have the weights, **SAM 3 → Choose SAM 3 weights folder…** uses that
-folder instead. With SAM 2.1 large beside it, SAM 3 peaks at about 6.7 GB of the
-app's memory, or 5.7 GB at half precision. Half precision moves masks a little.
-To turn it on, run `launchctl setenv SAM_UI_SAM3_DTYPE fp16` and restart the app.
+folder instead. With SAM 2.1 large beside it, SAM 3 peaks at about 6.9 GB of the
+app's memory at full precision, or about 6.1 GB at half precision (fp16), which SAM 3
+uses by default and which moves masks a little. For full precision, run
+`launchctl setenv SAM_UI_SAM3_DTYPE fp32` and restart the app.
 SAM 3 unloads itself after 10 idle minutes. See [Hardware](../docs/hardware.md).
 
 **Where things are:**
@@ -56,6 +57,23 @@ SAM 3 unloads itself after 10 idle minutes. See [Hardware](../docs/hardware.md).
 no CORS headers, and refuses any request whose `Host` or `Origin` isn't the app's
 own page, so other websites can't reach it. The app's windows are sandboxed, and
 links open in your browser.
+
+**Agents (MCP).** Claude Code, Codex or any MCP client can drive sam-ui: open a
+gallery clip, click or describe objects, track, look at frames with the masks
+drawn on, walk the review queue and export. It is off until you tick
+**Agents → Allow agents (MCP)**, which the app remembers. The server listens on
+`127.0.0.1:8793` only, wants the bearer token in `~/.sam-ui/token` (made on
+first use, readable only by you), and refuses any request from a web page.
+Agents can remove an object and its tracks, but can't upload or delete files or open them in place, and export only to
+`~/Movies/sam-ui/<name>`, never over an existing export. **Agents → Copy Claude
+Code setup command** copies this line:
+
+```sh
+claude mcp add --transport http --scope user sam-ui http://127.0.0.1:8793/mcp --header "Authorization: Bearer $(cat ~/.sam-ui/token)"
+```
+
+Claude Desktop connects through `mcp-remote` with the same URL and header. The
+tools are listed in [docs/development.md](../docs/development.md#agents-mcp).
 
 ## Develop
 

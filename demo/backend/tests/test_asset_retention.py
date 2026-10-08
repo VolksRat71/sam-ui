@@ -114,12 +114,24 @@ def test_invalid_association_input(tmp_path, key, start):
     assert not (tmp_path / 'assets').exists()
 
 
-def test_parent_symlink_cannot_redirect_storage(tmp_path):
+def test_symlinked_ancestor_is_trusted(tmp_path):
+    # macOS /var and /tmp, or a data folder moved to another drive behind a link.
     source = make_clip(tmp_path / 'in.mp4')
+    real = tmp_path / 'real'; real.mkdir()
+    data = tmp_path / 'data'; data.symlink_to(real, target_is_directory=True)
+    record = retain(source, data / 'assets')
+    assert (real / 'assets' / record['original_path']).read_bytes() == source.read_bytes()
+    assert retain(source, data / 'assets') == record
+
+
+def test_symlink_under_symlinked_ancestor_still_refused(tmp_path):
+    source = make_clip(tmp_path / 'in.mp4')
+    real = tmp_path / 'real'; (real / 'assets').mkdir(parents=True)
     outside = tmp_path / 'outside'; outside.mkdir()
-    redirect = tmp_path / 'redirect'; redirect.symlink_to(outside, target_is_directory=True)
+    (real / 'assets' / 'working-copies').symlink_to(outside, target_is_directory=True)
+    data = tmp_path / 'data'; data.symlink_to(real, target_is_directory=True)
     with pytest.raises(ValueError, match='original_retention_failed'):
-        retain(source, redirect / 'assets')
+        retain(source, data / 'assets')
     assert not list(outside.iterdir())
 
 
