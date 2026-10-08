@@ -683,7 +683,7 @@ export default function useStudioSession(video: VideoItem) {
     try {
       const {outcome} = await bridge.call('track', {objectIds: ids, key, engine});
       setEngines(list => list.map(e => (e.name === engine ? {...e, loaded: outcome.ok || e.loaded, loading: false} : e)));
-      tell(outcome.ok);
+      tell(outcome.ok && Object.keys(outcome.failed).length === 0); // one object failing is a failed job
       if (outcome.ok) {
         dispatch({type: 'trackFinished', key, tracked: outcome.tracked, failed: outcome.failed});
       } else {

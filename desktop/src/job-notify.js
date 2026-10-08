@@ -8,8 +8,8 @@
 // studio the job's objects, and studio jumps to their first unreviewed
 // review-queue stop, else the start of the track.
 // The page sends ids and one object's name, never the text: main writes that.
-// One notification at a time: a new one replaces the last, and jobs ending
-// within a few seconds of a shown one are folded into it (not shown again).
+// One notification at a time: a new one replaces the last. A finished job
+// within a few seconds of a shown one is dropped; a failure always shows.
 'use strict';
 
 const KINDS = new Set(['track']);
@@ -61,7 +61,7 @@ function createJobNotifier({Notification, enabled, getWindow, now = Date.now}) {
     const job = parseJobDone(payload);
     const win = getWindow();
     if (job == null || win == null || !enabled() || win.isFocused()) return false;
-    if (now() - shownAt < MIN_GAP_MS) return false;
+    if (job.ok && now() - shownAt < MIN_GAP_MS) return false;
     showing?.close();
     const n = new Notification(notificationText(job));
     showing = n;

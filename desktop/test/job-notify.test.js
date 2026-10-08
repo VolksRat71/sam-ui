@@ -148,6 +148,14 @@ describe('one at a time', () => {
     assert.ok(Notification.made[0].closed); // replaced, not piled up
     assert.strictEqual(jobDone.showing(), Notification.made[1]);
   });
+
+  test('a failure right after a shown finish still shows', () => {
+    const {jobDone, Notification, clock} = setup();
+    assert.strictEqual(jobDone(done()), true);
+    clock.t += 3000;
+    assert.strictEqual(jobDone(done({ok: false})), true);
+    assert.strictEqual(Notification.made.length, 2);
+  });
 });
 
 describe('the words', () => {
