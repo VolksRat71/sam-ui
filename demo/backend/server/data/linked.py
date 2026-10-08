@@ -39,10 +39,14 @@ SOURCES_DIR = ".sources"
 # what studio's decoder (mediabunny) and the backend's (decord, PyAV) both read
 VIDEO_EXTS = {".mp4", ".mov", ".m4v"}
 FPS_TOLERANCE = 1e-3
-# how far, in frames, a frame's timestamp may sit off a constant rate before
-# the file counts as variable rate (rate_drift): above timestamp rounding,
-# well below the half frame where a lookup by time picks a neighbouring frame
-VFR_TOLERANCE = 0.1
+# how far, in frames, a frame's timestamp may sit off a constant rate (plus a
+# tick of rounding) before the file counts as variable rate (rate_drift).
+# Capture-timestamped phone footage jitters by a millisecond or so, 0.03 of a
+# 30 fps frame, and sits well under this; a dropped or doubled frame measures
+# about 0.5. How After Effects picks a frame for a time from such a file
+# (floor or nearest) is not known here, so this stays well under the half
+# frame where a nearest lookup would move to a neighbouring frame.
+VFR_TOLERANCE = 0.25
 TOKEN_HEADER = "X-Sam-Ui-Link-Token"
 # the source fields kept from the caller; anything else it sends is dropped
 SOURCE_FIELDS = ("kind", "aeItemId", "aeProjectPath", "name", "path", "width", "height", "pixelAspect",
@@ -81,35 +85,47 @@ def native_metadata(path: str) -> Dict:
         raise LinkRefused(
             f"the file was trimmed without re-encoding ({before} frames before its start are hidden by an edit list), "
             "so decoders disagree on which frame is which: re-encode or re-export it, then link it again")
-    drift = rate_drift(pts)
-    if drift > VFR_TOLERANCE:
+    drift, limit = rate_drift(pts)
+    if drift > limit:
+        where = ("its frames share one timestamp" if drift == float("inf")
+                 else f"a frame sits {drift:.2f} frames off a constant rate")
         raise LinkRefused(
-            f"the file has a variable frame rate (a frame sits {drift:.2f} frames off a constant rate), and the masks "
-            "go back to After Effects keyed at frame / fps: conform it to a constant frame rate first (render a copy "
-            "from After Effects, or ffmpeg -i in.mov -fps_mode cfr -r <fps> out.mov), then open that copy")
+            f"the file has a variable frame rate ({where}), and the masks go back to After Effects keyed at "
+            "frame / fps: conform it to a constant frame rate first (render a copy from After Effects, or "
+            "ffmpeg -i in.mov -fps_mode cfr -r <fps> out.mov), then open that copy")
     return {"width": width, "height": height, "fps": fps, "frames": frames, "duration": duration}
 
 
-def rate_drift(pts: List[int]) -> float:
-    """The furthest any frame's timestamp sits, in frames, from where the
-    clip's own average spacing (first to last timestamp) puts it: frame i in
-    display order, the decoders' frame i, at first + i * spacing. sam-ui counts
-    frames by index and After Effects places them by time, so this offset is
-    what would put the mask for frame i on another frame.
+def rate_drift(pts: List[int]) -> Tuple[float, float]:
+    """(drift, limit), both in frames; the file is variable rate when drift >
+    limit. Drift is how far the worst frame's timestamp sits from a constant
+    rate: frame i (display order, the decoders' frame i) against a line at the
+    clip's own average spacing (first to last timestamp), centred between the
+    furthest frames above and below it. sam-ui counts frames by index and After
+    Effects places them by time, so this offset is what would put the mask for
+    frame i on another frame.
 
-    Cumulative, so timestamp rounding stays under a tick (0.05 of a frame on
-    QuickTime's coarse 600 time scale) while a frame held long, a skipped
-    timestamp or a slow drift all grow it. Measured against the timestamps
+    Cumulative, so a held frame, a skipped or doubled timestamp or a slow drift
+    all grow it (one dropped or doubled frame measures about half a frame),
+    while rounding to integer ticks does not add up: it stays within about
+    one tick, which the limit allows on top of VFR_TOLERANCE. A tick is small
+    at most time scales but not all (QuickTime's 600 is 0.1 of a 59.94 fps
+    frame, 1/1000 is 0.24 of a 240 fps one). Measured against the timestamps
     themselves, not the declared rate: a declared rate that differs from the
     cadence is check_native's frame-rate comparison, and the container's
     average_rate also counts the last frame's duration, which muxers round."""
     pts = sorted(pts)
     if len(pts) < 2:
-        return 0.0
-    step = (pts[-1] - pts[0]) / (len(pts) - 1)
+        return 0.0, VFR_TOLERANCE
+    step = (pts[-1] - pts[0]) / (len(pts) - 1)  # ticks per frame
     if step <= 0:
-        return float("inf")  # every frame on one timestamp
-    return max(abs((t - pts[0]) / step - i) for i, t in enumerate(pts))
+        return float("inf"), VFR_TOLERANCE  # every frame on one timestamp
+    off = [(t - pts[0]) / step - i for i, t in enumerate(pts)]
+    # ponytail: the one-tick allowance hides a single dropped or doubled frame
+    # (about 0.5) once a tick nears a quarter of a frame, e.g. a 1/fps time
+    # base; if that footage turns up, test exact deltas when the rate is a
+    # whole number of ticks
+    return (max(off) - min(off)) / 2, VFR_TOLERANCE + 1 / step
 
 
 def check_native(source: Dict, native: Dict) -> List[str]:
@@ -270,18 +286,22 @@ def preload() -> Dict[str, Video]:
 def make_blueprint(token: Optional[str] = None) -> Blueprint:
     """POST /linked (the desktop app's main process, with its token), GET
     /linked/<file> (the video, with range requests, for studio's decoder) and
-    GET /linked-source?path= (the record; with &verify=1 the file is hashed
-    again, so `changed` also covers a same-size, same-mtime swap)."""
+    GET /linked-source?path= (the record; with &verify=1, which needs the
+    token too, the file is hashed again, so `changed` also covers a same-size,
+    same-mtime swap)."""
     bp = Blueprint("linked", __name__)
     token = token if token is not None else os.environ.get("SAM_UI_LINK_TOKEN")
 
-    @bp.route(f"/{LINKED_PREFIX}", methods=["POST"])
-    def link_video():
+    def desktop_only(what: str):
         if not token:
             abort(404)
         sent = request.headers.get(TOKEN_HEADER, "")
         if not hmac.compare_digest(sent.encode(), token.encode()):
-            abort(403, description="only the desktop app can open files in place")
+            abort(403, description=f"only the desktop app can {what}")
+
+    @bp.route(f"/{LINKED_PREFIX}", methods=["POST"])
+    def link_video():
+        desktop_only("open files in place")
         body = request.get_json(silent=True) or {}
         try:
             video, record = register(body.get("path"), body.get("source") or {})
@@ -298,6 +318,8 @@ def make_blueprint(token: Optional[str] = None) -> Blueprint:
 
     @bp.route("/linked-source", methods=["GET"])
     def linked_source():
+        if request.args.get("verify"):
+            desktop_only("re-hash a linked file")  # a whole-file read: not for any page to trigger
         record = source_of(request.args.get("path", ""))
         if record is None:
             abort(404)
