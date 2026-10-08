@@ -53,7 +53,7 @@ def _check_display_data(frame) -> None:
                 raise ValueError('unsupported_display_transform')
 
 
-def _bt709(src, dst, reformatter: VideoReformatter):
+def _bt709(src, dst):
     """For display (`tag_colour`): tag the output the way a browser will read
     it. RGB sources (Animation, PNG) are converted with the BT.709 matrix and
     tagged BT.709; YUV sources keep their matrix and pass on the tags they
@@ -66,6 +66,7 @@ def _bt709(src, dst, reformatter: VideoReformatter):
         value = 1 if rgb else getattr(ctx,name)  # 1 is BT.709 in all three enums
         if value not in (None,2):  # 2: unspecified
             setattr(out,name,value)
+    reformatter = VideoReformatter()  # one per encode: it keeps its scaler between frames
 
     def convert(frame, w, h):
         return reformatter.reformat(frame,width=w,height=h,format='yuv420p',interpolation='BICUBIC',
@@ -99,7 +100,7 @@ def encode_proxy(source: SourceAsset, recipe: dict, output: Path, *, preset: str
         stream.time_base = stream.codec_context.time_base = base
         stream.codec_context.sample_aspect_ratio = sar
         stream.options = {'crf':'23','preset':preset,'threads':threads,'bf':'0'}
-        convert = _bt709(selected,stream,VideoReformatter()) if tag_colour else None
+        convert = _bt709(selected,stream) if tag_colour else None
         seen = set()
         def mux(packet):
             stamp = Fraction(packet.pts)*packet.time_base

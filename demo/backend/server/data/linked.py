@@ -300,9 +300,12 @@ def register(path: str, source: Dict, hash_file=None) -> Tuple[Video, Dict]:
     }
     # whole or not at all, even with a second link of the same file writing it at the same time
     fd, tmp = tempfile.mkstemp(prefix=f".{name}.", suffix=".tmp", dir=_sources())
-    with os.fdopen(fd, "w") as f:
-        f.write(json.dumps(record, indent=1))
-    os.replace(tmp, _record_file(name))
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(json.dumps(record, indent=1))
+        os.replace(tmp, _record_file(name))
+    finally:
+        Path(tmp).unlink(missing_ok=True)  # gone after the replace; left only when the write failed
     _sweep_previews()
     video = _video(name, record)
     from data.store import get_videos
