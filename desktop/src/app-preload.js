@@ -23,8 +23,8 @@ contextBridge.exposeInMainWorld('samUiDesktop', {
     openRelease: () => ipcRenderer.send('updates:open'),
   },
   // job notifications (main.js, job-notify.js): studio says a job ended
-  // ({kind, ok, objectIds, name}) and main decides whether to notify; a click
-  // on one comes back as {kind, objectIds} for studio to jump to
+  // ({kind, ok, engine, objectIds, name}) and main decides whether to notify; a click
+  // on one comes back as {engine, objectIds} for studio to jump to
   jobs: {
     done: job => ipcRenderer.send('jobs:done', job),
     onOpen: cb => {

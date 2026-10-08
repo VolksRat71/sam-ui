@@ -13,7 +13,7 @@
 'use strict';
 
 const KINDS = new Set(['track']);
-const ENGINES = new Set(['sam2', 'sam3', 'browser-sam2']);
+const ENGINE = /^[a-z0-9_-]{1,32}$/; // an engine name's shape, so a new engine still notifies
 const MIN_GAP_MS = 5000;
 const MAX_IDS = 256;
 const MAX_NAME = 60;
@@ -27,7 +27,7 @@ function notifyEnabled(settings) {
 function parseJobDone(x) {
   if (x == null || typeof x !== 'object' || Array.isArray(x)) return null;
   const {kind, ok, engine, objectIds, name} = x;
-  if (!KINDS.has(kind) || !ENGINES.has(engine) || typeof ok !== 'boolean') return null;
+  if (!KINDS.has(kind) || typeof engine !== 'string' || !ENGINE.test(engine) || typeof ok !== 'boolean') return null;
   if (!Array.isArray(objectIds) || objectIds.length === 0 || objectIds.length > MAX_IDS) return null;
   if (!objectIds.every(id => Number.isSafeInteger(id) && id >= 0)) return null;
   const label = typeof name === 'string' ? name.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, MAX_NAME) : '';
@@ -74,7 +74,7 @@ function createJobNotifier({Notification, enabled, getWindow, now = Date.now}) {
       if (w.isMinimized()) w.restore();
       w.show();
       w.focus();
-      w.webContents.send('jobs:open', {kind: job.kind, engine: job.engine, objectIds: job.objectIds});
+      w.webContents.send('jobs:open', {engine: job.engine, objectIds: job.objectIds});
     });
     n.show();
     return true;

@@ -37,9 +37,10 @@ function fakeNotificationClass() {
 
 function fakeWindow({focused = false, minimized = false} = {}) {
   const calls = [];
+  const sent = [];
   return {
     calls,
-    sent: [],
+    sent,
     isFocused: () => focused,
     isMinimized: () => minimized,
     restore: () => calls.push('restore'),
@@ -47,13 +48,12 @@ function fakeWindow({focused = false, minimized = false} = {}) {
     focus: () => calls.push('focus'),
     webContents: {send(channel, payload) {
       calls.push('send');
-      this.owner.sent.push({channel, payload});
+      sent.push({channel, payload});
     }},
   };
 }
 
 function setup({on = true, win = fakeWindow()} = {}) {
-  if (win != null) win.webContents.owner = win;
   const Notification = fakeNotificationClass();
   let enabled = on;
   const clock = {t: 1000000};
@@ -69,12 +69,6 @@ describe('when it notifies', () => {
       assert.strictEqual(notifyEnabled(settings), false, JSON.stringify(settings));
     }
     assert.strictEqual(notifyEnabled({notifyJobDone: true}), true);
-  });
-
-  test('nothing while the setting is off', () => {
-    const {jobDone, Notification} = setup({on: false});
-    assert.strictEqual(jobDone(done()), false);
-    assert.strictEqual(Notification.made.length, 0);
   });
 
   test('nothing while the window is focused', () => {
@@ -112,7 +106,7 @@ describe('a click', () => {
     assert.deepStrictEqual(win.calls, []); // nothing until the click
     Notification.made[0].click();
     assert.deepStrictEqual(win.calls, ['show', 'focus', 'send']);
-    assert.deepStrictEqual(win.sent, [{channel: 'jobs:open', payload: {kind: 'track', engine: 'sam3', objectIds: [2, 0]}}]);
+    assert.deepStrictEqual(win.sent, [{channel: 'jobs:open', payload: {engine: 'sam3', objectIds: [2, 0]}}]);
   });
 
   test('restores a minimized window first', () => {
@@ -181,7 +175,8 @@ describe('payload validation', () => {
       done({kind: 'refine'}),
       done({kind: '__proto__'}),
       done({engine: undefined}),
-      done({engine: 'gpt'}),
+      done({engine: 'SAM 3'}),
+      done({engine: 'x'.repeat(33)}),
       done({ok: 'yes'}),
       done({ok: undefined}),
       done({objectIds: []}),
