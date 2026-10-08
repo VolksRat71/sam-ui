@@ -59,7 +59,21 @@ export type AeBridge = {
   onProgress(cb: (p: {fraction: number; label: string}) => void): () => void;
 };
 
-export type DesktopBridge = {setupSam3(): void; ae?: AeBridge};
+/** A job that ended, as studio tells the desktop app. Main writes the notification's words. */
+export type JobDone = {kind: 'track'; ok: boolean; objectIds: number[]; name: string};
+
+/**
+ * Job notifications (desktop/src/job-notify.js): studio says a job ended and
+ * main decides whether to notify (a setting, off by default, and only while the
+ * window is not focused). A click comes back through onOpen.
+ */
+export type JobsBridge = {
+  done(job: JobDone): void;
+  /** A clicked notification's job; returns the unsubscribe. Not trusted: see asJobOpen. */
+  onOpen(cb: (job: unknown) => void): () => void;
+};
+
+export type DesktopBridge = {setupSam3(): void; ae?: AeBridge; jobs?: JobsBridge};
 
 export function desktopBridge(): DesktopBridge | null {
   const b = (globalThis as {samUiDesktop?: Partial<DesktopBridge>}).samUiDesktop;
@@ -70,4 +84,16 @@ export function desktopBridge(): DesktopBridge | null {
 export function aeBridge(): AeBridge | null {
   const ae = desktopBridge()?.ae;
   return ae != null && typeof ae.listMedia === 'function' ? ae : null;
+}
+
+/** The job-notification half of the desktop bridge, or null (a browser, or an older desktop app). */
+export function jobsBridge(): JobsBridge | null {
+  const jobs = desktopBridge()?.jobs;
+  return jobs != null && typeof jobs.done === 'function' && typeof jobs.onOpen === 'function' ? jobs : null;
+}
+
+/** A clicked notification's object ids, or null for anything else. */
+export function asJobOpen(x: unknown): number[] | null {
+  const ids = (x as {objectIds?: unknown} | null)?.objectIds;
+  return Array.isArray(ids) && ids.length > 0 && ids.every(id => Number.isSafeInteger(id) && id >= 0) ? ids : null;
 }

@@ -11,6 +11,7 @@ import type {
 } from '@/common/components/video/VideoWorkerBridge';
 import {useCallback, useEffect, useMemo, useReducer, useRef, useState} from 'react';
 import StudioBridge from '~/bridge/StudioBridge';
+import {asJobOpen, jobsBridge} from '~/lib/desktop';
 import {explainGraphQLError} from '~/lib/errors';
 import {
   EffectMap,
@@ -59,7 +60,7 @@ import {
   staleIds,
 } from '~/state/objects';
 import {moveTargets, undoBlock} from '~/state/history';
-import {type QueueEntry, type ReviewQueue, stepQueue} from '~/state/audit';
+import {type QueueEntry, type ReviewQueue, jobLanding, stepQueue} from '~/state/audit';
 import {clearFlag, parseFlagMap, pruneFlags, toggleFlag as toggled, type FlagMap} from '~/state/flags';
 import {
   ABSENT,
@@ -635,6 +636,16 @@ export default function useStudioSession(video: VideoItem) {
     [bridge],
   );
 
+  // the desktop app's job notifications: studio says a job ended, main decides (desktop/src/job-notify.js)
+  const jobs = useMemo(jobsBridge, []);
+  const tellJobDone = useCallback(
+    (objectIds: number[], ok: boolean) => {
+      const first = stateRef.current.objects.find(o => o.id === objectIds[0]);
+      jobs?.done({kind: 'track', ok, objectIds, name: first != null ? objectName(first) : ''});
+    },
+    [jobs],
+  );
+
   /**
    * Start a job for the dirty objects (`pick`: of them, the ones it keeps).
    * Jobs already running keep theirs.
@@ -653,19 +664,23 @@ export default function useStudioSession(video: VideoItem) {
     dispatch({type: 'trackStarted', key, ids, engine});
     // the first SAM 3 job loads its model (about 30 s): show that it is loading
     setEngines(list => list.map(e => (e.name === engine && !e.loaded ? {...e, loading: true} : e)));
+    // a job canceled here is no news (read before trackFinished/trackFailed drops it)
+    const tell = (ok: boolean) => !stateRef.current.jobs.find(j => j.key === key)?.canceling && tellJobDone(ids, ok);
     try {
       const {outcome} = await bridge.call('track', {objectIds: ids, key, engine});
       setEngines(list => list.map(e => (e.name === engine ? {...e, loaded: outcome.ok || e.loaded, loading: false} : e)));
+      tell(outcome.ok);
       if (outcome.ok) {
         dispatch({type: 'trackFinished', key, tracked: outcome.tracked, failed: outcome.failed});
       } else {
         dispatch({type: 'trackFailed', key, error: outcome.error});
       }
     } catch (error) {
+      tell(false);
       dispatch({type: 'trackFailed', key, error: message(error)});
     }
     await sync().catch(error => setWarning(message(error)));
-  }, [bridge, sync]);
+  }, [bridge, sync, tellJobDone]);
 
   /** Start a job for the dirty objects. Jobs already running keep theirs. */
   const track = useCallback(() => runTrack(), [runTrack]);
@@ -722,6 +737,8 @@ export default function useStudioSession(video: VideoItem) {
         dispatch({type: 'sync', objects});
         const done = watched.filter(id => objects.find(o => o.objectId === id)?.state !== 'tracking');
         if (done.length > 0) {
+          // ponytail: the other job's outcome is not kept, so "tracked" stands for ok (a canceled one reads as failed)
+          tellJobDone(done, done.every(id => objects.find(o => o.objectId === id)?.state === 'tracked'));
           await bridge.call('repaint', {objectIds: done});
         }
       } catch {
@@ -732,7 +749,7 @@ export default function useStudioSession(video: VideoItem) {
       stopped = true;
       clearInterval(timer);
     };
-  }, [bridge, foreignIds]);
+  }, [bridge, foreignIds, tellJobDone]);
 
   /** Clear one engine's track (the one on screen by default), or all with null. */
   const clearTrack = useCallback(
@@ -1319,6 +1336,25 @@ export default function useStudioSession(video: VideoItem) {
       }
     },
     [bridge, meta.numFrames],
+  );
+
+  // a clicked job notification: that job's first unreviewed stop, else where its track starts
+  // ponytail: ids only, so a click after switching videos lands on the same ids in this one; send the video along if that bites
+  useEffect(
+    () =>
+      jobs?.onOpen(job => {
+        const ids = asJobOpen(job);
+        const at =
+          ids &&
+          jobLanding(reviewRef.current?.queue ?? [], ids, id => {
+            const o = stateRef.current.objects.find(x => x.id === id);
+            return o == null ? undefined : (seedFrames(o)[0] ?? 0);
+          });
+        if (at != null) {
+          goToStop(at);
+        }
+      }),
+    [jobs, goToStop],
   );
 
   /** The next (or previous) stop in rank order, from the one last shown. */
