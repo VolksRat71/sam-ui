@@ -143,6 +143,7 @@ def _draw(pixels: np.ndarray, layers, size, points) -> Image.Image:
     for obj, x, y, rgb in boxes:
         label = str(obj)
         tw = 7 * len(label) + 4
+        x, y = max(0, min(x, w - tw - 1)), max(0, min(y, h - 13))  # a mask at the edge keeps its label in view
         d.rectangle([x, y, x + tw, y + 12], fill=rgb)
         d.text((x + 2, y), label, fill=(0, 0, 0))
     for _obj, px, py, label in points:

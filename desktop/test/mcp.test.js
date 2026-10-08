@@ -71,6 +71,9 @@ const fake = http.createServer((req, res) => {
       return reply(200, {canceled: true});
     }
     if (req.url === '/track_jobs') return reply(200, {jobs: track && !track.writableEnded ? [{job_id: 'job-1', objects: [1], frames_done: 2, n_frames: 10, elapsed_s: 1}] : []});
+    if (req.url === '/export' && body.out_dir.endsWith('/taken')) {
+      return reply(400, {error: `'${body.out_dir}' already has ['products.json']; tick Replace existing (force) to replace them`});
+    }
     if (req.url === '/export') return reply(200, {out_dir: body.out_dir, video: 'abc', products: [{id: 'object_1'}], skipped: {}, n_frames: 10});
     if (req.url === '/track_objects') {
       if (body.engine === 'nope') return reply(400, {error: "unknown engine 'nope'"});
@@ -278,6 +281,13 @@ test('export joins a plain name under ~/Movies/sam-ui and never forces', async (
   assert.strictEqual(t.exported_to, '~/Movies/sam-ui/dog-test');
   assert.strictEqual(t.out_dir, undefined);
   assert.doesNotMatch(JSON.stringify(t), /\/Users\//);
+});
+
+test('refusing an existing export names no path and offers no force', async () => {
+  const r = await call('sam_export', {session_id: 's1', name: 'taken'});
+  assert.strictEqual(r.isError, true);
+  assert.strictEqual(r.content[0].text,
+    "~/Movies/sam-ui/taken already has ['products.json']. Agents never replace an export: pick a new name.");
 });
 
 test('export names that are paths are refused', async () => {

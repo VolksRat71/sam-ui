@@ -192,6 +192,9 @@ const TOOLS = [
       'sam_capture a location\'s frame (or a sheet of start-end) to see it.\n' +
       '- mark (session_id, object_id, frame, reviewed? default true, span? [first, last]): mark a location as looked at and right, ' +
       'so it drops down the queue. reviewed:false removes the mark.\n' +
+      'Fixing what a capture shows: a mask on the wrong thing takes sam_edit points on that frame (a 0 on the wrong part, ' +
+      'a 1 on the object); an object that left the shot (reasons "stop" or "area", a sliver at the edge) takes sam_edit range ' +
+      'absent over the frames it is gone. Then sam_track start again: only the changed stretch re-tracks.\n' +
       'A few hundred tokens per 10 locations.',
     inputSchema: {
       type: 'object',
@@ -534,14 +537,24 @@ function createTools({backend, exportRoot = path.join(os.homedir(), 'Movies', 's
       'a folder name: letters, digits, ".", "_" and "-", up to 64, starting with a letter or digit');
     const ids = objectIds(args);
     const e = engine(args);
-    const r = await post('/export', {
-      session_id: sessionId(args), out_dir: path.join(exportRoot, name),
-      ...(ids ? {objects: Object.fromEntries(ids.map(id => [String(id), {}]))} : {}),
-      ...(e ? {engine: e} : {}), ...(args.union === true ? {union: true} : {}),
-      // never force: an existing folder may hold mattes a person repaired by hand
-    });
+    const outDir = path.join(exportRoot, name);
+    const shown = `~/Movies/sam-ui/${name}`;
+    let r;
+    try {
+      r = await post('/export', {
+        session_id: sessionId(args), out_dir: outDir,
+        ...(ids ? {objects: Object.fromEntries(ids.map(id => [String(id), {}]))} : {}),
+        ...(e ? {engine: e} : {}), ...(args.union === true ? {union: true} : {}),
+        // never force: an existing folder may hold mattes a person repaired by hand
+      });
+    } catch (err) {
+      // the backend's refusal names the full path and studio's Replace existing, which agents don't have
+      if (!(err instanceof ToolError)) throw err;
+      throw new ToolError(err.message.replaceAll(`'${outDir}'`, shown).replaceAll(outDir, shown)
+        .replace(/; tick Replace existing \(force\) to replace them$/, '. Agents never replace an export: pick a new name.'));
+    }
     const {out_dir: _dir, video_path: _vp, ...manifest} = r;
-    return text({exported_to: `~/Movies/sam-ui/${name}`, ...manifest});
+    return text({exported_to: shown, ...manifest});
   }
 
   async function callTool(name, args) {
