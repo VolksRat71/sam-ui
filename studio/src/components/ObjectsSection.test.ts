@@ -14,3 +14,11 @@ it("renames an object from its timeline lane, like a group's", () => {
   expect(lane).toContain('title="Double-click to rename">Dog</span>');
   expect(lane).toContain('tabindex="-1" class="icon-button small rename-button" title="Rename" aria-label="Rename Dog"'); // no Tab stop per lane
 });
+
+it("offers Rename in a group's Actions menu (the pencil is hidden on touch widths)", () => {
+  const group = {id: 'g1', name: 'Jugglers', color: '#3366ff', members: [], collapsed: false, hidden: false};
+  const session = {state: {...initialState, layout: {order: [], groups: [group]}}, canAdd: true, busy: false, status: 'ready'};
+  const html = renderToStaticMarkup(createElement(ObjectsSection, {session: session as never}));
+  const menu = html.slice(html.indexOf('class="group-options"'));
+  expect(menu).toMatch(/<button class="link-button" title="Rename the group">.*Rename<\/button>/);
+});
