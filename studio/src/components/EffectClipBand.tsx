@@ -28,7 +28,7 @@ function openSettings() {
   document.getElementById('tab-effects')?.click();
   const header = document.querySelector<HTMLButtonElement>('[data-section="effects"] .section-header');
   if (header?.getAttribute('aria-expanded') === 'false') header.click();
-  requestAnimationFrame(() => document.querySelector<HTMLElement>('.fx-settings input:not(:disabled), .fx-settings button:not(:disabled)')?.focus());
+  requestAnimationFrame(() => (document.querySelector<HTMLElement>('.fx-settings input:not(:disabled)') ?? document.querySelector<HTMLElement>('.fx-settings button:not(:disabled)'))?.focus());
 }
 
 export default function EffectClipBand({clips, name, session, pos}: Props) {
@@ -126,6 +126,8 @@ export default function EffectClipBand({clips, name, session, pos}: Props) {
             aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight Alt+BracketLeft Alt+BracketRight Delete Enter"
             title={`${label}. Drag to move, drag an end to trim; Alt+arrows move a frame, Alt+[ / Alt+] trim to the playhead`}
             style={{left, width: Math.max(8, pos(c.end - 1) - left), top: `calc(${line.get(c.id) ?? 0} * var(--fx-line))`}}
+            // the layer row is draggable (reorder): a native drag from here would cancel this pointer
+            onMouseDown={e => e.preventDefault()}
             onPointerDown={e => onPointerDown(e, c)}
             onPointerMove={onPointerMove}
             onPointerUp={endDrag}

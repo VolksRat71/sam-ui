@@ -10,6 +10,7 @@ describe('effect clip names', () => {
     expect(effectTitle({kind: 'background'}, 'Sobel')).toBe('Outline');
     expect(effectTitle(pim, 'Sparkle')).toBe('Sparkle'); // a newer build's effect
     expect(clipTitle({target: pim, effect: 'Outline', params: normalizeParams('Outline', {style: 'Glow'})})).toBe('Outline · Glow');
+    expect(clipTitle({target: pim, effect: 'Outline', params: normalizeParams('Outline', {})})).toBe('Outline');
     expect(clipTitle({target: pim, effect: 'NoisyMask', params: normalizeParams('NoisyMask', {})})).toBe('Noisy');
     expect(clipFrames({start: 30, end: 102})).toBe('frames 31–102');
     expect(clipFrames({start: 4, end: 5})).toBe('frame 5');

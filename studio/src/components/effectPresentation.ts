@@ -12,11 +12,13 @@ export function effectTitle(target: EffectTarget, effect: string): string {
   return tiles.find(t => t.effectName === effect)?.title ?? effect;
 }
 
-/** "Outline · Glow": the effect and, when it has more than one, its style. */
+/** "Outline · Glow": the effect and, when it has more than one, its style (unless the style is the effect's own name). */
 export function clipTitle(clip: Pick<EffectClip, 'target' | 'effect' | 'params'>): string {
-  const style = EFFECT_SPECS[clip.effect]?.params.style;
-  const many = style?.kind === 'choice' && style.options.length > 1;
-  return many ? `${effectTitle(clip.target, clip.effect)} · ${String(clip.params.style)}` : effectTitle(clip.target, clip.effect);
+  const spec = EFFECT_SPECS[clip.effect]?.params.style;
+  const title = effectTitle(clip.target, clip.effect);
+  const style = String(clip.params.style);
+  // Outline's plain style is "Outline": say it once
+  return spec?.kind === 'choice' && spec.options.length > 1 && style !== title ? `${title} · ${style}` : title;
 }
 
 /** The layer a clip is on, or "Background". */

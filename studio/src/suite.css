@@ -302,7 +302,7 @@ body:has(.app > .toast) .agent-toast { bottom: 72px; }
 .legend-swatch.fx-legend { border: 1px solid #5c5c62; border-left: 3px solid var(--lane-ink); background: var(--line); }
 .fx-background-row .layer-swatch { background: var(--text-muted); }
 @media (pointer: coarse), (max-width: 1023.98px) {
-  :root { --fx-line: 44px; }
+  :root { --fx-line: 48px; } /* a 44px clip target with its 2px gaps */
   .fx-clip-handle { width: 16px; }
 }
 /* The selected clip in the viewer chrome: the matte status keeps its own strip below. */
