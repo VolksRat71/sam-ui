@@ -93,6 +93,25 @@ def test_colour_lands_inside_the_box_only(h):
     assert np.abs(outside - GREY).max() < 12  # nothing drawn outside the box (JPEG noise aside)
 
 
+def test_a_picked_colour_fills_the_box_and_names_the_legend(h):
+    """colors: the person's colours from studio (issue #73), for this object only."""
+    seed(h, 3, 1, rect_mask(48, 32, 112, 64))
+    r = post(h, frames=[1], colors={"3": "#ff00ff", "9": "#00ff00"})
+    px = image(r)
+    assert np.abs(px[52, 64] - (GREY * 0.6 + np.array([255, 0, 255]) * 0.4)).max() < 12
+    assert np.abs(px[:30].reshape(-1, 3) - GREY).max() < 12
+    assert r.json["legend"]["objects"] == [{"id": 3, "name": None, "colour": "#FF00FF", "state": "untracked"}]
+    assert post(h, frames=[1]).json["legend"]["objects"][0]["colour"] == cap.THEME_COLORS[3]
+
+
+@pytest.mark.parametrize("colors", [["#ff00ff"], {"3": "red"}, {"3": "#ff00f"}, {"x": "#ff00ff"}, {"-1": "#ff00ff"},
+                                    {"3": 7}, {str(i): "#000000" for i in range(1001)}])
+def test_bad_colours_are_refused(h, colors):
+    h.click(1)
+    r = post(h, frames=[0], colors=colors)
+    assert r.status_code == 400 and "colors" in r.json["error"]
+
+
 def seed(h, obj, frame, mask):
     """A click on `frame` whose approved mask is `mask`."""
     h.service.record_points(h.video, obj, frame, [[0.5, 0.5]], [1], True, mask)

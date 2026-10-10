@@ -10,7 +10,9 @@ none), its area in percent of the frame and its box (normalised 0-1).
 
 What a frame shows is what studio shows: nothing inside an absent range, else
 the seed's approved mask, else the track's, then Refine Detail on top
-(service.effective_mask). 40% fill, a 2 px outline, the object id at the top
+(service.effective_mask), each object in its theme colour or in the one the
+person picked in studio (`colors`, which the desktop app's MCP passes along).
+40% fill, a 2 px outline, the object id at the top
 left of its box, and the frame's clicks as + (positive) and x (negative).
 
 Reads tracks from disk and opens the video on its own: no model lock.
@@ -18,6 +20,7 @@ Reads tracks from disk and opens the video on its own: no model lock.
 import base64
 import io
 import math
+import re
 from typing import Callable, Dict, List, Optional
 
 import numpy as np
@@ -43,8 +46,27 @@ class CaptureError(ValueError):
     """A refused request (a 400)."""
 
 
-def colour(obj_id: int) -> str:
-    return THEME_COLORS[obj_id % len(THEME_COLORS)]
+HEX = re.compile(r"#[0-9a-fA-F]{6}")
+MAX_COLOURS = 1000
+
+
+def colour(obj_id: int, colours: Optional[Dict[int, str]] = None) -> str:
+    """The object's colour: studio's override when one is given, else its theme colour."""
+    return (colours or {}).get(obj_id) or THEME_COLORS[obj_id % len(THEME_COLORS)]
+
+
+def pick_colours(value) -> Dict[int, str]:
+    """`colors` {"<id>": "#rrggbb"}: the colours a person picked in studio (issue #73)."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict) or len(value) > MAX_COLOURS:
+        raise CaptureError(f"colors maps object ids to #rrggbb, at most {MAX_COLOURS} of them")
+    out = {}
+    for k, v in value.items():
+        if not (isinstance(k, str) and k.isdigit() and len(k) <= 9) or not (isinstance(v, str) and HEX.fullmatch(v)):
+            raise CaptureError(f"colors maps object ids to #rrggbb, not {k!r}: {v!r}")
+        out[int(k)] = v.upper()
+    return out
 
 
 def video_fps(path: str) -> Optional[float]:
@@ -156,8 +178,9 @@ def _draw(pixels: np.ndarray, layers, size, points) -> Image.Image:
 def capture(service, video: str, path: str, body: Dict, n_frames: int, fps: Optional[float],
             read_frame: Optional[Callable] = None) -> Dict:
     """POST /capture's reply, from its body ({frames | start, end, count; object_ids?,
-    engine?, long_edge?, sheet?}); CaptureError for a refusal."""
+    engine?, long_edge?, sheet?, colors?}); CaptureError for a refusal."""
     frames = pick_frames(body, n_frames)
+    colours = pick_colours(body.get("colors"))
     engine = body.get("engine") or service.default
     if not isinstance(engine, str):
         raise CaptureError("engine is a name, such as sam2")
@@ -180,7 +203,7 @@ def capture(service, video: str, path: str, body: Dict, n_frames: int, fps: Opti
     for o in ids:
         track = {f: r for f, r in service.tracks.masks(video, o, engine) if f in wanted}
         per_obj[o] = (service.seeds.seeds(video, o), service.seeds.ranges(video, o), track)
-    legend_objects = [{"id": o, "name": names.get(o), "colour": colour(o),
+    legend_objects = [{"id": o, "name": names.get(o), "colour": colour(o, colours),
                        "state": service.object_info(video, o, engine)["state"]} for o in ids]
 
     if not sheet and len(frames) != 1:
@@ -215,7 +238,7 @@ def capture(service, video: str, path: str, body: Dict, n_frames: int, fps: Opti
                     entry["area"] = round(100 * float(mask.mean()), 2)
                     entry["box"] = [round(xs.min() / fw, 4), round(ys.min() / fh, 4),
                                     round((xs.max() + 1) / fw, 4), round((ys.max() + 1) / fh, 4)]
-                layers.append((o, mask, ImageColor.getrgb(colour(o))))
+                layers.append((o, mask, ImageColor.getrgb(colour(o, colours))))
             if kind != "absent":
                 for p, l in zip(seeds.get(f, {}).get("points", []), seeds.get(f, {}).get("labels", [])):
                     points.append((o, p[0], p[1], int(l)))

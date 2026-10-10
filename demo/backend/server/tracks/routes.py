@@ -80,8 +80,9 @@ POST /export {session_id, out_dir, objects?, include_stale?, frames?, force?, en
   gives out_dir back as asked and leaves out the source video's path (it stays
   in the export's notes/sam-ui-export.json).
   data/review.json carries the audit queue (flags: the studio's review flags).
-POST /capture {session_id, frames | start, end, count; object_ids?, engine?, long_edge?, sheet?}:
-  1 to 12 frames with the masks drawn on as studio shows them, one image or a
+POST /capture {session_id, frames | start, end, count; object_ids?, engine?, long_edge?, sheet?, colors?}:
+  1 to 12 frames with the masks drawn on as studio shows them (colors: the
+  person's picked colours, {"<id>": "#rrggbb"}), one image or a
   contact sheet, JPEG in base64 plus a legend (tracks/capture.py). For agents
   (the desktop app's MCP server). Disk and the video file only, no model lock.
   400 on a refusal, 404 for an unknown session.
