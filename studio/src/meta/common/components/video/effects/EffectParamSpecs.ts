@@ -5,12 +5,15 @@
 // effects have no settings beyond a variant number, so each gets one `style`
 // choice whose options name its variants in order: the worker turns the style
 // back into that variant (styleIndex), and the shaders are unchanged. A
-// style's preset is the params it sets (`styles`).
+// style's preset is the params it sets (`styles`), and a stored clip missing
+// a setting takes it from its style (normalizeParams), so clips saved when an
+// effect had only a style still draw as they did.
 import type {EffectParams} from './Effect';
 
 export type ParamSpec =
   // percentOfHeight: a fraction of the frame height, shown to people as a percentage (stored as the fraction)
-  | {kind: 'number'; min: number; max: number; step: number; default: number; label: string; percentOfHeight?: true}
+  // onlyStyles: shown (and used) only with these styles
+  | {kind: 'number'; min: number; max: number; step: number; default: number; label: string; percentOfHeight?: true; onlyStyles?: string[]}
   | {kind: 'color'; default: string; label: string} // '#rrggbb' or 'layer' (follow the layer's mask colour)
   | {kind: 'choice'; options: string[]; default: string; label: string};
 export type EffectSpec = {params: Record<string, ParamSpec>; styles: Record<string, Partial<EffectParams>>};
@@ -23,15 +26,36 @@ function variants(...options: string[]): EffectSpec {
   };
 }
 
+/**
+ * Block size or blur radius in fractions of the frame height, with styles
+ * that give Meta's fixed pixel sizes at 720p (`px`): 10/20/30 px blocks,
+ * 3/6/12 px blur. The effects round to whole pixels, so 720p is exact.
+ */
+function sized(key: 'size' | 'radius', label: string, max: number, px: Record<string, number>, extra: EffectSpec['params'] = {}): EffectSpec {
+  const options = Object.keys(px);
+  const at720 = (n: number) => Math.round((n / 720) * 1000) / 1000;
+  return {
+    params: {
+      [key]: {kind: 'number', min: 0.002, max, step: 0.001, default: at720(px[options[0]]), label, percentOfHeight: true},
+      ...extra,
+      style: {kind: 'choice', options, default: options[0], label: 'Style'},
+    },
+    styles: Object.fromEntries(options.map(o => [o, {style: o, [key]: at720(px[o])}])),
+  };
+}
+const FEATHER: ParamSpec = {kind: 'number', min: 0, max: 1, step: 0.05, default: 0, label: 'Feather'};
+/** How far a mask's edge softens at feather 1, as a fraction of the frame height. */
+export const FEATHER_REACH = 0.02;
+
 export const EFFECT_SPECS: Record<string, EffectSpec> = {
   /* Backgrounds */
   Original: variants('Plain', 'Vivid', 'Dimmed'),
   EraseBackground: variants('Black', 'White', 'Green'),
   Desaturate: variants('Gray', 'Gray, high contrast', 'Gray, low contrast'),
-  Pixelate: variants('Fine', 'Medium', 'Coarse'),
+  Pixelate: sized('size', 'Block size', 0.08, {Fine: 10, Medium: 20, Coarse: 30}),
   Sobel: variants('Colour edges', 'Green edges', 'White edges', 'Black on white'),
   BackgroundText: variants('Zooming words', 'Scrolling text'),
-  BackgroundBlur: variants('Light', 'Medium', 'Strong'),
+  BackgroundBlur: sized('radius', 'Radius', 0.05, {Light: 3, Medium: 6, Strong: 12}),
   Gradient: variants('Palette 1', 'Palette 2', 'Palette 3'),
 
   /* Objects ('Overlay' is studio's MaskOverlayEffect: its four fill strengths) */
@@ -42,7 +66,8 @@ export const EFFECT_SPECS: Record<string, EffectSpec> = {
   VibrantMask: variants('Palette 1', 'Palette 2', 'Palette 3'),
   Replace: variants('Angry', 'Angry, square', 'Heart', 'Heart, square', 'Whistle', 'Whistle, square'),
   Burst: variants('Colour rays', 'White rays', 'Colour wedges', 'White wedges'),
-  PixelateMask: variants('Fine', 'Medium', 'Coarse'),
+  PixelateMask: sized('size', 'Block size', 0.08, {Fine: 10, Medium: 20, Coarse: 30}, {feather: FEATHER}),
+  BlurMask: sized('radius', 'Radius', 0.05, {Light: 6, Medium: 12, Strong: 24}, {feather: {...FEATHER, default: 0.5}}),
   Arrow: variants('White arrow', 'Rainbow arrow', 'White dot', 'Rainbow dot'),
   NoisyMask: variants('Noise'),
   Outline: {
@@ -51,14 +76,25 @@ export const EFFECT_SPECS: Record<string, EffectSpec> = {
       color: {kind: 'color', default: 'layer', label: 'Colour'},
       opacity: {kind: 'number', min: 0, max: 1, step: 0.05, default: 1, label: 'Opacity'},
       softness: {kind: 'number', min: 0, max: 1, step: 0.05, default: 0.25, label: 'Softness'},
-      style: {kind: 'choice', options: ['Outline', 'Glow'], default: 'Outline', label: 'Style'},
+      // Scribble: how far the stroke wanders out from the edge, and how many times a second it is redrawn (0: never)
+      wobble: {kind: 'number', min: 0, max: 0.03, step: 0.001, default: 0.008, label: 'Wobble', percentOfHeight: true, onlyStyles: ['Scribble']},
+      boil: {kind: 'number', min: 0, max: 24, step: 1, default: 8, label: 'Boil per second', onlyStyles: ['Scribble']},
+      style: {kind: 'choice', options: ['Outline', 'Glow', 'Scribble'], default: 'Outline', label: 'Style'},
     },
     styles: {
       Outline: {style: 'Outline', softness: 0.25},
       Glow: {style: 'Glow', width: 0.02, softness: 0.8, opacity: 0.9},
+      Scribble: {style: 'Scribble', width: 0.005, softness: 0.25, opacity: 1, wobble: 0.008, boil: 8},
     },
   },
 };
+
+/** Setting `key` of `effect` from raw params: a number clamped to its range, else its default (behind normalizeParams, at the worker). */
+export function numberParam(effect: string, key: string, params: EffectParams): number {
+  const spec = EFFECT_SPECS[effect].params[key] as Extract<ParamSpec, {kind: 'number'}>;
+  const v = params[key];
+  return typeof v === 'number' && Number.isFinite(v) ? Math.min(spec.max, Math.max(spec.min, v)) : spec.default;
+}
 
 /** The style's position among the effect's style options (its Meta variant); 0 when unknown. */
 export function styleIndex(effect: string, params: EffectParams): number {

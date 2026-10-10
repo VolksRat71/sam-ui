@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+// Modified by sam-ui: paced over its clip (context.time / duration) when it has one.
 import {Tracklet} from '@/common/tracker/Tracker';
 import {DEMO_SHORT_NAME} from '@/demo/DemoConfig';
 import {Bound, CanvasForm, Num, Pt, Shaping} from 'pts';
@@ -32,17 +33,21 @@ export default class BackgroundTextEffect extends AbstractEffect {
 
     const words = ['SEGMENT', 'ANYTHING', 'WOW'];
     const paragraph = `${DEMO_SHORT_NAME} is designed for efficient video processing with streaming inference to enable real-time, interactive applications.`;
-    const progress = context.frameIndex / context.totalFrames;
+    // sam-ui: paced over the clip (its clock), else over the video
+    const p =
+      context.time != null && context.duration != null && context.duration > 0
+        ? context.time / context.duration
+        : context.frameIndex / context.totalFrames;
+    const progress = p - Math.floor(p); // 0..1, wherever a trimmed clip's clock starts
 
     // Zooming heading
     if (this.variant % 2 === 0) {
-      const step = context.totalFrames / words.length;
       const wordIndex = Math.floor(progress * words.length);
       const fontSize = context.width / Math.max(4, words[wordIndex].length - 1);
       const sizeMax = fontSize * 1.2;
 
       const t = Shaping.quadraticInOut(
-        Num.cycle((context.frameIndex - wordIndex * step) / step),
+        Num.cycle(progress * words.length - wordIndex),
       );
       const currentSize = fontSize + Shaping.sineInOut(t, sizeMax - fontSize);
       form.fillOnly('#fff').font(currentSize, 'bold');

@@ -24,6 +24,17 @@
 //       with every layer on Original, nothing drawn over the video)
 //   B6  Noisy (animated) on frame 101 is pixel-identical after a wait, a scrub
 //       away and back, and play/pause; its export frame is checked by B7
+//   SC  Scribble (boiling Outline) on frame 101: identical after a scrub away and
+//       back and play/pause, redrawn when boil is on (differs from boil 0, which
+//       is itself steady); its export matches the preview within B7's tolerance
+//   OB  the layer Blur draws on A, its settings carry the tracking caveat, and a
+//       larger radius changes it
+//   PH  animated effects run on the clip clock (docs written as split and
+//       duplicate leave them, since those operations live on another branch):
+//       Noisy's split right half [s, b) at phase s - a equals the unsplit clip on
+//       frame s + k; a duplicate [b, 2b - a) at phase 0 restarts, so on frame
+//       b + k it differs from the original carried on (with the video's frame
+//       index as the clock, the old way, they were identical)
 //   B11 every background and layer tile picked in turn, then Erase: the preview
 //       matches a reloaded (fresh) worker, the export matches the preview, and
 //       Chrome logged no "Too many active WebGL contexts"
@@ -236,7 +247,7 @@ const clearClips = async () => {
 };
 const fx = page.locator('.fx-settings');
 const setting = async (what, value) => {
-  if (what === 'width') await fx.locator('input[type=number][aria-label^="Width"]').fill(value);
+  if (['width', 'boil', 'radius'].includes(what)) await fx.locator(`input[type=number][aria-label^="${what[0].toUpperCase()}${what.slice(1)}"]`).fill(value);
   else if (what === 'last') await fx.locator('input[aria-label="Last frame"]').fill(value);
   else if (what === 'style') await fx.getByRole('button', {name: value, exact: true}).click();
   else if (what === 'color') {
@@ -500,6 +511,91 @@ await step('B7', async () => {
   // the comparison can tell frames apart: preview frame 101 against export frame 181
   const shifted = stats(shots[PARITY_FRAMES.indexOf(100)], frames[PARITY_FRAMES.indexOf(180)]);
   check('B7', shifted.psnr < tolerance, `a mismatched frame falls below it (f101 vs export f181: ${shifted.psnr} dB)`, shifted);
+  await clearClips();
+});
+
+await step('SC', async () => {
+  if (tolerance == null) throw new Error('no B7 tolerance');
+  await sel(A);
+  await seekTo(100);
+  await tile(0, 'Outline'); // over the whole video: its clock is the video's
+  await setting('style', 'Scribble');
+  const boiling = await cap('SC-1_scribble_f101');
+  check('SC', differs(compare(ref[100], boiling)), 'Scribble draws on frame 101', compare(ref[100], boiling));
+  await seekTo(60);
+  await seekTo(100);
+  const back = await cap('SC-2_scribble_f101_scrub-away-and-back');
+  await seekTo(94);
+  await page.keyboard.press(' ');
+  await page.waitForTimeout(220);
+  await page.keyboard.press(' ');
+  await page.waitForTimeout(800);
+  await seekTo(100);
+  const played = await cap('SC-3_scribble_f101_play-pause');
+  for (const [what, png] of [['scrub away and back', back], ['play/pause', played]]) {
+    const s = compare(boiling, png);
+    check('SC', s.changedPct === 0, `frame 101 identical after ${what}: MAD ${s.mad}`, s);
+  }
+  await setting('boil', '0');
+  const still = await cap('SC-4_scribble_boil-0_f101');
+  await seekTo(60);
+  await seekTo(100);
+  const stillBack = await cap('SC-5_scribble_boil-0_f101_scrub-away-and-back');
+  check('SC', !same(compare(boiling, still)) && compare(still, stillBack).changedPct === 0, 'boil 8 redraws the stroke (frame 101 differs from boil 0), boil 0 is steady', {
+    boil: compare(boiling, still),
+    steady: compare(still, stillBack),
+  });
+  await setting('boil', '8');
+  const shots = await preview('SC-6_scribble');
+  const file = await exportVideo('SC_scribble_A');
+  const frames = exportFrames(file, PARITY_FRAMES);
+  const rows = PARITY_FRAMES.map((f, i) => ({frame: f + 1, ...stats(shots[i], frames[i])}));
+  check('SC', rows.every(r => r.psnr >= tolerance), `export matches the preview: ${rows.map(r => `f${r.frame} ${r.psnr} dB`).join(', ')} (needs >= ${tolerance} dB)`, rows);
+  await clearClips();
+});
+
+await step('OB', async () => {
+  await sel(A);
+  await seekTo(100);
+  await tile(0, 'Blur');
+  const blurred = await cap('OB-1_layer-blur_f101');
+  check('OB', differs(compare(ref[100], blurred)), 'the layer Blur draws on A', compare(ref[100], blurred));
+  const note = await fx.locator('.effect-note').innerText();
+  check('OB', /if tracking misses a frame, the subject shows/.test(note), `its settings say tracking can fail: "${note}"`);
+  await setting('radius', '4');
+  const wide = await cap('OB-2_layer-blur_radius-4pct_f101');
+  const d = (await doc()).clips[0];
+  check('OB', d.effect === 'BlurMask' && d.params.radius === 0.04 && differs(compare(blurred, wide)), `radius 4 % blurs it more (radius ${d.params.radius})`, compare(blurred, wide));
+  await clearClips();
+});
+
+await step('PH', async () => {
+  await clearClips();
+  const key = await page.evaluate(() => Object.keys(localStorage).find(k => k.startsWith('sam-ui-studio:effects:v2:local/')));
+  const put = async clips => {
+    await page.evaluate(([k, c]) => localStorage.setItem(k, JSON.stringify({version: 2, clips: c})), [key, clips]);
+    await reload();
+    await sel(A);
+  };
+  const noisy = (id, start, end, phase) => ({id, target: {kind: 'object', id: aId}, effect: 'NoisyMask', params: {style: 'Noise'}, start, end, row: 0, phase});
+  const [a, s, b, k] = [40, 60, 80, 9]; // s + k = 69: B3 has the frame without clips
+  await put([noisy('u', a, b, 0)]);
+  await seekTo(s + k);
+  const unsplit = await cap(`PH-1_noisy-${a + 1}-${b}_f${s + k + 1}`);
+  await put([noisy('l', a, s, 0), noisy('r', s, b, s - a)]);
+  await seekTo(s + k);
+  const right = await cap(`PH-2_split-at-${s + 1}_right-half_f${s + k + 1}`);
+  const cont = compare(unsplit, right);
+  check('PH', differs(compare(ref[s + k], unsplit)), `Noisy draws on frame ${s + k + 1}`, compare(ref[s + k], unsplit));
+  check('PH', cont.changedPct === 0, `a split's right half continues the clip: frame ${s + k + 1} identical (MAD ${cont.mad})`, cont);
+  await put([noisy('u', a, 2 * b - a, 0)]);
+  await seekTo(b + k);
+  const carried = await cap(`PH-3_noisy-${a + 1}-${2 * b - a}_f${b + k + 1}`);
+  await put([noisy('u', a, b, 0), noisy('d', b, 2 * b - a, 0)]);
+  await seekTo(b + k);
+  const dup = await cap(`PH-4_duplicate-${b + 1}-${2 * b - a}_phase-0_f${b + k + 1}`);
+  const restart = compare(carried, dup);
+  check('PH', !same(restart), `a duplicate at phase 0 restarts: frame ${b + k + 1} differs from the original carried on (${restart.changedPct} % of pixels)`, restart);
   await clearClips();
 });
 

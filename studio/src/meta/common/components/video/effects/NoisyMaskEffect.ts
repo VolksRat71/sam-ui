@@ -15,10 +15,12 @@
  */
 // Modified by sam-ui: the three mask textures are allocated once in setup
 // and freed in cleanup (it created one per mask per frame and never freed it).
+// Animates on effectFrame (its clip's clock), not the video's frame index.
 import BaseGLEffect from '@/common/components/video/effects/BaseGLEffect';
 import {
   EffectFrameContext,
   EffectInit,
+  effectFrame,
 } from '@/common/components/video/effects/Effect';
 import vertexShaderSource from '@/common/components/video/effects/shaders/DefaultVert.vert?raw';
 import fragmentShaderSource from '@/common/components/video/effects/shaders/NoisyMask.frag?raw';
@@ -72,7 +74,7 @@ export default class NoisyMaskEffect extends BaseGLEffect {
     gl.clear(gl.COLOR_BUFFER_BIT);
 
     // dynamic uniforms per frame
-    gl.uniform1f(this._currentFrameLocation, context.frameIndex);
+    gl.uniform1f(this._currentFrameLocation, effectFrame(context));
     gl.uniform1i(this._numMasksUniformLocation, context.masks.length);
 
     // Create and bind 2D textures for each mask

@@ -80,8 +80,10 @@ export function normalizeParams(effect: string, raw: unknown): EffectParams {
     );
   }
   const out: EffectParams = {};
+  // a setting the clip lacks comes from its style (a clip saved before the effect had it draws as it did)
+  const preset: Record<string, unknown> = typeof given.style === 'string' ? (spec.styles[given.style] ?? {}) : {};
   for (const [key, p] of Object.entries(spec.params)) {
-    const v = given[key];
+    const v = given[key] ?? preset[key];
     if (p.kind === 'number') {
       if (typeof v === 'number' && Number.isFinite(v)) {
         const stepped = Number((p.min + Math.round((v - p.min) / p.step) * p.step).toFixed(decimals(p.step)));

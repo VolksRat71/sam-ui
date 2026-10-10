@@ -20,7 +20,7 @@ import EraseBackgroundEffect from './EraseBackgroundEffect';
 import OriginalEffect from './OriginalEffect';
 import OverlayEffect from './OverlayEffect';
 import ArrowGLEffect from './ArrowGLEffect';
-import BackgroundBlurEffect from './BackgroundBlurEffect';
+import BlurGLEffect from './BlurGLEffect';
 import BurstGLEffect from './BurstGLEffect';
 import CutoutGLEffect from './CutoutGLEffect';
 import EraseForegroundGLEffect from './EraseForegroundGLEffect';
@@ -56,6 +56,7 @@ export type Effects = {
   PixelateMask: Effect;
   Arrow: Effect;
   Outline: Effect;
+  BlurMask: Effect;
 
   /* More Effects */
   NoisyMask: Effect;
@@ -72,7 +73,7 @@ export function createEffects(): Effects {
     Pixelate: new PixelateEffect(),
     Sobel: new SobelEffect(),
     BackgroundText: new BackgroundTextEffect(),
-    BackgroundBlur: new BackgroundBlurEffect(),
+    BackgroundBlur: new BlurGLEffect(),
     Gradient: new GradientEffect(),
 
     /* Highlights */
@@ -86,6 +87,7 @@ export function createEffects(): Effects {
     PixelateMask: new PixelateMaskGLEffect(),
     Arrow: new ArrowGLEffect(),
     Outline: new OutlineGLEffect(),
+    BlurMask: new BlurGLEffect(true),
 
     /* More Effects */
     NoisyMask: new NoisyMaskEffect(),

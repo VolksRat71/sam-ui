@@ -1,12 +1,14 @@
 // sam-ui (Apache-2.0). New file, not from SAM 2.
 //
-// Outline: a stroke around each object's mask, or a soft Glow, drawn as
-// decoration only (transparent inside the mask and beyond the stroke). Three
+// Outline: a stroke around each object's mask, a soft Glow, or a hand-drawn
+// Scribble that wanders off the edge and boils (is redrawn a few times a
+// second, from the clip's clock), drawn as decoration only (transparent inside the mask and beyond the stroke). Three
 // passes on this effect's own context, all resources made once in setup:
 // masks -> blurred coverage (drops specks, smooths edges), a horizontal then
 // a vertical distance search (exact within the width, so wide strokes stay
 // round), then the stroke. Settings come from `params` on every apply, since
-// one instance draws many objects in turn.
+// one instance draws many objects in turn. Scribble's randomness is a seeded
+// lattice made here (scribbleNoise), so a frame draws the same every time.
 import {hexToRgb} from '@/common/components/video/editor/VideoEditorUtils';
 import BaseGLEffect from '@/common/components/video/effects/BaseGLEffect';
 import {
@@ -14,7 +16,7 @@ import {
   EffectInit,
   EffectParams,
 } from '@/common/components/video/effects/Effect';
-import {EFFECT_SPECS, type ParamSpec} from '@/common/components/video/effects/EffectParamSpecs';
+import {numberParam} from '@/common/components/video/effects/EffectParamSpecs';
 import vertexShaderSource from '@/common/components/video/effects/shaders/DefaultVert.vert?raw';
 import fragmentShaderSource from '@/common/components/video/effects/shaders/Outline.frag?raw';
 import coverShaderSource from '@/common/components/video/effects/shaders/OutlineCover.frag?raw';
@@ -30,10 +32,21 @@ const MASK_SLOTS = 3;
 // Texture units: masks 0-2, then the two intermediate textures.
 const COVER_UNIT = MASK_SLOTS;
 const SPREAD_UNIT = MASK_SLOTS + 1;
+const NOISE_UNIT = MASK_SLOTS + 2;
+/** Scribble's noise lattice is NOISE_SIZE x NOISE_SIZE values, repeating; its cells are 1/WOBBLE_CELLS of the frame height. */
+export const NOISE_SIZE = 32;
+const WOBBLE_CELLS = 16;
 
-export type OutlineSettings = {width: number; color: string; opacity: number; softness: number; glow: boolean};
-
-const SPEC = EFFECT_SPECS.Outline.params;
+export type OutlineSettings = {
+  width: number;
+  color: string;
+  opacity: number;
+  softness: number;
+  glow: boolean;
+  scribble: boolean;
+  wobble: number;
+  boil: number;
+};
 
 /**
  * The effect's settings from raw params, a second check behind the session's
@@ -41,11 +54,7 @@ const SPEC = EFFECT_SPECS.Outline.params;
  * numbers clamped to its ranges.
  */
 export function resolveOutlineParams(params: EffectParams): OutlineSettings {
-  const num = (key: 'width' | 'opacity' | 'softness') => {
-    const spec = SPEC[key] as Extract<ParamSpec, {kind: 'number'}>;
-    const v = params[key];
-    return typeof v === 'number' && Number.isFinite(v) ? Math.min(spec.max, Math.max(spec.min, v)) : spec.default;
-  };
+  const num = (key: string) => numberParam('Outline', key, params);
   const color = params.color;
   return {
     width: num('width'),
@@ -53,7 +62,27 @@ export function resolveOutlineParams(params: EffectParams): OutlineSettings {
     opacity: num('opacity'),
     softness: num('softness'),
     glow: params.style === 'Glow',
+    scribble: params.style === 'Scribble',
+    wobble: num('wobble'),
+    boil: num('boil'),
   };
+}
+
+/** Which redraw of a boiling Scribble a clip time falls in: `boil` a second from the clip's start, always 0 at boil 0 or with no clock. */
+export function boilStep(time: number | undefined, boil: number): number {
+  return time == null || !(boil > 0) ? 0 : Math.floor(time * boil + 1e-6);
+}
+
+/** Scribble's random lattice for redraw `seed`: NOISE_SIZE² bytes, the same for the same seed on any machine (integer hash, no Math.random). */
+export function scribbleNoise(seed: number): Uint8Array {
+  const out = new Uint8Array(NOISE_SIZE * NOISE_SIZE);
+  for (let i = 0; i < out.length; i++) {
+    let h = Math.imul(i + 1, 0x9e3779b1) ^ Math.imul(seed | 0, 0x85ebca6b);
+    h = Math.imul(h ^ (h >>> 16), 0x7feb352d);
+    h = Math.imul(h ^ (h >>> 15), 0x846ca68b);
+    out[i] = (h ^ (h >>> 16)) & 255;
+  }
+  return out;
 }
 
 /** The stroke colour as 0..1 RGB: the layer's mask colour for 'layer', else the '#rrggbb' given. */
@@ -68,6 +97,7 @@ export default class OutlineGLEffect extends BaseGLEffect {
   private _maskTextures: WebGLTexture[] = [];
   private _targets: WebGLTexture[] = []; // [cover, spread]
   private _framebuffers: WebGLFramebuffer[] = [];
+  private _noise: WebGLTexture | null = null;
 
   constructor() {
     super(1);
@@ -102,6 +132,13 @@ export default class OutlineGLEffect extends BaseGLEffect {
       return fb;
     });
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+    this._noise = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, this._noise);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
     gl.bindTexture(gl.TEXTURE_2D, null);
   }
 
@@ -142,7 +179,9 @@ export default class OutlineGLEffect extends BaseGLEffect {
     const {width, height} = context;
     const s = resolveOutlineParams(this.params);
     const widthPx = s.width * height;
-    const radius = Math.ceil(widthPx + 1);
+    const wobblePx = s.scribble ? s.wobble * height : 0;
+    // Scribble's stroke sits up to wobblePx out and is up to 1.5 widths thick
+    const radius = Math.ceil((s.scribble ? wobblePx + 1.5 * widthPx : widthPx) + 1);
     const at = (p: WebGLProgram, name: string) => gl.getUniformLocation(p, name);
 
     gl.viewport(0, 0, width, height);
@@ -185,6 +224,13 @@ export default class OutlineGLEffect extends BaseGLEffect {
     gl.uniform1f(at(program, 'uSoftness'), s.softness);
     gl.uniform1f(at(program, 'uOpacity'), s.opacity);
     gl.uniform1i(at(program, 'uGlow'), s.glow ? 1 : 0);
+    gl.uniform1i(at(program, 'uScribble'), s.scribble ? 1 : 0);
+    gl.uniform1f(at(program, 'uWobble'), wobblePx);
+    gl.uniform1f(at(program, 'uNoiseScale'), WOBBLE_CELLS / height / NOISE_SIZE);
+    gl.activeTexture(gl.TEXTURE0 + NOISE_UNIT);
+    gl.bindTexture(gl.TEXTURE_2D, this._noise);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, NOISE_SIZE, NOISE_SIZE, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, scribbleNoise(boilStep(context.time, s.boil)));
+    gl.uniform1i(at(program, 'uNoise'), NOISE_UNIT);
     for (let i = 0; i < MASK_SLOTS; i++) {
       gl.uniform3fv(at(program, `uColor${i}`), outlineRgb(s.color, context.maskColors[i] ?? ''));
     }
@@ -199,13 +245,14 @@ export default class OutlineGLEffect extends BaseGLEffect {
     super.cleanup();
     const gl = this._gl;
     if (gl != null) {
-      [...this._maskTextures, ...this._targets].forEach(t => gl.deleteTexture(t));
+      [...this._maskTextures, ...this._targets, this._noise].forEach(t => t != null && gl.deleteTexture(t));
       this._framebuffers.forEach(fb => gl.deleteFramebuffer(fb));
       [this._coverProgram, this._spreadProgram].forEach(p => p != null && gl.deleteProgram(p));
     }
     this._maskTextures = [];
     this._targets = [];
     this._framebuffers = [];
+    this._noise = null;
     this._coverProgram = null;
     this._spreadProgram = null;
   }

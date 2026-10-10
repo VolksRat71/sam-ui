@@ -13,11 +13,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+// Modified by sam-ui: block size and feather (a soft mask edge) come from
+// params, not the variant's fixed 10/20/30 px blocks.
 import BaseGLEffect from '@/common/components/video/effects/BaseGLEffect';
 import {
   EffectFrameContext,
   EffectInit,
 } from '@/common/components/video/effects/Effect';
+import {FEATHER_REACH, numberParam} from '@/common/components/video/effects/EffectParamSpecs';
+import {pixelBlock} from '@/common/components/video/effects/PixelateEffect';
 import vertexShaderSource from '@/common/components/video/effects/shaders/DefaultVert.vert?raw';
 import fragmentShaderSource from '@/common/components/video/effects/shaders/PixelateMask.frag?raw';
 import {Tracklet} from '@/common/tracker/Tracker';
@@ -66,11 +70,14 @@ export default class PixelateMaskGLEffect extends BaseGLEffect {
     gl.clearColor(0.0, 0.0, 0.0, 1.0);
     gl.clear(gl.COLOR_BUFFER_BIT);
 
-    const blockSize = [10, 20, 30][this.variant];
+    const blockSize = pixelBlock(numberParam('PixelateMask', 'size', this.params), context.height);
+    // a box of half-width f/sqrt(3) has the spread of the layer Blur's feather (a Gaussian reaching f at 3 sigma)
+    const feather = (numberParam('PixelateMask', 'feather', this.params) * FEATHER_REACH * context.height) / Math.sqrt(3);
 
     // dynamic uniforms per frame
     gl.uniform1i(this._numMasksUniformLocation, context.masks.length);
     gl.uniform1f(gl.getUniformLocation(program, 'uBlockSize'), blockSize);
+    gl.uniform1f(gl.getUniformLocation(program, 'uFeather'), feather);
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this._frameTexture);
