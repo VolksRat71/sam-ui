@@ -75,13 +75,15 @@ Everything sam-ui does, area by area. How each control in studio works is in
 
 ## Organise
 
-- **Objects.** Up to 16 per video by default, each with a name you edit in place.
-  Exports use the names.
+- **Objects.** Up to 16 per video by default, each with a name you edit in place, in
+  Layer info or on its timeline lane. Exports use the names.
 - **Groups.** Drag objects to reorder them or into named, coloured groups. A group
   can track, clear, take one effect, hide from the preview and ungroup. The order is
-  the timeline's and every export's. Reordering never makes a track stale.
+  the timeline's and every export's. Reordering never makes a track stale. On phones
+  and tablets, rename a group from its Actions menu.
 - **The workspace.** The preview, a dock with Review, Layer info, Effects and Media,
-  and a timeline with a lane per object. Press ? for the keyboard shortcuts.
+  and a timeline with a lane per object. The Layers list is one Tab stop; right-click
+  a layer, or press Shift+F10, for its Actions. Press ? for the keyboard shortcuts.
 - **Phones and tablets.** Studio stacks its panes on small screens, with tap to add a
   point, long press for the other kind, and pinch to zoom. It has been checked in
   Chrome's device emulation only, and Android Chrome shows a blank preview for now
@@ -103,13 +105,26 @@ Everything sam-ui does, area by area. How each control in studio works is in
   - **Media > Open from After Effects** lists the footage in the open AE project and
     opens it where it is, with no upload and no re-encode, so frame N in sam-ui is
     frame N in AE. It takes unmodified .mp4 and .mov footage with square pixels, no
-    proxy and no Interpret Footage overrides. Image sequences are not supported yet.
+    proxy and no Interpret Footage overrides. Variable frame rate footage is refused
+    (conform it first). Footage the browser can't play, such as ProRes, previews
+    through a frame-exact H.264 proxy, while tracking and export read the original.
+    Removing linked footage from Media leaves the file where it is. Image sequences
+    are not supported yet.
   - **Export > Export to After Effects** makes a new comp at the footage's own size,
     frame rate and duration: the footage as a guide layer, and one layer per object,
-    named after it, with its outlines as mask-path keys. The footage is checked again
-    before anything is written. Save the project in AE to keep it.
+    named after it, with its outlines as mask-path keys. The footage is checked again,
+    down to its hash, before anything is written. Save the project in AE to keep it.
   - Export to After Effects is offered only for footage opened from After Effects.
     For an uploaded clip, use the Vector JSON or the roto folder.
+
+## Desktop app
+
+- **Track-finished notification** (off by default): **sam-ui > Notify When a Track
+  Finishes** shows a system notification when a track ends while the window isn't
+  focused, failures included. Clicking it opens that track's first review stop.
+- **Agents (MCP)** (off by default): **Agents > Allow agents (MCP)** runs an MCP
+  server on `127.0.0.1:8793` so an agent can open videos, click, track, review,
+  capture frames and export. See [the desktop README](../desktop/README.md).
 
 ## Experimental
 

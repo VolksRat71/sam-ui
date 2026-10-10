@@ -89,8 +89,13 @@ Meta's demo UI. Paths such as `src/...` and `e2e/...` are in `studio/`.
   matches nothing changes nothing. The frame is marked on the lane like a
   clicked one, titled with its text. With SAM 2 or the browser engine the
   field is disabled and says why (`GET /engines` reports `text` per engine).
+  *Find in clip* looks for the same phrase across the whole clip and adds
+  each appearance as a candidate range for the Review queue; it writes no
+  seeds and makes no track stale.
 - **Names.** Objects are *Object N* until renamed:
-  double-click the name (or the pencil) to rename it in place. Names are
+  double-click the name (or the pencil) to rename it in place, in Layer info
+  or on the object's timeline lane. On touch widths a group's Actions menu
+  has Rename. Names are
   stored with the seeds (`POST /rename_object`) and never make a track stale;
   numbers are never reused after a delete.
 - **Order and groups.** Drag an object by its handle to reorder it, or onto a
@@ -179,7 +184,9 @@ Meta's demo UI. Paths such as `src/...` and `e2e/...` are in `studio/`.
   Space plays and pauses, the arrow keys step one frame, F flags the frame for
   a correction, Cmd-Z / Shift-Cmd-Z undo and redo the selected object's
   clicks, . and , step through the review queue, Y says its stop looks right,
-  and Escape drops a lane selection.
+  and Escape drops a lane selection. The Layers list is one Tab stop: Up and
+  Down select layers in it, and Shift+F10 (Fn-Shift-F10 on a Mac laptop) or a
+  right-click opens a layer's lane actions.
 
 ## The browser-only build
 
@@ -212,7 +219,7 @@ Compared with Meta's demo UI, which studio replaced:
 | --- | --- |
 | Gallery of videos, pick one | done (Media) |
 | Upload a video (mp4/mov, 70 MB) | done (click or drop), up to 5 minutes and 2 GB; uploads are listed with the gallery |
-| Remove a video | studio only (Meta's demo has none): a delete button on uploads, never on gallery videos, confirmed in an in-app dialog, with an option to keep the tracks. An open video's session closes first, and studio moves to the next video or the empty state |
+| Remove a video | studio only (Meta's demo has none): a delete button on uploads and on footage linked from After Effects (the file itself stays), never on gallery videos, confirmed in an in-app dialog, with an option to keep the tracks. An open video's session closes first, and studio moves to the next video or the empty state |
 | Default video (`defaultVideo`) | partial: the last video you used, else the first in the gallery |
 | Click adds a positive point, right click a negative one | done |
 | Add / Remove point toggle | done |
@@ -235,8 +242,8 @@ Compared with Meta's demo UI, which studio replaced:
 | Close the session on unload | missing: the backend expires idle sessions (30 min). A visible tab touches its session every 5 minutes to keep it |
 | Stats overlay (debug) | missing |
 
-Studio only: SAM 3 engine, the in-browser SAM 2.1 tiny engine, per-engine badges and disagreement flags, objects restored on reload (with their seed masks), track-state badges, Clear track, absent ranges, candidate and present ranges, the review queue, undo with kept track versions, text prompts (SAM 3),
-object groups, concurrent jobs, jobs from other tabs shown, zoom and pan, export
+Studio only: SAM 3 engine, the in-browser SAM 2.1 tiny engine, per-engine badges and disagreement flags, objects restored on reload (with their seed masks), track-state badges, Clear track, absent ranges, candidate and present ranges, the review queue, undo with kept track versions, text prompts and Find in clip (SAM 3),
+object groups, the track-finished notification and the MCP server (desktop app), concurrent jobs, jobs from other tabs shown, zoom and pan, export
 for rotoscoping, the After Effects round trip (desktop app), experimental Refine
 Detail, and keyboard shortcuts.
 

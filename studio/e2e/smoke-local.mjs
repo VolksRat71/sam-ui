@@ -110,8 +110,12 @@ export async function runNoServer({url, clip, out, check}) {
   if (!(await first.evaluate(r => r.classList.contains('active')))) {
     await first.locator('.layer-summary').click();
   }
-  await page.dblclick('.layer-details .object-name-text');
-  await page.fill('.object-name-input', 'Red disc');
+  // Playwright's Firefox (WebDriver BiDi) sends a double-click as two single clicks
+  // and its fill() skips React's change event; a real Firefox user is fine. So Firefox
+  // opens the field with the pencil, and the name is typed (it opens selected)
+  if (process.env.BROWSER === 'firefox') await page.click('.layer-details .rename-button');
+  else await page.dblclick('.layer-details .object-name-text');
+  await page.locator('.object-name-input').pressSequentially('Red disc');
   await page.keyboard.press('Enter');
   await settle();
   await page.reload();
