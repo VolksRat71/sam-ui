@@ -35,13 +35,12 @@ function fakeNotificationClass() {
   return FakeNotification;
 }
 
-function fakeWindow({focused = false, minimized = false} = {}) {
+function fakeWindow({minimized = false} = {}) {
   const calls = [];
   const sent = [];
   return {
     calls,
     sent,
-    isFocused: () => focused,
     isMinimized: () => minimized,
     restore: () => calls.push('restore'),
     show: () => calls.push('show'),
@@ -53,11 +52,12 @@ function fakeWindow({focused = false, minimized = false} = {}) {
   };
 }
 
-function setup({on = true, win = fakeWindow()} = {}) {
+/** `focused`: which app window has focus ('main', 'sam3', or null for another app). */
+function setup({on = true, win = fakeWindow(), focused = null} = {}) {
   const Notification = fakeNotificationClass();
   let enabled = on;
   const clock = {t: 1000000};
-  const jobDone = createJobNotifier({Notification, enabled: () => enabled, getWindow: () => win, now: () => clock.t});
+  const jobDone = createJobNotifier({Notification, enabled: () => enabled, getWindow: () => win, appFocused: () => focused != null, now: () => clock.t});
   return {jobDone, Notification, win, clock, setEnabled: v => (enabled = v)};
 }
 
@@ -72,7 +72,13 @@ describe('when it notifies', () => {
   });
 
   test('nothing while the window is focused', () => {
-    const {jobDone, Notification} = setup({win: fakeWindow({focused: true})});
+    const {jobDone, Notification} = setup({focused: 'main'});
+    assert.strictEqual(jobDone(done()), false);
+    assert.strictEqual(Notification.made.length, 0);
+  });
+
+  test('nothing while another sam-ui window (the SAM 3 setup) is focused', () => {
+    const {jobDone, Notification} = setup({focused: 'sam3'});
     assert.strictEqual(jobDone(done()), false);
     assert.strictEqual(Notification.made.length, 0);
   });

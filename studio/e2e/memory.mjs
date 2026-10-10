@@ -374,7 +374,7 @@ try {
   }
 } finally {
   summary.criticalPressure = critical;
-  summary.pageErrors = errors.filter(e => !/WebGL context|NetworkError|access control checks|Inter-VariableFont/.test(e)).slice(0, 5);
+  summary.pageErrors = errors.filter(e => !/WebGL context|NetworkError|access control checks/.test(e)).slice(0, 5);
   summary.consoleErrors = consoleErrors.slice(0, 10);
   summary.samples = rows.length;
   summary.csv = csv;

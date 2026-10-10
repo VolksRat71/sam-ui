@@ -184,7 +184,7 @@ const vids = await (
 const listed = vids.data.videos.edges.some(e => e.node.path.endsWith(uploaded));
 check(refusal == null && !listed, `delete removes ${uploaded}${refusal ? ` (refused: ${refusal})` : ''}`);
 
-const real = errors.filter(e => !/WebGL context|NetworkError|Inter-VariableFont/.test(e));
+const real = errors.filter(e => !/WebGL context|NetworkError/.test(e));
 check(real.length === 0, `no page errors${real.length ? `: ${real.slice(0, 3).join(' | ')}` : ''}`);
 await browser.close();
 if (MODE === 'both') {
