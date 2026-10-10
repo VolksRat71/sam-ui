@@ -216,24 +216,26 @@ export default function Preview({session, mode, onModeChange}: Props) {
             <SubtractFilled size={18} className="icon-negative" /> Remove
           </button>
         </div>
-        <div className="preview-status" role="status" aria-live="polite">
-          {clip?.target.kind === 'background' ? (
-            <span className="chip fx-context" title="The selected effect clip: the Effects panel edits it">
-              Background · {effectTitle(clip.target, clip.effect)}
-              {clipOff && <span className="muted"> · not on this frame</span>}
-            </span>
-          ) : active != null ? (
-            <span className={clip != null ? 'chip fx-context' : 'chip'} title={clip != null ? 'The selected effect clip: the Effects panel edits it' : undefined}>
-              <span className="swatch" style={{background: active.color}} />
-              {objectName(active)}
-              {clip != null && <> · {effectTitle(clip.target, clip.effect)}</>}
-              {clipOff && <span className="muted"> · not on this frame</span>}
-            </span>
-          ) : (
-            <span className="muted">
-              {state.objects.length === 0 ? 'Click the footage to add a layer' : 'Select a layer, or click to add one'}
-            </span>
-          )}
+        <div className="preview-status">
+          <span role="status">
+            {clip?.target.kind === 'background' ? (
+              <span className="chip fx-context" title="The selected effect clip: the Effects panel edits it">
+                Background · {effectTitle(clip.target, clip.effect)}
+              </span>
+            ) : active != null ? (
+              <span className={clip != null ? 'chip fx-context' : 'chip'} title={clip != null ? 'The selected effect clip: the Effects panel edits it' : undefined}>
+                <span className="swatch" style={{background: active.color}} />
+                {objectName(active)}
+                {clip != null && <> · {effectTitle(clip.target, clip.effect)}</>}
+              </span>
+            ) : (
+              <span className="muted">
+                {state.objects.length === 0 ? 'Click the footage to add a layer' : 'Select a layer, or click to add one'}
+              </span>
+            )}
+          </span>
+          {/* outside the live region: it toggles at the clip's ends during playback */}
+          {clipOff && <span className="muted"> not on this frame</span>}
         </div>
         <div className="zoom-controls">
           <button className="icon-button" onClick={() => zoomBy(1 / 1.5)} disabled={view.zoom <= 1} title="Zoom out">

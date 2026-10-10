@@ -278,19 +278,24 @@ export default function EffectsSection({session}: Props) {
           : hasClips
             ? `Add a ${e.title} clip at frame ${frame + 1}`
             : `Give ${name} ${e.title} over the whole video`;
-    const status =
-      target == null ? null : isAdding ? (
-        <>Choose the effect for a new clip at frame {frame + 1}.</>
-      ) : edited != null ? (
-        <>
-          Tiles change <strong>{clipTitle(edited)}</strong>, {clipFrames(edited)}
-          {edited.id === selectedClipId ? '' : ' (on the playhead)'}.
-        </>
-      ) : hasClips ? (
-        <>No {name} clip on this frame: a tile adds one at frame {frame + 1}.</>
-      ) : (
-        <>A tile gives {name} that effect over the whole video.</>
-      );
+    // the live part names only what tiles act on, so playback and scrubbing never
+    // re-announce it; frame numbers follow outside it
+    const [status, where] =
+      target == null
+        ? [null, null]
+        : isAdding
+          ? [<>Choose the effect for a new clip</>, <> at frame {frame + 1}.</>]
+          : edited != null
+            ? [
+                <>
+                  Tiles change <strong>{clipTitle(edited)}</strong>
+                  {edited.id === selectedClipId ? '' : ' (on the playhead)'}
+                </>,
+                <>, {clipFrames(edited)}.</>,
+              ]
+            : hasClips
+              ? [<>No {name} clip on this frame: a tile adds one</>, <> at frame {frame + 1}.</>]
+              : [<>A tile gives {name} that effect over the whole video.</>, null];
     return {
       active: target == null || isAdding ? null : activeOf(edited, fallback),
       pick,
@@ -298,10 +303,12 @@ export default function EffectsSection({session}: Props) {
       header:
         target == null ? null : (
           <div className="fx-command">
-            <p className="effect-note" role="status">{status}</p>
+            <p className="effect-note">
+              <span role="status">{status}</span>
+              {where}
+            </p>
             <button
               className="button compact"
-              aria-pressed={isAdding}
               disabled={locked}
               onClick={() => setAdding(isAdding ? null : kind)}
               onKeyDown={e => e.key === 'Escape' && setAdding(null)}

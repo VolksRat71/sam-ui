@@ -37,7 +37,7 @@ export default function ShortcutSheet({onClose}: {onClose: () => void}) {
   }, []);
   return <dialog ref={ref} className="shortcut-sheet" aria-labelledby="shortcut-title" onCancel={e => { e.preventDefault(); onClose(); }}>
     <header><h2 id="shortcut-title">Keyboard shortcuts</h2><button className="button" onClick={onClose} autoFocus>Close</button></header>
-    <p>Shortcuts pause while you type in a field. Undo steps back your own edits in this window, newest first; an agent’s changes are not in it. After a reload it applies to the selected layer’s clicks.</p>
+    <p>Shortcuts pause while you type in a field. Undo steps back your own edits in this window, newest first. Undoing a click steps back that layer’s newest change, which can be an agent’s. After a reload it applies to the selected layer’s clicks.</p>
     <dl>{shortcuts.map(([keys, description]) => <div key={keys}><dt><kbd>{keys}</kbd></dt><dd>{description}</dd></div>)}</dl>
   </dialog>;
 }
