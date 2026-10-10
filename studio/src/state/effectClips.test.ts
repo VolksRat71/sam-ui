@@ -10,6 +10,7 @@ import {
   EMPTY_DOC,
   activeClips,
   addClip,
+  clipLines,
   clipTime,
   clipToEdit,
   migrateV1,
@@ -184,17 +185,27 @@ describe('adding, editing and removing clips', () => {
     expect(pruneClips(doc, [0, 1])).toBe(doc);
   });
 
-  it('an effect pick edits the selected clip, else the top one on the playhead, else the top one', () => {
+  it('an effect pick edits the selected clip, else the top one on the playhead, never one off the playhead', () => {
     const doc: EffectDoc = {
       version: 2,
       clips: [clip({id: 'low', row: 0, start: 0, end: 50}), clip({id: 'high', row: 1, start: 60, end: 90}), clip({id: 'other', target: B})],
     };
     expect(clipToEdit(doc, A, 10, null)?.id).toBe('low');
     expect(clipToEdit(doc, A, 70, null)?.id).toBe('high');
-    expect(clipToEdit(doc, A, 55, null)?.id).toBe('high');
+    expect(clipToEdit(doc, A, 55, null)).toBeNull(); // between clips: nothing visible to edit
+    expect(clipToEdit(doc, A, 55, 'low')?.id).toBe('low'); // unless it is selected
     expect(clipToEdit(doc, A, 70, 'low')?.id).toBe('low');
     expect(clipToEdit(doc, A, 70, 'other')?.id).toBe('high'); // selected, but not this layer's
     expect(clipToEdit(doc, BG, 70, null)).toBeNull();
+  });
+
+  it('a pick off every clip of a layer adds a clip at the playhead; on a layer with none, over the whole video', () => {
+    const doc: EffectDoc = {version: 2, clips: [clip({id: 'a', start: 0, end: 50})]};
+    const off = pickOnTarget(doc, {target: A, effect: 'Burst', frame: 60, numFrames: 300, fps: 10, selectedId: null, newId: 'n'});
+    expect(off.doc.clips.find(c => c.id === 'n')).toMatchObject({start: 60, end: 90, row: 1, effect: 'Burst'});
+    expect(off.doc.clips.find(c => c.id === 'a')).toBe(doc.clips[0]); // the clip off the playhead is untouched
+    const fresh = pickOnTarget(doc, {target: B, effect: 'Burst', frame: 60, numFrames: 300, fps: 10, selectedId: null, newId: 'm'});
+    expect(fresh.doc.clips.find(c => c.id === 'm')).toMatchObject({start: 0, end: 300});
   });
 });
 
@@ -276,5 +287,21 @@ describe('storage (U1)', () => {
     expect(doc.clips[1]).toMatchObject({effect: 'Future', params: {k: 'v'}, row: 0, phase: 0, target: {kind: 'background'}});
     expect(parseEffectDoc({version: 1, clips: []})).toEqual(EMPTY_DOC);
     expect(parseEffectDoc(null)).toEqual(EMPTY_DOC);
+  });
+});
+
+describe('clipLines (timeline band layout)', () => {
+  it('stacks overlapping clips with the upper row higher, and lets clips that do not overlap share a line', () => {
+    const doc = [
+      clip({id: 'base', row: 0, start: 0, end: 100}),
+      clip({id: 'mid', row: 1, start: 10, end: 30}),
+      clip({id: 'top', row: 2, start: 50, end: 70}),
+      clip({id: 'over', row: 3, start: 20, end: 60}),
+    ];
+    const {line, count} = clipLines(doc);
+    expect(Object.fromEntries(line)).toEqual({over: 0, top: 1, mid: 1, base: 2});
+    expect(count).toBe(3);
+    expect(clipLines([clip({id: 'a', start: 0, end: 10}), clip({id: 'b', row: 1, start: 10, end: 20})]).count).toBe(1);
+    expect(clipLines([]).count).toBe(0);
   });
 });

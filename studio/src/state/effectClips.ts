@@ -203,12 +203,13 @@ export function pruneClips(doc: EffectDoc, objectIds: ReadonlyArray<number>): Ef
 
 /**
  * The clip an effect pick on `target` edits: the selected clip if it is
- * `target`'s, else its top clip on the playhead, else its top clip anywhere.
+ * `target`'s, else its top clip on the playhead; never a clip off the
+ * playhead the person cannot see being changed.
  */
 export function clipToEdit(doc: EffectDoc, target: EffectTarget, frame: number, selectedId: string | null): EffectClip | null {
   const mine = clipsOf(doc, target);
   const top = (cs: EffectClip[]) => cs.reduce<EffectClip | null>((t, c) => (t == null || c.row > t.row ? c : t), null);
-  return mine.find(c => c.id === selectedId) ?? top(mine.filter(c => c.start <= frame && frame < c.end)) ?? top(mine);
+  return mine.find(c => c.id === selectedId) ?? top(mine.filter(c => c.start <= frame && frame < c.end));
 }
 
 /** What picking `effect` gives a clip: the effect it has again moves to its next style; another starts at its defaults. */
@@ -224,16 +225,21 @@ export function pickedParams(clip: Pick<EffectClip, 'effect' | 'params'> | null,
 /**
  * Today's one-click effect buttons on top of clips: picking `effect` on
  * `target` edits the clip clipToEdit finds (the same effect again: its next
- * style), or adds a clip over the whole video when the target has none.
+ * style). With none, it adds a clip over the whole video when the target has
+ * no clips yet, else a new clip at the playhead (as Add effect does).
  */
 export function pickOnTarget(
   doc: EffectDoc,
-  o: {target: EffectTarget; effect: string; frame: number; numFrames: number; selectedId: string | null; newId: string; params?: EffectParams},
+  o: {target: EffectTarget; effect: string; frame: number; numFrames: number; fps?: number; selectedId: string | null; newId: string; params?: EffectParams},
 ): {doc: EffectDoc; clipId: string} {
   const clip = clipToEdit(doc, o.target, o.frame, o.selectedId);
   const params = o.params ?? pickedParams(clip, o.effect);
   if (clip != null) {
     return {doc: updateClip(doc, clip.id, {effect: o.effect, params}), clipId: clip.id};
+  }
+  if (clipsOf(doc, o.target).length > 0) {
+    const added = newClip({id: o.newId, target: o.target, effect: o.effect, frame: o.frame, numFrames: o.numFrames, fps: o.fps ?? 30, params});
+    return {doc: addClip(doc, added), clipId: o.newId};
   }
   const full: EffectClip = {
     id: o.newId,
@@ -328,4 +334,23 @@ export function migrateV1(map: unknown, numFrames: number): EffectDoc {
     });
   }
   return {version: 2, clips};
+}
+
+/**
+ * Where a target's clips sit on its timeline band: line 0 at the top. A clip
+ * goes one line below every higher-row clip it overlaps, so of two
+ * overlapping clips the one drawn on top is always shown higher; clips that
+ * do not overlap share a line, keeping the band as short as it can be.
+ */
+export function clipLines(clips: ReadonlyArray<EffectClip>): {line: Map<string, number>; count: number} {
+  const line = new Map<string, number>();
+  const placed: EffectClip[] = [];
+  let count = 0;
+  for (const c of [...clips].sort((a, b) => b.row - a.row || a.start - b.start)) {
+    const below = placed.filter(p => p.start < c.end && c.start < p.end).reduce((m, p) => Math.max(m, line.get(p.id)! + 1), 0);
+    line.set(c.id, below);
+    placed.push(c);
+    count = Math.max(count, below + 1);
+  }
+  return {line, count};
 }

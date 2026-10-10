@@ -1,0 +1,122 @@
+// sam-ui (Apache-2.0). New file, not from SAM 2.
+//
+// Acceptance check U9 (vault 06-acceptance-test-plan): one Cmd-Z across the
+// person's effect and seed edits, newest first, never stepping an agent's.
+import {describe, expect, it} from 'vitest';
+import {type EffectClip, type EffectDoc, EMPTY_DOC, addClip, newClip, removeClip, updateClip} from './effectClips';
+import {
+  EMPTY_JOURNAL,
+  type Journal,
+  type JournalEntry,
+  type SeedStatus,
+  applyEntry,
+  diffClips,
+  recordEffect,
+  recordSeed,
+  steppedObject,
+  takeStep,
+} from './editJournal';
+
+const PIM = {kind: 'object', id: 1} as const;
+const outline = (id: string, frame: number): EffectClip =>
+  newClip({id, target: PIM, effect: 'Outline', frame, numFrames: 300, fps: 30});
+
+/** The session's Cmd-Z, on plain values: effect entries restore clips, seed entries go to `seedUndo`. */
+function press(
+  s: {doc: EffectDoc; journal: Journal},
+  which: 'undo' | 'redo',
+  seedStep: (id: number) => void,
+  status: (id: number) => SeedStatus = () => 'ok',
+) {
+  const {journal, entry, blocked} = takeStep(s.journal, which, status);
+  s.journal = journal;
+  if (entry?.kind === 'effect') {
+    s.doc = applyEntry(s.doc, entry.changes, which);
+  } else if (entry?.kind === 'seed') {
+    entry.objectIds.forEach(seedStep);
+  }
+  return blocked;
+}
+
+describe('edit journal (U9)', () => {
+  it("person adds Outline, an agent changes clicks, two undos step back only the person's own edits", () => {
+    const s = {doc: EMPTY_DOC, journal: EMPTY_JOURNAL};
+    const seedUndos: number[] = [];
+    // the person clicks Pim (a seed entry), then adds Outline at frame 30
+    s.journal = recordSeed(s.journal, [1]);
+    const before = s.doc;
+    s.doc = addClip(s.doc, outline('c1', 30));
+    s.journal = recordEffect(s.journal, before, s.doc, 'add', 0);
+    // an agent changes Pim's clicks: it reaches the backend and the screen, never the journal
+    const agentJournal = s.journal;
+
+    press(s, 'undo', id => seedUndos.push(id));
+    expect(s.doc.clips).toEqual([]); // the Outline went first: newest
+    expect(seedUndos).toEqual([]);
+    press(s, 'undo', id => seedUndos.push(id));
+    expect(seedUndos).toEqual([1]); // then the person's click, on the backend
+    expect(s.journal.undo).toEqual([]);
+    expect(agentJournal.undo).toHaveLength(2); // the agent added nothing to step
+
+    // redo walks forward again, oldest undone last
+    press(s, 'redo', () => {});
+    press(s, 'redo', () => {});
+    expect(s.doc.clips.map(c => c.id)).toEqual(['c1']);
+  });
+
+  it('a seed undo never removes an effect, and an effect undo never touches seeds', () => {
+    const s = {doc: addClip(EMPTY_DOC, outline('c1', 0)), journal: EMPTY_JOURNAL};
+    const seeds: number[] = [];
+    const was = s.doc;
+    s.doc = updateClip(s.doc, 'c1', {params: {...s.doc.clips[0].params, width: 0.02}});
+    s.journal = recordEffect(s.journal, was, s.doc, 'w', 0);
+    s.journal = recordSeed(s.journal, [1]);
+    press(s, 'undo', id => seeds.push(id));
+    expect(seeds).toEqual([1]);
+    expect(s.doc.clips[0].params.width).toBe(0.02); // the effect is untouched by the seed undo
+    press(s, 'undo', id => seeds.push(id));
+    expect(seeds).toEqual([1]);
+    expect(s.doc.clips[0].params.width).toBe(0.006);
+  });
+
+  it('restores a removed clip by id, with its settings and range', () => {
+    const doc = addClip(EMPTY_DOC, outline('c1', 40));
+    const gone = removeClip(doc, 'c1');
+    const changes = diffClips(doc, gone);
+    expect(changes).toEqual([{id: 'c1', before: doc.clips[0], after: null}]);
+    expect(applyEntry(gone, changes, 'undo').clips).toEqual(doc.clips);
+    expect(applyEntry(doc, changes, 'redo').clips).toEqual([]);
+  });
+
+  it('merges a drag (same key, close together) into one step, but not separate edits', () => {
+    let doc = addClip(EMPTY_DOC, outline('c1', 0));
+    let j = EMPTY_JOURNAL;
+    for (const [w, at] of [[0.01, 0], [0.02, 300], [0.03, 600]] as const) {
+      const was = doc;
+      doc = updateClip(doc, 'c1', {params: {...doc.clips[0].params, width: w}});
+      j = recordEffect(j, was, doc, 'c1:width', at);
+    }
+    expect(j.undo).toHaveLength(1);
+    expect(applyEntry(doc, (j.undo[0] as Extract<JournalEntry, {kind: 'effect'}>).changes, 'undo').clips[0].params.width).toBe(0.006);
+    const was = doc;
+    doc = updateClip(doc, 'c1', {params: {...doc.clips[0].params, width: 0.04}});
+    expect(recordEffect(j, was, doc, 'c1:width', 5000).undo).toHaveLength(2); // a later drag is its own step
+    expect(recordEffect(j, doc, doc, 'x', 700)).toBe(j); // nothing changed: nothing recorded
+  });
+
+  it('skips entries for removed objects, waits for a tracking one, and follows per-object undo buttons', () => {
+    let j = recordSeed(recordSeed(EMPTY_JOURNAL, [1]), [2]);
+    const s = {doc: EMPTY_DOC, journal: j};
+    const seeds: number[] = [];
+    // object 2 is tracking: the step waits and says why
+    expect(press(s, 'undo', id => seeds.push(id), id => (id === 2 ? {blocked: 'tracking'} : 'ok'))).toBe('tracking');
+    expect(s.journal).toBe(j);
+    // object 2 was removed: its entry is dropped and object 1 steps
+    press(s, 'undo', id => seeds.push(id), id => (id === 2 ? 'gone' : 'ok'));
+    expect(seeds).toEqual([1]);
+    // the Layer info Undo button stepped object 1: its newest entry moves to redo too
+    j = steppedObject(recordSeed(recordSeed(EMPTY_JOURNAL, [1]), [2]), 'undo', 1);
+    expect(j.undo).toEqual([{kind: 'seed', objectIds: [2]}]);
+    expect(j.redo).toEqual([{kind: 'seed', objectIds: [1]}]);
+  });
+});
