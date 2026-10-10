@@ -11,7 +11,7 @@ import type {
 } from '@/common/components/video/VideoWorkerBridge';
 import {useCallback, useEffect, useMemo, useReducer, useRef, useState} from 'react';
 import StudioBridge from '~/bridge/StudioBridge';
-import {agentBridge, asAgentChange, asJobOpen, jobsBridge} from '~/lib/desktop';
+import {type AgentChange, agentBridge, asAgentChange, asAgentGoto, asJobOpen, jobsBridge} from '~/lib/desktop';
 import {type AgentEntry, appendActivity, viewReport} from '~/state/agentActivity';
 import {explainGraphQLError} from '~/lib/errors';
 import {
@@ -1560,6 +1560,46 @@ export default function useStudioSession(video: VideoItem) {
       }
     },
     [bridge, meta.numFrames, selectObject],
+  );
+
+  // sam_studio goto: an agent points at a frame or layer. Studio moves only
+  // when the person is not playing and has not scrubbed or picked a layer in
+  // the last 2 s (moves the agent made itself don't count), and says so.
+  const playingRef = useRef(playing);
+  playingRef.current = playing;
+  const lastTouch = useRef(0);
+  const agentMovedAt = useRef(-Infinity);
+  useEffect(() => {
+    if (Date.now() - agentMovedAt.current > 1000) {
+      lastTouch.current = Date.now();
+    }
+  }, [frame, state.activeId]);
+  useEffect(
+    () =>
+      agent?.onGoto?.(raw => {
+        const g = asAgentGoto(raw);
+        if (g == null || g.videoId !== video.path || status !== 'ready') {
+          return {moved: false, reason: 'studio is not on that video'};
+        }
+        if (playingRef.current) {
+          return {moved: false, reason: 'the person is playing the clip'};
+        }
+        if (Date.now() - lastTouch.current < 2000) {
+          return {moved: false, reason: 'the person is working on the timeline'};
+        }
+        if (g.objectId != null && !stateRef.current.objects.some(o => o.id === g.objectId)) {
+          return {moved: false, reason: `there is no layer ${g.objectId} on this video`};
+        }
+        agentMovedAt.current = Date.now();
+        const c: AgentChange = {
+          videoId: g.videoId, kind: 'goto', objectIds: g.objectId != null ? [g.objectId] : [], frame: g.frame,
+          end: null, state: null, jobId: null, name: null, at: Date.now(),
+        };
+        setAgentActivity(list => appendActivity(list, c, stateRef.current.activeId));
+        goToAgentChange({id: 0, change: c, onSelected: false});
+        return {moved: true};
+      }),
+    [agent, video.path, status, goToAgentChange],
   );
 
   // the person's view, for sam_studio state: at once on any change but the

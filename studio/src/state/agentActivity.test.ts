@@ -56,6 +56,9 @@ describe('describeChange', () => {
       [{kind: 'review', frame: 40, state: 'unreviewed'}, 'unmarked frame 41 of Blocks 2 as reviewed'],
       [{kind: 'export', frame: null, objectIds: [], name: 'blocks-73'}, 'exported every tracked layer to blocks-73'],
       [{kind: 'track_start', frame: null, objectIds: [1, 2, 3, 4, 5]}, 'started tracking Blocks 2, Object 3, Object 4 and 2 more'],
+      [{kind: 'goto', frame: 40, objectIds: []}, 'moved you to frame 41'],
+      [{kind: 'goto', frame: 40}, 'moved you to Blocks 2, frame 41'],
+      [{kind: 'goto', frame: null}, 'moved you to Blocks 2'],
     ];
     for (const [c, words] of cases) {
       expect(describeChange(change(c), nameOf)).toBe(words);

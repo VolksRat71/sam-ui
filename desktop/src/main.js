@@ -241,7 +241,26 @@ const MCP_PORT = mcpPort();
 // it (parseView: checked whole, or null), in memory only and never logged; and
 // each agent change, sent to the window while agents are allowed.
 let studioView = null;
-const studio = {view: () => studioView};
+// sam_studio goto: main asks the window and waits (3 s at most) for its answer
+let gotoSeq = 0;
+const gotoWaits = new Map(); // id -> resolve
+const studio = {
+  view: () => studioView,
+  goto: req =>
+    new Promise(resolve => {
+      if (mainWindow == null || mainWindow.isDestroyed()) return resolve({moved: false, reason: 'studio is not open'});
+      const id = ++gotoSeq;
+      const timer = setTimeout(() => {
+        gotoWaits.delete(id);
+        resolve({moved: false, reason: 'studio did not answer'});
+      }, 3000);
+      gotoWaits.set(id, reply => {
+        clearTimeout(timer);
+        resolve(reply);
+      });
+      mainWindow.webContents.send('agent:goto', {id, ...req});
+    }),
+};
 function tellStudio(change) {
   if (mcp != null && mainWindow != null && !mainWindow.isDestroyed()) mainWindow.webContents.send('agent:changed', change);
 }
@@ -504,6 +523,13 @@ ipcMain.on('jobs:done', (event, payload) => {
 
 ipcMain.on('agent:view', (event, payload) => {
   if (isMainWindow(event)) studioView = parseView(payload);
+});
+// studio's answer to a goto; mcp-tools.js parseGotoReply reads what it says
+ipcMain.on('agent:goto-done', (event, reply) => {
+  const done = isMainWindow(event) && Number.isInteger(reply?.id) ? gotoWaits.get(reply.id) : undefined;
+  if (done == null) return;
+  gotoWaits.delete(reply.id);
+  done(reply.result);
 });
 
 // -- SAM 3 download --------------------------------------------------------

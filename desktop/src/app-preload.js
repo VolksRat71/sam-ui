@@ -43,6 +43,16 @@ contextBridge.exposeInMainWorld('samUiDesktop', {
       ipcRenderer.on('agent:changed', listener);
       return () => ipcRenderer.removeListener('agent:changed', listener);
     },
+    // sam_studio goto: cb answers {moved, reason?} (or a promise of it), sent back to main
+    onGoto: cb => {
+      const listener = (_e, req) =>
+        Promise.resolve()
+          .then(() => cb(req))
+          .catch(() => ({moved: false, reason: 'studio could not move'}))
+          .then(result => ipcRenderer.send('agent:goto-done', {id: req?.id, result}));
+      ipcRenderer.on('agent:goto', listener);
+      return () => ipcRenderer.removeListener('agent:goto', listener);
+    },
   },
   setupSam3: () => ipcRenderer.send('app:setup-sam3'),
   ae: {

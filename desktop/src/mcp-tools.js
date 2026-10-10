@@ -129,6 +129,13 @@ function parseView(v) {
     hidden_objects: [...hidden_objects], colors: Object.fromEntries(Object.entries(colors)), next_object_id};
 }
 
+/** Studio's answer to sam_studio goto, {moved, reason?}: anything else reads as not moved. */
+function parseGotoReply(r) {
+  if (!isPlain(r) || typeof r.moved !== 'boolean') return {moved: false, reason: 'studio did not answer'};
+  const reason = typeof r.reason === 'string' && r.reason.length <= 200 && !/[\x00-\x1f\x7f]/.test(r.reason) ? r.reason : null;
+  return r.moved ? {moved: true} : {moved: false, reason: reason ?? 'studio did not move'};
+}
+
 // -- MCP content
 
 const text = value => ({content: [{type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value, null, 1)}]});
@@ -321,11 +328,16 @@ const TOOLS = [
       'frame" means, and their selected layer is the one they are working on, so leave it alone unless they ask.\n' +
       '- state: {open: false} when studio has no video open (or this is not the app), else {open: true, video_id, ' +
       'session_id, frame, n_frames, playing, active_object: {id, name} | null, engine, hidden_objects, colors, next_object_id}. ' +
-      'sam_session open on that video_id shares that session. About 150 tokens.',
+      'sam_session open on that video_id shares that session. About 150 tokens.\n' +
+      '- goto (frame?, object_id?): show the person a frame and select a layer, to point at what you mean. Studio moves only ' +
+      'when they are not playing and have not touched the timeline in the last 2 s; else {moved: false, reason}. Use it sparingly: ' +
+      'it moves their view.',
     inputSchema: {
       type: 'object',
       properties: {
-        command: {type: 'string', enum: ['state']},
+        command: {type: 'string', enum: ['state', 'goto']},
+        frame: {type: 'integer', minimum: 0},
+        object_id: {type: 'integer', minimum: 0},
       },
       required: ['command'],
     },
@@ -335,7 +347,7 @@ const TOOLS = [
 /**
  * The tool table over `backend` (ae-roto.js backendClient, without a token).
  * `exportRoot` is where sam_export writes (~/Movies/sam-ui); `now` is for tests.
- * `studio` ({view(): a parseView result or null}) is the desktop app's window,
+ * `studio` ({view(): a parseView result or null, goto(req): Promise of studio's answer}) is the desktop app's window,
  * null on its own; `onChange` hears each change an agent made (see change()).
  */
 function createTools({backend, exportRoot = path.join(os.homedir(), 'Movies', 'sam-ui'), now = Date.now,
@@ -698,6 +710,14 @@ function createTools({backend, exportRoot = path.join(os.homedir(), 'Movies', 's
         const {open, active_object, ...rest} = v;
         return text({open, ...rest, active_object: active_object == null ? null : {id: active_object, name}});
       },
+      async goto(args) {
+        const v = view();
+        if (v == null || typeof studio?.goto !== 'function') throw new ToolError('Studio has no video open.');
+        const frame = opt(args, 'frame', f => isNat(f) && f < v.n_frames, `a frame number, 0 to ${v.n_frames - 1}`);
+        const obj = opt(args, 'object_id', isNat, 'an object id');
+        if (frame == null && obj == null) throw new ToolError('give frame, object_id or both');
+        return text(parseGotoReply(await studio.goto({video_id: v.video_id, frame: frame ?? null, object_id: obj ?? null})));
+      },
     },
   };
 
@@ -793,4 +813,4 @@ function closingPart(tail) {
   return {done: false, error: 'the stream ended without a result'};
 }
 
-module.exports = {EXPORT_NAME, INSTRUCTIONS, TOOLS, closingPart, createTools, parseView};
+module.exports = {EXPORT_NAME, INSTRUCTIONS, TOOLS, closingPart, createTools, parseGotoReply, parseView};

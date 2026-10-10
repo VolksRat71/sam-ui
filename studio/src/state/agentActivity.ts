@@ -75,6 +75,8 @@ export function describeChange(c: AgentChange, nameOf: (id: number) => string): 
       return c.state === 'unreviewed' ? `unmarked ${frame} of ${who} as reviewed` : `marked ${frame} of ${who} reviewed`;
     case 'export':
       return `exported ${who} to ${c.name ?? 'a folder'}`;
+    case 'goto':
+      return c.objectIds.length === 0 ? `moved you to ${frame}` : `moved you to ${who}${frame != null ? `, ${frame}` : ''}`;
   }
 }
 

@@ -94,7 +94,7 @@ export type AgentView =
     };
 
 export const AGENT_KINDS = [
-  'points', 'text', 'range', 'undo', 'redo', 'remove', 'track_start', 'track_done', 'track_cancel', 'review', 'export',
+  'points', 'text', 'range', 'undo', 'redo', 'remove', 'track_start', 'track_done', 'track_cancel', 'review', 'export', 'goto',
 ] as const;
 export type AgentKind = (typeof AGENT_KINDS)[number];
 
@@ -123,7 +123,12 @@ export type AgentBridge = {
   report(view: AgentView): void;
   /** An agent's change; returns the unsubscribe. Not trusted: see asAgentChange. */
   onChanged(cb: (change: unknown) => void): () => void;
+  /** sam_studio goto: cb answers whether studio moved. Not trusted: see asAgentGoto. Absent before #73's goto. */
+  onGoto?(cb: (request: unknown) => GotoAnswer): () => void;
 };
+
+export type GotoAnswer = {moved: true} | {moved: false; reason: string};
+export type AgentGoto = {videoId: string; frame: number | null; objectId: number | null};
 
 export type DesktopBridge = {setupSam3(): void; ae?: AeBridge; jobs?: JobsBridge; agent?: AgentBridge};
 
@@ -186,6 +191,18 @@ export function asAgentChange(x: unknown): AgentChange | null {
     name: (name as string | undefined) ?? null,
     at,
   };
+}
+
+/** A sam_studio goto as main sends it ({video_id, frame, object_id}), or null for anything malformed. */
+export function asAgentGoto(x: unknown): AgentGoto | null {
+  if (x == null || typeof x !== 'object' || Array.isArray(x)) {
+    return null;
+  }
+  const {video_id: videoId, frame: rawFrame, object_id: rawObject} = x as Record<string, unknown>;
+  const frame = optNat(rawFrame);
+  const objectId = optNat(rawObject);
+  const ok = typeof videoId === 'string' && videoId.length > 0 && frame !== undefined && objectId !== undefined && (frame != null || objectId != null);
+  return ok ? {videoId, frame, objectId} : null;
 }
 
 /** A clicked notification's engine and object ids, or null for anything else. */

@@ -15,7 +15,7 @@ const net = require('node:net');
 const {test, before, after} = require('node:test');
 const {backendClient} = require('../src/ae-roto');
 const {createMcpServer, loadOrCreateToken, tokenFile} = require('../src/mcp-server');
-const {closingPart, createTools, parseView} = require('../src/mcp-tools');
+const {closingPart, createTools, parseGotoReply, parseView} = require('../src/mcp-tools');
 
 const EXPORT_ROOT = '/Users/someone/Movies/sam-ui';
 const OBJECT = {
@@ -598,6 +598,33 @@ test('capture on studio\'s session takes the person\'s frame, colours, engine an
   const elsewhere = await s.call('sam_capture', {command: 'frame', session_id: 's9'});
   assert.strictEqual(elsewhere.isError, true);
   assert.match(elsewhere.content[0].text, /^frame must be given: studio is not on this video/);
+});
+
+test('sam_studio goto asks studio to move and passes on its answer', async () => {
+  const s = studioTools();
+  const asked = [];
+  let answer = {moved: true, extra: 'x'};
+  s.tools = createTools({backend: backendClient({port: fake.address().port}),
+    studio: {view: () => parseView(s.view), goto: async req => (asked.push(req), answer)}});
+  assert.deepStrictEqual(textOf(await s.call('sam_studio', {command: 'goto', frame: 3, object_id: 1})), {moved: true});
+  assert.deepStrictEqual(asked, [{video_id: 'gallery/01_dog.mp4', frame: 3, object_id: 1}]);
+  answer = {moved: false, reason: 'the person is playing the clip'};
+  assert.deepStrictEqual(textOf(await s.call('sam_studio', {command: 'goto', frame: 3})), answer);
+  answer = 'whatever';
+  assert.deepStrictEqual(textOf(await s.call('sam_studio', {command: 'goto', object_id: 1})), {moved: false, reason: 'studio did not answer'});
+  for (const args of [{}, {frame: 10}, {frame: -1}, {object_id: 'a'}]) {
+    assert.strictEqual((await s.call('sam_studio', {command: 'goto', ...args})).isError, true, JSON.stringify(args));
+  }
+  assert.strictEqual(asked.length, 3);
+  s.view = {open: false};
+  assert.match((await s.call('sam_studio', {command: 'goto', frame: 0})).content[0].text, /no video open/);
+});
+
+test('parseGotoReply keeps a short plain reason only', () => {
+  assert.deepStrictEqual(parseGotoReply({moved: false, reason: 'busy'}), {moved: false, reason: 'busy'});
+  assert.deepStrictEqual(parseGotoReply({moved: false, reason: 'a\nb'}), {moved: false, reason: 'studio did not move'});
+  assert.deepStrictEqual(parseGotoReply({moved: 'yes'}), {moved: false, reason: 'studio did not answer'});
+  assert.deepStrictEqual(parseGotoReply(null), {moved: false, reason: 'studio did not answer'});
 });
 
 test('next_id is past studio\'s own next id on its video', async () => {

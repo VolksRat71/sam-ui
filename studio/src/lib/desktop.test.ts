@@ -1,6 +1,6 @@
 // sam-ui (Apache-2.0). New file, not from SAM 2.
 import {afterEach, describe, expect, it} from 'vitest';
-import {agentBridge, asAgentChange} from './desktop';
+import {agentBridge, asAgentChange, asAgentGoto} from './desktop';
 
 describe('agentBridge', () => {
   const g = globalThis as {samUiDesktop?: unknown};
@@ -20,6 +20,16 @@ describe('agentBridge', () => {
     const agent = {report: () => {}, onChanged: () => () => {}};
     g.samUiDesktop = {setupSam3: () => {}, agent};
     expect(agentBridge()).toBe(agent);
+  });
+});
+
+describe('asAgentGoto', () => {
+  it('reads a frame, a layer or both, and nothing else', () => {
+    expect(asAgentGoto({id: 1, video_id: 'v.mp4', frame: 3, object_id: null})).toEqual({videoId: 'v.mp4', frame: 3, objectId: null});
+    expect(asAgentGoto({video_id: 'v.mp4', frame: null, object_id: 2})).toEqual({videoId: 'v.mp4', frame: null, objectId: 2});
+    for (const bad of [null, [], {video_id: 'v.mp4'}, {video_id: '', frame: 1}, {video_id: 'v.mp4', frame: -1}, {video_id: 'v.mp4', object_id: '2'}]) {
+      expect(asAgentGoto(bad), JSON.stringify(bad)).toBeNull();
+    }
   });
 });
 
