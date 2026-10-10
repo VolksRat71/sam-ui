@@ -47,6 +47,7 @@ class CaptureError(ValueError):
 
 
 HEX = re.compile(r"#[0-9a-fA-F]{6}")
+ID_KEY = re.compile(r"[0-9]{1,9}")  # ASCII digits only: str.isdigit takes "²", which int() refuses
 MAX_COLOURS = 1000
 
 
@@ -63,7 +64,7 @@ def pick_colours(value) -> Dict[int, str]:
         raise CaptureError(f"colors maps object ids to #rrggbb, at most {MAX_COLOURS} of them")
     out = {}
     for k, v in value.items():
-        if not (isinstance(k, str) and k.isdigit() and len(k) <= 9) or not (isinstance(v, str) and HEX.fullmatch(v)):
+        if not (isinstance(k, str) and ID_KEY.fullmatch(k)) or not (isinstance(v, str) and HEX.fullmatch(v)):
             raise CaptureError(f"colors maps object ids to #rrggbb, not {k!r}: {v!r}")
         out[int(k)] = v.upper()
     return out

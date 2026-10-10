@@ -104,7 +104,7 @@ def test_a_picked_colour_fills_the_box_and_names_the_legend(h):
     assert post(h, frames=[1]).json["legend"]["objects"][0]["colour"] == cap.THEME_COLORS[3]
 
 
-@pytest.mark.parametrize("colors", [["#ff00ff"], {"3": "red"}, {"3": "#ff00f"}, {"x": "#ff00ff"}, {"-1": "#ff00ff"},
+@pytest.mark.parametrize("colors", [["#ff00ff"], {"3": "red"}, {"3": "#ff00f"}, {"x": "#ff00ff"}, {"-1": "#ff00ff"}, {"²": "#ff00ff"}, {"1" * 10: "#ff00ff"},
                                     {"3": 7}, {str(i): "#000000" for i in range(1001)}])
 def test_bad_colours_are_refused(h, colors):
     h.click(1)
