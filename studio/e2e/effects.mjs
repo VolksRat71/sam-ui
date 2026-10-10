@@ -29,6 +29,12 @@
 //       is itself steady); its export matches the preview within B7's tolerance
 //   OB  the layer Blur draws on A, its settings carry the tracking caveat, and a
 //       larger radius changes it
+//   PH  animated effects run on the clip clock (docs written as split and
+//       duplicate leave them, since those operations live on another branch):
+//       Noisy's split right half [s, b) at phase s - a equals the unsplit clip on
+//       frame s + k; a duplicate [b, 2b - a) at phase 0 restarts, so on frame
+//       b + k it differs from the original carried on (with the video's frame
+//       index as the clock, the old way, they were identical)
 //   B11 every background and layer tile picked in turn, then Erase: the preview
 //       matches a reloaded (fresh) worker, the export matches the preview, and
 //       Chrome logged no "Too many active WebGL contexts"
@@ -552,6 +558,36 @@ await step('OB', async () => {
   const wide = await cap('OB-2_layer-blur_radius-4pct_f101');
   const d = (await doc()).clips[0];
   check('OB', d.effect === 'BlurMask' && d.params.radius === 0.04 && differs(compare(blurred, wide)), `radius 4 % blurs it more (radius ${d.params.radius})`, compare(blurred, wide));
+  await clearClips();
+});
+
+await step('PH', async () => {
+  await clearClips();
+  const key = await page.evaluate(() => Object.keys(localStorage).find(k => k.startsWith('sam-ui-studio:effects:v2:local/')));
+  const put = async clips => {
+    await page.evaluate(([k, c]) => localStorage.setItem(k, JSON.stringify({version: 2, clips: c})), [key, clips]);
+    await reload();
+    await sel(A);
+  };
+  const noisy = (id, start, end, phase) => ({id, target: {kind: 'object', id: aId}, effect: 'NoisyMask', params: {style: 'Noise'}, start, end, row: 0, phase});
+  const [a, s, b, k] = [40, 60, 80, 9]; // s + k = 69: B3 has the frame without clips
+  await put([noisy('u', a, b, 0)]);
+  await seekTo(s + k);
+  const unsplit = await cap(`PH-1_noisy-${a + 1}-${b}_f${s + k + 1}`);
+  await put([noisy('l', a, s, 0), noisy('r', s, b, s - a)]);
+  await seekTo(s + k);
+  const right = await cap(`PH-2_split-at-${s + 1}_right-half_f${s + k + 1}`);
+  const cont = compare(unsplit, right);
+  check('PH', differs(compare(ref[s + k], unsplit)), `Noisy draws on frame ${s + k + 1}`, compare(ref[s + k], unsplit));
+  check('PH', cont.changedPct === 0, `a split's right half continues the clip: frame ${s + k + 1} identical (MAD ${cont.mad})`, cont);
+  await put([noisy('u', a, 2 * b - a, 0)]);
+  await seekTo(b + k);
+  const carried = await cap(`PH-3_noisy-${a + 1}-${2 * b - a}_f${b + k + 1}`);
+  await put([noisy('u', a, b, 0), noisy('d', b, 2 * b - a, 0)]);
+  await seekTo(b + k);
+  const dup = await cap(`PH-4_duplicate-${b + 1}-${2 * b - a}_phase-0_f${b + k + 1}`);
+  const restart = compare(carried, dup);
+  check('PH', !same(restart), `a duplicate at phase 0 restarts: frame ${b + k + 1} differs from the original carried on (${restart.changedPct} % of pixels)`, restart);
   await clearClips();
 });
 

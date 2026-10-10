@@ -15,10 +15,12 @@
  */
 // Modified by sam-ui: the three mask textures are allocated once in setup
 // and freed in cleanup (it created one per mask per frame and never freed it).
+// Animates on effectFrame (its clip's clock), not the video's frame index.
 import BaseGLEffect from '@/common/components/video/effects/BaseGLEffect';
 import {
   EffectFrameContext,
   EffectInit,
+  effectFrame,
 } from '@/common/components/video/effects/Effect';
 import fragmentShaderSource from '@/common/components/video/effects/shaders/Arrow.frag?raw';
 import vertexShaderSource from '@/common/components/video/effects/shaders/DefaultVert.vert?raw';
@@ -75,7 +77,7 @@ export default class ArrowGLEffect extends BaseGLEffect {
     gl.uniform1i(this._numMasksUniformLocation, context.masks.length);
     gl.uniform1f(
       gl.getUniformLocation(program, 'uCurrentFrame'),
-      context.frameIndex,
+      effectFrame(context),
     );
     gl.uniform1i(
       gl.getUniformLocation(program, 'uLineColor'),

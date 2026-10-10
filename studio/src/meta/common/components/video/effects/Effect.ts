@@ -59,8 +59,24 @@ export type EffectFrameContext = {
   timeParameter?: number;
   /** Clip-local video time in seconds: (frame - clip.start + clip.phase) / fps (sam-ui). */
   time?: number;
+  /** The clip's animation length in seconds: (clip.end - clip.start + clip.phase) / fps (sam-ui). */
+  duration?: number;
   actionPoint: EffectActionPoint | null;
 };
+
+/** An effect's clock in seconds: its clip's time, else (Meta's own slots) the video's frame over fps (sam-ui). */
+export function effectTime(context: EffectFrameContext): number {
+  return context.time ?? context.frameIndex / (context.fps > 0 ? context.fps : 30);
+}
+
+/**
+ * effectTime as frames at 24 fps, the frame index Meta's animated shaders
+ * were tuned on: the same look as before on a 24 fps video, at any frame rate,
+ * counted from the clip's start (sam-ui).
+ */
+export function effectFrame(context: EffectFrameContext): number {
+  return effectTime(context) * 24;
+}
 
 export interface Effect {
   variant: number;
