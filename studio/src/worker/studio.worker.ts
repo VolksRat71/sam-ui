@@ -17,7 +17,7 @@
 // the video messages are Meta's, the tracker is replaced by studio's RPC calls,
 // effects are studio's effect clips (ObjectHighlight), and the export is
 // studio's own encoder (exportVideo.ts).
-import AllEffects, {type Effects} from '@/common/components/video/effects/Effects';
+import AllEffects, {createEffects} from '@/common/components/video/effects/Effects';
 import VideoWorkerContext from '@/common/components/video/VideoWorkerContext';
 import type {VideoWorkerRequestMessageEvent} from '@/common/components/video/VideoWorkerTypes';
 import {registerSerializableConstructors} from '@/common/error/ErrorSerializationUtils';
@@ -43,8 +43,9 @@ registerSerializableConstructors();
 // one effect to every object (and its Overlay shader holds three masks), so
 // the highlight slot gets studio's ObjectHighlight, which draws the effect
 // clips (background clips, then each object's), before the context reads it.
-// Meta's effects stay in `metaEffects` for ObjectHighlight to run.
-const metaEffects: Effects = {...AllEffects};
+// ObjectHighlight runs instances of its own: it sets their style and params,
+// which must never reach the ones Meta's background slot draws.
+const metaEffects = createEffects();
 const overlay = new MaskOverlayEffect();
 const highlight = new ObjectHighlight(overlay, metaEffects, () => ({width: context.width, height: context.height}));
 AllEffects.Overlay = highlight;

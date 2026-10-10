@@ -3,14 +3,17 @@
 // The worker's effect handlers with Meta's context, the session, the encoder
 // and the effects faked: an effect edit only redraws (U7), and an export
 // stops naming a frame that fails to draw, leaving a selection made during it
-// in place (U8).
+// in place (U8). ObjectHighlight's effects are never the instances Meta's
+// background slot draws.
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import type {StudioCall, StudioReply} from './protocol';
 
 const h = vi.hoisted(() => ({
-  drawn: [] as Array<{form: unknown; effect: string; active?: number | null}>,
+  drawn: [] as Array<{form: unknown; effect: string; active?: number | null; variant?: number}>,
+  /** Meta's background slot (Original) as each frame starts. */
+  slot: [] as Array<{variant: number; params: unknown}>,
   failAt: -1,
-  context: null as null | {goToFrame: ReturnType<typeof vi.fn>},
+  context: null as null | {goToFrame: ReturnType<typeof vi.fn>; _drawFrameImpl(form: unknown, index: number): Promise<boolean>},
   overlay: null as null | {activeObjectId: number | null},
   session: null as null | Record<string, ReturnType<typeof vi.fn>>,
   midExport: null as null | (() => Promise<void>),
@@ -23,12 +26,22 @@ vi.mock('@/common/components/video/effects/Effects', () => {
     numVariants: 4,
     variant: 0,
     params: {},
-    setParams() {},
+    setParams(p: object) {
+      this.params = p;
+    },
     setup: async () => {},
     cleanup: async () => {},
-    apply: (form: unknown) => h.drawn.push({form, effect: name}),
+    apply(form: unknown) {
+      h.drawn.push({form, effect: name, variant: this.variant});
+    },
   });
-  return {default: {Original: fake('Original'), Overlay: fake('MetaOverlay'), Cutout: fake('Cutout'), PixelateMask: fake('PixelateMask')}};
+  const createEffects = () => ({
+    Original: fake('Original'),
+    Overlay: fake('MetaOverlay'),
+    Cutout: fake('Cutout'),
+    PixelateMask: fake('PixelateMask'),
+  });
+  return {createEffects, default: createEffects()};
 });
 
 vi.mock('./MaskOverlayEffect', () => ({
@@ -54,7 +67,9 @@ vi.mock('@/common/components/video/VideoWorkerContext', async () => {
       frameIndex = 0;
       goToFrame = vi.fn();
       _decodedVideo = {fps: 10, numFrames: 3, frames: [{}, {}, {}]};
-      // the highlight slot (ObjectHighlight, installed before construction), as Meta's renderer runs it
+      // Meta's slots: the background (the plain frame) and the highlight
+      // (ObjectHighlight, installed before construction), as its renderer runs them
+      background = AllEffects.Original;
       highlight = AllEffects.Overlay;
       constructor() {
         h.context = this;
@@ -63,6 +78,7 @@ vi.mock('@/common/components/video/VideoWorkerContext', async () => {
         if (index === h.failAt) {
           return false;
         }
+        h.slot.push({variant: this.background.variant, params: this.background.params});
         const ctx = {frameIndex: index, fps: 10, width: 8, height: 8, masks: [{bitmap: {}}], maskColors: ['#ff0000']};
         this.highlight.apply(form as never, ctx as never, [{id: 1}] as never);
         return true;
@@ -121,6 +137,7 @@ describe('studio.worker effect handlers', () => {
   beforeEach(async () => {
     vi.resetModules();
     h.drawn = [];
+    h.slot = [];
     h.failAt = -1;
     h.midExport = null;
     replies.length = 0;
@@ -171,5 +188,20 @@ describe('studio.worker effect handlers', () => {
     expect(reply).toMatchObject({ok: false, error: 'Frame 3 could not be drawn, so the export stopped.'});
     h.failAt = -1;
     expect((await call('exportVideo', {doc: doc('PixelateMask'), drawOrder: [1], untouched: 'original'})).ok).toBe(true);
+  });
+
+  it("a background Original clip never restyles Meta's background slot, outside the clip or after it is removed", async () => {
+    const dimmed = {
+      version: 2,
+      clips: [{id: 'b1', target: {kind: 'background'}, effect: 'Original', params: {style: 'Dimmed'}, start: 0, end: 72, row: 0, phase: 0}],
+    };
+    await call('setEffectDoc', {doc: dimmed, drawOrder: [1]});
+    const form = {};
+    await h.context!._drawFrameImpl(form, 10); // in the clip: the clip draws Dimmed over the plain frame
+    await h.context!._drawFrameImpl(form, 100);
+    expect(h.drawn.filter(d => d.effect === 'Original').map(d => d.variant)).toEqual([2]);
+    await call('setEffectDoc', {doc: {version: 2, clips: []}, drawOrder: [1]});
+    await h.context!._drawFrameImpl(form, 10);
+    expect(h.slot).toEqual([0, 0, 0].map(() => ({variant: 0, params: {}})));
   });
 });
