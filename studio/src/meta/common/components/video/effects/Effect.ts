@@ -27,6 +27,9 @@ export type EffectOptions = {
   variant: number;
 };
 
+export type EffectParamValue = number | string | boolean;
+export type EffectParams = Record<string, EffectParamValue>;
+
 export type EffectInit = {
   width: number;
   height: number;
@@ -54,13 +57,17 @@ export type EffectFrameContext = {
   maskColors: string[];
   frame: ImageBitmap;
   timeParameter?: number;
+  /** Clip-local video time in seconds: (frame - clip.start + clip.phase) / fps (sam-ui). */
+  time?: number;
   actionPoint: EffectActionPoint | null;
 };
 
 export interface Effect {
   variant: number;
   numVariants: number;
+  params: EffectParams;
   nextVariant(): void;
+  setParams(params: EffectParams): void;
   setup(init: EffectInit): Promise<void>;
   update(options: EffectOptions): Promise<void>;
   cleanup(): Promise<void>;
@@ -74,6 +81,7 @@ export interface Effect {
 export abstract class AbstractEffect implements Effect {
   public numVariants: number;
   public variant: number;
+  params: EffectParams = {};
 
   constructor(numVariants: number) {
     this.numVariants = numVariants;
@@ -91,6 +99,10 @@ export abstract class AbstractEffect implements Effect {
 
   async update(options: EffectOptions): Promise<void> {
     this.variant = options.variant;
+  }
+
+  setParams(params: EffectParams): void {
+    this.params = params;
   }
 
   async cleanup(): Promise<void> {
