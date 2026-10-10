@@ -640,6 +640,17 @@ function GroupBlock({
   const {state, busy} = session;
   const [drop, setDrop] = useState<'into' | 'before' | null>(null);
   const [renaming, setRenaming] = useState(false);
+  // what the last group effect pick did, for the status line beside it
+  const [picked, setPicked] = useState('');
+  const pickEffect = (name: string) => {
+    const r = session.setGroupEffect(group.id, name);
+    if (r != null) {
+      const title = GROUP_EFFECTS.find(fx => fx.effectName === name)?.title ?? name;
+      const clips = (k: number) => `${k} ${k === 1 ? 'clip' : 'clips'}`;
+      const did = [r.changed > 0 && `changed ${clips(r.changed)} on the playhead`, r.added > 0 && `added ${clips(r.added)} at frame ${session.frame + 1}`];
+      setPicked(`${title}: ${did.filter(Boolean).join(', ')}.`);
+    }
+  };
   const members = group.members.map(id => state.objects.find(o => o.id === id)).filter((o): o is StudioObject => o != null);
   const toTrack = groupDirtyIds(state, group.id);
   const clearable = members.filter(o => clearTarget(o, state.engine) != null);
@@ -749,8 +760,8 @@ function GroupBlock({
             value=""
             disabled={members.length === 0}
             aria-label={`Give every member of ${group.name} an effect`}
-            title="Give every member this effect"
-            onChange={e => e.target.value !== '' && session.setGroupEffect(group.id, e.target.value)}>
+            title="Give every member this effect: its clip on the playhead, else a new clip there"
+            onChange={e => e.target.value !== '' && pickEffect(e.target.value)}>
             <option value="" disabled>
               Effect…
             </option>
@@ -760,6 +771,7 @@ function GroupBlock({
               </option>
             ))}
           </select>
+          <span className="muted small" role="status">{picked}</span>
           <button
             className="link-button"
             disabled={!moves(layout, stepAction(-1))}

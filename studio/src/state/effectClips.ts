@@ -256,6 +256,31 @@ export function pickOnTarget(
   return {doc: addClip(doc, full), clipId: o.newId};
 }
 
+/**
+ * A group's effect pick, the same for every member: edit its top clip on the
+ * playhead, else add one there (selection plays no part). Every member gets
+ * the first member's picked settings (the same effect again: its next style).
+ */
+export function pickOnGroup(
+  doc: EffectDoc,
+  o: {members: number[]; effect: string; frame: number; numFrames: number; fps: number},
+): {doc: EffectDoc; changed: number; added: number} {
+  let params: EffectParams | undefined;
+  let changed = 0;
+  for (const id of o.members) {
+    const target: EffectTarget = {kind: 'object', id};
+    const clip = clipToEdit(doc, target, o.frame, null);
+    params ??= pickedParams(clip, o.effect);
+    if (clip != null) {
+      doc = updateClip(doc, clip.id, {effect: o.effect, params});
+      changed++;
+    } else {
+      doc = addClip(doc, newClip({id: newClipId(doc), target, effect: o.effect, frame: o.frame, numFrames: o.numFrames, fps: o.fps, params}));
+    }
+  }
+  return {doc, changed, added: o.members.length - changed};
+}
+
 function parseTarget(raw: unknown): EffectTarget | null {
   const t = raw as {kind?: unknown; id?: unknown} | null;
   if (t?.kind === 'background') {

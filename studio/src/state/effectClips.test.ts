@@ -20,9 +20,11 @@ import {
   newClipId,
   normalizeParams,
   parseEffectDoc,
+  pickOnGroup,
   pickOnTarget,
   pruneClips,
   removeClip,
+  sameTarget,
   saveEffectDoc,
   trimClip,
   updateClip,
@@ -208,6 +210,25 @@ describe('adding, editing and removing clips', () => {
     expect(off.doc.clips.find(c => c.id === 'a')).toBe(doc.clips[0]); // the clip off the playhead is untouched
     const fresh = pickOnTarget(doc, {target: B, effect: 'Burst', frame: 60, numFrames: 300, fps: 10, selectedId: null, newId: 'm'});
     expect(fresh.doc.clips.find(c => c.id === 'm')).toMatchObject({start: 0, end: 300});
+  });
+
+  it("a group pick treats every member alike: its clip on the playhead changes, else a 3 s clip is added there, never the selection's", () => {
+    const C = {kind: 'object', id: 2} as const;
+    const doc: EffectDoc = {
+      version: 2,
+      clips: [clip({id: 'a', target: A, start: 50, end: 80, effect: 'Burst', params: normalizeParams('Burst', {style: 'Colour rays'})}), clip({id: 'c', target: C, start: 0, end: 20})],
+    };
+    const r = pickOnGroup(doc, {members: [0, 1, 2], effect: 'Burst', frame: 60, numFrames: 300, fps: 10});
+    expect([r.changed, r.added]).toEqual([1, 2]);
+    const style = r.doc.clips.find(c => c.id === 'a')!.params.style;
+    expect(style).toBe('White rays'); // the same effect again: its next style, for every member
+    for (const t of [B, C]) {
+      expect(r.doc.clips.filter(c => sameTarget(c.target, t) && c.start === 60)).toEqual([
+        expect.objectContaining({end: 90, effect: 'Burst', params: expect.objectContaining({style})}),
+      ]);
+    }
+    expect(r.doc.clips.find(c => c.id === 'c')).toBe(doc.clips[1]); // C's clip off the playhead is untouched
+    expect(new Set(r.doc.clips.map(c => c.id)).size).toBe(r.doc.clips.length);
   });
 });
 

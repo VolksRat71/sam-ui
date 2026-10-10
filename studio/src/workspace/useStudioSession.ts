@@ -1301,10 +1301,10 @@ export default function useStudioSession(video: VideoItem) {
    * The one-click effect buttons, on clips: give `target` the effect `name`
    * (again: its next style) on its selected clip or its top clip on the
    * playhead; else a new clip at the playhead, or over the whole video when
-   * it has none (clips.pickOnTarget). `params` overrides the picked settings.
+   * it has none (clips.pickOnTarget).
    */
   const pickEffect = useCallback(
-    (target: EffectTarget, name: string, params?: EffectParams, step: string = ownStep()): EffectClip | null => {
+    (target: EffectTarget, name: string): EffectClip | null => {
       const d = docRef.current;
       if (d == null) {
         return null;
@@ -1317,9 +1317,8 @@ export default function useStudioSession(video: VideoItem) {
         fps: meta.fps,
         selectedId: selectedClipId,
         newId: clips.newClipId(d),
-        params,
       });
-      editDoc(() => picked.doc, step);
+      editDoc(() => picked.doc, ownStep());
       return picked.doc.clips.find(c => c.id === picked.clipId) ?? null;
     },
     [editDoc, frame, meta.numFrames, meta.fps, selectedClipId],
@@ -1342,17 +1341,19 @@ export default function useStudioSession(video: VideoItem) {
     [pickEffect],
   );
 
-  /** Give every member of a group the effect `name` (again: the first member's next style, for all of them): one undo step. */
+  /** Give every member of a group the effect `name` (clips.pickOnGroup), as one undo step; what it changed and added. */
   const setGroupEffect = useCallback(
-    (groupId: string, name: string) => {
+    (groupId: string, name: string): {changed: number; added: number} | null => {
       const members = stateRef.current.layout.groups.find(g => g.id === groupId)?.members ?? [];
-      const step = ownStep();
-      const first = members.length === 0 ? null : pickEffect({kind: 'object', id: members[0]}, name, undefined, step);
-      for (const id of members.slice(1)) {
-        pickEffect({kind: 'object', id}, name, first?.params, step);
+      const d = docRef.current;
+      if (d == null || members.length === 0 || meta.numFrames <= 0) {
+        return null;
       }
+      const {doc, changed, added} = clips.pickOnGroup(d, {members, effect: name, frame, numFrames: meta.numFrames, fps: meta.fps});
+      editDoc(() => doc, ownStep());
+      return {changed, added};
     },
-    [pickEffect],
+    [editDoc, frame, meta.numFrames, meta.fps],
   );
 
   /**
