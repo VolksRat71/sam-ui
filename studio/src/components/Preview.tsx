@@ -21,6 +21,7 @@ import {objectName} from '~/state/fileNames';
 import {FIT, panBy, toScreen, zoomAt, zoomWheelDelta, type View} from '~/state/view';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
 import useTouchGestures from '~/workspace/useTouchGestures';
+import {effectTitle} from './effectPresentation';
 
 export type LabelMode = 'positive' | 'negative';
 
@@ -89,6 +90,9 @@ export default function Preview({session, mode, onModeChange}: Props) {
   const points = active?.points[frame] ?? [];
   const track = active == null ? null : trackPresentation(active.state, active.running);
   const changedCount = state.objects.filter(o => o.state === 'stale').length;
+  // the selected effect clip names what the Effects panel edits: "Pim · Outline"
+  const clip = session.effectDoc?.clips.find(c => c.id === session.selectedClipId);
+  const clipOff = clip != null && (frame < clip.start || frame >= clip.end);
 
   // zoom and pan
   const [view, setView] = useState<View>(FIT);
@@ -212,11 +216,18 @@ export default function Preview({session, mode, onModeChange}: Props) {
             <SubtractFilled size={18} className="icon-negative" /> Remove
           </button>
         </div>
-        <div className="preview-status">
-          {active != null ? (
-            <span className="chip">
+        <div className="preview-status" role="status" aria-live="polite">
+          {clip?.target.kind === 'background' ? (
+            <span className="chip fx-context" title="The selected effect clip: the Effects panel edits it">
+              Background · {effectTitle(clip.target, clip.effect)}
+              {clipOff && <span className="muted"> · not on this frame</span>}
+            </span>
+          ) : active != null ? (
+            <span className={clip != null ? 'chip fx-context' : 'chip'} title={clip != null ? 'The selected effect clip: the Effects panel edits it' : undefined}>
               <span className="swatch" style={{background: active.color}} />
               {objectName(active)}
+              {clip != null && <> · {effectTitle(clip.target, clip.effect)}</>}
+              {clipOff && <span className="muted"> · not on this frame</span>}
             </span>
           ) : (
             <span className="muted">
