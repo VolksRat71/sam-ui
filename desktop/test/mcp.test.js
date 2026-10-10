@@ -70,7 +70,7 @@ const fake = http.createServer((req, res) => {
       track?.end(part({frame_index: -1, results: [], done: false, job_id: 'job-1', error: 'canceled', objects: [1]}));
       return reply(200, {canceled: true});
     }
-    if (req.url === '/track_jobs') return reply(200, {jobs: track && !track.writableEnded ? [{job_id: 'job-1', objects: [1], frames_done: 2, n_frames: 10, elapsed_s: 1}] : []});
+    if (req.url === '/track_jobs') return reply(200, {jobs: track && !track.writableEnded && body.session_id === 's1' ? [{job_id: 'job-1', objects: [1], frames_done: 2, n_frames: 10, elapsed_s: 1}] : []});
     if (req.url === '/export' && body.out_dir.endsWith('/taken')) {
       return reply(400, {error: `'${body.out_dir}' already has ['products.json']; tick Replace existing (force) to replace them`});
     }
@@ -320,6 +320,22 @@ test('track cancel ends the stream as canceled', async () => {
   assert.deepStrictEqual(last('/cancel_track').body, {session_id: 's1', job_id: 'job-1'});
   const r = textOf(await call('sam_track', {command: 'wait', session_id: 's1', job_id: 'job-1', timeout_s: 5}));
   assert.strictEqual(r.state, 'canceled');
+});
+
+test('a job_id from another session is not on this video, running or finished', async () => {
+  await call('sam_track', {command: 'start', session_id: 's1'});
+  const noJob = /No job job-1 on this video/;
+  const status = await call('sam_track', {command: 'status', session_id: 's2', job_id: 'job-1'});
+  assert.strictEqual(status.isError, true);
+  assert.match(status.content[0].text, noJob);
+  const t0 = Date.now();
+  const wait = await call('sam_track', {command: 'wait', session_id: 's2', job_id: 'job-1', timeout_s: 5});
+  assert.strictEqual(wait.isError, true);
+  assert.match(wait.content[0].text, noJob);
+  assert.ok(Date.now() - t0 < 2000, 'wait did not block on the other session\'s job');
+  await call('sam_track', {command: 'cancel', session_id: 's1', job_id: 'job-1'});
+  assert.strictEqual(textOf(await call('sam_track', {command: 'wait', session_id: 's1', job_id: 'job-1', timeout_s: 5})).state, 'canceled');
+  assert.match((await call('sam_track', {command: 'status', session_id: 's2', job_id: 'job-1'})).content[0].text, noJob);
 });
 
 test('a refused track is an error with the backend\'s reason', async () => {

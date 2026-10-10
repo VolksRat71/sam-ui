@@ -363,7 +363,7 @@ function createTools({backend, exportRoot = path.join(os.homedir(), 'Movies', 's
     sweep();
     const running = (await post('/track_jobs', {session_id: sid})).jobs ?? [];
     const describe = id => {
-      const job = held.get(id);
+      const job = held.get(id)?.sessionId === sid ? held.get(id) : null; // another session's job is not on this video
       const live = running.find(j => j.job_id === id);
       if (job?.result != null) {
         const r = job.result;
@@ -389,7 +389,7 @@ function createTools({backend, exportRoot = path.join(os.homedir(), 'Movies', 's
     const jobId = need(args, 'job_id', isStr, 'the job_id from sam_track start');
     const timeout = Math.min(WAIT_MAX_S, opt(args, 'timeout_s', v => Number.isFinite(v) && v >= 0, 'seconds, at most 50') ?? 30);
     const job = held.get(jobId);
-    if (job && job.result == null) {
+    if (job && job.sessionId === sid && job.result == null) {
       let timer;
       await Promise.race([job.done, new Promise(r => (timer = setTimeout(r, timeout * 1000)))]);
       clearTimeout(timer);
