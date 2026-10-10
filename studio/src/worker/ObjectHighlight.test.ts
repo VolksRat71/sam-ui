@@ -372,7 +372,7 @@ describe('ObjectHighlight WebGL contexts (D1)', () => {
     expect(plain).toEqual([]);
   });
 
-  it('draws an object effect without a context as the Overlay and a background one not at all, trying once per setDoc', async () => {
+  it("draws an object effect without a context as the Overlay and a background one not at all, trying once until the doc's effects change", async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const {h, meta, canvases, plain, draw} = contexts(true);
     await h.setDoc(doc(clip(1, 'Burst'), clip('bg', 'Sobel'), clip('bg', 'Desaturate', {}, {row: 1})), [1]);
@@ -385,16 +385,20 @@ describe('ObjectHighlight WebGL contexts (D1)', () => {
     warn.mockRestore();
   });
 
-  it('draws an effect whose setup failed as the Overlay, until the next setDoc', async () => {
+  it("draws an effect whose setup failed as the Overlay and frees its context; only a change in the doc's effects retries it", async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const {h, meta, canvases, plain, draw} = contexts();
+    const {h, meta, canvases, plain, draw, live} = contexts();
     meta.Scope.fail = true;
     await h.setDoc(doc(clip(1, 'Scope')), [1]);
     draw([1]);
     expect(plain).toEqual([[1]]);
     expect(canvases).toHaveLength(1);
+    expect(live()).toBe(0); // the failed setup's context is given back
+    await h.setDoc(doc(clip(1, 'Scope', {opacity: 0.5})), [1]); // a slider tick: no retry, no new context
+    draw([1]);
+    expect(canvases).toHaveLength(1);
     meta.Scope.fail = false;
-    await h.setDoc(doc(clip(1, 'Scope')), [1]);
+    await h.setDoc(doc(clip(1, 'Scope'), clip(2, 'Burst')), [1, 2]);
     draw([1]);
     expect(meta.Scope.draws).toHaveLength(1);
     expect(warn).toHaveBeenCalledOnce();

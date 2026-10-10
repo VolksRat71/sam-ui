@@ -78,8 +78,9 @@ export default class ObjectHighlight extends AbstractEffect {
   /** Running exports' states: their effects stay set up whatever the preview does. */
   private _exports = new Set<DrawState>();
   private _ready = new Map<string, Ready>();
-  /** Effects whose setup failed, skipped (drawn as the stage default) until the next setDoc. */
+  /** Effects whose setup failed, skipped (drawn as the stage default) until a setDoc changes which effects the doc uses. */
   private _failed = new Set<string>();
+  private _docEffects = '';
 
   constructor(
     private readonly _overlay: MaskOverlayEffect,
@@ -93,7 +94,12 @@ export default class ObjectHighlight extends AbstractEffect {
   /** The preview's clips and layer order (object ids, bottom layer first). */
   async setDoc(doc: EffectDoc, drawOrder: number[]): Promise<void> {
     this._preview = {doc, drawOrder, untouched: null};
-    this._failed.clear();
+    // not on every edit (a slider tick): a failing effect would make a new context each time
+    const effects = [...new Set(doc.clips.map(c => c.effect))].sort().join();
+    if (effects !== this._docEffects) {
+      this._docEffects = effects;
+      this._failed.clear();
+    }
     await this._sync();
   }
 
@@ -175,6 +181,7 @@ export default class ObjectHighlight extends AbstractEffect {
       if (this._ready.get(name) === mine) {
         this._ready.delete(name);
       }
+      gl?.getExtension('WEBGL_lose_context')?.loseContext();
       console.warn(`the ${name} effect failed to set up; drawn as the stage default`, error);
     });
   }
