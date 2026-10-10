@@ -37,7 +37,7 @@ import BaseGLEffect from '@/common/components/video/effects/BaseGLEffect';
 import {styleIndex} from '@/common/components/video/effects/EffectParamSpecs';
 import type {Effects} from '@/common/components/video/effects/Effects';
 import type {Tracklet} from '@/common/tracker/Tracker';
-import type {CanvasForm} from 'pts';
+import {CanvasForm} from 'pts';
 import {
   EMPTY_DOC,
   type EffectDoc,
@@ -252,6 +252,8 @@ export default class ObjectHighlight extends AbstractEffect {
     }
 
     for (const p of passes) {
+      // pts 1.0 skips style writes it thinks are applied; the pass before (save/restore, direct ctx writes) desyncs it
+      CanvasForm.resetStyleCache(form.ctx);
       const ctx = {
         ...context,
         masks: p.idx.map(i => context.masks[i]),

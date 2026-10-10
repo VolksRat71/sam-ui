@@ -12,6 +12,10 @@ import DesaturateEffect from './effects/DesaturateEffect';
 import {Effect, EffectFrameContext} from './effects/Effect';
 import EraseBackgroundEffect from './effects/EraseBackgroundEffect';
 import OriginalEffect from './effects/OriginalEffect';
+import type {Effects} from './effects/Effects';
+import {normalizeParams, type EffectClip} from '~/state/effectClips';
+import type MaskOverlayEffect from '~/worker/MaskOverlayEffect';
+import ObjectHighlight from '~/worker/ObjectHighlight';
 
 const W = 640;
 const H = 360;
@@ -129,5 +133,25 @@ describe('canvas-2D background effects keep their fill on a redraw', () => {
   it('Original v3: the dim overlay fills #00000066', () => {
     const paints = drawFrames(...twice(withVariant(new OriginalEffect(), 2)));
     expect(paints).toEqual([{op: 'fill', fillStyle: '#00000066'}]);
+  });
+});
+
+describe("studio's effect clips: ObjectHighlight draws several in one slot", () => {
+  it('Text v1 over an overlapping Desaturate clip: the heading is drawn white', async () => {
+    const meta = {Desaturate: new DesaturateEffect(), BackgroundText: new BackgroundTextEffect()} as unknown as Effects;
+    const h = new ObjectHighlight({} as MaskOverlayEffect, meta, () => ({width: W, height: H}));
+    const clip = (effect: string, row: number, params = {}): EffectClip => ({
+      id: effect,
+      target: {kind: 'background'},
+      effect,
+      params: normalizeParams(effect, params),
+      start: 0,
+      end: 100,
+      row,
+      phase: 0,
+    });
+    await h.setDoc({version: 2, clips: [clip('Desaturate', 0), clip('BackgroundText', 1, {style: 'Zooming words'})]}, []);
+    const paints = drawFrames(...twice(h));
+    expect(paints.filter(p => p.op === 'fillText').map(p => p.fillStyle)).toEqual(['#fff']);
   });
 });
