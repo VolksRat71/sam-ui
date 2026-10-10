@@ -15,7 +15,7 @@
  */
 // Modified by sam-ui: adapted from VideoWorker.ts in Meta's SAM 2 demo frontend;
 // the video messages are Meta's, the tracker is replaced by studio's RPC calls,
-// highlight effects are per object (ObjectHighlight), and the export is
+// effects are studio's effect clips (ObjectHighlight), and the export is
 // studio's own encoder (exportVideo.ts).
 import AllEffects, {type Effects} from '@/common/components/video/effects/Effects';
 import VideoWorkerContext from '@/common/components/video/VideoWorkerContext';
@@ -35,14 +35,15 @@ import type {
   StudioReply,
 } from './protocol';
 import StudioSession from './StudioSession';
+import type {EffectDoc, UntouchedMode} from '~/state/effectClips';
 
 registerSerializableConstructors();
 
 // Meta's context draws [background, highlight]. Its highlight effects apply
 // one effect to every object (and its Overlay shader holds three masks), so
-// the highlight slot gets studio's ObjectHighlight, which draws each object
-// with its own effect, before the context reads it. Meta's highlight effects
-// stay in `metaEffects` for ObjectHighlight to run.
+// the highlight slot gets studio's ObjectHighlight, which draws the effect
+// clips (background clips, then each object's), before the context reads it.
+// Meta's effects stay in `metaEffects` for ObjectHighlight to run.
 const metaEffects: Effects = {...AllEffects};
 const overlay = new MaskOverlayEffect();
 const highlight = new ObjectHighlight(overlay, metaEffects, () => ({width: context.width, height: context.height}));
@@ -50,13 +51,9 @@ AllEffects.Overlay = highlight;
 
 const context = new VideoWorkerContext();
 
-/** The effects the preview shows; an export swaps in its own, then restores these. */
-let previewEffects: Record<number, {name: string; variant: number}> = {};
 let exporting = false;
-/** The preview's hidden objects (a hidden group's members); an export draws them all. */
-let previewHidden: (id: number) => boolean = () => false;
 
-async function exportVideo(effects: Record<number, {name: string; variant: number}>): Promise<ArrayBuffer> {
+async function exportVideo(doc: EffectDoc, drawOrder: number[], untouched: UntouchedMode): Promise<ArrayBuffer> {
   // Meta's context keeps its decoded frames and its frame renderer private;
   // bracket access uses them without copying the class.
   const decoded = context['_decodedVideo'];
@@ -67,29 +64,27 @@ async function exportVideo(effects: Record<number, {name: string; variant: numbe
     throw new Error('an export is already running');
   }
   exporting = true;
-  const active = overlay.activeObjectId;
-  const faded = overlay.faded;
-  overlay.activeObjectId = null; // no editing aids in the file
-  overlay.faded = () => false;
-  highlight.hidden = () => false; // hiding a group is for the preview only
   try {
-    await highlight.setEffects(effects);
+    // the export's own copy of the clips: no editing aids, hidden groups
+    // drawn, and anything changed meanwhile reaches only the preview
+    const state = {doc, drawOrder, untouched};
+    await highlight.prepare(state);
     return await encodeMp4({
       width: context.width,
       height: context.height,
       fps: decoded.fps,
       numFrames: decoded.frames.length,
       // the renderer the preview uses, without Meta's watermark
-      draw: (form: CanvasForm, index: number) => context['_drawFrameImpl'](form, index, false),
+      draw: async (form: CanvasForm, index: number) => {
+        highlight.drawWith(form, state);
+        if (!(await context['_drawFrameImpl'](form, index, false))) {
+          throw new Error(`Frame ${index + 1} could not be drawn, so the export stopped.`);
+        }
+      },
       onProgress: done => emit({type: 'exportProgress', done}),
     });
   } finally {
-    overlay.activeObjectId = active;
-    overlay.faded = faded;
-    highlight.hidden = previewHidden;
-    await highlight.setEffects(previewEffects);
     exporting = false;
-    context.goToFrame(context.frameIndex);
   }
 }
 
@@ -138,15 +133,11 @@ const handlers: Handlers = {
   disagreement: ({a, b, objectIds}) => session.disagreement(a, b, objectIds),
   reviewQueue: ({engine, flags, candidates}) => session.reviewQueue(engine, flags, candidates),
   setReviewed: args => session.setReviewed(args),
-  setObjectEffects: async ({effects}) => {
-    previewEffects = effects;
-    if (!exporting) {
-      await highlight.setEffects(effects);
-      context.goToFrame(context.frameIndex);
-    }
+  setEffectDoc: async ({doc, drawOrder}) => {
+    await highlight.setDoc(doc, drawOrder);
+    context.goToFrame(context.frameIndex);
   },
-  effectVariants: ({names}) => highlight.variantCounts(names),
-  exportVideo: ({effects}) => exportVideo(effects),
+  exportVideo: ({doc, drawOrder, untouched}) => exportVideo(doc, drawOrder, untouched),
   setLocalOptions: options => session.setLocalOptions(options),
   renameObject: ({objectId, name}) => session.renameObject(objectId, name),
   exportMasks: args => session.exportMasks(args),
@@ -155,11 +146,8 @@ const handlers: Handlers = {
   setObjectLayout: ({layout}) => session.setObjectLayout(layout),
   setHiddenObjects: ({objectIds}) => {
     const hidden = new Set(objectIds);
-    previewHidden = id => hidden.has(id);
-    if (!exporting) {
-      highlight.hidden = previewHidden;
-      context.goToFrame(context.frameIndex);
-    }
+    highlight.hidden = id => hidden.has(id); // the preview's only: an export draws every object
+    context.goToFrame(context.frameIndex);
   },
 };
 
@@ -212,7 +200,8 @@ self.addEventListener(
           await context.createFilmstrip(data.width, data.height);
           break;
         case 'setEffect':
-          // the background; highlights are per object (setObjectEffects)
+          // Meta's background slot; studio draws the plain frame there and its
+          // background clips over it (ObjectHighlight, setEffectDoc)
           await context.setEffect(data.name, data.index, data.options);
           break;
       }

@@ -618,10 +618,11 @@ export default class VideoWorkerContext {
     enableWatermark: boolean = false,
     step: number = 0,
     maxSteps: number = 40,
-  ): Promise<void> {
+  ): Promise<boolean> {
+    // sam-ui: resolves false when the frame was not drawn (an export stops on it)
     const store = this._store;
     if (this._decodedVideo === null || store == null) {
-      return;
+      return false;
     }
 
     {
@@ -718,9 +719,13 @@ export default class VideoWorkerContext {
         this._stats.memory?.end();
       }
 
-      this._isDrawing = false;
+      if (form === this._form) {
+        this._isDrawing = false; // sam-ui: an export's draw (its own form) must not end the preview's
+      }
+      return true;
     } catch {
       this._sendRenderingError(new DrawFrameError('Failed to draw frame'));
+      return false;
     }
   }
 

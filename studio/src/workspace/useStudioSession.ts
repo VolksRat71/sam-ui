@@ -14,14 +14,9 @@ import StudioBridge from '~/bridge/StudioBridge';
 import {type AgentChange, type AgentTrackReply, agentBridge, asAgentChange, asAgentGoto, asAgentTrack, asJobOpen, jobsBridge} from '~/lib/desktop';
 import {type AgentEntry, appendActivity, planAgentTrack, viewReport} from '~/state/agentActivity';
 import {explainGraphQLError} from '~/lib/errors';
-import {
-  EffectMap,
-  UntouchedMode,
-  exportEffects,
-  parseEffectMap,
-  pickEffect,
-  pruneEffects,
-} from '~/state/objectEffects';
+import type {EffectParams} from '@/common/components/video/effects/Effect';
+import * as clips from '~/state/effectClips';
+import type {EffectClip, EffectDoc, EffectTarget, UntouchedMode} from '~/state/effectClips';
 import {parseObjectColors} from '~/state/objectColors';
 import {isOffline} from '~/lib/mode';
 import {webGpuAvailable} from '~/lib/webgpu';
@@ -96,19 +91,6 @@ function readLocalOptions(): LocalOptions {
   const raw = readJson<Partial<LocalOptions>>(LOCAL_OPTIONS_KEY, {});
   return {quality: parseQuality(raw.quality ?? 512), fillHoleArea: raw.fillHoleArea === 8 ? 8 : 0};
 }
-
-/** Meta's selected-object effects (EffectsUtils' highlight and "more" lists). */
-const HIGHLIGHT_NAMES = [
-  'Cutout',
-  'EraseForeground',
-  'VibrantMask',
-  'PixelateMask',
-  'Overlay',
-  'Replace',
-  'Burst',
-  'Scope',
-  'NoisyMask',
-];
 
 /** The engine studio compares SAM 2 with when both have tracks. */
 const COMPARE_ENGINE = 'sam3';
@@ -1177,67 +1159,146 @@ export default function useStudioSession(video: VideoItem) {
     [bridge, serial, sync],
   );
 
-  // Per-object effects: each object keeps its own until the user changes it;
-  // saved per video in this browser.
-  const effectsKey = `sam-ui-studio:effects:${video.path}`;
-  const [objectEffects, setObjectEffects] = useState<EffectMap>(() => parseEffectMap(readJson(effectsKey, {})));
-  const [variantCounts, setVariantCounts] = useState<Record<string, number>>({});
-  const idsKey = state.objects.map(o => o.id).join(',');
+  // Effect clips (state/effectClips.ts): each layer's and the background's
+  // effects with their frame ranges, saved per video in this browser. Loaded
+  // once the frame count is known, when a v1 map (one effect per object for
+  // the whole video) becomes full-range clips; the v1 key is only ever read,
+  // so an older build keeps its own copy. docRef is the doc as of the last
+  // edit, so edits in one tick build on each other.
+  const effectsKey = `sam-ui-studio:effects:v2:${video.path}`;
+  const [effectDoc, setEffectDoc] = useState<EffectDoc | null>(null);
+  const docRef = useRef<EffectDoc | null>(null);
+  const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
+  const editDoc = useCallback((fn: (doc: EffectDoc) => EffectDoc) => {
+    if (docRef.current != null) {
+      docRef.current = fn(docRef.current);
+      setEffectDoc(docRef.current);
+    }
+  }, []);
   useEffect(() => {
-    // forget effects of removed objects, once the objects are known
+    if (docRef.current == null && meta.numFrames > 0) {
+      const stored = readJson<unknown>(effectsKey, null);
+      docRef.current =
+        stored != null
+          ? clips.parseEffectDoc(stored)
+          : clips.migrateV1(readJson<unknown>(`sam-ui-studio:effects:${video.path}`, null), meta.numFrames);
+      setEffectDoc(docRef.current);
+    }
+  }, [effectsKey, meta.numFrames, video.path]);
+  const idsKey = state.objects.map(o => o.id).join(',');
+  const docLoaded = effectDoc != null;
+  useEffect(() => {
+    // forget effects of removed objects, once the objects and the clips are known
     if (status === 'ready') {
-      setObjectEffects(m => {
-        const pruned = pruneEffects(m, idsKey === '' ? [] : idsKey.split(',').map(Number));
-        return Object.keys(pruned).length === Object.keys(m).length ? m : pruned;
-      });
+      editDoc(d => clips.pruneClips(d, idsKey === '' ? [] : idsKey.split(',').map(Number)));
       setFlags(m => {
         const pruned = pruneFlags(m, idsKey === '' ? [] : idsKey.split(',').map(Number));
         return Object.keys(pruned).length === Object.keys(m).length ? m : pruned;
       });
     }
-  }, [idsKey, status]);
+  }, [editDoc, idsKey, status, docLoaded]);
+  // the Layers list draws its bottom row first, so the top row is drawn on top
+  const ordered = useMemo(() => orderedObjects(state), [state]);
+  const drawKey = ordered.map(o => o.id).reverse().join(',');
   useEffect(() => {
-    writeJson(effectsKey, objectEffects);
-    bridge?.call('setObjectEffects', {effects: objectEffects}).catch(error => setWarning(message(error)));
-  }, [bridge, effectsKey, objectEffects]);
-  useEffect(() => {
-    if (bridge != null && meta.decoded) {
-      // set up effects that waited for the decoded size, and learn their variants
-      bridge.call('setObjectEffects', {effects: objectEffects}).catch(() => {});
-      bridge
-        .call('effectVariants', {names: HIGHLIGHT_NAMES})
-        .then(setVariantCounts)
-        .catch(() => {});
+    if (effectDoc != null) {
+      writeJson(effectsKey, effectDoc);
     }
-    // once per decode
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bridge, meta.decoded]);
+  }, [effectsKey, effectDoc]);
+  useEffect(() => {
+    if (effectDoc != null) {
+      const drawOrder = drawKey === '' ? [] : drawKey.split(',').map(Number);
+      bridge?.call('setEffectDoc', {doc: effectDoc, drawOrder}).catch(error => setWarning(message(error)));
+    }
+  }, [bridge, effectDoc, drawKey]);
 
-  /** Give the selected object the effect `name` (again: its next variant). */
+  /** Add a clip of `effect` on `target` at the playhead (3 s, clamped to the end) on top of its clips, and select it. */
+  const addClip = useCallback(
+    (target: EffectTarget, effect: string, params?: EffectParams): string | null => {
+      const d = docRef.current;
+      if (d == null || meta.numFrames <= 0) {
+        return null;
+      }
+      const clip = clips.newClip({id: clips.newClipId(d), target, effect, frame, numFrames: meta.numFrames, fps: meta.fps, params});
+      editDoc(doc => clips.addClip(doc, clip));
+      setSelectedClipId(clip.id);
+      return clip.id;
+    },
+    [editDoc, frame, meta.numFrames, meta.fps],
+  );
+  /** Change a clip's effect and/or settings (validated; a new effect starts from its defaults unless params are given). */
+  const updateClip = useCallback(
+    (id: string, patch: {effect?: string; params?: EffectParams}) => editDoc(d => clips.updateClip(d, id, patch)),
+    [editDoc],
+  );
+  /** Move a clip to start at `start`, keeping its length and animation. */
+  const moveClip = useCallback(
+    (id: string, start: number) => editDoc(d => clips.moveClip(d, id, start, meta.numFrames)),
+    [editDoc, meta.numFrames],
+  );
+  /** Move a clip's start or end edge to `frame` (a later start advances its animation to match). */
+  const trimClip = useCallback(
+    (id: string, edge: 'start' | 'end', frame: number) => editDoc(d => clips.trimClip(d, id, edge, frame, meta.numFrames)),
+    [editDoc, meta.numFrames],
+  );
+  const removeClip = useCallback(
+    (id: string) => {
+      editDoc(d => clips.removeClip(d, id));
+      setSelectedClipId(s => (s === id ? null : s));
+    },
+    [editDoc],
+  );
+
+  /**
+   * The one-click effect buttons, on clips: give `target` the effect `name`
+   * (again: its next style) on its selected or top clip, or on a new clip over
+   * the whole video when it has none. `params` overrides the picked settings.
+   */
+  const pickEffect = useCallback(
+    (target: EffectTarget, name: string, params?: EffectParams): EffectClip | null => {
+      const d = docRef.current;
+      if (d == null) {
+        return null;
+      }
+      const picked = clips.pickOnTarget(d, {
+        target,
+        effect: name,
+        frame,
+        numFrames: meta.numFrames,
+        selectedId: selectedClipId,
+        newId: clips.newClipId(d),
+        params,
+      });
+      editDoc(() => picked.doc);
+      return picked.doc.clips.find(c => c.id === picked.clipId) ?? null;
+    },
+    [editDoc, frame, meta.numFrames, selectedClipId],
+  );
+
+  /** Give the selected object the effect `name` (again: its next style). */
   const pickObjectEffect = useCallback(
     (name: string) => {
       const id = stateRef.current.activeId;
-      if (id == null) {
-        return;
+      if (id != null) {
+        pickEffect({kind: 'object', id}, name);
       }
-      setObjectEffects(m => pickEffect(m, id, name, variantCounts[name] ?? 1));
     },
-    [variantCounts],
+    [pickEffect],
   );
 
-  /** Give every member of a group the effect `name` (again: the next variant, for all of them). */
+  /** Give the background the effect `name` (again: its next style); kept with the video like the layers' (Q7). */
+  const pickBackgroundEffect = useCallback((name: string) => pickEffect({kind: 'background'}, name), [pickEffect]);
+
+  /** Give every member of a group the effect `name` (again: the first member's next style, for all of them). */
   const setGroupEffect = useCallback(
     (groupId: string, name: string) => {
       const members = stateRef.current.layout.groups.find(g => g.id === groupId)?.members ?? [];
-      if (members.length === 0) {
-        return;
+      const first = members.length === 0 ? null : pickEffect({kind: 'object', id: members[0]}, name);
+      for (const id of members.slice(1)) {
+        pickEffect({kind: 'object', id}, name, first?.params);
       }
-      setObjectEffects(m => {
-        const effect = pickEffect(m, members[0], name, variantCounts[name] ?? 1)[members[0]];
-        return {...m, ...Object.fromEntries(members.map(id => [id, effect]))};
-      });
     },
-    [variantCounts],
+    [pickEffect],
   );
 
   const [exportProgress, setExportProgress] = useState<number | null>(null);
@@ -1311,7 +1372,7 @@ export default function useStudioSession(video: VideoItem) {
     },
     [bridge, modelOf],
   );
-  /** Render the video with every object's own effect, as an MP4 file. */
+  /** Render the video with its effect clips, as an MP4 file. */
   const exportVideo = useCallback(
     async (untouched: UntouchedMode): Promise<Blob> => {
       if (bridge == null) {
@@ -1319,18 +1380,14 @@ export default function useStudioSession(video: VideoItem) {
       }
       setExportProgress(0);
       try {
-        const effects = exportEffects(
-          objectEffects,
-          stateRef.current.objects.map(o => o.id),
-          untouched,
-        );
-        const buffer = await bridge.call('exportVideo', {effects});
+        const drawOrder = orderedObjects(stateRef.current).map(o => o.id).reverse();
+        const buffer = await bridge.call('exportVideo', {doc: docRef.current ?? clips.EMPTY_DOC, drawOrder, untouched});
         return new Blob([buffer], {type: 'video/mp4'});
       } finally {
         setExportProgress(null);
       }
     },
-    [bridge, objectEffects],
+    [bridge],
   );
 
   // Where SAM 2 and SAM 3 disagree, for objects both track with current
@@ -1806,7 +1863,6 @@ export default function useStudioSession(video: VideoItem) {
   }, [bridge, playing]);
 
   const dirty = useMemo(() => dirtyIds(state), [state]);
-  const ordered = useMemo(() => orderedObjects(state), [state]);
 
   /** Flag the current frame of the selected object for a correction, or unflag it. */
   const toggleFlag = useCallback(() => {
@@ -1868,11 +1924,19 @@ export default function useStudioSession(video: VideoItem) {
     markReviewed,
     flags,
     toggleFlag,
-    objectEffects,
+    /** The effect clips (state/effectClips.ts); null until the video's frame count is known. */
+    effectDoc,
+    selectedClipId,
+    selectClip: setSelectedClipId,
+    addClip,
+    updateClip,
+    moveClip,
+    trimClip,
+    removeClip,
     objectColors,
     setObjectColor,
     pickObjectEffect,
-    variantCounts,
+    pickBackgroundEffect,
     exportVideo,
     exportMasks,
     modelOf,

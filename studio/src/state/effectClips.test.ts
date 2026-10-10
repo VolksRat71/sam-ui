@@ -15,6 +15,7 @@ import {
   migrateV1,
   moveClip,
   newClip,
+  newClipId,
   normalizeParams,
   parseEffectDoc,
   pickOnTarget,
@@ -161,6 +162,11 @@ describe('adding, editing and removing clips', () => {
     doc = addClip(doc, newClip({id: 'a2', target: A, effect: 'Cutout', frame: 0, numFrames: 300, fps: 30}));
     doc = addClip(doc, newClip({id: 'g1', target: BG, effect: 'BackgroundBlur', frame: 0, numFrames: 300, fps: 30}));
     expect(Object.fromEntries(doc.clips.map(c => [c.id, c.row]))).toEqual({a1: 0, b1: 0, a2: 1, g1: 0});
+  });
+
+  it('names new clips c1, c2, ... past every id in the doc', () => {
+    expect(newClipId(EMPTY_DOC)).toBe('c1');
+    expect(newClipId({version: 2, clips: [clip({id: 'c7'}), clip({id: 'v1-9'}), clip({id: 'c2'})]})).toBe('c8');
   });
 
   it('updates settings (validated) and switches effects (to the new defaults)', () => {

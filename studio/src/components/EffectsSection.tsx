@@ -4,30 +4,39 @@
 // the demo's own effect lists (EffectsUtils) and effect classes, run by the
 // worker. Unlike the demo, each object keeps its own effect: focusing an
 // object only chooses which object the buttons edit, and they show that
-// object's effect. The background stays one per video. Clicking the active
-// effect again cycles its variants, as in the demo. Both groups start
-// collapsed. The video export is in the top bar.
-import type {EffectUpdateEvent} from '@/common/components/video/VideoWorkerBridge';
+// object's effect. A pick edits the layer's selected or top effect clip, or
+// adds one over the whole video (state/effectClips.ts); the background is a
+// clip too, kept with the video. Clicking the active effect again cycles its
+// styles (Meta's variants). Both groups start collapsed. The video export is
+// in the top bar.
 import {
   backgroundEffects,
   highlightEffects,
   moreEffects,
   type DemoEffect,
 } from '@/common/components/effects/EffectsUtils';
-import type {EffectIndex, Effects} from '@/common/components/video/effects/Effects';
+import {EFFECT_SPECS, styleIndex} from '@/common/components/video/effects/EffectParamSpecs';
 import {ChevronDown, ChevronRight} from '@carbon/icons-react';
-import {useEffect, useState, type ReactNode} from 'react';
+import {useState, type ReactNode} from 'react';
 import {objectName} from '~/state/fileNames';
 import {readJson, writeJson} from '~/lib/storage';
-import {effectOf} from '~/state/objectEffects';
+import {BACKGROUND_DEFAULT, type EffectClip, type EffectTarget, OVERLAY, clipToEdit} from '~/state/effectClips';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
-
-// Meta's EffectIndex enum, without loading every effect into the main thread
-const BACKGROUND = 0 as EffectIndex;
 
 const OPEN_KEY = 'sam-ui-studio:effect-groups-open';
 
 type Active = {name: string; variant: number; numVariants: number};
+
+/** What a grid shows as active: the clip a pick would edit, or the stage's default with none. */
+function activeOf(clip: EffectClip | null, fallback: string): Active {
+  const name = clip?.effect ?? fallback;
+  const style = EFFECT_SPECS[name]?.params.style;
+  return {
+    name,
+    variant: clip == null ? 0 : styleIndex(name, clip.params),
+    numVariants: style?.kind === 'choice' ? style.options.length : 1,
+  };
+}
 
 type Props = {session: StudioSessionApi};
 
@@ -89,8 +98,7 @@ function EffectGrid({
 }
 
 export default function EffectsSection({session}: Props) {
-  const {bridge, state, meta, objectEffects, variantCounts} = session;
-  const [background, setBackground] = useState<Active>({name: 'Original', variant: 0, numVariants: 3});
+  const {state, meta, effectDoc, frame, selectedClipId} = session;
   const [open, setOpen] = useState<Record<string, boolean>>(() => readJson(OPEN_KEY, {}));
   const toggle = (id: string) => {
     const next = {...open, [id]: !open[id]};
@@ -98,37 +106,15 @@ export default function EffectsSection({session}: Props) {
     writeJson(OPEN_KEY, next);
   };
 
-  useEffect(() => {
-    if (bridge == null) {
-      return;
-    }
-    // the worker is the source of truth for the background effect and variant
-    const onUpdate = (e: EffectUpdateEvent) => {
-      if (e.index === BACKGROUND) {
-        setBackground({name: e.name, variant: e.variant, numVariants: e.numVariants});
-      }
-    };
-    bridge.addEventListener('effectUpdate', onUpdate);
-    return () => bridge.removeEventListener('effectUpdate', onUpdate);
-  }, [bridge]);
-
-  const pickBackground = (effect: DemoEffect) => {
-    if (background.name === effect.effectName) {
-      bridge?.setEffect(effect.effectName as keyof Effects, BACKGROUND, {
-        variant: (background.variant + 1) % background.numVariants,
-      });
-    } else {
-      bridge?.setEffect(effect.effectName as keyof Effects, BACKGROUND);
-    }
-  };
-
-  const locked = session.exportProgress != null || !meta.decoded;
+  const locked = session.exportProgress != null || !meta.decoded || effectDoc == null;
   const focused = state.activeId;
-  const mine = focused == null ? null : effectOf(objectEffects, focused);
+  const edited = (target: EffectTarget) =>
+    effectDoc == null ? null : clipToEdit(effectDoc, target, frame, selectedClipId);
   const focusedObject = focused == null ? undefined : session.state.objects.find(o => o.id === focused);
   const focusedName = focused == null ? null : objectName(focusedObject ?? {id: focused});
-  const active: Active | null =
-    mine == null ? null : {...mine, numVariants: variantCounts[mine.name] ?? 1};
+  // an object with no clip shows the Overlay, as the preview draws it
+  const active: Active | null = focused == null ? null : activeOf(edited({kind: 'object', id: focused}), OVERLAY);
+  const background = activeOf(edited({kind: 'background'}), BACKGROUND_DEFAULT);
 
   return (
     <div className="effects">
@@ -153,7 +139,7 @@ export default function EffectsSection({session}: Props) {
         disabled={locked}
         open={open.background ?? false}
         onToggle={() => toggle('background')}
-        onPick={pickBackground}
+        onPick={e => session.pickBackgroundEffect(e.effectName)}
       />
     </div>
   );

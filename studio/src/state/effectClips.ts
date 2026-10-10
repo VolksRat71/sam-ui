@@ -111,6 +111,12 @@ export function clipTime(clip: EffectClip, frame: number, fps: number): number {
   return (frame - clip.start + clip.phase) / (fps > 0 ? fps : 30);
 }
 
+/** An id no clip in `doc` has: c1, c2, ... (as layout.ts names groups). */
+export function newClipId(doc: EffectDoc): string {
+  const n = doc.clips.reduce((m, c) => Math.max(m, /^c(\d+)$/.test(c.id) ? Number(c.id.slice(1)) : 0), 0);
+  return `c${n + 1}`;
+}
+
 function clipsOf(doc: EffectDoc, target: EffectTarget): EffectClip[] {
   return doc.clips.filter(c => sameTarget(c.target, target));
 }
