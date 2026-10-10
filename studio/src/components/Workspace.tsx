@@ -54,7 +54,7 @@ export default function Workspace({video, renderMedia}: Props) {
   const n = meta.numFrames;
 
   // keyboard: space plays, arrows step, F flags the frame, Cmd-Z / Shift-Cmd-Z undo
-  // and redo the selected object's clicks, . and , step through the review
+  // and redo this window's newest click or effect edit, . and , step through the review
   // queue and Y says its stop looks right (none of them while typing in a field;
   // the review keys also work with a button focused, as after clicking a stop)
   useEffect(() => {
@@ -64,7 +64,7 @@ export default function Workspace({video, renderMedia}: Props) {
       if (step != null) {
         e.preventDefault();
         if (!e.repeat) {
-          session.stepSeeds(step);
+          session.stepEdits(step);
         }
         return;
       }

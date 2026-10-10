@@ -127,12 +127,13 @@ export type SeedStatus = 'ok' | 'gone' | {blocked: string};
  * clips of objects still here; a seed entry names the objects to step on the
  * backend. A seed entry whose object is busy (tracking) stops the step and
  * stays, with the reason. `entry` null and no reason: nothing of this
- * window's is left to step.
+ * window's is left to step. `exists` says whether an object is still here.
  */
 export function takeStep(
   j: Journal,
   which: 'undo' | 'redo',
   status: (objectId: number) => SeedStatus,
+  exists: (objectId: number) => boolean,
 ): {journal: Journal; entry: JournalEntry | null; blocked?: string} {
   for (;;) {
     const top = nextEntry(j, which);
@@ -142,7 +143,7 @@ export function takeStep(
     if (top.kind === 'effect') {
       const changes = top.changes.filter(c => {
         const t = (c.before ?? c.after)!.target;
-        return t.kind === 'background' || status(t.id) !== 'gone';
+        return t.kind === 'background' || exists(t.id);
       });
       if (changes.length > 0) {
         return {journal: stepped(j, which), entry: {...top, changes}};

@@ -28,7 +28,7 @@ function press(
   seedStep: (id: number) => void,
   status: (id: number) => SeedStatus = () => 'ok',
 ) {
-  const {journal, entry, blocked} = takeStep(s.journal, which, status);
+  const {journal, entry, blocked} = takeStep(s.journal, which, status, id => status(id) !== 'gone');
   s.journal = journal;
   if (entry?.kind === 'effect') {
     s.doc = applyEntry(s.doc, entry.changes, which);

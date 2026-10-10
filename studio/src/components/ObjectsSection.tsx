@@ -2,7 +2,7 @@
 //
 // The Objects list: one row per object with Meta's colour-block thumbnail,
 // its track state, and its own Clear track / Remove actions. The selected
-// object also has Undo / Redo (Cmd-Z / Shift-Cmd-Z), its kept track versions,
+// object also has its own Undo / Redo (Cmd-Z steps the window's newest edit), its kept track versions,
 // and "Move these clicks to" for clicks on this frame that went to it by mistake.
 // Objects can be dragged into another order and into named, coloured groups
 // (issue #21); Alt-Up / Alt-Down, the arrow buttons and the Group menu do
@@ -172,14 +172,14 @@ function HistoryControls({o, session}: {o: StudioObject; session: StudioSessionA
           className="link-button"
           disabled={busy || blocked('undo') != null}
           onClick={() => session.stepSeeds('undo', o.id)}
-          title={blocked('undo') ?? 'Undo the last click or range change (⌘Z); a kept track comes back with no re-track'}>
+          title={blocked('undo') ?? 'Undo this layer’s last click or range change; a kept track comes back with no re-track. ⌘Z steps your newest edit on any layer'}>
           <Undo size={14} /> Undo
         </button>
         <button
           className="link-button"
           disabled={busy || blocked('redo') != null}
           onClick={() => session.stepSeeds('redo', o.id)}
-          title={blocked('redo') ?? 'Redo (⇧⌘Z)'}>
+          title={blocked('redo') ?? 'Redo this layer’s last undone change'}>
           <Redo size={14} /> Redo
         </button>
         <button

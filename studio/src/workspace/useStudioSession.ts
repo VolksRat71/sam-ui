@@ -17,6 +17,7 @@ import {explainGraphQLError} from '~/lib/errors';
 import type {EffectParams} from '@/common/components/video/effects/Effect';
 import * as clips from '~/state/effectClips';
 import type {EffectClip, EffectDoc, EffectTarget, UntouchedMode} from '~/state/effectClips';
+import * as journals from '~/state/editJournal';
 import {parseObjectColors} from '~/state/objectColors';
 import {isOffline} from '~/lib/mode';
 import {webGpuAvailable} from '~/lib/webgpu';
@@ -431,6 +432,13 @@ export default function useStudioSession(video: VideoItem) {
     [],
   );
 
+  // This window's own edits, for one Cmd-Z across clicks and effects (state/editJournal.ts):
+  // seed changes are recorded once the backend took them, effect edits in editDoc.
+  const journalRef = useRef<journals.Journal>(journals.EMPTY_JOURNAL);
+  const journalSeed = useCallback((objectIds: number[]) => {
+    journalRef.current = journals.recordSeed(journalRef.current, objectIds);
+  }, []);
+
   // clicks stay open while jobs run; only a session start or a repaint holds them
   // no engine can run (the browser-only build without WebGPU): nothing to click or track
   const noEngine = engines.length > 0 && engines.every(e => !e.available);
@@ -475,6 +483,9 @@ export default function useStudioSession(video: VideoItem) {
       serial(async () => {
         try {
           await bridge.call('setPoints', {objectId, frameIndex, points, engine});
+          if (JSON.stringify(points) !== JSON.stringify(before)) {
+            journalSeed([objectId]);
+          }
           if (points.length > 0) {
             setFlags(m => clearFlag(m, objectId, frameIndex)); // corrected
           }
@@ -491,7 +502,7 @@ export default function useStudioSession(video: VideoItem) {
         await sync();
       });
     },
-    [bridge, serial, sync, showNudge],
+    [bridge, serial, sync, showNudge, journalSeed],
   );
 
   /** Send a frame's new clicks, or refuse or nudge and keep the old ones (state/corrections.ts). */
@@ -535,13 +546,14 @@ export default function useStudioSession(video: VideoItem) {
       return serial(async () => {
         result = await bridge.call('textPrompt', {objectId, frameIndex: at, text, engine});
         if (result.matched) {
+          journalSeed([objectId]);
           dispatch({type: 'setText', id: objectId, frame: at, text: result.text});
           setFlags(m => clearFlag(m, objectId, at));
         }
         await sync();
       }).then(() => result);
     },
-    [bridge, serial, sync, frame],
+    [bridge, serial, sync, frame, journalSeed],
   );
 
   /**
@@ -957,11 +969,15 @@ export default function useStudioSession(video: VideoItem) {
           dispatch({type: 'setRanges', id: objectId, ...before});
           throw error;
         }
-        dispatch({type: 'setRanges', id: objectId, ranges: normalizeRanges(res.ranges), marks: normalizeMarks(res.ranges)});
+        const ranges = normalizeRanges(res.ranges);
+        if (JSON.stringify(ranges) !== JSON.stringify(before.ranges)) {
+          journalSeed([objectId]); // absent frames are seeds; present and candidate marks keep no history
+        }
+        dispatch({type: 'setRanges', id: objectId, ranges, marks: normalizeMarks(res.ranges)});
         await sync();
       });
     },
-    [bridge, serial, sync],
+    [bridge, serial, sync, journalSeed],
   );
 
   /** A candidate confirmed: the object is there (present) or not in the shot (absent, a seed change). */
@@ -990,29 +1006,41 @@ export default function useStudioSession(video: VideoItem) {
   );
 
   /**
-   * Undo (or redo) the selected object's last seed change. A kept track of the
-   * clicks it goes back to shows at once, tracked, with no job; without one the
-   * object is stale, as after any click. Refused while a job holds the object.
+   * Undo (or redo) an object's last seed change on the backend. A kept track
+   * of the clicks it goes back to shows at once, tracked, with no job;
+   * without one the object is stale, as after any click. Refused while a job
+   * holds the object. Says whether the step was sent.
    */
-  const stepSeeds = useCallback(
-    (which: 'undo' | 'redo', objectId: number | null = stateRef.current.activeId) => {
+  const stepObjectSeeds = useCallback(
+    (which: 'undo' | 'redo', objectId: number | null = stateRef.current.activeId): boolean => {
       if (bridge == null || busy) {
-        return;
+        return false;
       }
       const o = stateRef.current.objects.find(x => x.id === objectId);
       const why = undoBlock(o, which);
       // a click still on its way has not reached the history yet: let the backend say
       if (why != null && (o == null || isTracking(o) || pending === 0)) {
         setWarning(why);
-        return;
+        return false;
       }
       serial(async () => {
         const res = await bridge.call(which, {objectId: o!.id});
         dispatch({type: 'objectChanged', object: res});
         await sync();
       });
+      return true;
     },
     [bridge, busy, pending, serial, sync],
+  );
+
+  /** The selected (or a given) object's own Undo / Redo: its journal entry steps with it, so Cmd-Z never steps it twice. */
+  const stepSeeds = useCallback(
+    (which: 'undo' | 'redo', objectId: number | null = stateRef.current.activeId) => {
+      if (stepObjectSeeds(which, objectId) && objectId != null) {
+        journalRef.current = journals.steppedObject(journalRef.current, which, objectId);
+      }
+    },
+    [stepObjectSeeds],
   );
 
   /** Go back to one of an object's kept versions (an undoable seed change). */
@@ -1023,11 +1051,12 @@ export default function useStudioSession(video: VideoItem) {
       }
       serial(async () => {
         const res = await bridge.call('restoreVersion', {objectId, key, engine});
+        journalSeed([objectId]);
         dispatch({type: 'objectChanged', object: res});
         await sync();
       });
     },
-    [bridge, busy, serial, sync],
+    [bridge, busy, serial, sync, journalSeed],
   );
 
   /** Move the selected object's clicks on this frame to another object: one undo step each. */
@@ -1046,13 +1075,14 @@ export default function useStudioSession(video: VideoItem) {
       serial(async () => {
         // the engine on screen, as setPoints sends: SAM 3 takes a frame of negatives alone
         const res = await bridge.call('moveClicks', {frameIndex: frame, fromId, toId, engine: stateRef.current.engine});
+        journalSeed([fromId, toId]);
         for (const o of res) {
           dispatch({type: 'objectChanged', object: o});
         }
         await sync();
       });
     },
-    [bridge, busy, frame, serial, sync],
+    [bridge, busy, frame, serial, sync, journalSeed],
   );
 
   /**
@@ -1169,12 +1199,31 @@ export default function useStudioSession(video: VideoItem) {
   const [effectDoc, setEffectDoc] = useState<EffectDoc | null>(null);
   const docRef = useRef<EffectDoc | null>(null);
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
-  const editDoc = useCallback((fn: (doc: EffectDoc) => EffectDoc) => {
-    if (docRef.current != null) {
-      docRef.current = fn(docRef.current);
+  /**
+   * Change the doc. A person's edit passes a journal `key` (edits with the
+   * same key in quick succession are one undo step: a drag); loading,
+   * pruning and undo itself pass none.
+   */
+  const editDoc = useCallback((fn: (doc: EffectDoc) => EffectDoc, key?: string) => {
+    const before = docRef.current;
+    if (before != null) {
+      docRef.current = fn(before);
       setEffectDoc(docRef.current);
+      if (key != null) {
+        journalRef.current = journals.recordEffect(journalRef.current, before, docRef.current, key, Date.now());
+      }
     }
   }, []);
+  // a key no other edit has: its own undo step
+  const editSeq = useRef(0);
+  const ownStep = () => `edit:${++editSeq.current}`;
+  // a clip stays selected only with its own layer (or, for a background clip, until a layer is picked)
+  useEffect(() => {
+    setSelectedClipId(id => {
+      const t = id == null ? undefined : docRef.current?.clips.find(c => c.id === id)?.target;
+      return t?.kind === 'object' && t.id === state.activeId ? id : t?.kind === 'background' && state.activeId == null ? id : null;
+    });
+  }, [state.activeId]);
   useEffect(() => {
     if (docRef.current == null && meta.numFrames > 0) {
       const stored = readJson<unknown>(effectsKey, null);
@@ -1220,30 +1269,34 @@ export default function useStudioSession(video: VideoItem) {
         return null;
       }
       const clip = clips.newClip({id: clips.newClipId(d), target, effect, frame, numFrames: meta.numFrames, fps: meta.fps, params});
-      editDoc(doc => clips.addClip(doc, clip));
+      editDoc(doc => clips.addClip(doc, clip), ownStep());
       setSelectedClipId(clip.id);
       return clip.id;
     },
     [editDoc, frame, meta.numFrames, meta.fps],
   );
+  // `step`: a journal key shared by the edits of one gesture (a slider or clip
+  // drag), which then undo as one; without it each edit is its own step.
   /** Change a clip's effect and/or settings (validated; a new effect starts from its defaults unless params are given). */
   const updateClip = useCallback(
-    (id: string, patch: {effect?: string; params?: EffectParams}) => editDoc(d => clips.updateClip(d, id, patch)),
+    (id: string, patch: {effect?: string; params?: EffectParams}, step?: string) =>
+      editDoc(d => clips.updateClip(d, id, patch), step ?? ownStep()),
     [editDoc],
   );
   /** Move a clip to start at `start`, keeping its length and animation. */
   const moveClip = useCallback(
-    (id: string, start: number) => editDoc(d => clips.moveClip(d, id, start, meta.numFrames)),
+    (id: string, start: number, step?: string) => editDoc(d => clips.moveClip(d, id, start, meta.numFrames), step ?? ownStep()),
     [editDoc, meta.numFrames],
   );
   /** Move a clip's start or end edge to `frame` (a later start advances its animation to match). */
   const trimClip = useCallback(
-    (id: string, edge: 'start' | 'end', frame: number) => editDoc(d => clips.trimClip(d, id, edge, frame, meta.numFrames)),
+    (id: string, edge: 'start' | 'end', frame: number, step?: string) =>
+      editDoc(d => clips.trimClip(d, id, edge, frame, meta.numFrames), step ?? ownStep()),
     [editDoc, meta.numFrames],
   );
   const removeClip = useCallback(
     (id: string) => {
-      editDoc(d => clips.removeClip(d, id));
+      editDoc(d => clips.removeClip(d, id), ownStep());
       setSelectedClipId(s => (s === id ? null : s));
     },
     [editDoc],
@@ -1251,11 +1304,12 @@ export default function useStudioSession(video: VideoItem) {
 
   /**
    * The one-click effect buttons, on clips: give `target` the effect `name`
-   * (again: its next style) on its selected or top clip, or on a new clip over
-   * the whole video when it has none. `params` overrides the picked settings.
+   * (again: its next style) on its selected clip or its top clip on the
+   * playhead; else a new clip at the playhead, or over the whole video when
+   * it has none (clips.pickOnTarget). `params` overrides the picked settings.
    */
   const pickEffect = useCallback(
-    (target: EffectTarget, name: string, params?: EffectParams): EffectClip | null => {
+    (target: EffectTarget, name: string, params?: EffectParams, step: string = ownStep()): EffectClip | null => {
       const d = docRef.current;
       if (d == null) {
         return null;
@@ -1265,40 +1319,92 @@ export default function useStudioSession(video: VideoItem) {
         effect: name,
         frame,
         numFrames: meta.numFrames,
+        fps: meta.fps,
         selectedId: selectedClipId,
         newId: clips.newClipId(d),
         params,
       });
-      editDoc(() => picked.doc);
+      editDoc(() => picked.doc, step);
       return picked.doc.clips.find(c => c.id === picked.clipId) ?? null;
     },
-    [editDoc, frame, meta.numFrames, selectedClipId],
+    [editDoc, frame, meta.numFrames, meta.fps, selectedClipId],
   );
 
-  /** Give the selected object the effect `name` (again: its next style). */
+  /** Give the selected object the effect `name` (again: its next style), and select the clip that took it. */
   const pickObjectEffect = useCallback(
     (name: string) => {
       const id = stateRef.current.activeId;
       if (id != null) {
-        pickEffect({kind: 'object', id}, name);
+        setSelectedClipId(pickEffect({kind: 'object', id}, name)?.id ?? null);
       }
     },
     [pickEffect],
   );
 
   /** Give the background the effect `name` (again: its next style); kept with the video like the layers' (Q7). */
-  const pickBackgroundEffect = useCallback((name: string) => pickEffect({kind: 'background'}, name), [pickEffect]);
+  const pickBackgroundEffect = useCallback(
+    (name: string) => setSelectedClipId(pickEffect({kind: 'background'}, name)?.id ?? null),
+    [pickEffect],
+  );
 
-  /** Give every member of a group the effect `name` (again: the first member's next style, for all of them). */
+  /** Give every member of a group the effect `name` (again: the first member's next style, for all of them): one undo step. */
   const setGroupEffect = useCallback(
     (groupId: string, name: string) => {
       const members = stateRef.current.layout.groups.find(g => g.id === groupId)?.members ?? [];
-      const first = members.length === 0 ? null : pickEffect({kind: 'object', id: members[0]}, name);
+      const step = ownStep();
+      const first = members.length === 0 ? null : pickEffect({kind: 'object', id: members[0]}, name, undefined, step);
       for (const id of members.slice(1)) {
-        pickEffect({kind: 'object', id}, name, first?.params);
+        pickEffect({kind: 'object', id}, name, first?.params, step);
       }
     },
     [pickEffect],
+  );
+
+  /**
+   * Cmd-Z / Shift-Cmd-Z: step this window's newest own edit (state/editJournal.ts,
+   * Nate's Q6). An effect edit puts its clips back by id and selects the clip;
+   * a click or range edit steps that object back on the backend, as its own
+   * Undo does. With nothing of this window's left, the selected object's
+   * history steps, as before. Agents' changes are never in the journal.
+   */
+  const stepEdits = useCallback(
+    (which: 'undo' | 'redo') => {
+      const objects = stateRef.current.objects;
+      const exists = (id: number) => objects.some(o => o.id === id);
+      const status = (id: number): journals.SeedStatus => {
+        const o = objects.find(x => x.id === id);
+        if (o == null) {
+          return 'gone';
+        }
+        if (isTracking(o)) {
+          return {blocked: undoBlock(o, which)!};
+        }
+        // nothing left to step there (an agent stepped it already): skip; a click on its way: let the backend say
+        return (which === 'undo' ? o.history.canUndo : o.history.canRedo) || pending > 0 ? 'ok' : 'gone';
+      };
+      const {journal, entry, blocked} = journals.takeStep(journalRef.current, which, status, exists);
+      if (blocked != null) {
+        setWarning(blocked);
+        return;
+      }
+      if (entry?.kind === 'seed' && (bridge == null || busy)) {
+        return;
+      }
+      journalRef.current = journal;
+      if (entry == null) {
+        stepObjectSeeds(which);
+      } else if (entry.kind === 'seed') {
+        entry.objectIds.forEach(id => stepObjectSeeds(which, id));
+      } else {
+        editDoc(d => journals.applyEntry(d, entry.changes, which));
+        const shown = entry.changes.map(c => (which === 'undo' ? c.before : c.after)).find(c => c != null);
+        if (shown?.target.kind === 'object' && shown.target.id !== stateRef.current.activeId) {
+          selectObject(shown.target.id);
+        }
+        setSelectedClipId(shown?.id ?? null);
+      }
+    },
+    [bridge, busy, pending, editDoc, stepObjectSeeds, selectObject],
   );
 
   const [exportProgress, setExportProgress] = useState<number | null>(null);
@@ -1933,6 +2039,7 @@ export default function useStudioSession(video: VideoItem) {
     moveClip,
     trimClip,
     removeClip,
+    stepEdits,
     objectColors,
     setObjectColor,
     pickObjectEffect,
