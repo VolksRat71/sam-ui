@@ -27,12 +27,13 @@
 //   B11 every background and layer tile picked in turn, then Erase: the preview
 //       matches a reloaded (fresh) worker, the export matches the preview, and
 //       Chrome logged no "Too many active WebGL contexts"
-//   S2  slice 2: S splits a Noisy clip at its middle, every checked frame (the
+//   S2  slice 2: S (timeline focus only) splits a Noisy clip at its middle, every checked frame (the
 //       split frame and its neighbours) pixel-identical; Duplicate puts a copy
 //       after the right part (phase 0 in the doc), drawn like a fresh Noisy clip
 //       there (no effect reads the clip clock yet, so phase shows in no pixel:
-//       the right part carried on is logged as INFO); Alt+Down and Move up swap two
-//       overlapping clips (Gradient, Erase), the one on top measured as B5 does;
+//       the right part carried on is logged as INFO); Alt+Down passes the nearest clip it overlaps
+//       (skipping a non-overlapping Outline), a second press says why it does nothing,
+//       Move up puts it back; the one on top measured as B5 does;
 //       Cmd-Z restores each, Shift-Cmd-Z redoes it
 //   B8  from the end of tracking to here: no segmentation or tracking call
 //       reached the video worker, no job started, no job chip showed
@@ -550,6 +551,10 @@ await step('S2', async () => {
   }
   const d0 = await doc();
   await seekTo(96);
+  await page.keyboard.press('s'); // focus outside the timeline: S does nothing
+  await page.waitForTimeout(400);
+  check('S2', JSON.stringify((await doc()).clips) === JSON.stringify(d0.clips), 'S with focus outside the timeline leaves the clip alone');
+  await page.locator('.fx-clip.selected').focus();
   await page.keyboard.press('s');
   await page.waitForTimeout(600);
   const d1 = await doc();
@@ -624,21 +629,31 @@ await step('S2', async () => {
 await step('S2', async () => {
   await sel(A);
   await seekTo(30);
-  await addEffect(0, 'Gradient');
-  await addEffect(0, 'Erase'); // added last: on top
+  await addEffect(0, 'Gradient'); // [30, 102), row 0
+  await seekTo(150);
+  await addEffect(0, 'Outline'); // [150, 222), row 1: overlaps neither of the others
+  await seekTo(30);
+  await addEffect(0, 'Erase'); // [30, 102), row 2: on top
   const eraseOver = await cap('S2-order-0_erase-over-gradient_f31');
   const d0 = await doc();
   const erase = d0.clips.find(c => c.effect === 'EraseForeground');
   // the tiles' effects: Erase is EraseForeground, Gradient VibrantMask
-  const rowsOf = d => Object.fromEntries(d.clips.map(c => [c.effect === 'EraseForeground' ? 'Erase' : 'Gradient', c.row]));
+  const names = {EraseForeground: 'Erase', VibrantMask: 'Gradient', Outline: 'Outline'};
+  const rowsOf = d => Object.fromEntries(d.clips.map(c => [names[c.effect], c.row]));
   await page.locator(`.fx-clip[data-clip="${erase.id}"]`).focus();
   await page.keyboard.press('Alt+ArrowDown');
   await page.waitForTimeout(600);
   const d1 = await doc();
   const gradientOver = await cap('S2-order-1_alt-down_gradient-over-erase_f31');
   const said = await note();
-  check('S2', rowsOf(d1).Erase === 0 && rowsOf(d1).Gradient === 1 && differs(compare(eraseOver, gradientOver)), `Alt+Down on the Erase clip puts it under Gradient (${JSON.stringify(rowsOf(d1))}); the frame changes ${compare(eraseOver, gradientOver).changedPct} %`, compare(eraseOver, gradientOver));
+  const r1 = rowsOf(d1);
+  check('S2', r1.Erase === 0 && r1.Gradient === 1 && r1.Outline === 2 && differs(compare(eraseOver, gradientOver)), `one Alt+Down skips the Outline clip it doesn't overlap and puts Erase under Gradient (${JSON.stringify(rowsOf(d0))} -> ${JSON.stringify(r1)}); the frame changes ${compare(eraseOver, gradientOver).changedPct} %`, compare(eraseOver, gradientOver));
   check('S2', /moved down: now drawn under Gradient/.test(said) && !/frames? \d/.test(said), `announced: "${said}"`);
+  await page.keyboard.press('Alt+ArrowDown'); // nothing under it on its frames now
+  await page.waitForTimeout(600);
+  const stay = await note();
+  const downOff = await fx.getByRole('button', {name: 'Move down', exact: true}).isDisabled();
+  check('S2', JSON.stringify((await doc()).clips) === JSON.stringify(d1.clips) && /not moved: no clip under it/.test(stay) && downOff, `with no overlapping clip below, Alt+Down changes nothing and says so ("${stay}"); Move down is disabled: ${downOff}`);
   await undo();
   const undone = await cap('S2-order-2_undone_f31');
   check('S2', JSON.stringify((await doc()).clips) === JSON.stringify(d0.clips) && identical(compare(eraseOver, undone)), 'Cmd-Z restores the order exactly', compare(eraseOver, undone));
@@ -648,7 +663,8 @@ await step('S2', async () => {
   await fx.getByRole('button', {name: 'Move up', exact: true}).click();
   await page.waitForTimeout(600);
   const up = await cap('S2-order-4_move-up_f31');
-  check('S2', rowsOf(await doc()).Erase === 1 && identical(compare(eraseOver, up)), 'Move up in the settings puts Erase back on top', compare(eraseOver, up));
+  const r2 = rowsOf(await doc());
+  check('S2', r2.Erase > r2.Gradient && identical(compare(eraseOver, up)), `Move up in the settings puts Erase back over Gradient (${JSON.stringify(r2)})`, compare(eraseOver, up));
   // which one is on top, as B5 measures it (Gradient's LUT is random per setup, so no rebuilt reference):
   // with Erase on top Gradient barely shows against Erase alone; moved over it, it does
   const gradient = d0.clips.find(c => c.effect === 'VibrantMask');

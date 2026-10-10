@@ -231,27 +231,39 @@ export function duplicateClip(doc: EffectDoc, id: string, newId: string, numFram
 }
 
 /** A target's clips in stack order: the one drawn first (lowest row) first; equal rows in doc order. */
-export function stackOf(doc: EffectDoc, target: EffectTarget): EffectClip[] {
+function stackOf(doc: EffectDoc, target: EffectTarget): EffectClip[] {
   return clipsOf(doc, target).sort((a, b) => a.row - b.row);
 }
 
 /**
- * Move a clip one place up (drawn later, on top) or down its target's stack,
- * swapping places with its neighbour there; the target's rows become 0..n-1.
- * At the top (or the bottom) nothing changes.
+ * The nearest clip above (up) or below (down) a clip in its target's stack
+ * that overlaps it in time: the one a reorder passes. Clips it does not
+ * overlap are skipped, since passing them changes nothing drawn.
  */
-export function reorderClip(doc: EffectDoc, id: string, direction: 'up' | 'down'): EffectDoc {
+export function overlapNeighbour(doc: EffectDoc, id: string, direction: 'up' | 'down'): EffectClip | null {
   const c = doc.clips.find(x => x.id === id);
   if (c == null) {
-    return doc;
+    return null;
   }
   const stack = stackOf(doc, c.target);
   const at = stack.indexOf(c);
-  const to = at + (direction === 'up' ? 1 : -1);
-  if (to < 0 || to >= stack.length) {
+  const side = direction === 'up' ? stack.slice(at + 1) : stack.slice(0, at).reverse();
+  return side.find(o => o.start < c.end && c.start < o.end) ?? null;
+}
+
+/**
+ * Move a clip up (drawn later, on top) or down its target's stack, just past
+ * overlapNeighbour; every other clip keeps its order, and the target's rows
+ * become 0..n-1. With no overlapping clip that way, nothing changes.
+ */
+export function reorderClip(doc: EffectDoc, id: string, direction: 'up' | 'down'): EffectDoc {
+  const past = overlapNeighbour(doc, id, direction);
+  if (past == null) {
     return doc;
   }
-  [stack[at], stack[to]] = [stack[to], stack[at]];
+  const c = doc.clips.find(x => x.id === id)!;
+  const stack = stackOf(doc, c.target).filter(x => x !== c);
+  stack.splice(stack.indexOf(past) + (direction === 'up' ? 1 : 0), 0, c);
   const rows = new Map(stack.map((x, i) => [x.id, i]));
   return {
     ...doc,

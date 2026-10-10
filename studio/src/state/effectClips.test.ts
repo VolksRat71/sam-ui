@@ -20,6 +20,7 @@ import {
   newClip,
   newClipId,
   normalizeParams,
+  overlapNeighbour,
   parseEffectDoc,
   pickOnGroup,
   pickOnTarget,
@@ -29,7 +30,6 @@ import {
   sameTarget,
   saveEffectDoc,
   splitClip,
-  stackOf,
   trimClip,
   updateClip,
 } from './effectClips';
@@ -412,7 +412,7 @@ describe('split, duplicate and stack order (slice 2)', () => {
     expect(duplicateClip(free, 'gone', 'd', 100)).toBe(free);
   });
 
-  it("moves a clip up or down its own layer's stack, swapping with its neighbour", () => {
+  it("moves a clip up or down its own layer's stack, past the nearest clip it overlaps", () => {
     const doc: EffectDoc = {
       version: 2,
       clips: [clip({id: 'a', row: 0}), clip({id: 'b', row: 1}), clip({id: 'other', target: B, row: 0}), clip({id: 'c', row: 2})],
@@ -424,16 +424,33 @@ describe('split, duplicate and stack order (slice 2)', () => {
     expect(reorderClip(doc, 'a', 'down')).toBe(doc); // at the bottom
     expect(reorderClip(doc, 'other', 'up')).toBe(doc); // alone on its layer
     expect(reorderClip(doc, 'nope', 'up')).toBe(doc);
-    // the swap changes which of two overlapping clips draws on top
+    // the move changes which of two overlapping clips draws on top
     expect(activeClips(reorderClip(doc, 'b', 'up'), 15).filter(x => sameTarget(x.target, A)).map(x => x.id)).toEqual(['a', 'c', 'b']);
+  });
+
+  it('skips clips it does not overlap, so every move changes what is drawn; with none to pass, nothing changes', () => {
+    // low [0, 50) and top [0, 50) overlap; mid [60, 90) overlaps neither
+    const doc: EffectDoc = {
+      version: 2,
+      clips: [clip({id: 'low', row: 0, start: 0, end: 50}), clip({id: 'mid', row: 1, start: 60, end: 90}), clip({id: 'top', row: 2, start: 0, end: 50})],
+    };
+    expect(overlapNeighbour(doc, 'top', 'down')?.id).toBe('low');
+    expect(rows(reorderClip(doc, 'top', 'down'))).toEqual({top: 0, low: 1, mid: 2}); // past mid and low; mid keeps its place above low
+    expect(rows(reorderClip(doc, 'low', 'up'))).toEqual({mid: 0, top: 1, low: 2});
+    expect(activeClips(reorderClip(doc, 'top', 'down'), 10).map(c => c.id)).toEqual(['top', 'low']);
+    expect(overlapNeighbour(doc, 'mid', 'up')).toBeNull();
+    expect(reorderClip(doc, 'mid', 'up')).toBe(doc);
+    expect(reorderClip(doc, 'mid', 'down')).toBe(doc);
+    expect(overlapNeighbour(doc, 'nope', 'up')).toBeNull();
   });
 
   it('keeps rows dense: gaps (after a removal) and shared rows (after a split) become 0..n-1', () => {
     const gappy: EffectDoc = {version: 2, clips: [clip({id: 'a', row: 0}), clip({id: 'b', row: 4}), clip({id: 'c', row: 7})]};
     expect(rows(reorderClip(gappy, 'a', 'up'))).toEqual({a: 1, b: 0, c: 2});
+    // after a split the parts share a row; the clip over both moves under the one it overlaps
     const split = splitClip({version: 2, clips: [clip({id: 'top', row: 1, start: 0, end: 100}), clip({id: 'c'})]}, 'c', 15, 'r');
-    expect(stackOf(split, A).map(c => c.id)).toEqual(['c', 'r', 'top']);
-    expect(rows(reorderClip(split, 'r', 'up'))).toEqual({top: 1, c: 0, r: 2});
+    expect(rows(reorderClip(split, 'top', 'down'))).toEqual({top: 1, c: 0, r: 2});
+    expect(rows(reorderClip(split, 'c', 'up'))).toEqual({top: 1, c: 2, r: 0});
   });
 });
 

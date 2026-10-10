@@ -28,8 +28,8 @@ import {
   OVERLAY,
   clipToEdit,
   normalizeParams,
+  overlapNeighbour,
   sameTarget,
-  stackOf,
   withStyle,
 } from '~/state/effectClips';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
@@ -147,8 +147,7 @@ function ClipSettings({clip, session, layerColor, title}: {clip: EffectClip; ses
   const styled = spec == null ? clip.params : withStyle(clip.effect, normalizeParams(clip.effect, {}), style);
   const atStyle = JSON.stringify(styled) === JSON.stringify(clip.params);
   const canSplit = clip.start < session.frame && session.frame < clip.end;
-  const stack = session.effectDoc == null ? [clip] : stackOf(session.effectDoc, clip.target);
-  const place = stack.findIndex(c => c.id === clip.id);
+  const passes = (direction: 'up' | 'down') => session.effectDoc != null && overlapNeighbour(session.effectDoc, clip.id, direction) != null;
   const control = (key: string, p: ParamSpec) => {
     const id = `fx-${clip.id}-${key}`;
     if (p.kind === 'choice') {
@@ -209,26 +208,25 @@ function ClipSettings({clip, session, layerColor, title}: {clip: EffectClip; ses
             className="link-button"
             disabled={!canSplit}
             aria-label="Split at playhead"
-            aria-keyshortcuts="S"
             onClick={() => session.splitClip(clip.id)}
-            title={canSplit ? 'Split this clip in two at the playhead (S)' : 'Put the playhead inside this clip, past its first frame, to split it (S)'}>
+            title={canSplit ? 'Split this clip in two at the playhead (S in the timeline)' : 'Put the playhead inside this clip, past its first frame, to split it'}>
             <Cut size={14} /> Split
           </button>
-          <button className="link-button" aria-keyshortcuts="D" onClick={() => session.duplicateClip(clip.id)} title="Copy this clip right after it, its animation from the start (D)">
+          <button className="link-button" onClick={() => session.duplicateClip(clip.id)} title="Copy this clip right after it, its animation from the start (D in the timeline)">
             <Copy size={14} /> Duplicate
           </button>
           <button
             className="link-button"
-            disabled={place >= stack.length - 1}
+            disabled={!passes('up')}
             onClick={() => session.reorderClip(clip.id, 'up')}
-            title="Draw this clip over the next one up this layer's stack (Alt+Up on the clip in the timeline)">
+            title="Draw this clip over the next clip above it on its frames (Alt+Up on the clip in the timeline)">
             <BringForward size={14} /> Move up
           </button>
           <button
             className="link-button"
-            disabled={place <= 0}
+            disabled={!passes('down')}
             onClick={() => session.reorderClip(clip.id, 'down')}
-            title="Draw this clip under the next one down this layer's stack (Alt+Down on the clip in the timeline)">
+            title="Draw this clip under the next clip below it on its frames (Alt+Down on the clip in the timeline)">
             <SendBackward size={14} /> Move down
           </button>
           <button className="link-button" onClick={() => session.removeClip(clip.id)} title="Remove this clip (Delete in the timeline)">

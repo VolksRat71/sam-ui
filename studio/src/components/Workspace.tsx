@@ -86,13 +86,6 @@ export default function Workspace({video, renderMedia}: Props) {
           session.stepReview(e.key === '.' ? 1 : -1);
           return;
         }
-        // S splits the selected effect clip at the playhead, D duplicates it
-        if ((e.key === 's' || e.key === 'd') && session.selectedClipId != null && !e.repeat) {
-          e.preventDefault();
-          if (e.key === 's') session.splitClip(session.selectedClipId);
-          else session.duplicateClip(session.selectedClipId);
-          return;
-        }
         if ((e.key === 'y' || e.key === 'Y') && session.currentStop != null && !e.repeat) {
           e.preventDefault();
           session.markReviewed(session.currentStop, true, true);

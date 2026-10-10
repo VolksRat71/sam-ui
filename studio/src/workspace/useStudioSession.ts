@@ -1341,7 +1341,7 @@ export default function useStudioSession(video: VideoItem) {
     },
     [editDoc, meta.numFrames],
   );
-  /** Move a clip one place up (drawn over) or down its layer's stack. */
+  /** Move a clip up (drawn over) or down its layer's stack, past the nearest clip it overlaps. */
   const reorderClip = useCallback(
     (id: string, direction: 'up' | 'down') => {
       const d = docRef.current;
@@ -1349,10 +1349,9 @@ export default function useStudioSession(video: VideoItem) {
       if (d == null || c == null) {
         return;
       }
-      const stack = clips.stackOf(d, c.target);
-      const other = stack[stack.indexOf(c) + (direction === 'up' ? 1 : -1)];
+      const other = clips.overlapNeighbour(d, id, direction);
       if (other == null) {
-        setClipNote(`${clipTitle(c)} is already at the ${direction === 'up' ? 'top' : 'bottom'} of the stack.`);
+        setClipNote(`${clipTitle(c)} not moved: no clip ${direction === 'up' ? 'over' : 'under'} it on its frames.`);
         return;
       }
       editDoc(doc => clips.reorderClip(doc, id, direction), ownStep());

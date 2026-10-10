@@ -7,9 +7,9 @@
 // body to move, either end to trim, snapping to whole frames. From the
 // keyboard: Left / Right go to the previous / next clip, Alt Left / Right
 // move it a frame (Shift: ten), Alt [ / Alt ] trim its start / end to the
-// playhead (After Effects' keys), Alt Up / Down move it up / down its layer's
-// stack, Delete removes it, Enter opens its settings, Escape drops the
-// selection (S and D, split and duplicate, are the window's). One Tab stop per band.
+// playhead (After Effects' keys), Alt Up / Down draw it over / under the next
+// clip it overlaps, Delete removes it, Enter opens its settings, Escape drops
+// the selection (S and D, split and duplicate, are the timeline's). One Tab stop per band.
 import {useRef, type CSSProperties, type KeyboardEvent, type PointerEvent} from 'react';
 import {type EffectClip, clipLines} from '~/state/effectClips';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
@@ -128,7 +128,7 @@ export default function EffectClipBand({clips, name, session, pos}: Props) {
             aria-pressed={selected}
             aria-label={`${name}: ${label}`}
             aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight Alt+BracketLeft Alt+BracketRight Alt+ArrowUp Alt+ArrowDown S D Delete Enter"
-            title={`${label}. Drag to move, drag an end to trim; Alt+Left / Right move a frame, Alt+[ / Alt+] trim to the playhead, Alt+Up / Down change the stack order, S splits at the playhead, D duplicates`}
+            title={`${label}. Drag to move, drag an end to trim; Alt+Left / Right move a frame, Alt+[ / Alt+] trim to the playhead, Alt+Up / Down draw it over / under the next clip it overlaps, S splits at the playhead, D duplicates`}
             style={{left, width: Math.max(8, pos(c.end - 1) - left), top: `calc(${line.get(c.id) ?? 0} * var(--fx-line))`}}
             // the layer row is draggable (reorder): a native drag from here would cancel this pointer
             onMouseDown={e => e.preventDefault()}
