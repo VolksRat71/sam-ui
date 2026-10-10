@@ -23,6 +23,7 @@ export default function Fixture() {
     flags: {}, tracklets: new Map(), disagreement: new Map(), review: null, currentStop: null,
     seek: setFrame, selectObject: (id: number) => { calls.push(['select', id]); select(id); },
     markAbsentUntilNextSeed: record('absent'), objectColors: {}, textSupport: {ok: false, why: 'Fixture'},
+    effectDoc: {version: 2, clips: []}, selectedClipId: null,
   }, {get: (target, key) => key in target ? target[key] : record(String(key))});
   return <>
     <div style={{padding: 12, display: 'flex', gap: 8, flexWrap: 'wrap'}}>
