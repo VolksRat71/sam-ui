@@ -18,6 +18,7 @@ import type {EffectParams} from '@/common/components/video/effects/Effect';
 import * as clips from '~/state/effectClips';
 import type {EffectClip, EffectDoc, EffectTarget, UntouchedMode} from '~/state/effectClips';
 import * as journals from '~/state/editJournal';
+import {clipTitle} from '~/components/effectPresentation';
 import {parseObjectColors} from '~/state/objectColors';
 import {isOffline} from '~/lib/mode';
 import {webGpuAvailable} from '~/lib/webgpu';
@@ -1296,6 +1297,69 @@ export default function useStudioSession(video: VideoItem) {
     },
     [editDoc],
   );
+  // what the last split, duplicate or reorder did, for a live region: no frame numbers, so playback never re-announces it
+  const [clipNote, setClipNote] = useState('');
+  useEffect(() => {
+    if (clipNote !== '') {
+      const timer = setTimeout(() => setClipNote(''), 6000);
+      return () => clearTimeout(timer);
+    }
+  }, [clipNote]);
+  /** Split a clip at the playhead (its animation runs on unbroken) and select the part from the playhead on. */
+  const splitClip = useCallback(
+    (id: string) => {
+      const d = docRef.current;
+      const c = d?.clips.find(x => x.id === id);
+      if (d == null || c == null) {
+        return;
+      }
+      if (frame <= c.start || frame >= c.end) {
+        setClipNote(`${clipTitle(c)} not split: put the playhead inside the clip, past its first frame.`);
+        return;
+      }
+      const newId = clips.newClipId(d);
+      editDoc(doc => clips.splitClip(doc, id, frame, newId), ownStep());
+      setSelectedClipId(newId);
+      setClipNote(`${clipTitle(c)} split in two at the playhead. The second part is selected.`);
+    },
+    [editDoc, frame],
+  );
+  /** Copy a clip (its animation from the start) right after it, or on top of it with no room there, and select the copy. */
+  const duplicateClip = useCallback(
+    (id: string) => {
+      const d = docRef.current;
+      const c = d?.clips.find(x => x.id === id);
+      if (d == null || c == null) {
+        return;
+      }
+      const newId = clips.newClipId(d);
+      const next = clips.duplicateClip(d, id, newId, meta.numFrames);
+      editDoc(() => next, ownStep());
+      setSelectedClipId(newId);
+      const after = next.clips.find(x => x.id === newId)?.start === c.end;
+      setClipNote(`${clipTitle(c)} duplicated ${after ? 'right after the original' : 'on top of the original'}. The copy is selected.`);
+    },
+    [editDoc, meta.numFrames],
+  );
+  /** Move a clip one place up (drawn over) or down its layer's stack. */
+  const reorderClip = useCallback(
+    (id: string, direction: 'up' | 'down') => {
+      const d = docRef.current;
+      const c = d?.clips.find(x => x.id === id);
+      if (d == null || c == null) {
+        return;
+      }
+      const stack = clips.stackOf(d, c.target);
+      const other = stack[stack.indexOf(c) + (direction === 'up' ? 1 : -1)];
+      if (other == null) {
+        setClipNote(`${clipTitle(c)} is already at the ${direction === 'up' ? 'top' : 'bottom'} of the stack.`);
+        return;
+      }
+      editDoc(doc => clips.reorderClip(doc, id, direction), ownStep());
+      setClipNote(`${clipTitle(c)} moved ${direction}: now drawn ${direction === 'up' ? 'over' : 'under'} ${clipTitle(other)}.`);
+    },
+    [editDoc],
+  );
 
   /**
    * The one-click effect buttons, on clips: give `target` the effect `name`
@@ -2035,6 +2099,11 @@ export default function useStudioSession(video: VideoItem) {
     moveClip,
     trimClip,
     removeClip,
+    splitClip,
+    duplicateClip,
+    reorderClip,
+    /** What the last split, duplicate or reorder did (or why it did nothing), for a live region; cleared after a few seconds. */
+    clipNote,
     stepEdits,
     objectColors,
     setObjectColor,

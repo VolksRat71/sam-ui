@@ -18,7 +18,7 @@ import {
 } from '@/common/components/effects/EffectsUtils';
 import type {EffectParams} from '@/common/components/video/effects/Effect';
 import {EFFECT_SPECS, type ParamSpec, styleIndex} from '@/common/components/video/effects/EffectParamSpecs';
-import {Add, ChevronDown, ChevronRight, Reset, TrashCan} from '@carbon/icons-react';
+import {Add, BringForward, ChevronDown, ChevronRight, Copy, Cut, Reset, SendBackward, TrashCan} from '@carbon/icons-react';
 import {useEffect, useState, type ReactNode} from 'react';
 import {readJson, writeJson} from '~/lib/storage';
 import {
@@ -29,6 +29,7 @@ import {
   clipToEdit,
   normalizeParams,
   sameTarget,
+  stackOf,
   withStyle,
 } from '~/state/effectClips';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
@@ -145,6 +146,9 @@ function ClipSettings({clip, session, layerColor, title}: {clip: EffectClip; ses
   const style = String(clip.params.style ?? '');
   const styled = spec == null ? clip.params : withStyle(clip.effect, normalizeParams(clip.effect, {}), style);
   const atStyle = JSON.stringify(styled) === JSON.stringify(clip.params);
+  const canSplit = clip.start < session.frame && session.frame < clip.end;
+  const stack = session.effectDoc == null ? [clip] : stackOf(session.effectDoc, clip.target);
+  const place = stack.findIndex(c => c.id === clip.id);
   const control = (key: string, p: ParamSpec) => {
     const id = `fx-${clip.id}-${key}`;
     if (p.kind === 'choice') {
@@ -200,9 +204,37 @@ function ClipSettings({clip, session, layerColor, title}: {clip: EffectClip; ses
     <div className="fx-settings" role="group" aria-label={`${title} settings`}>
       <div className="fx-settings-head">
         <strong>{title}</strong>
-        <button className="link-button" onClick={() => session.removeClip(clip.id)} title="Remove this clip (Delete in the timeline)">
-          <TrashCan size={14} /> Remove clip
-        </button>
+        <div className="fx-clip-actions">
+          <button
+            className="link-button"
+            disabled={!canSplit}
+            aria-label="Split at playhead"
+            aria-keyshortcuts="S"
+            onClick={() => session.splitClip(clip.id)}
+            title={canSplit ? 'Split this clip in two at the playhead (S)' : 'Put the playhead inside this clip, past its first frame, to split it (S)'}>
+            <Cut size={14} /> Split
+          </button>
+          <button className="link-button" aria-keyshortcuts="D" onClick={() => session.duplicateClip(clip.id)} title="Copy this clip right after it, its animation from the start (D)">
+            <Copy size={14} /> Duplicate
+          </button>
+          <button
+            className="link-button"
+            disabled={place >= stack.length - 1}
+            onClick={() => session.reorderClip(clip.id, 'up')}
+            title="Draw this clip over the next one up this layer's stack (Alt+Up on the clip in the timeline)">
+            <BringForward size={14} /> Move up
+          </button>
+          <button
+            className="link-button"
+            disabled={place <= 0}
+            onClick={() => session.reorderClip(clip.id, 'down')}
+            title="Draw this clip under the next one down this layer's stack (Alt+Down on the clip in the timeline)">
+            <SendBackward size={14} /> Move down
+          </button>
+          <button className="link-button" onClick={() => session.removeClip(clip.id)} title="Remove this clip (Delete in the timeline)">
+            <TrashCan size={14} /> Remove clip
+          </button>
+        </div>
       </div>
       <div className="fx-param">
         <span className="fx-param-label" id={`fx-${clip.id}-range`}>Frames</span>

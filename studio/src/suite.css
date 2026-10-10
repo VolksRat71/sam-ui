@@ -314,7 +314,8 @@ body:has(.app > .toast) .agent-toast { bottom: 72px; }
 .fx-command .button { flex: none; display: inline-flex; align-items: center; gap: 4px; }
 .fx-command .button[aria-pressed='true'] { border-color: var(--primary); }
 .fx-settings { display: grid; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
-.fx-settings-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: var(--type-label); }
+.fx-settings-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; font-size: var(--type-label); }
+.fx-clip-actions { display: flex; flex-wrap: wrap; gap: 4px 12px; }
 .fx-param { display: grid; grid-template-columns: 72px minmax(0, 1fr); align-items: center; gap: 8px; font-size: var(--type-label); }
 .fx-param-label { color: var(--text-muted); }
 .fx-number { display: grid; grid-template-columns: minmax(0, 1fr) 76px; align-items: center; gap: 8px; }
