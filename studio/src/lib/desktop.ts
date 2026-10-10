@@ -125,7 +125,18 @@ export type AgentBridge = {
   onChanged(cb: (change: unknown) => void): () => void;
   /** sam_studio goto: cb answers whether studio moved. Not trusted: see asAgentGoto. Absent before #73's goto. */
   onGoto?(cb: (request: unknown) => GotoAnswer): () => void;
+  /**
+   * sam_track start on the open video: studio runs the job as its own, so it
+   * draws on the lanes, and answers through `reply`. Not trusted: see asAgentTrack.
+   */
+  onTrack?(cb: (request: unknown, reply: (msg: AgentTrackReply) => void) => void): () => void;
 };
+
+export type AgentTrack = {videoId: string; objectIds: number[] | null; engine: string | null};
+export type AgentTrackReply =
+  | {stage: 'started'; job_id: string | null; objects: number[]; bounded: number[]}
+  | {stage: 'refused'; error: string}
+  | {stage: 'done'; result: {done: boolean; tracked: number[]; failed: Record<string, string>; error?: string}};
 
 export type GotoAnswer = {moved: true} | {moved: false; reason: string};
 export type AgentGoto = {videoId: string; frame: number | null; objectId: number | null};
@@ -203,6 +214,19 @@ export function asAgentGoto(x: unknown): AgentGoto | null {
   const objectId = optNat(rawObject);
   const ok = typeof videoId === 'string' && videoId.length > 0 && frame !== undefined && objectId !== undefined && (frame != null || objectId != null);
   return ok ? {videoId, frame, objectId} : null;
+}
+
+/** A track request as main sends it ({video_id, object_ids, engine}), or null for anything malformed. */
+export function asAgentTrack(x: unknown): AgentTrack | null {
+  if (x == null || typeof x !== 'object' || Array.isArray(x)) {
+    return null;
+  }
+  const {video_id: videoId, object_ids: ids, engine} = x as Record<string, unknown>;
+  const ok =
+    typeof videoId === 'string' && videoId.length > 0 &&
+    (ids == null || (Array.isArray(ids) && ids.length <= 1000 && ids.every(isNat))) &&
+    (engine == null || (typeof engine === 'string' && /^[a-z0-9_-]{1,32}$/.test(engine)));
+  return ok ? {videoId, objectIds: ids == null ? null : [...(ids as number[])], engine: (engine as string | null | undefined) ?? null} : null;
 }
 
 /** A clicked notification's engine and object ids, or null for anything else. */

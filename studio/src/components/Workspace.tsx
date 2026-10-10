@@ -126,6 +126,7 @@ export default function Workspace({video, renderMedia}: Props) {
           {jobs.map(job => (
             <span key={job.key} className="job-chip">
               <span className="spinner small" />
+              {job.jobId != null && session.agentJobIds.has(job.jobId) ? 'Agent: ' : ''}
               {job.canceling ? 'Cancelling' : 'Tracking'} {job.ids.map(nameOf).join(', ')}
               <span className="engine-tag">{engineLabel(job.engine)}</span>
               {job.bounded.length > 0 && (

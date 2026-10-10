@@ -53,6 +53,13 @@ contextBridge.exposeInMainWorld('samUiDesktop', {
       ipcRenderer.on('agent:goto', listener);
       return () => ipcRenderer.removeListener('agent:goto', listener);
     },
+    // sam_track start on studio's video: studio runs the job as its own, and
+    // tells main through reply ({stage: started | refused | done, ...})
+    onTrack: cb => {
+      const listener = (_e, req) => cb(req, msg => ipcRenderer.send('agent:track-reply', {...msg, id: req?.id}));
+      ipcRenderer.on('agent:track', listener);
+      return () => ipcRenderer.removeListener('agent:track', listener);
+    },
   },
   setupSam3: () => ipcRenderer.send('app:setup-sam3'),
   ae: {

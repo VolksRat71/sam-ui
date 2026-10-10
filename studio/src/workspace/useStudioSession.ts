@@ -11,7 +11,7 @@ import type {
 } from '@/common/components/video/VideoWorkerBridge';
 import {useCallback, useEffect, useMemo, useReducer, useRef, useState} from 'react';
 import StudioBridge from '~/bridge/StudioBridge';
-import {type AgentChange, agentBridge, asAgentChange, asAgentGoto, asJobOpen, jobsBridge} from '~/lib/desktop';
+import {type AgentChange, type AgentTrackReply, agentBridge, asAgentChange, asAgentGoto, asAgentTrack, asJobOpen, jobsBridge} from '~/lib/desktop';
 import {type AgentEntry, appendActivity, viewReport} from '~/state/agentActivity';
 import {explainGraphQLError} from '~/lib/errors';
 import {
@@ -78,6 +78,7 @@ import {
   normalizeRanges,
   paintTimeline,
 } from '~/state/ranges';
+import type {JobOutcome} from '~/api/trackStream';
 import type {DiscoverTextResult, EngineInfo, RunningJob, TextPromptResult, TrackletSummary} from '~/worker/protocol';
 
 // how long after this page's own job ends the follow path keeps quiet about its objects
@@ -128,6 +129,17 @@ function queueIndex(q: ReadonlyArray<QueueEntry>, at: {objectId: number; frame: 
 }
 
 export type SessionStatus = 'starting' | 'ready' | 'failed';
+
+/**
+ * A track run for someone else (an agent, issue #73): exactly these ids (not
+ * only the dirty ones), on this engine, and who hears the job id once the
+ * backend gave it.
+ */
+type TrackOptions = {
+  ids?: number[];
+  engine?: string;
+  onStarted?: (job: {jobId: string | null; selected: number[]; bounded: number[]}) => void;
+};
 
 export type Metadata = {numFrames: number; fps: number; width: number; height: number; decoded: boolean};
 
@@ -216,6 +228,8 @@ export default function useStudioSession(video: VideoItem) {
   frameRef.current = frame;
   const queue = useRef<Promise<unknown>>(Promise.resolve());
   const nextJobKey = useRef(1);
+  /** A job's key -> who waits for its job id (an agent's track, which studio runs). */
+  const startedWaits = useRef(new Map<number, NonNullable<TrackOptions['onStarted']>>());
   const sessionIdRef = useRef<string | null>(null);
 
   // A reload or a closed tab never unmounts the Workspace, so its session
@@ -272,6 +286,8 @@ export default function useStudioSession(video: VideoItem) {
           setTracklets(new Map(event.tracklets.map(t => [t.id, t])));
           break;
         case 'jobStarted':
+          startedWaits.current.get(event.key)?.({jobId: event.jobId, selected: event.selected, bounded: event.bounded ?? []});
+          startedWaits.current.delete(event.key);
           dispatch({
             type: 'trackAttached',
             key: event.key,
@@ -699,17 +715,20 @@ export default function useStudioSession(video: VideoItem) {
    * Start a job for the dirty objects (`pick`: of them, the ones it keeps).
    * Jobs already running keep theirs.
    */
-  const runTrack = useCallback(async (pick: (ids: number[]) => number[] = ids => ids) => {
+  const runTrack = useCallback(async (pick: (ids: number[]) => number[] = ids => ids, opts: TrackOptions = {}): Promise<JobOutcome | null> => {
     if (bridge == null) {
-      return;
+      return null;
     }
     await queue.current; // clicks first
-    const ids = pick(dirtyIds(stateRef.current));
+    const ids = opts.ids ?? pick(dirtyIds(stateRef.current));
     if (ids.length === 0) {
-      return;
+      return null;
     }
     const key = nextJobKey.current++;
-    const engine = stateRef.current.engine;
+    const engine = opts.engine ?? stateRef.current.engine;
+    if (opts.onStarted != null) {
+      startedWaits.current.set(key, opts.onStarted);
+    }
     ids.forEach(id => toldHere.current.delete(id));
     dispatch({type: 'trackStarted', key, ids, engine});
     // the first SAM 3 job loads its model (about 30 s): show that it is loading
@@ -724,8 +743,10 @@ export default function useStudioSession(video: VideoItem) {
         tellJobDone(held, ok, engine);
       }
     };
+    let result: JobOutcome;
     try {
       const {outcome} = await bridge.call('track', {objectIds: ids, key, engine});
+      result = outcome;
       setEngines(list => list.map(e => (e.name === engine ? {...e, loaded: outcome.ok || e.loaded, loading: false} : e)));
       tell(outcome.ok && Object.keys(outcome.failed).length === 0); // one object failing is a failed job
       if (outcome.ok) {
@@ -734,10 +755,13 @@ export default function useStudioSession(video: VideoItem) {
         dispatch({type: 'trackFailed', key, error: outcome.error});
       }
     } catch (error) {
+      result = {ok: false, error: message(error), objects: ids};
       tell(false);
       dispatch({type: 'trackFailed', key, error: message(error)});
     }
+    startedWaits.current.delete(key);
     await sync().catch(error => setWarning(message(error)));
+    return result;
   }, [bridge, sync, tellJobDone]);
 
   /** Start a job for the dirty objects. Jobs already running keep theirs. */
@@ -1600,6 +1624,58 @@ export default function useStudioSession(video: VideoItem) {
         return {moved: true};
       }),
     [agent, video.path, status, goToAgentChange],
+  );
+
+  // sam_track start on this video: studio runs the job through runTrack, its
+  // own path, so the lanes fill and the states move as for the person's own
+  // tracks. Main hears the job id once the backend gives it, then the outcome.
+  const agentTracks = useRef(new Set<(msg: AgentTrackReply) => void>()); // replies still owed a 'done'
+  useEffect(
+    () =>
+      agent?.onTrack?.((raw, reply) => {
+        const r = asAgentTrack(raw);
+        if (r == null || r.videoId !== video.path || status !== 'ready') {
+          reply({stage: 'refused', error: 'studio is not on that video'});
+          return;
+        }
+        if (r.engine === BROWSER_ENGINE) {
+          reply({stage: 'refused', error: `${engineLabel(BROWSER_ENGINE)} runs in the person's browser only`});
+          return;
+        }
+        let started = false;
+        agentTracks.current.add(reply);
+        void runTrack(undefined, {
+          ids: r.objectIds ?? undefined,
+          engine: r.engine ?? DEFAULT_ENGINE, // as the backend's default, whatever the person shows
+          onStarted: job => {
+            started = true;
+            reply({stage: 'started', job_id: job.jobId, objects: job.selected, bounded: job.bounded});
+          },
+        }).then(outcome => {
+          if (!agentTracks.current.delete(reply)) {
+            return; // the video closed first, and said so
+          }
+          if (!started) {
+            reply(outcome == null ? {stage: 'started', job_id: null, objects: [], bounded: []} : {stage: 'refused', error: outcome.ok ? 'tracking did not start' : outcome.error});
+            return;
+          }
+          reply({
+            stage: 'done',
+            result: outcome?.ok
+              ? {done: true, tracked: outcome.tracked, failed: Object.fromEntries(Object.entries(outcome.failed))}
+              : {done: false, tracked: [], failed: {}, error: outcome?.error ?? 'the track did not finish'},
+          });
+        });
+      }),
+    [agent, video.path, status, runTrack],
+  );
+  useEffect(
+    () => () => {
+      // the video closes, and its worker with the jobs it ran
+      agentTracks.current.forEach(reply => reply({stage: 'done', result: {done: false, tracked: [], failed: {}, error: 'the person closed this video in studio'}}));
+      agentTracks.current.clear();
+    },
+    [],
   );
 
   // the person's view, for sam_studio state: at once on any change but the

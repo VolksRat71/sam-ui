@@ -15,7 +15,7 @@ const net = require('node:net');
 const {test, before, after} = require('node:test');
 const {backendClient} = require('../src/ae-roto');
 const {createMcpServer, loadOrCreateToken, tokenFile} = require('../src/mcp-server');
-const {closingPart, createTools, parseGotoReply, parseView} = require('../src/mcp-tools');
+const {closingPart, createTools, parseGotoReply, parseTrackReply, parseView} = require('../src/mcp-tools');
 
 const EXPORT_ROOT = '/Users/someone/Movies/sam-ui';
 const OBJECT = {
@@ -618,6 +618,50 @@ test('sam_studio goto asks studio to move and passes on its answer', async () =>
   assert.strictEqual(asked.length, 3);
   s.view = {open: false};
   assert.match((await s.call('sam_studio', {command: 'goto', frame: 0})).content[0].text, /no video open/);
+});
+
+test('a track on studio\'s session is run by studio, and wait follows it', async () => {
+  const events = [];
+  let end;
+  let answer = () => ({job_id: 'job-9', objects: [1], bounded: [], done: new Promise(r => (end = r))});
+  const asked = [];
+  const view = VIEW;
+  const tools = createTools({backend: backendClient({port: fake.address().port}), onChange: e => events.push(e), now: () => 1000,
+    studio: {view: () => parseView(view), track: async req => (asked.push(req), answer())}});
+  const before = seen.length;
+  const start = textOf(await tools.callTool('sam_track', {command: 'start', session_id: 'studio-1', object_ids: [1]}));
+  assert.deepStrictEqual(start, {job_id: 'job-9', objects: [1], bounded: []});
+  assert.deepStrictEqual(asked, [{video_id: 'gallery/01_dog.mp4', object_ids: [1], engine: null}]);
+  assert.ok(!seen.slice(before).some(s => s.url === '/track_objects')); // studio holds the stream, not the tools
+  assert.deepStrictEqual(events.map(e => e.kind), ['track_start']);
+  setTimeout(() => end({done: true, tracked: [1], failed: {}}), 30);
+  const done = textOf(await tools.callTool('sam_track', {command: 'wait', session_id: 'studio-1', job_id: 'job-9', timeout_s: 5}));
+  assert.deepStrictEqual(done, {job_id: 'job-9', state: 'done', objects: [1], tracked: [1], failed: {}});
+  assert.deepStrictEqual(events.map(e => e.kind), ['track_start', 'track_done']);
+  answer = () => ({error: 'unknown engine'});
+  const refused = await tools.callTool('sam_track', {command: 'start', session_id: 'studio-1'});
+  assert.match(refused.content[0].text, /^Tracking was refused: unknown engine/);
+  answer = () => ({job_id: null, objects: [], bounded: []});
+  assert.deepStrictEqual(textOf(await tools.callTool('sam_track', {command: 'start', session_id: 'studio-1'})), {job_id: null, objects: [], bounded: []});
+  answer = () => null; // studio could not: the tools read the stream as before
+  assert.strictEqual(textOf(await tools.callTool('sam_track', {command: 'start', session_id: 'studio-1'})).job_id, 'job-1');
+  assert.ok(seen.slice(before).some(s => s.url === '/track_objects'));
+  tools.close();
+});
+
+test('parseTrackReply takes studio\'s three words and nothing else', () => {
+  assert.deepStrictEqual(parseTrackReply({id: 1, stage: 'started', job_id: 'job-3', objects: [1], bounded: []}),
+    {stage: 'started', job_id: 'job-3', objects: [1], bounded: []});
+  assert.deepStrictEqual(parseTrackReply({stage: 'started', job_id: null, objects: [], bounded: []}).job_id, null);
+  assert.deepStrictEqual(parseTrackReply({stage: 'refused', error: 'busy'}), {stage: 'refused', error: 'busy'});
+  assert.deepStrictEqual(parseTrackReply({stage: 'done', result: {done: true, tracked: [1], failed: {2: 'no clicks'}}}),
+    {stage: 'done', result: {done: true, tracked: [1], failed: {2: 'no clicks'}}});
+  assert.deepStrictEqual(parseTrackReply({stage: 'done', result: {done: false, error: 'canceled'}}).result,
+    {done: false, tracked: [], failed: {}, error: 'canceled'});
+  for (const bad of [null, {stage: 'started', job_id: '../x', objects: [], bounded: []}, {stage: 'started', job_id: 'j', objects: [-1], bounded: []},
+    {stage: 'done', result: {done: 'yes'}}, {stage: 'other'}]) {
+    assert.strictEqual(parseTrackReply(bad), null, JSON.stringify(bad));
+  }
 });
 
 test('parseGotoReply keeps a short plain reason only', () => {

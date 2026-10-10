@@ -28,7 +28,7 @@ const roto = require('./ae-roto');
 const {downloadRepo, downloadVerified} = require('./hf-download');
 const {createJobNotifier, notifyEnabled} = require('./job-notify');
 const {DEFAULT_PORT, claudeAddCommand, createMcpServer} = require('./mcp-server');
-const {parseView} = require('./mcp-tools');
+const {parseTrackReply, parseView} = require('./mcp-tools');
 const {autoCheckEnabled, createUpdateChecker, fileLogger, fileStore, releasePageUrl} = require('./update-check');
 
 const CHECKPOINT_URL = 'https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_large.pt';
@@ -260,7 +260,40 @@ const studio = {
       });
       mainWindow.webContents.send('agent:goto', {id, ...req});
     }),
+  // sam_track start on studio's session: studio runs the job itself, so it draws on
+  // the person's lanes as their own tracks do. Null (no window, no answer in 30 s)
+  // lets the tools read the stream themselves.
+  // ponytail: a studio that answers after the 30 s still starts its job, beside the tools' own
+  track: req =>
+    new Promise(resolve => {
+      if (mainWindow == null || mainWindow.isDestroyed()) return resolve(null);
+      const id = ++trackSeq;
+      let ended;
+      const done = new Promise(r => (ended = r));
+      const timer = setTimeout(() => {
+        trackWaits.delete(id);
+        resolve(null);
+      }, 30000);
+      trackWaits.set(id, {
+        started: reply => {
+          clearTimeout(timer);
+          resolve(reply == null ? null : reply.error != null ? {error: reply.error} : {...reply, done});
+        },
+        ended,
+      });
+      mainWindow.webContents.send('agent:track', {id, ...req});
+    }),
 };
+let trackSeq = 0;
+const trackWaits = new Map(); // id -> {started(reply), ended(result)}
+/** The window reloaded or crashed: its jobs went with it. */
+function dropStudioJobs() {
+  for (const w of trackWaits.values()) {
+    w.started(null);
+    w.ended({done: false, error: 'studio closed the video'});
+  }
+  trackWaits.clear();
+}
 function tellStudio(change) {
   if (mcp != null && mainWindow != null && !mainWindow.isDestroyed()) mainWindow.webContents.send('agent:changed', change);
 }
@@ -419,9 +452,15 @@ async function main() {
   mainWindow.webContents.session.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
   // a reload or a crash leaves no view behind: the new page reports its own
   mainWindow.webContents.on('did-start-navigation', details => {
-    if (details.isMainFrame && !details.isSameDocument) studioView = null;
+    if (details.isMainFrame && !details.isSameDocument) {
+      studioView = null;
+      dropStudioJobs();
+    }
   });
-  mainWindow.webContents.on('render-process-gone', () => (studioView = null));
+  mainWindow.webContents.on('render-process-gone', () => {
+    studioView = null;
+    dropStudioJobs();
+  });
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
     if (!splashWin.isDestroyed()) splashWin.close();
@@ -530,6 +569,18 @@ ipcMain.on('agent:goto-done', (event, reply) => {
   if (done == null) return;
   gotoWaits.delete(reply.id);
   done(reply.result);
+});
+// studio's word on a job it runs for an agent: started (or refused), then done
+ipcMain.on('agent:track-reply', (event, msg) => {
+  const w = isMainWindow(event) && Number.isInteger(msg?.id) ? trackWaits.get(msg.id) : undefined;
+  const reply = w != null ? parseTrackReply(msg) : null;
+  if (reply == null) return;
+  if (reply.stage === 'started') w.started({job_id: reply.job_id, objects: reply.objects, bounded: reply.bounded});
+  if (reply.stage === 'refused') w.started({error: reply.error});
+  if (reply.stage === 'done' || reply.stage === 'refused' || reply.job_id == null) {
+    w.ended(reply.result ?? {done: false, error: reply.error ?? 'nothing to track'});
+    trackWaits.delete(msg.id);
+  }
 });
 
 // -- SAM 3 download --------------------------------------------------------

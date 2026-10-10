@@ -1,6 +1,6 @@
 // sam-ui (Apache-2.0). New file, not from SAM 2.
 import {afterEach, describe, expect, it} from 'vitest';
-import {agentBridge, asAgentChange, asAgentGoto} from './desktop';
+import {agentBridge, asAgentChange, asAgentGoto, asAgentTrack} from './desktop';
 
 describe('agentBridge', () => {
   const g = globalThis as {samUiDesktop?: unknown};
@@ -29,6 +29,16 @@ describe('asAgentGoto', () => {
     expect(asAgentGoto({video_id: 'v.mp4', frame: null, object_id: 2})).toEqual({videoId: 'v.mp4', frame: null, objectId: 2});
     for (const bad of [null, [], {video_id: 'v.mp4'}, {video_id: '', frame: 1}, {video_id: 'v.mp4', frame: -1}, {video_id: 'v.mp4', object_id: '2'}]) {
       expect(asAgentGoto(bad), JSON.stringify(bad)).toBeNull();
+    }
+  });
+});
+
+describe('asAgentTrack', () => {
+  it('reads ids or none, and an engine or none', () => {
+    expect(asAgentTrack({id: 2, video_id: 'v.mp4', object_ids: [0, 3], engine: 'sam3'})).toEqual({videoId: 'v.mp4', objectIds: [0, 3], engine: 'sam3'});
+    expect(asAgentTrack({video_id: 'v.mp4', object_ids: null, engine: null})).toEqual({videoId: 'v.mp4', objectIds: null, engine: null});
+    for (const bad of [null, {}, {video_id: 'v.mp4', object_ids: [-1]}, {video_id: 'v.mp4', engine: 'SAM 3'}, {video_id: 'v.mp4', object_ids: '1'}]) {
+      expect(asAgentTrack(bad), JSON.stringify(bad)).toBeNull();
     }
   });
 });

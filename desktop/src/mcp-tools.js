@@ -136,6 +136,32 @@ function parseGotoReply(r) {
   return r.moved ? {moved: true} : {moved: false, reason: reason ?? 'studio did not move'};
 }
 
+const plainText = (v, most = 300) => typeof v === 'string' && v.length <= most && !/[\x00-\x08\x0b-\x1f\x7f]/.test(v);
+const natList = v => Array.isArray(v) && v.length <= LIST_LIMIT && v.every(isSafeNat);
+
+/**
+ * Studio's word on a track it runs for an agent (main.js agent:track-reply):
+ * {stage: 'started', job_id, objects, bounded} (job_id null: nothing needed
+ * tracking), {stage: 'refused', error}, or {stage: 'done', result: {done,
+ * tracked, failed, error?}}. Null for anything else.
+ */
+function parseTrackReply(m) {
+  if (!isPlain(m)) return null;
+  if (m.stage === 'started') {
+    const ok = (m.job_id === null || (typeof m.job_id === 'string' && /^[\w-]{1,128}$/.test(m.job_id))) &&
+      natList(m.objects) && natList(m.bounded);
+    return ok ? {stage: 'started', job_id: m.job_id, objects: [...m.objects], bounded: [...m.bounded]} : null;
+  }
+  if (m.stage === 'refused') return {stage: 'refused', error: plainText(m.error) ? m.error : 'studio could not start it'};
+  if (m.stage === 'done' && isPlain(m.result) && typeof m.result.done === 'boolean') {
+    const r = m.result;
+    const failed = isPlain(r.failed) && Object.entries(r.failed).every(([k, v]) => /^\d{1,9}$/.test(k) && plainText(v)) ? {...r.failed} : {};
+    return {stage: 'done', result: {done: r.done, tracked: natList(r.tracked) ? [...r.tracked] : [], failed,
+      ...(plainText(r.error) ? {error: r.error} : r.done ? {} : {error: 'the track did not finish'})}};
+  }
+  return null;
+}
+
 // -- MCP content
 
 const text = value => ({content: [{type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value, null, 1)}]});
@@ -347,8 +373,11 @@ const TOOLS = [
 /**
  * The tool table over `backend` (ae-roto.js backendClient, without a token).
  * `exportRoot` is where sam_export writes (~/Movies/sam-ui); `now` is for tests.
- * `studio` ({view(): a parseView result or null, goto(req): Promise of studio's answer}) is the desktop app's window,
- * null on its own; `onChange` hears each change an agent made (see change()).
+ * `studio` is the desktop app's window, null on its own: {view(): a parseView
+ * result or null; goto(req): a Promise of studio's answer; track(req): a Promise
+ * of {job_id, objects, bounded, done: a Promise of the result} or {error} once
+ * studio started the job itself, or null when it could not}. `onChange` hears
+ * each change an agent made (see change()).
  */
 function createTools({backend, exportRoot = path.join(os.homedir(), 'Movies', 'sam-ui'), now = Date.now,
   studio = null, onChange = () => {}} = {}) {
@@ -398,8 +427,9 @@ function createTools({backend, exportRoot = path.join(os.homedir(), 'Movies', 's
   /** Drop results older than 30 minutes, and streams silent that long (destroyed: the backend cancels their jobs). */
   function sweep() {
     for (const [id, job] of held) {
+      if (job.res == null && job.result == null) continue; // studio's job: it ends with studio
       if (now() - (job.result != null ? job.endedAt : job.lastAt) > HELD_MS) {
-        job.res.destroy();
+        job.res?.destroy();
         held.delete(id);
       }
     }
@@ -440,6 +470,17 @@ function createTools({backend, exportRoot = path.join(os.homedir(), 'Movies', 's
     if (ids) body.object_ids = ids;
     const e = engine(args);
     if (e) body.engine = e;
+    // on studio's session studio runs the job, so it draws on the person's lanes
+    // as their own tracks do (#73); a null answer (studio could not) reads it here
+    if (studioOn(sid) != null && typeof studio?.track === 'function') {
+      const r = await studio.track({video_id: videoOf(sid), object_ids: ids ?? null, engine: e ?? null});
+      if (r?.error != null) throw new ToolError(`Tracking was refused: ${r.error}`);
+      if (r != null) {
+        if (r.job_id == null) return {job_id: null, objects: [], bounded: []}; // nothing needed tracking
+        hold(sid, r.job_id, r.objects, null, r.done);
+        return {job_id: r.job_id, objects: r.objects, bounded: r.bounded};
+      }
+    }
     const res = await backend.stream('/track_objects', body);
     if (res.statusCode !== 200) {
       const chunks = [];
@@ -460,18 +501,19 @@ function createTools({backend, exportRoot = path.join(os.homedir(), 'Movies', 's
     }
     const objs = String(res.headers['objects-tracked'] ?? '').split(',').filter(Boolean).map(Number);
     const bounded = String(res.headers['objects-bounded'] ?? '').split(',').filter(Boolean).map(Number);
+    hold(sid, jobId, objs, res);
+    return {job_id: jobId, objects: objs, bounded};
+  }
+
+  /**
+   * Hold a started job for status and wait: `res` is its stream, read here,
+   * or null when studio runs the job (then `ended` is its closing result).
+   */
+  function hold(sid, jobId, objs, res, ended) {
     const job = {sessionId: sid, objects: objs, result: null, endedAt: null, lastAt: now(), res};
     const videoId = videoOf(sid); // the job's video, though studio may move off it before the end
     if (objs.length > 0) change(sid, 'track_start', objs, {job_id: jobId});
     job.done = new Promise(resolve => {
-      let tail = '';
-      res.setEncoding('latin1'); // bytes as they are; only the last part is decoded
-      res.on('data', chunk => {
-        job.lastAt = now();
-        tail += chunk;
-        const at = tail.lastIndexOf(BOUNDARY);
-        if (at > 0) tail = tail.slice(at);
-      });
       const finish = result => {
         if (job.result != null) return;
         job.result = result;
@@ -482,12 +524,23 @@ function createTools({backend, exportRoot = path.join(os.homedir(), 'Movies', 's
           change(sid, 'track_done', result.done ? (result.tracked ?? objs) : objs, {video_id: videoId, job_id: jobId, state: result.done ? 'done' : 'failed'});
         }
       };
+      if (res == null) {
+        ended.then(finish, err => finish({done: false, error: String(err?.message ?? err)}));
+        return;
+      }
+      let tail = '';
+      res.setEncoding('latin1'); // bytes as they are; only the last part is decoded
+      res.on('data', chunk => {
+        job.lastAt = now();
+        tail += chunk;
+        const at = tail.lastIndexOf(BOUNDARY);
+        if (at > 0) tail = tail.slice(at);
+      });
       res.on('end', () => finish(closingPart(tail)));
       res.on('error', err => finish({done: false, error: `the stream broke: ${err.message}`}));
       res.on('close', () => finish({done: false, error: 'the stream closed early'}));
     });
     held.set(jobId, job);
-    return {job_id: jobId, objects: objs, bounded};
   }
 
   async function jobStatus(sid, jobId) {
@@ -792,7 +845,7 @@ function createTools({backend, exportRoot = path.join(os.homedir(), 'Movies', 's
 
   /** Destroy every held stream (the backend cancels a job whose reader goes) and forget them. */
   function close() {
-    for (const job of held.values()) job.res.destroy();
+    for (const job of held.values()) job.res?.destroy(); // studio's own jobs stay studio's
     held.clear();
   }
 
@@ -813,4 +866,4 @@ function closingPart(tail) {
   return {done: false, error: 'the stream ended without a result'};
 }
 
-module.exports = {EXPORT_NAME, INSTRUCTIONS, TOOLS, closingPart, createTools, parseGotoReply, parseView};
+module.exports = {EXPORT_NAME, INSTRUCTIONS, TOOLS, closingPart, createTools, parseGotoReply, parseTrackReply, parseView};
