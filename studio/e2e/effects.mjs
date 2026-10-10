@@ -27,6 +27,13 @@
 //   B11 every background and layer tile picked in turn, then Erase: the preview
 //       matches a reloaded (fresh) worker, the export matches the preview, and
 //       Chrome logged no "Too many active WebGL contexts"
+//   S2  slice 2: S splits a Noisy clip at its middle, every checked frame (the
+//       split frame and its neighbours) pixel-identical; Duplicate puts a copy
+//       after the right part (phase 0 in the doc), drawn like a fresh Noisy clip
+//       there (no effect reads the clip clock yet, so phase shows in no pixel:
+//       the right part carried on is logged as INFO); Alt+Down and Move up swap two
+//       overlapping clips (Gradient, Erase), the one on top measured as B5 does;
+//       Cmd-Z restores each, Shift-Cmd-Z redoes it
 //   B8  from the end of tracking to here: no segmentation or tracking call
 //       reached the video worker, no job started, no job chip showed
 //   B4  frames 71-120 of A marked absent (lane actions; B's last frame first, so
@@ -520,6 +527,139 @@ await step('B11', async () => {
   const fresh = await cap('B11-2_after-reload_f101');
   check('B11', same(compare(cycled, fresh)), 'the preview after cycling matches a fresh worker drawing the same clips', compare(cycled, fresh));
   check('B11', contextLosses() - losses0 === 0, `no "Too many active WebGL contexts" while cycling and exporting (${contextLosses() - losses0})`);
+});
+
+// slice 2: split, duplicate, stack order; and Cmd-Z after each
+const note = () => page.locator('.fx-note').innerText();
+const undo = async (redo = false) => {
+  await page.keyboard.press(redo ? 'Meta+Shift+z' : 'Meta+z');
+  await page.waitForTimeout(600);
+};
+const identical = s => s.changedPct === 0;
+let parts = null;
+await step('S2', async () => {
+  await clearClips();
+  await sel(A);
+  await seekTo(60);
+  await addEffect(0, 'Noisy'); // [60, 132), selected
+  const frames = [60, 95, 96, 97, 131];
+  const whole = {};
+  for (const f of frames) {
+    await seekTo(f);
+    whole[f] = await cap(`S2-split-0_noisy-whole_f${f + 1}`);
+  }
+  const d0 = await doc();
+  await seekTo(96);
+  await page.keyboard.press('s');
+  await page.waitForTimeout(600);
+  const d1 = await doc();
+  const [l, r] = d1.clips;
+  const w = d0.clips[0];
+  const label = await page.locator('.fx-clip.selected').getAttribute('aria-label');
+  const said = await note();
+  check('S2', d1.clips.length === 2 && l.start === 60 && l.end === 96 && l.phase === 0 && r.start === 96 && r.end === 132 && r.phase === 36 && r.id !== l.id && [l, r].every(c => c.row === w.row && c.effect === 'NoisyMask' && JSON.stringify(c.params) === JSON.stringify(w.params)), `S at frame 97 splits [60, 132) into ${d1.clips.map(c => `[${c.start}, ${c.end}) phase ${c.phase}`).join(' and ')}`, d1.clips);
+  check('S2', /frames 97–132/.test(label ?? '') && /split in two/.test(said) && !/frames? \d/.test(said), `the part from the playhead is selected ("${label}"); announced without frame numbers: "${said}"`);
+  const rows = [];
+  for (const f of frames) {
+    await seekTo(f);
+    rows.push({frame: f + 1, ...compare(whole[f], await cap(`S2-split-1_split_f${f + 1}`))});
+  }
+  check('S2', rows.every(identical), `split: every checked frame pixel-identical to the whole clip (${rows.map(x => `f${x.frame} ${x.changedPct} %`).join(', ')})`, rows);
+  await undo();
+  const back = [];
+  for (const f of [95, 96]) {
+    await seekTo(f);
+    back.push(compare(whole[f], await cap(`S2-split-2_undone_f${f + 1}`)));
+  }
+  check('S2', JSON.stringify((await doc()).clips) === JSON.stringify(d0.clips) && back.every(identical), 'Cmd-Z puts the whole clip back exactly', back);
+  await undo(true);
+  check('S2', JSON.stringify((await doc()).clips) === JSON.stringify(d1.clips), 'Shift-Cmd-Z splits it again');
+  parts = d1.clips;
+});
+
+await step('S2', async () => {
+  if (parts == null) throw new Error('no split clips');
+  const [, r] = parts;
+  await seekTo(140);
+  const plain = await cap('S2-dup-0_no-clip_f141');
+  const d0 = await doc();
+  await page.locator(`.fx-clip[data-clip="${r.id}"]`).click();
+  await fx.getByRole('button', {name: 'Duplicate', exact: true}).click();
+  await page.waitForTimeout(600);
+  const d1 = await doc();
+  const copy = d1.clips.at(-1);
+  const label = await page.locator('.fx-clip.selected').getAttribute('aria-label');
+  const said = await note();
+  check('S2', d1.clips.length === 3 && copy.id !== r.id && copy.start === 132 && copy.end === 168 && copy.phase === 0 && copy.row === r.row && copy.effect === 'NoisyMask', `Duplicate puts the copy right after the original, phase 0: [${copy.start}, ${copy.end}) phase ${copy.phase} row ${copy.row}`, copy);
+  check('S2', /frames 133–168/.test(label ?? '') && /duplicated right after/.test(said) && !/frames? \d/.test(said), `the copy is selected ("${label}"): "${said}"`);
+  const dup = await cap('S2-dup-1_copy_f141');
+  check('S2', differs(compare(plain, dup)), 'the copy draws', compare(plain, dup));
+  await undo();
+  const undone = await cap('S2-dup-2_undone_f141');
+  check('S2', JSON.stringify((await doc()).clips) === JSON.stringify(d0.clips) && identical(compare(plain, undone)), 'Cmd-Z removes the copy exactly', compare(plain, undone));
+  await undo(true);
+  const redone = await cap('S2-dup-3_redone_f141');
+  check('S2', JSON.stringify((await doc()).clips) === JSON.stringify(d1.clips) && identical(compare(dup, redone)), 'Shift-Cmd-Z puts it back', compare(dup, redone));
+  await undo();
+  // references at frame 141: a fresh Noisy clip from frame 133 (phase 0), and the right part carried on to frame 168
+  await seekTo(132);
+  await addEffect(0, 'Noisy');
+  await seekTo(140);
+  const fresh = await cap('S2-dup-4_fresh-noisy-from-f133_f141');
+  await page.locator('.fx-clip.selected').click();
+  await page.keyboard.press('Delete');
+  await page.waitForTimeout(400);
+  await page.locator(`.fx-clip[data-clip="${r.id}"]`).click();
+  await setting('last', '168');
+  await seekTo(140);
+  const carried = await cap('S2-dup-5_right-part-carried-on_f141');
+  check('S2', same(compare(dup, fresh)), 'the copy looks like a fresh Noisy clip there (its animation from the start)', compare(dup, fresh));
+  // no effect reads the clip clock yet (Noisy animates on the video frame, frameIndex), so phase 0 cannot show in pixels: logged, not checked
+  const vsCarried = compare(dup, carried);
+  console.log(`INFO S2 copy vs the right part carried on to frame 141: ${vsCarried.changedPct} % (0 while effects ignore phase)`);
+  results.S2.push({ok: true, what: 'info: copy vs right part carried on (effects ignore phase)', data: vsCarried});
+  await clearClips();
+});
+
+await step('S2', async () => {
+  await sel(A);
+  await seekTo(30);
+  await addEffect(0, 'Gradient');
+  await addEffect(0, 'Erase'); // added last: on top
+  const eraseOver = await cap('S2-order-0_erase-over-gradient_f31');
+  const d0 = await doc();
+  const erase = d0.clips.find(c => c.effect === 'EraseForeground');
+  // the tiles' effects: Erase is EraseForeground, Gradient VibrantMask
+  const rowsOf = d => Object.fromEntries(d.clips.map(c => [c.effect === 'EraseForeground' ? 'Erase' : 'Gradient', c.row]));
+  await page.locator(`.fx-clip[data-clip="${erase.id}"]`).focus();
+  await page.keyboard.press('Alt+ArrowDown');
+  await page.waitForTimeout(600);
+  const d1 = await doc();
+  const gradientOver = await cap('S2-order-1_alt-down_gradient-over-erase_f31');
+  const said = await note();
+  check('S2', rowsOf(d1).Erase === 0 && rowsOf(d1).Gradient === 1 && differs(compare(eraseOver, gradientOver)), `Alt+Down on the Erase clip puts it under Gradient (${JSON.stringify(rowsOf(d1))}); the frame changes ${compare(eraseOver, gradientOver).changedPct} %`, compare(eraseOver, gradientOver));
+  check('S2', /moved down: now drawn under Gradient/.test(said) && !/frames? \d/.test(said), `announced: "${said}"`);
+  await undo();
+  const undone = await cap('S2-order-2_undone_f31');
+  check('S2', JSON.stringify((await doc()).clips) === JSON.stringify(d0.clips) && identical(compare(eraseOver, undone)), 'Cmd-Z restores the order exactly', compare(eraseOver, undone));
+  await undo(true);
+  check('S2', JSON.stringify((await doc()).clips) === JSON.stringify(d1.clips) && identical(compare(gradientOver, await cap('S2-order-3_redone_f31'))), 'Shift-Cmd-Z swaps them again');
+  await page.locator(`.fx-clip[data-clip="${erase.id}"]`).click();
+  await fx.getByRole('button', {name: 'Move up', exact: true}).click();
+  await page.waitForTimeout(600);
+  const up = await cap('S2-order-4_move-up_f31');
+  check('S2', rowsOf(await doc()).Erase === 1 && identical(compare(eraseOver, up)), 'Move up in the settings puts Erase back on top', compare(eraseOver, up));
+  // which one is on top, as B5 measures it (Gradient's LUT is random per setup, so no rebuilt reference):
+  // with Erase on top Gradient barely shows against Erase alone; moved over it, it does
+  const gradient = d0.clips.find(c => c.effect === 'VibrantMask');
+  await page.locator(`.fx-clip[data-clip="${gradient.id}"]`).click();
+  await page.keyboard.press('Delete');
+  await page.waitForTimeout(500);
+  const eraseOnly = await cap('S2-order-5_erase-only_f31');
+  const under = compare(eraseOnly, eraseOver);
+  const over = compare(eraseOnly, gradientOver);
+  check('S2', differs(over) && under.changedPct < over.changedPct / 4, `the swap changes which one is drawn on top: Gradient under Erase changes ${under.changedPct} % of Erase alone, moved over it ${over.changedPct} %`, {under, over});
+  await clearClips();
 });
 
 await step('B8', async () => {

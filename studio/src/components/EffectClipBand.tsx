@@ -88,6 +88,7 @@ export default function EffectClipBand({clips, name, session, pos}: Props) {
       session.moveClip(c.id, c.start + (e.key === 'ArrowRight' ? 1 : -1) * (e.shiftKey ? 10 : 1), `${c.id}:nudge`);
     } else if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
       session.reorderClip(c.id, e.key === 'ArrowUp' ? 'up' : 'down');
+      requestAnimationFrame(() => focusClip(c.id)); // its button may move in the band
     } else if (e.altKey && (e.code === 'BracketLeft' || e.code === 'BracketRight')) {
       if (e.code === 'BracketLeft') session.trimClip(c.id, 'start', frame);
       else session.trimClip(c.id, 'end', frame + 1);
