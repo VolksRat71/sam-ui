@@ -11,7 +11,8 @@ import type {
 } from '@/common/components/video/VideoWorkerBridge';
 import {useCallback, useEffect, useMemo, useReducer, useRef, useState} from 'react';
 import StudioBridge from '~/bridge/StudioBridge';
-import {asJobOpen, jobsBridge} from '~/lib/desktop';
+import {agentBridge, asAgentChange, asJobOpen, jobsBridge} from '~/lib/desktop';
+import {type AgentEntry, appendActivity, viewReport} from '~/state/agentActivity';
 import {explainGraphQLError} from '~/lib/errors';
 import {
   EffectMap,
@@ -1482,6 +1483,126 @@ export default function useStudioSession(video: VideoItem) {
     [bridge, goToStop],
   );
 
+  // -- agents (the desktop app's MCP, issue #73) ------------------------------------------
+  // Each change an agent makes on this video shows here as it lands: changed
+  // objects are re-read through `serial`, after any clicks of the person's
+  // still on their way, and a list keeps what was done. The person's view goes
+  // the other way, for sam_studio state. A browser has no bridge: none of it runs.
+
+  const agent = useMemo(agentBridge, []);
+  const [agentActivity, setAgentActivity] = useState<AgentEntry[]>([]);
+  /** Track jobs an agent started on this video: their chips say "Agent". */
+  const [agentJobIds, setAgentJobIds] = useState<ReadonlySet<string>>(() => new Set());
+  /** The objects of the refresh waiting in `serial`, which later changes join. */
+  const refreshing = useRef<Set<number> | null>(null);
+
+  const refreshAgentObjects = useCallback(
+    (ids: number[]) => {
+      if (bridge == null) {
+        return;
+      }
+      if (refreshing.current != null) {
+        ids.forEach(id => refreshing.current!.add(id));
+        return;
+      }
+      const wanted = new Set(ids);
+      refreshing.current = wanted;
+      serial(async () => {
+        refreshing.current = null; // a change from here on waits for the next refresh
+        const objects = await bridge.call('refreshObjects', {objectIds: [...wanted]});
+        dispatch({type: 'sync', objects});
+      });
+    },
+    [bridge, serial],
+  );
+
+  useEffect(
+    () =>
+      agent?.onChanged(raw => {
+        const c = asAgentChange(raw);
+        if (c == null || c.videoId !== video.path || status !== 'ready') {
+          return;
+        }
+        setAgentActivity(list => appendActivity(list, c, stateRef.current.activeId));
+        switch (c.kind) {
+          case 'track_start':
+            if (c.jobId != null) {
+              const jobId = c.jobId;
+              setAgentJobIds(s => new Set(s).add(jobId));
+            }
+            void serial(sync); // the objects read as tracking: the follow path takes it from here
+            break;
+          case 'track_cancel':
+            void serial(sync);
+            break;
+          case 'review':
+            setReviewTick(t => t + 1);
+            break;
+          case 'track_done':
+          case 'export':
+            break; // the follow path repaints a finished track; an export changes nothing here
+          default:
+            refreshAgentObjects(c.objectIds);
+        }
+      }),
+    [agent, video.path, status, serial, sync, refreshAgentObjects],
+  );
+
+  /** Go to what an agent changed: its layer selected and its frame on screen. */
+  const goToAgentChange = useCallback(
+    (e: AgentEntry) => {
+      const id = e.change.objectIds.find(x => stateRef.current.objects.some(o => o.id === x));
+      if (id != null) {
+        selectObject(id);
+      }
+      if (bridge != null && e.change.frame != null && meta.numFrames > 0) {
+        bridge.goToFrame(Math.max(0, Math.min(meta.numFrames - 1, e.change.frame)));
+      }
+    },
+    [bridge, meta.numFrames, selectObject],
+  );
+
+  // the person's view, for sam_studio state: at once on any change but the
+  // frame, which is sent at most every 200 ms and always after scrubbing stops
+  const view = viewReport({
+    videoId: video.path,
+    sessionId: status === 'ready' ? sessionIdRef.current : null,
+    frame,
+    numFrames: meta.numFrames,
+    playing,
+    activeId: state.activeId,
+    engine: state.engine,
+    hiddenIds: hiddenIds(state.layout),
+    colors: objectColors,
+    nextObjectId: nextObjectId(state.objects, idFloor.current),
+  });
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  const viewKey = JSON.stringify({...view, frame: undefined});
+  useEffect(() => {
+    agent?.report(viewRef.current);
+  }, [agent, viewKey]);
+  const frameTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (agent == null || frameTimer.current != null) {
+      return;
+    }
+    frameTimer.current = setTimeout(() => {
+      frameTimer.current = null;
+      agent.report(viewRef.current);
+    }, 200);
+  }, [agent, frame]);
+  useEffect(
+    () => () => {
+      if (frameTimer.current != null) {
+        clearTimeout(frameTimer.current);
+        frameTimer.current = null;
+      }
+      agent?.report({open: false});
+    },
+    [agent],
+  );
+
   const removeObject = useCallback(
     (objectId: number) => {
       if (bridge == null) {
@@ -1645,6 +1766,11 @@ export default function useStudioSession(video: VideoItem) {
     startOver,
     seek,
     togglePlay,
+    /** What agents did on this video, newest first (state/agentActivity.ts). */
+    agentActivity,
+    /** Job ids an agent started here: foreignJobs among them are the agent's. */
+    agentJobIds,
+    goToAgentChange,
   };
 }
 

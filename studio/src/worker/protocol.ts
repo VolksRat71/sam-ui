@@ -169,6 +169,8 @@ export type StudioMethods = {
     result: ServerObject;
   };
   objectTracks: {args: Record<string, never>; result: ServerObject[]};
+  /** Show objects changed elsewhere (an agent): clicks, seed masks and cached track; answers every object. */
+  refreshObjects: {args: {objectIds: number[]}; result: ServerObject[]};
   /** Undo or redo one object's last seed change; a kept track of the restored clicks comes back with no job. */
   undo: {args: {objectId: number}; result: ServerObject};
   redo: {args: {objectId: number}; result: ServerObject};

@@ -213,3 +213,20 @@ it('keeps a newer click mask when another object refreshes or applies a detail',
     expect(repaint).toHaveBeenCalledWith([2]);
   } finally {vi.unstubAllGlobals();}
 });
+
+it('refreshObjects shows the objects an agent changed and drops one it removed (#73)', async () => {
+  const s = new StudioSession({clearTrackletMasks: () => {}} as never, {} as never, () => {});
+  const inside = s as unknown as {_render: () => void; _tracklets: Map<number, unknown>;
+    _showChanged: (objects: Array<{objectId: number}>) => Promise<void>};
+  const listed = [{objectId: 1}, {objectId: 3}];
+  vi.spyOn(s, 'objectTracks').mockResolvedValue(listed as never);
+  const shown: number[][] = [];
+  inside._showChanged = async objects => void shown.push(objects.map(o => o.objectId));
+  inside._render = () => {};
+  inside._tracklets.set(2, {id: 2, masks: []});
+  inside._tracklets.set(3, {id: 3, masks: []});
+  expect(await s.refreshObjects([1, 2])).toBe(listed);
+  expect(shown).toEqual([[1]]); // only the changed ones, not 3
+  expect(inside._tracklets.has(2)).toBe(false);
+  expect(inside._tracklets.has(3)).toBe(true);
+});
