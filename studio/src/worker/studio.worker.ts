@@ -64,10 +64,10 @@ async function exportVideo(doc: EffectDoc, drawOrder: number[], untouched: Untou
     throw new Error('an export is already running');
   }
   exporting = true;
+  // the export's own copy of the clips: no editing aids, hidden groups
+  // drawn, and anything changed meanwhile reaches only the preview
+  const state = {doc, drawOrder, untouched};
   try {
-    // the export's own copy of the clips: no editing aids, hidden groups
-    // drawn, and anything changed meanwhile reaches only the preview
-    const state = {doc, drawOrder, untouched};
     await highlight.prepare(state);
     return await encodeMp4({
       width: context.width,
@@ -85,6 +85,7 @@ async function exportVideo(doc: EffectDoc, drawOrder: number[], untouched: Untou
     });
   } finally {
     exporting = false;
+    await highlight.finish(state);
   }
 }
 

@@ -17,13 +17,20 @@
 // and effects read every setting on every draw. Meta's shaders hold three
 // masks, so consecutive objects sharing an effect and settings are drawn three
 // at a time; the effects are transparent outside their masks, so the passes
-// composite.
+// composite. Meta's 2D effects (Original, Desaturate, ...) draw straight on
+// the form and get no context.
+//
+// Browsers cap live WebGL contexts (Chrome: 16, then the oldest is lost and
+// draws nothing), so an effect's context lives only while the preview or a
+// running export draws with it, and a context lost anyway is set up again on
+// the next draw.
 import type {
   Effect,
   EffectFrameContext,
   EffectParams,
 } from '@/common/components/video/effects/Effect';
 import {AbstractEffect} from '@/common/components/video/effects/Effect';
+import BaseGLEffect from '@/common/components/video/effects/BaseGLEffect';
 import {styleIndex} from '@/common/components/video/effects/EffectParamSpecs';
 import type {Effects} from '@/common/components/video/effects/Effects';
 import type {Tracklet} from '@/common/tracker/Tracker';
@@ -46,6 +53,7 @@ import type MaskOverlayEffect from './MaskOverlayEffect';
  */
 export type DrawState = {doc: EffectDoc; drawOrder: number[]; untouched: UntouchedMode | null};
 
+type Ready = {effect: Effect; gl: WebGL2RenderingContext | null};
 type Pass = {effect: string; params: EffectParams; time?: number; key: string; idx: number[]};
 
 const META_MASK_SLOTS = 3;
@@ -64,12 +72,17 @@ export default class ObjectHighlight extends AbstractEffect {
   private _preview: DrawState = {doc: EMPTY_DOC, drawOrder: [], untouched: null};
   /** Canvases drawn from a state of their own (an export's), not the preview's. */
   private _forms = new WeakMap<CanvasForm, DrawState>();
-  private _ready = new Map<string, Effect>();
+  /** Running exports' states: their effects stay set up whatever the preview does. */
+  private _exports = new Set<DrawState>();
+  private _ready = new Map<string, Ready>();
+  /** Effects whose setup failed, skipped (drawn as the stage default) until the next setDoc. */
+  private _failed = new Set<string>();
 
   constructor(
     private readonly _overlay: MaskOverlayEffect,
     private readonly _meta: Effects,
     private readonly _size: () => {width: number; height: number},
+    private readonly _newCanvas = (width: number, height: number) => new OffscreenCanvas(width, height),
   ) {
     super(1);
   }
@@ -77,16 +90,37 @@ export default class ObjectHighlight extends AbstractEffect {
   /** The preview's clips and layer order (object ids, bottom layer first). */
   async setDoc(doc: EffectDoc, drawOrder: number[]): Promise<void> {
     this._preview = {doc, drawOrder, untouched: null};
-    await this.prepare(this._preview);
+    this._failed.clear();
+    await this._sync();
   }
 
-  /** Set up every effect `state` draws with (those it names that are not registered draw as the Overlay). */
+  /** Set up every effect an export's `state` draws with and keep it until `finish(state)`. */
   async prepare(state: DrawState): Promise<void> {
-    const names = new Set(state.doc.clips.map(c => c.effect));
-    if (state.untouched === 'original') {
-      names.add(ORIGINAL);
+    this._exports.add(state);
+    await this._sync();
+  }
+
+  /** The export drawing `state` is over: free what nothing else draws with. */
+  async finish(state: DrawState): Promise<void> {
+    this._exports.delete(state);
+    await this._sync();
+  }
+
+  /** Keep effects set up for exactly the preview's and running exports' clips (unregistered ones draw as the stage default). */
+  private async _sync(): Promise<void> {
+    const names = new Set<string>();
+    for (const state of [this._preview, ...this._exports]) {
+      state.doc.clips.forEach(c => names.add(c.effect));
+      if (state.untouched === 'original') {
+        names.add(ORIGINAL);
+      }
     }
     names.delete(OVERLAY);
+    for (const name of [...this._ready.keys()]) {
+      if (!names.has(name)) {
+        await this._release(name);
+      }
+    }
     for (const name of names) {
       await this._prepare(name);
     }
@@ -97,20 +131,59 @@ export default class ObjectHighlight extends AbstractEffect {
     this._forms.set(form, state);
   }
 
-  /** Set up Meta's effect `name` on a WebGL context of its own, once. */
-  private async _prepare(name: string): Promise<void> {
-    if (this._ready.has(name)) {
+  /**
+   * Set up Meta's effect `name` (a GL one on a WebGL context of its own),
+   * unless it is set up on a live context. It is ready before `setup`
+   * resolves: Meta's GL effects do their GL work synchronously, so a draw can
+   * rebuild a lost one and use it.
+   */
+  private _prepare(name: string): Promise<void> | undefined {
+    const ready = this._ready.get(name);
+    if ((ready != null && ready.gl?.isContextLost() !== true) || this._failed.has(name)) {
       return;
     }
+    this._ready.delete(name);
     const effect = this._meta[name as keyof Effects];
     const {width, height} = this._size();
     if (effect == null || width < 1 || height < 1) {
-      return; // unknown, or the video is not decoded yet: drawn as Overlay until then
+      return; // unknown, or the video is not decoded yet: the stage default until then
     }
-    const canvas = new OffscreenCanvas(width, height);
-    const gl = canvas.getContext('webgl2');
-    await effect.setup({width, height, canvas, gl: gl ?? undefined});
-    this._ready.set(name, effect);
+    let canvas: OffscreenCanvas | undefined;
+    let gl: WebGL2RenderingContext | null = null;
+    if (effect instanceof BaseGLEffect) {
+      canvas = this._newCanvas(width, height);
+      gl = canvas.getContext('webgl2');
+      if (gl == null) {
+        this._failed.add(name);
+        console.warn(`no WebGL2 context for the ${name} effect; drawn as the stage default`);
+        return;
+      }
+      const lost = gl;
+      canvas.addEventListener('webglcontextlost', () => {
+        if (this._ready.get(name)?.gl === lost) {
+          this._ready.delete(name);
+        }
+      });
+    }
+    const mine: Ready = {effect, gl};
+    this._ready.set(name, mine);
+    return effect.setup({width, height, canvas, gl: gl ?? undefined}).catch(error => {
+      this._failed.add(name);
+      if (this._ready.get(name) === mine) {
+        this._ready.delete(name);
+      }
+      console.warn(`the ${name} effect failed to set up; drawn as the stage default`, error);
+    });
+  }
+
+  /** Free effect `name`'s GL resources and its context. */
+  private async _release(name: string): Promise<void> {
+    const ready = this._ready.get(name);
+    this._ready.delete(name);
+    if (ready != null) {
+      await ready.effect.cleanup();
+      ready.gl?.getExtension('WEBGL_lose_context')?.loseContext();
+    }
   }
 
   apply(form: CanvasForm, context: EffectFrameContext, tracklets: Tracklet[]): void {
@@ -118,6 +191,13 @@ export default class ObjectHighlight extends AbstractEffect {
     const preview = state.untouched == null;
     const frame = context.frameIndex;
     const active = activeClips(state.doc, frame);
+    const ready = (name: string): boolean => {
+      if (name === OVERLAY) {
+        return false;
+      }
+      void this._prepare(name); // nothing while its context lives; rebuilds a lost one
+      return this._ready.has(name);
+    };
     const passes: Pass[] = [];
     // one pass per clip, merged with the pass below when it is the same effect
     // and settings (three masks at most for Meta's shaders, any for the Overlay)
@@ -140,7 +220,7 @@ export default class ObjectHighlight extends AbstractEffect {
 
     // background clips by row; an effect this build lacks leaves the plain frame below
     for (const c of active) {
-      if (c.target.kind === 'background' && this._ready.has(c.effect)) {
+      if (c.target.kind === 'background' && ready(c.effect)) {
         add(c.effect, c.params, clipTime(c, frame, context.fps), null);
       }
     }
@@ -156,11 +236,11 @@ export default class ObjectHighlight extends AbstractEffect {
       const i = at.get(id)!;
       const mine = active.filter(c => c.target.kind === 'object' && c.target.id === id);
       if (mine.length === 0) {
-        const original = state.untouched === 'original' && this._ready.has(ORIGINAL);
+        const original = state.untouched === 'original' && ready(ORIGINAL);
         add(original ? ORIGINAL : OVERLAY, original ? UNCHANGED : TINT, undefined, i);
       }
       for (const c of mine) {
-        if (c.effect === OVERLAY || this._ready.has(c.effect)) {
+        if (c.effect === OVERLAY || ready(c.effect)) {
           add(c.effect, c.params, clipTime(c, frame, context.fps), i);
         } else {
           add(OVERLAY, TINT, undefined, i); // unknown, or not set up yet
@@ -184,7 +264,7 @@ export default class ObjectHighlight extends AbstractEffect {
           this._withoutAids(() => this._overlay.apply(form, ctx, objects));
         }
       } else {
-        const effect = this._ready.get(p.effect)!;
+        const effect = this._ready.get(p.effect)!.effect;
         effect.setParams(p.params);
         effect.variant = styleIndex(p.effect, p.params);
         effect.apply(form, ctx, objects);
@@ -206,10 +286,9 @@ export default class ObjectHighlight extends AbstractEffect {
   }
 
   async cleanup(): Promise<void> {
-    for (const e of this._ready.values()) {
-      await e.cleanup();
+    for (const name of [...this._ready.keys()]) {
+      await this._release(name);
     }
-    this._ready.clear();
     await this._overlay.cleanup();
   }
 }

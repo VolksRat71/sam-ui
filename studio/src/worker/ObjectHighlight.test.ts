@@ -3,10 +3,14 @@
 // ObjectHighlight with fake effects: per-clip settings never leak between
 // passes (U3), draw order, untouched objects in the preview and the export
 // (what objectEffects.test.ts pinned for exportEffects), and an export's own
-// drawing state (part of U8).
+// drawing state (part of U8). Then WebGL context lifetimes (D1) with fake
+// contexts: only GL effects in use by the preview or a running export hold
+// one, and a lost one is rebuilt.
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
-import type {EffectFrameContext, EffectParams} from '@/common/components/video/effects/Effect';
-import type {Effects} from '@/common/components/video/effects/Effects';
+import {backgroundEffects, highlightEffects, moreEffects} from '@/common/components/effects/EffectsUtils';
+import BaseGLEffect from '@/common/components/video/effects/BaseGLEffect';
+import {AbstractEffect, type EffectFrameContext, type EffectInit, type EffectParams} from '@/common/components/video/effects/Effect';
+import AllEffects, {type Effects} from '@/common/components/video/effects/Effects';
 import type {Tracklet} from '@/common/tracker/Tracker';
 import type {CanvasForm} from 'pts';
 import {type EffectClip, type EffectDoc, normalizeParams} from '~/state/effectClips';
@@ -220,5 +224,180 @@ describe('ObjectHighlight', () => {
     h.apply(exportForm, ...frame([1]));
     h.apply(preview, ...frame([1]));
     expect(log.map(p => p.effect)).toEqual(['PixelateMask', 'Outline']);
+  });
+});
+
+/** A WebGL2 context that only knows whether it is lost, and can be lost as Chrome's cap does. */
+class FakeCanvas {
+  lost = false;
+  constructor(private _noContext = false) {}
+  private _onLost: (() => void)[] = [];
+  private _gl = {
+    isContextLost: () => this.lost,
+    getExtension: (name: string) => (name === 'WEBGL_lose_context' ? {loseContext: () => this.lose()} : null),
+  };
+  getContext(): unknown {
+    return this._noContext ? null : this._gl;
+  }
+  addEventListener(type: string, listener: () => void): void {
+    if (type === 'webglcontextlost') {
+      this._onLost.push(listener);
+    }
+  }
+  lose(): void {
+    this.lost = true;
+    this._onLost.forEach(l => l());
+  }
+}
+
+/** A Meta GL effect: needs a live context to draw anything. */
+class FakeGLEffect extends BaseGLEffect {
+  gl: {isContextLost(): boolean} | null = null;
+  cleanups = 0;
+  fail = false;
+  draws: number[][] = [];
+  async setup(init: EffectInit): Promise<void> {
+    this.gl = (init.gl as unknown as {isContextLost(): boolean}) ?? null;
+    if (this.fail) {
+      throw new Error('setup failed');
+    }
+  }
+  async cleanup(): Promise<void> {
+    this.cleanups++;
+  }
+  apply(_form: CanvasForm, _context: EffectFrameContext, tracklets: Tracklet[]): void {
+    // drawing on a lost context paints nothing, which is the bug this guards
+    if (this.gl?.isContextLost() === false) {
+      this.draws.push(tracklets.map(t => t.id));
+    }
+  }
+}
+
+/** A Meta 2D effect: draws on the form, no context. */
+class Fake2DEffect extends AbstractEffect {
+  draws: number[][] = [];
+  apply(_form: CanvasForm, _context: EffectFrameContext, tracklets: Tracklet[]): void {
+    this.draws.push(tracklets.map(t => t.id));
+  }
+}
+
+describe('ObjectHighlight WebGL contexts (D1)', () => {
+  // the real registry's split between GL and 2D effects, faked
+  const isGL = (name: string) => AllEffects[name as keyof Effects] instanceof BaseGLEffect;
+
+  function contexts(noContext = false) {
+    const canvases: FakeCanvas[] = [];
+    const meta = Object.fromEntries(
+      Object.keys(AllEffects).map(n => [n, isGL(n) ? new FakeGLEffect(4) : new Fake2DEffect(4)]),
+    ) as unknown as Record<string, FakeGLEffect>;
+    const plain: number[][] = [];
+    const overlay = {
+      variant: 0,
+      apply: (_f: CanvasForm, _c: EffectFrameContext, t: Tracklet[]) => plain.push(t.map(x => x.id)),
+      cleanup: async () => {},
+    } as unknown as MaskOverlayEffect;
+    const h = new ObjectHighlight(overlay, meta as unknown as Effects, () => ({width: 4, height: 4}), () => {
+      const c = new FakeCanvas(noContext);
+      canvases.push(c);
+      return c as unknown as OffscreenCanvas;
+    });
+    const draw = (ids: number[], form = preview) => h.apply(form, ...frame(ids));
+    const live = () => canvases.filter(c => !c.lost).length;
+    return {h, meta, canvases, plain, draw, live};
+  }
+
+  it('cycling every exposed background and object effect keeps one context per GL effect in use, none for 2D', async () => {
+    const {h, draw, live, canvases} = contexts();
+    const backgrounds = backgroundEffects.map(e => e.effectName);
+    const objects = [...highlightEffects, ...moreEffects].map(e => e.effectName);
+    expect(backgrounds.filter(n => !isGL(n))).toEqual(['Original', 'EraseBackground', 'Desaturate', 'BackgroundText']);
+    for (let round = 0; round < 2; round++) {
+      for (const bg of backgrounds) {
+        for (const fx of objects) {
+          await h.setDoc(doc(clip('bg', bg), clip(1, fx), clip(2, 'Cutout')), [1, 2]);
+          draw([1, 2]);
+          expect(live()).toBe(new Set([bg, fx, 'Cutout'].filter(n => n !== 'Overlay' && isGL(n))).size);
+        }
+      }
+    }
+    await h.setDoc(doc(clip('bg', 'Original'), clip(1, 'Desaturate')), [1]);
+    expect(live()).toBe(0);
+    expect(canvases.length).toBeGreaterThan(0);
+  });
+
+  it('frees a context on cleanup and when no clip uses its effect', async () => {
+    const {h, meta, draw, live} = contexts();
+    await h.setDoc(doc(clip(1, 'Burst'), clip(2, 'Scope')), [1, 2]);
+    expect(live()).toBe(2);
+    await h.setDoc(doc(clip(1, 'Burst'), clip(2, 'Overlay')), [1, 2]);
+    expect(live()).toBe(1);
+    expect(meta.Scope.cleanups).toBe(1);
+    draw([1, 2]);
+    expect(meta.Burst.draws).toEqual([[1]]);
+    await h.cleanup();
+    expect(live()).toBe(0);
+  });
+
+  it("a preview edit during an export never frees an effect the export draws; the export's end does", async () => {
+    const {h, meta, draw, live} = contexts();
+    await h.setDoc(doc(clip(1, 'Burst')), [1]);
+    const state = {doc: doc(clip(1, 'Burst'), clip('bg', 'BackgroundBlur')), drawOrder: [1, 2], untouched: 'original' as const};
+    await h.prepare(state);
+    h.drawWith(exportForm, state);
+    expect(live()).toBe(3); // Burst, BackgroundBlur, and Cutout for the untouched object 2
+    await h.setDoc(doc(clip(1, 'Scope')), [1]); // the person edits the preview mid-export
+    expect(live()).toBe(4);
+    draw([1, 2], exportForm);
+    expect(meta.Burst.draws).toEqual([[1]]);
+    expect(meta.BackgroundBlur.draws).toEqual([[]]);
+    expect(meta.Cutout.draws).toEqual([[2]]);
+    await h.finish(state);
+    expect(live()).toBe(1);
+    expect([meta.Burst, meta.BackgroundBlur, meta.Cutout].map(e => e.cleanups)).toEqual([1, 1, 1]);
+  });
+
+  it('rebuilds a lost context on the next draw instead of drawing nothing', async () => {
+    const {h, meta, canvases, plain, draw} = contexts();
+    await h.setDoc(doc(clip(1, 'EraseForeground'), clip('bg', 'Pixelate')), [1]);
+    canvases[0].lose(); // the browser took it, with the event
+    draw([1]);
+    expect(canvases).toHaveLength(3);
+    expect(meta.EraseForeground.draws).toEqual([[1]]);
+
+    canvases[1].lost = true; // lost, the event not yet delivered
+    draw([1]);
+    expect(canvases).toHaveLength(4);
+    expect(meta.Pixelate.draws).toEqual([[], []]);
+    expect(meta.EraseForeground.draws).toHaveLength(2);
+    expect(plain).toEqual([]);
+  });
+
+  it('draws an object effect without a context as the Overlay and a background one not at all, trying once per setDoc', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const {h, meta, canvases, plain, draw} = contexts(true);
+    await h.setDoc(doc(clip(1, 'Burst'), clip('bg', 'Sobel'), clip('bg', 'Desaturate', {}, {row: 1})), [1]);
+    draw([1]);
+    draw([1]);
+    expect(plain).toEqual([[1], [1]]);
+    expect((meta.Desaturate as unknown as Fake2DEffect).draws).toEqual([[], []]); // 2D needs no context
+    expect(canvases).toHaveLength(2);
+    expect(warn).toHaveBeenCalledTimes(2);
+    warn.mockRestore();
+  });
+
+  it('draws an effect whose setup failed as the Overlay, until the next setDoc', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const {h, meta, canvases, plain, draw} = contexts();
+    meta.Scope.fail = true;
+    await h.setDoc(doc(clip(1, 'Scope')), [1]);
+    draw([1]);
+    expect(plain).toEqual([[1]]);
+    expect(canvases).toHaveLength(1);
+    meta.Scope.fail = false;
+    await h.setDoc(doc(clip(1, 'Scope')), [1]);
+    draw([1]);
+    expect(meta.Scope.draws).toHaveLength(1);
+    expect(warn).toHaveBeenCalledOnce();
+    warn.mockRestore();
   });
 });

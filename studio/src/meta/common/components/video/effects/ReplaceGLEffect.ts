@@ -13,6 +13,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+// Modified by sam-ui: cleanup deletes the emoji texture; the decoded emoji are
+// kept, so setting up again (on a new context) draws them on the first frame.
 import angeryIcon from '@/assets/icons/angery.png';
 import heartIcon from '@/assets/icons/heart.png';
 import whistleIcon from '@/assets/icons/whistle.png';
@@ -68,7 +70,9 @@ export default class ReplaceGLEffect extends BaseGLEffect {
     // We know the max number of textures, pre-allocate 3.
     this._maskTextures = preAllocateTextures(gl, 3);
 
-    this._bitmap = []; // clear any previous pool of texture
+    if (this._bitmap.length > 0) {
+      return; // decoded already; apply uploads them every frame
+    }
 
     let response = await fetch(angeryIcon);
     let blob = await response.blob();
@@ -186,6 +190,8 @@ export default class ReplaceGLEffect extends BaseGLEffect {
         }
       });
       this._maskTextures = [];
+      this._gl.deleteTexture(this._extraTexture);
+      this._extraTexture = null;
     }
   }
 }

@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+// Modified by sam-ui: cleanup deletes the LUT textures.
 import BaseGLEffect from '@/common/components/video/effects/BaseGLEffect';
 import {
   EffectFrameContext,
@@ -174,6 +175,8 @@ export default class VibrantMaskEffect extends BaseGLEffect {
         }
       });
       this._maskTextures = [];
+      this._lutTextures.forEach(texture => this._gl?.deleteTexture(texture));
+      this._lutTextures = [];
     }
   }
 }
