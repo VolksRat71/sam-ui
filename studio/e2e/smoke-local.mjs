@@ -146,7 +146,7 @@ export async function runNoServer({url, clip, out, check}) {
   const left = await page.$$eval('.media-name', ns => ns.map(n => n.title));
   check(!left.some(p => p.startsWith('local/')), `no-server: delete removes it (${left.join(', ') || 'no videos left'})`);
 
-  const real = errors.filter(e => !/WebGL context|NetworkError|access control checks|Inter-VariableFont/.test(e));
+  const real = errors.filter(e => !/WebGL context|NetworkError|access control checks/.test(e));
   check(real.length === 0, `no-server: no page errors${real.length ? `: ${real.slice(0, 3).join(' | ')}` : ''}`);
   await browser.close();
 }

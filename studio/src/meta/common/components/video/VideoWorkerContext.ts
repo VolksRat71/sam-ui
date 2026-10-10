@@ -18,6 +18,7 @@
 // decoded frame of the video; draws do not overlap, and a draw asked for
 // while one runs happens after it.
 import type {ImageFrame} from '@/common/codecs/VideoDecoder';
+import {BASE_URL} from '~/config';
 import {FrameStore} from '~/worker/frameStore';
 import {encode as encodeVideo} from '@/common/codecs/VideoEncoder';
 import {
@@ -780,14 +781,15 @@ export default class VideoWorkerContext {
   private _loadWatermarkFonts() {
     const requiredFonts = [
       {
-        url: '/fonts/Inter-VariableFont.ttf',
+        // public/fonts; BASE_URL so it also resolves under GitHub Pages' /sam-ui/
+        url: `${BASE_URL}fonts/Inter-VariableFont_opsz,wght.ttf`,
         format: 'truetype-variations',
       },
     ];
     requiredFonts.forEach(requiredFont => {
       const fontFace = new FontFace(
         'Inter',
-        `url(${requiredFont.url}) format('${requiredFont.format}')`,
+        `url('${requiredFont.url}') format('${requiredFont.format}')`,
       );
       fontFace.load().then(font => {
         self.fonts.add(font);
