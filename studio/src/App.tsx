@@ -2,9 +2,8 @@
 import {Bot} from '@carbon/icons-react';
 import {useCallback, useEffect, useMemo, useState} from 'react';
 import DeleteVideoModal from '~/components/DeleteVideoModal';
-import {type AgentChange, agentBridge, asAgentChange} from '~/lib/desktop';
+import {agentBridge, asAgentChange} from '~/lib/desktop';
 import {videoDisplayName} from '~/lib/uploadNames';
-import {layerCount} from '~/state/agentActivity';
 import MediaSection from '~/components/MediaSection';
 import Workspace from '~/components/Workspace';
 import {whenClosed} from '~/lib/sessionClose';
@@ -146,7 +145,7 @@ function App({media}: {media: MediaApi}) {
  */
 function AgentElsewhere({current, videos, onOpen}: {current: string; videos: VideoItem[]; onOpen: (v: VideoItem) => void}) {
   const agent = useMemo(agentBridge, []);
-  const [news, setNews] = useState<{videoId: string; changes: AgentChange[]} | null>(null);
+  const [news, setNews] = useState<{videoId: string; layers: ReadonlySet<number>} | null>(null);
   useEffect(
     () =>
       agent?.onChanged(raw => {
@@ -154,7 +153,8 @@ function AgentElsewhere({current, videos, onOpen}: {current: string; videos: Vid
         if (c == null || c.videoId === current) {
           return;
         }
-        setNews(n => (n?.videoId === c.videoId ? {videoId: c.videoId, changes: [...n.changes, c]} : {videoId: c.videoId, changes: [c]}));
+        // the layers touched, not every change: a busy agent never grows this
+        setNews(n => ({videoId: c.videoId, layers: new Set([...(n?.videoId === c.videoId ? n.layers : []), ...c.objectIds])}));
       }),
     [agent, current],
   );
@@ -165,7 +165,7 @@ function AgentElsewhere({current, videos, onOpen}: {current: string; videos: Vid
     return null;
   }
   const video = videos.find(v => v.path === news.videoId);
-  const n = layerCount(news.changes);
+  const n = news.layers.size;
   return (
     <div className="toast agent-toast" role="status">
       <Bot size={16} aria-hidden="true" />

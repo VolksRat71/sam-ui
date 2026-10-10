@@ -115,11 +115,6 @@ export function ageLabel(ms: number): string {
   return `${Math.floor(s / 3600)} h`;
 }
 
-/** How many layers a change touched, for the other-video toast. */
-export function layerCount(changes: ReadonlyArray<AgentChange>): number {
-  return new Set(changes.flatMap(c => c.objectIds)).size;
-}
-
 /**
  * What studio reports to the desktop app as the person's view: closed until
  * the session and the video's length are known, the frame kept in the clip,

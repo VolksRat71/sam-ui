@@ -2,7 +2,7 @@
 import {describe, expect, it} from 'vitest';
 import type {AgentChange, AgentTrack} from '~/lib/desktop';
 import {type ServerObject, dirtyOn} from '~/state/objects';
-import {ACTIVITY_LIMIT, ageLabel, appendActivity, describeChange, describeEntry, layerCount, planAgentTrack, viewReport} from './agentActivity';
+import {ACTIVITY_LIMIT, ageLabel, appendActivity, describeChange, describeEntry, planAgentTrack, viewReport} from './agentActivity';
 
 const change = (c: Partial<AgentChange>): AgentChange => ({
   videoId: 'gallery/03_blocks.mp4', kind: 'points', objectIds: [1], frame: 120, end: null, state: null, jobId: null, name: null, at: 0, ...c,
@@ -74,9 +74,6 @@ describe('describeChange', () => {
     expect([0, 4_000, 40_000, 200_000, 7_300_000].map(ageLabel)).toEqual(['now', 'now', '40 s', '3 min', '2 h']);
   });
 
-  it('counts the layers a set of changes touched', () => {
-    expect(layerCount([change({objectIds: [1, 2]}), change({objectIds: [2]})])).toBe(2);
-  });
 });
 
 describe('planAgentTrack', () => {
