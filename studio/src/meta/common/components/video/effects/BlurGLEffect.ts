@@ -19,7 +19,9 @@
 // (resources made once in setup), its radius a fraction of the frame height
 // from params, with the box's spread at the same radius, so the Light/Medium/
 // Strong styles look as the 3/6/12 px boxes did at 720p. `masked` makes it
-// the layer Blur: only inside the layer's masks, with a feathered edge.
+// the layer Blur: each mask blurred from its own pixels only (nothing from
+// the background or another object bleeds into its edge), drawn inside it
+// with a feathered edge.
 import BaseGLEffect from '@/common/components/video/effects/BaseGLEffect';
 import {
   EffectFrameContext,
@@ -36,8 +38,12 @@ import invariant from 'invariant';
 import {CanvasForm} from 'pts';
 
 const MASK_SLOTS = 3;
-// Texture units: the frame 0, masks 1-3, pass 1's output 4.
+// Texture units: the frame 0, masks 1-3, then pass 1's outputs: a colour per mask 4-6, the feathers 7.
 const PASS1_UNIT = MASK_SLOTS + 1;
+const FEATHER = MASK_SLOTS; // the feathers' attachment
+// pass 1's attachments: a colour per mask and the feathers; the background is one mask
+const LAYER_SLOTS = [0, 1, 2, FEATHER];
+const BACKGROUND_SLOTS = [0, FEATHER];
 
 /** The Gaussian's sigma with the spread of a (2r+1)-tap box: sqrt(r(r+1)/3). */
 export function blurSigma(radiusPx: number): number {
@@ -55,7 +61,7 @@ export function resolveBlurParams(effect: 'BackgroundBlur' | 'BlurMask', params:
 
 export default class BlurGLEffect extends BaseGLEffect {
   private _maskTextures: WebGLTexture[] = [];
-  private _target: WebGLTexture | null = null;
+  private _targets: WebGLTexture[] = []; // pass 1's, by slot (LAYER_SLOTS / BACKGROUND_SLOTS)
   private _framebuffer: WebGLFramebuffer | null = null;
 
   constructor(private readonly _masked = false) {
@@ -78,15 +84,20 @@ export default class BlurGLEffect extends BaseGLEffect {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     this._maskTextures = this._masked ? preAllocateTextures(gl, MASK_SLOTS) : [];
 
-    const [target] = preAllocateTextures(gl, 1);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, init.width, init.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    const slots = this._masked ? LAYER_SLOTS : BACKGROUND_SLOTS;
+    this._targets = preAllocateTextures(gl, slots.length);
     const fb = gl.createFramebuffer();
     invariant(fb !== null, 'framebuffer required');
     gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
-    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, target, 0);
+    const attachments = [gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1, gl.COLOR_ATTACHMENT2, gl.COLOR_ATTACHMENT3];
+    this._targets.forEach((target, i) => {
+      gl.bindTexture(gl.TEXTURE_2D, target);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, init.width, init.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, attachments[slots[i]], gl.TEXTURE_2D, target, 0);
+    });
+    gl.drawBuffers(attachments.map((a, i) => (slots.includes(i) ? a : gl.NONE)));
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.bindTexture(gl.TEXTURE_2D, null);
-    this._target = target;
     this._framebuffer = fb;
   }
 
@@ -122,7 +133,10 @@ export default class BlurGLEffect extends BaseGLEffect {
     for (let i = 0; i < MASK_SLOTS; i++) {
       gl.uniform1i(at(`uMaskTexture${i}`), 1 + i);
     }
-    gl.uniform1i(at('uPass1'), PASS1_UNIT);
+    for (let i = 0; i < MASK_SLOTS; i++) {
+      gl.uniform1i(at(`uPass1_${i}`), PASS1_UNIT + i);
+    }
+    gl.uniform1i(at('uFeather'), PASS1_UNIT + FEATHER);
     gl.uniform1i(at('uNumMasks'), masks.length);
     gl.uniform2f(at('uSize'), width, height);
     gl.uniform1f(at('uSigma'), s.sigma);
@@ -136,8 +150,11 @@ export default class BlurGLEffect extends BaseGLEffect {
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
     // Pass 2: down, to the canvas
-    gl.activeTexture(gl.TEXTURE0 + PASS1_UNIT);
-    gl.bindTexture(gl.TEXTURE_2D, this._target);
+    const slots = this._masked ? LAYER_SLOTS : BACKGROUND_SLOTS;
+    this._targets.forEach((target, i) => {
+      gl.activeTexture(gl.TEXTURE0 + PASS1_UNIT + slots[i]);
+      gl.bindTexture(gl.TEXTURE_2D, target);
+    });
     gl.uniform1i(at('uVertical'), 1);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
@@ -150,13 +167,13 @@ export default class BlurGLEffect extends BaseGLEffect {
     super.cleanup();
     const gl = this._gl;
     if (gl != null) {
-      [...this._maskTextures, this._target].forEach(t => t != null && gl.deleteTexture(t));
+      [...this._maskTextures, ...this._targets].forEach(t => gl.deleteTexture(t));
       if (this._framebuffer != null) {
         gl.deleteFramebuffer(this._framebuffer);
       }
     }
     this._maskTextures = [];
-    this._target = null;
+    this._targets = [];
     this._framebuffer = null;
   }
 }

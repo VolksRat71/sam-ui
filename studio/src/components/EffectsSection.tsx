@@ -35,6 +35,8 @@ import type {StudioSessionApi} from '~/workspace/useStudioSession';
 import {clipFrames, clipTitle, effectTitle, targetName} from './effectPresentation';
 
 const OPEN_KEY = 'sam-ui-studio:effect-groups-open';
+/** Effects people use to hide something: their settings say how far the mask can be trusted. */
+const OBSCURING = new Set(['PixelateMask', 'BlurMask', 'Pixelate', 'BackgroundBlur']);
 
 type Active = {name: string; variant: number; numVariants: number};
 
@@ -218,6 +220,13 @@ function ClipSettings({clip, session, layerColor, title}: {clip: EffectClip; ses
         Object.entries(spec.params)
           .filter(([, p]) => p.kind !== 'number' || p.onlyStyles == null || p.onlyStyles.includes(style))
           .map(([key, p]) => control(key, p))
+      )}
+      {OBSCURING.has(clip.effect) && (
+        <p className="effect-note">
+          {clip.target.kind === 'object'
+            ? 'Follows the mask: if tracking misses a frame, the subject shows.'
+            : 'Covers the whole frame: a layer drawn on top stays clear only where tracking found it.'}
+        </p>
       )}
       {spec != null && (
         <button className="button subtle compact" disabled={atStyle} onClick={() => session.updateClip(clip.id, {params: styled})}>

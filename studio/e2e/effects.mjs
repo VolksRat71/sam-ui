@@ -27,7 +27,8 @@
 //   SC  Scribble (boiling Outline) on frame 101: identical after a scrub away and
 //       back and play/pause, redrawn when boil is on (differs from boil 0, which
 //       is itself steady); its export matches the preview within B7's tolerance
-//   OB  the layer Blur draws on A, and a larger radius changes it
+//   OB  the layer Blur draws on A, its settings carry the tracking caveat, and a
+//       larger radius changes it
 //   B11 every background and layer tile picked in turn, then Erase: the preview
 //       matches a reloaded (fresh) worker, the export matches the preview, and
 //       Chrome logged no "Too many active WebGL contexts"
@@ -545,6 +546,8 @@ await step('OB', async () => {
   await tile(0, 'Blur');
   const blurred = await cap('OB-1_layer-blur_f101');
   check('OB', differs(compare(ref[100], blurred)), 'the layer Blur draws on A', compare(ref[100], blurred));
+  const note = await fx.locator('.effect-note').innerText();
+  check('OB', /if tracking misses a frame, the subject shows/.test(note), `its settings say tracking can fail: "${note}"`);
   await setting('radius', '4');
   const wide = await cap('OB-2_layer-blur_radius-4pct_f101');
   const d = (await doc()).clips[0];

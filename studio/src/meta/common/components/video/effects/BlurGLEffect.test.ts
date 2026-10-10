@@ -68,20 +68,25 @@ describe('BlurGLEffect', () => {
     expect(u.get('uFeatherSigma')).toBeCloseTo(0.4 / 3); // 2 % of 20 px
     expect(u.get('uFeatherTaps')).toBe(1);
     expect(u.get('uMaskTexture2')).toBe(3);
+    expect([0, 1, 2].map(i => u.get(`uPass1_${i}`))).toEqual([4, 5, 6]);
+    expect(u.get('uFeather')).toBe(7);
     expect(drawImage).toHaveBeenCalledTimes(1);
   });
 
   it.each([
-    ['background', false, 1 + 1], // frame, pass 1's target
-    ['layer', true, 1 + 3 + 1], // and three masks
-  ])('the %s Blur makes no GL resources per frame, and frees them on cleanup', async (_, masked, textures) => {
+    ['background', false, 1 + 2, ['COLOR_ATTACHMENT0', 'NONE', 'NONE', 'COLOR_ATTACHMENT3']], // frame; pass 1: colour, feathers
+    ['layer', true, 1 + 3 + 4, ['COLOR_ATTACHMENT0', 'COLOR_ATTACHMENT1', 'COLOR_ATTACHMENT2', 'COLOR_ATTACHMENT3']], // frame, masks; a colour per mask, feathers
+  ])('the %s Blur makes no GL resources per frame, and frees them on cleanup', async (_, masked, textures, buffers) => {
     const {effect, calls, form, context} = await setUpGL(new BlurGLEffect(masked));
     const created = () => calls.filter(([name]) => name.startsWith('create')).length;
     const before = created();
+    // pass 1 writes every mask's colour and the feathers at once (attachments set once)
+    expect(calls.filter(([name]) => name === 'drawBuffers')).toEqual([['drawBuffers', [buffers]]]);
     for (let i = 0; i < 5; i++) {
       effect.apply(form, context(3), []);
     }
     expect(created()).toBe(before);
+    expect(calls.filter(([name]) => name === 'drawBuffers')).toHaveLength(1);
     await effect.cleanup();
     expect(calls.filter(([name]) => name === 'deleteTexture')).toHaveLength(textures);
     expect(calls.filter(([name]) => name === 'deleteFramebuffer')).toHaveLength(1);
