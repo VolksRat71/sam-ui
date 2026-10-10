@@ -7,10 +7,12 @@
 // frame where a layer has no active clip it is "untouched": the preview shows
 // its Overlay tint, and an export draws it as the export dialog says.
 //
-// Every function here is pure: the session keeps the doc in React state and
-// in localStorage (v2 key; the v1 per-object map is only ever read, once).
+// Every function here is pure but loadEffectDoc/saveEffectDoc: the session
+// keeps the doc in React state and in localStorage (v2 key; the v1
+// per-object map is only ever read, once).
 import type {EffectParams, EffectParamValue} from '@/common/components/video/effects/Effect';
 import {EFFECT_SPECS} from '@/common/components/video/effects/EffectParamSpecs';
+import {readJson, writeJson} from '~/lib/storage';
 
 export type EffectTarget = {kind: 'object'; id: number} | {kind: 'background'};
 export type EffectClip = {
@@ -334,6 +336,20 @@ export function migrateV1(map: unknown, numFrames: number): EffectDoc {
     });
   }
   return {version: 2, clips};
+}
+
+const storeKey = (path: string) => `sam-ui-studio:effects:v2:${path}`;
+
+/** The video's stored doc, else its v1 map (`sam-ui-studio:effects:<path>`, never written) migrated. */
+export function loadEffectDoc(path: string, numFrames: number): EffectDoc {
+  const stored = readJson<unknown>(storeKey(path), null);
+  return stored != null
+    ? parseEffectDoc(stored)
+    : migrateV1(readJson<unknown>(`sam-ui-studio:effects:${path}`, null), numFrames);
+}
+
+export function saveEffectDoc(path: string, doc: EffectDoc): void {
+  writeJson(storeKey(path), doc);
 }
 
 /**

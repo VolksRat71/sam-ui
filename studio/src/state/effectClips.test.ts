@@ -2,7 +2,7 @@
 //
 // Acceptance checks U1, U2, U4, U5, U6 (vault 06-acceptance-test-plan), and
 // the per-object behaviour objectEffects.test.ts pinned before clips.
-import {describe, expect, it} from 'vitest';
+import {afterEach, describe, expect, it, vi} from 'vitest';
 import {EFFECT_SPECS} from '@/common/components/video/effects/EffectParamSpecs';
 import {
   type EffectClip,
@@ -13,6 +13,7 @@ import {
   clipLines,
   clipTime,
   clipToEdit,
+  loadEffectDoc,
   migrateV1,
   moveClip,
   newClip,
@@ -22,6 +23,7 @@ import {
   pickOnTarget,
   pruneClips,
   removeClip,
+  saveEffectDoc,
   trimClip,
   updateClip,
 } from './effectClips';
@@ -287,6 +289,49 @@ describe('storage (U1)', () => {
     expect(doc.clips[1]).toMatchObject({effect: 'Future', params: {k: 'v'}, row: 0, phase: 0, target: {kind: 'background'}});
     expect(parseEffectDoc({version: 1, clips: []})).toEqual(EMPTY_DOC);
     expect(parseEffectDoc(null)).toEqual(EMPTY_DOC);
+  });
+});
+
+describe("the session's load, prune and save (useStudioSession's wiring)", () => {
+  const V1 = 'sam-ui-studio:effects:juggle.mp4';
+  const V2 = 'sam-ui-studio:effects:v2:juggle.mp4';
+  function storage(entries: Record<string, unknown>) {
+    const store = new Map(Object.entries(entries).map(([k, v]) => [k, JSON.stringify(v)]));
+    const setItem = vi.fn((k: string, v: string) => store.set(k, v));
+    vi.stubGlobal('window', {localStorage: {getItem: (k: string) => store.get(k) ?? null, setItem}});
+    return {store, setItem};
+  }
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('migrates a v1 map once the frame count is known, prunes a deleted layer, and writes only the v2 key', () => {
+    const v1 = {'1': {name: 'Cutout', variant: 3}, '2': {name: 'Burst', variant: 1}};
+    const {store, setItem} = storage({[V1]: v1});
+    // as the hook does: load, prune to the layers that still exist, save
+    const doc = pruneClips(loadEffectDoc('juggle.mp4', 247), [1]);
+    expect(doc.clips).toEqual([
+      {id: 'v1-1', target: {kind: 'object', id: 1}, effect: 'Cutout', params: {style: 'Sepia'}, start: 0, end: 247, row: 0, phase: 0},
+    ]);
+    saveEffectDoc('juggle.mp4', doc);
+    expect(setItem.mock.calls.map(([k]) => k)).toEqual([V2]);
+    expect(store.get(V1)).toBe(JSON.stringify(v1)); // an older build keeps its copy
+    // the next load reads v2, not the v1 map
+    expect(loadEffectDoc('juggle.mp4', 247)).toEqual(doc);
+  });
+
+  it('loads a stored v2 doc as it is (validated), ignoring a leftover v1 map', () => {
+    const bg = clip({id: 'b', target: BG, effect: 'Original', params: {style: 'Dimmed'}, start: 0, end: 72});
+    storage({[V2]: {version: 2, clips: [bg, {id: 'bad'}]}, [V1]: {'1': {name: 'Cutout', variant: 0}}});
+    expect(loadEffectDoc('juggle.mp4', 247)).toEqual({version: 2, clips: [bg]});
+  });
+
+  it('starts empty with no store, or with storage blocked', () => {
+    storage({});
+    expect(loadEffectDoc('juggle.mp4', 247)).toEqual(EMPTY_DOC);
+    vi.stubGlobal('window', {});
+    expect(loadEffectDoc('juggle.mp4', 247)).toEqual(EMPTY_DOC);
+    expect(() => saveEffectDoc('juggle.mp4', EMPTY_DOC)).not.toThrow();
   });
 });
 

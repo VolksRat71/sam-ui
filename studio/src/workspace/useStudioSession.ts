@@ -1195,7 +1195,6 @@ export default function useStudioSession(video: VideoItem) {
   // the whole video) becomes full-range clips; the v1 key is only ever read,
   // so an older build keeps its own copy. docRef is the doc as of the last
   // edit, so edits in one tick build on each other.
-  const effectsKey = `sam-ui-studio:effects:v2:${video.path}`;
   const [effectDoc, setEffectDoc] = useState<EffectDoc | null>(null);
   const docRef = useRef<EffectDoc | null>(null);
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
@@ -1226,14 +1225,10 @@ export default function useStudioSession(video: VideoItem) {
   }, [state.activeId]);
   useEffect(() => {
     if (docRef.current == null && meta.numFrames > 0) {
-      const stored = readJson<unknown>(effectsKey, null);
-      docRef.current =
-        stored != null
-          ? clips.parseEffectDoc(stored)
-          : clips.migrateV1(readJson<unknown>(`sam-ui-studio:effects:${video.path}`, null), meta.numFrames);
+      docRef.current = clips.loadEffectDoc(video.path, meta.numFrames);
       setEffectDoc(docRef.current);
     }
-  }, [effectsKey, meta.numFrames, video.path]);
+  }, [meta.numFrames, video.path]);
   const idsKey = state.objects.map(o => o.id).join(',');
   const docLoaded = effectDoc != null;
   useEffect(() => {
@@ -1251,9 +1246,9 @@ export default function useStudioSession(video: VideoItem) {
   const drawKey = ordered.map(o => o.id).reverse().join(',');
   useEffect(() => {
     if (effectDoc != null) {
-      writeJson(effectsKey, effectDoc);
+      clips.saveEffectDoc(video.path, effectDoc);
     }
-  }, [effectsKey, effectDoc]);
+  }, [video.path, effectDoc]);
   useEffect(() => {
     if (effectDoc != null) {
       const drawOrder = drawKey === '' ? [] : drawKey.split(',').map(Number);
