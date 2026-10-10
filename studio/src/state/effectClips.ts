@@ -257,8 +257,9 @@ export function pickOnTarget(
 }
 
 /**
- * A group's effect pick, the same for every member: edit its top clip on the
- * playhead, else add one there (selection plays no part). Every member gets
+ * A group's effect pick, the same for every member and the same rule as a
+ * one-layer pick (pickOnTarget, selection plays no part): edit its top clip on
+ * the playhead, else add one there, or over the whole video if it has none. Every member gets
  * the first member's picked settings (the same effect again: its next style).
  */
 export function pickOnGroup(
@@ -272,11 +273,10 @@ export function pickOnGroup(
     const clip = clipToEdit(doc, target, o.frame, null);
     params ??= pickedParams(clip, o.effect);
     if (clip != null) {
-      doc = updateClip(doc, clip.id, {effect: o.effect, params});
       changed++;
-    } else {
-      doc = addClip(doc, newClip({id: newClipId(doc), target, effect: o.effect, frame: o.frame, numFrames: o.numFrames, fps: o.fps, params}));
     }
+    // the single-layer rule (pickOnTarget), so a member with no clips yet gets the whole video like a one-layer pick
+    doc = pickOnTarget(doc, {target, effect: o.effect, frame: o.frame, numFrames: o.numFrames, fps: o.fps, selectedId: null, newId: newClipId(doc), params}).doc;
   }
   return {doc, changed, added: o.members.length - changed};
 }

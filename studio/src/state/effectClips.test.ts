@@ -212,7 +212,7 @@ describe('adding, editing and removing clips', () => {
     expect(fresh.doc.clips.find(c => c.id === 'm')).toMatchObject({start: 0, end: 300});
   });
 
-  it("a group pick treats every member alike: its clip on the playhead changes, else a 3 s clip is added there, never the selection's", () => {
+  it("a group pick treats every member like a one-layer pick: its clip on the playhead changes, else a 3 s clip is added there (whole video if it has none), never the selection's", () => {
     const C = {kind: 'object', id: 2} as const;
     const doc: EffectDoc = {
       version: 2,
@@ -222,11 +222,12 @@ describe('adding, editing and removing clips', () => {
     expect([r.changed, r.added]).toEqual([1, 2]);
     const style = r.doc.clips.find(c => c.id === 'a')!.params.style;
     expect(style).toBe('White rays'); // the same effect again: its next style, for every member
-    for (const t of [B, C]) {
-      expect(r.doc.clips.filter(c => sameTarget(c.target, t) && c.start === 60)).toEqual([
-        expect.objectContaining({end: 90, effect: 'Burst', params: expect.objectContaining({style})}),
-      ]);
-    }
+    expect(r.doc.clips.filter(c => sameTarget(c.target, C) && c.start === 60)).toEqual([
+      expect.objectContaining({end: 90, effect: 'Burst', params: expect.objectContaining({style})}),
+    ]);
+    expect(r.doc.clips.filter(c => sameTarget(c.target, B))).toEqual([ // B had no clips: the whole video, as a one-layer pick
+      expect.objectContaining({start: 0, end: 300, effect: 'Burst', params: expect.objectContaining({style})}),
+    ]);
     expect(r.doc.clips.find(c => c.id === 'c')).toBe(doc.clips[1]); // C's clip off the playhead is untouched
     expect(new Set(r.doc.clips.map(c => c.id)).size).toBe(r.doc.clips.length);
   });
