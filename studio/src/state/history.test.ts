@@ -76,6 +76,15 @@ describe('keyboard shortcuts', () => {
     expect(isTypingTarget({tagName: 'input'})).toBe(true);
     expect(isTypingTarget({tagName: 'CANVAS'})).toBe(false);
   });
+
+  it('undoes right after a slider, colour or checkbox edit; a text or number field keeps its own undo', () => {
+    for (const type of ['range', 'color', 'checkbox']) {
+      expect(historyShortcut(key({metaKey: true, target: {tagName: 'INPUT', type}}))).toBe('undo');
+    }
+    for (const type of ['text', 'number', 'search']) {
+      expect(historyShortcut(key({metaKey: true, target: {tagName: 'INPUT', type}}))).toBeNull();
+    }
+  });
 });
 
 describe('the version list', () => {
