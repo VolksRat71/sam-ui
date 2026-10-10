@@ -167,6 +167,8 @@ function startBackend(p, port) {
     ...process.env,
     PATH: `${p.ffmpegDir}${path.delimiter}${process.env.PATH || ''}`,
     PYTORCH_ENABLE_MPS_FALLBACK: '1',
+    // a .pyc written inside the packaged .app breaks its code seal (macOS can then call it damaged)
+    ...(app.isPackaged ? {PYTHONDONTWRITEBYTECODE: '1'} : {}),
     APP_ROOT: p.userData, // the backend reads APP_ROOT/checkpoints/<checkpoint>
     MODEL_SIZE: 'large',
     DATA_PATH: p.dataDir,
