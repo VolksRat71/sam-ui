@@ -47,7 +47,7 @@ const styleOf = (doc: EffectDoc, id: number) => doc.clips.find(c => c.target.kin
 
 describe('normalizeParams (U1, U2)', () => {
   it('fills every default for an empty or malformed record', () => {
-    expect(normalizeParams('Outline', undefined)).toEqual({width: 0.006, color: 'layer', opacity: 1, softness: 0.25, style: 'Outline'});
+    expect(normalizeParams('Outline', undefined)).toEqual({width: 0.006, color: 'layer', opacity: 1, softness: 0.25, wobble: 0.008, boil: 8, style: 'Outline'});
     expect(normalizeParams('Outline', 'x')).toEqual(normalizeParams('Outline', {}));
     expect(normalizeParams('Outline', [1, 2])).toEqual(normalizeParams('Outline', {}));
   });
@@ -85,6 +85,8 @@ describe('normalizeParams (U1, U2)', () => {
       color: 'layer',
       opacity: 0.35,
       softness: 0.25,
+      wobble: 0.008,
+      boil: 8,
       style: 'Outline',
     });
   });
@@ -257,14 +259,16 @@ describe('per-object picks (the behaviour objectEffects.test.ts pinned)', () => 
   it('a background pick is a persisted clip too (Q7)', () => {
     let doc = pick(EMPTY_DOC, BG, 'BackgroundBlur');
     doc = pick(doc, BG, 'BackgroundBlur');
-    expect(doc.clips).toEqual([expect.objectContaining({target: BG, effect: 'BackgroundBlur', params: {style: 'Medium'}})]);
+    expect(doc.clips).toEqual([expect.objectContaining({target: BG, effect: 'BackgroundBlur', params: {radius: 0.008, style: 'Medium'}})]);
     expect(parseEffectDoc(JSON.parse(JSON.stringify(doc)))).toEqual(doc);
   });
 
-  it('Outline cycles Outline -> Glow (applying the preset) -> Outline', () => {
+  it('Outline cycles Outline -> Glow (applying the preset) -> Scribble -> Outline', () => {
     let doc = pick(EMPTY_DOC, A, 'Outline');
     doc = pick(doc, A, 'Outline');
-    expect(styleOf(doc, 0)?.params).toEqual({width: 0.02, color: 'layer', opacity: 0.9, softness: 0.8, style: 'Glow'});
+    expect(styleOf(doc, 0)?.params).toEqual({width: 0.02, color: 'layer', opacity: 0.9, softness: 0.8, wobble: 0.008, boil: 8, style: 'Glow'});
+    doc = pick(doc, A, 'Outline');
+    expect(styleOf(doc, 0)?.params).toMatchObject({style: 'Scribble', width: 0.005, softness: 0.25, opacity: 1});
     doc = pick(doc, A, 'Outline');
     expect(styleOf(doc, 0)?.params).toMatchObject({style: 'Outline', softness: 0.25});
   });
@@ -307,7 +311,7 @@ describe('storage (U1)', () => {
       ],
     });
     expect(doc.clips.map(c => c.id)).toEqual(['ok', 'raw']);
-    expect(doc.clips[0].params).toEqual({width: 0.05, color: 'layer', opacity: 1, softness: 0.25, style: 'Outline'});
+    expect(doc.clips[0].params).toEqual({width: 0.05, color: 'layer', opacity: 1, softness: 0.25, wobble: 0.008, boil: 8, style: 'Outline'});
     expect(doc.clips[1]).toMatchObject({effect: 'Future', params: {k: 'v'}, row: 0, phase: 0, target: {kind: 'background'}});
     expect(parseEffectDoc({version: 1, clips: []})).toEqual(EMPTY_DOC);
     expect(parseEffectDoc(null)).toEqual(EMPTY_DOC);

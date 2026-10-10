@@ -62,6 +62,7 @@ export const highlightEffects: DemoEffect[] = [
   {title: 'Erase', Icon: Erase, effectName: 'EraseForeground'},
   {title: 'Gradient', Icon: ColorPalette, effectName: 'VibrantMask'},
   {title: 'Pixelate', Icon: Development, effectName: 'PixelateMask'},
+  {title: 'Blur', Icon: Humidity, effectName: 'BlurMask'}, // sam-ui
   {
     title: 'Overlay',
     Icon: Overlay,

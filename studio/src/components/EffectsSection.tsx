@@ -215,7 +215,9 @@ function ClipSettings({clip, session, layerColor, title}: {clip: EffectClip; ses
       {spec == null ? (
         <p className="effect-note">This effect comes from a newer build of sam-ui: its settings are kept as they are.</p>
       ) : (
-        Object.entries(spec.params).map(([key, p]) => control(key, p))
+        Object.entries(spec.params)
+          .filter(([, p]) => p.kind !== 'number' || p.onlyStyles == null || p.onlyStyles.includes(style))
+          .map(([key, p]) => control(key, p))
       )}
       {spec != null && (
         <button className="button subtle compact" disabled={atStyle} onClick={() => session.updateClip(clip.id, {params: styled})}>
