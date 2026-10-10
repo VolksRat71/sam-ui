@@ -15,7 +15,7 @@
 // cannot share one context). One effect instance serves every clip that uses
 // it: its params (and the variant its style names) are set before each draw,
 // and effects read every setting on every draw. Meta's shaders hold three
-// masks, so objects in a row sharing an effect and settings are drawn three
+// masks, so consecutive objects sharing an effect and settings are drawn three
 // at a time; the effects are transparent outside their masks, so the passes
 // composite.
 import type {
