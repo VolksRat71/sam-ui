@@ -16,7 +16,9 @@
 // Modified by sam-ui: frames come from studio's FrameStore (decoded on demand,
 // an LRU bounded by bytes) instead of Meta's decodeStream, which kept every
 // decoded frame of the video; draws do not overlap, and a draw asked for
-// while one runs happens after it.
+// while one runs happens after it. Its two WebGL contexts are created only
+// for a GL effect in its slots (studio's are 2D), since a worker gets just
+// four live contexts.
 import type {ImageFrame} from '@/common/codecs/VideoDecoder';
 import {BASE_URL} from '~/config';
 import {FrameStore} from '~/worker/frameStore';
@@ -38,6 +40,7 @@ import {VIDEO_WATERMARK_TEXT} from '@/demo/DemoConfig';
 import CreateFilmstripError from '@/graphql/errors/CreateFilmstripError';
 import DrawFrameError from '@/graphql/errors/DrawFrameError';
 import WebGLContextError from '@/graphql/errors/WebGLContextError';
+import BaseGLEffect from './effects/BaseGLEffect';
 import {RLEObject} from '@/jscocotools/mask';
 import invariant from 'invariant';
 import {CanvasForm} from 'pts';
@@ -345,24 +348,25 @@ export default class VideoWorkerContext {
       // cleaning up their memory.
       await this._effects[index].cleanup();
 
-      const offCanvas =
-        index === EffectIndex.BACKGROUND
-          ? this._canvasBackground
-          : this._canvasHighlights;
-      invariant(offCanvas != null, 'need OffscreenCanvas to render effects');
-      const webglContext =
-        index === EffectIndex.BACKGROUND ? this._glBackground : this._glObjects;
-      invariant(webglContext != null, 'need WebGL context to render effects');
-
       // Initialize the effect. This can be used by effects to prepare
       // resources needed for rendering. If the video wasn't decoded yet, the
       // effect setup will happen in the _decodeVideo function.
       if (this._decodedVideo != null) {
+        const {width, height} = this._decodedVideo;
+        if (effect instanceof BaseGLEffect) {
+          this.initializeWebGLContext(width, height);
+        }
+        const offCanvas =
+          index === EffectIndex.BACKGROUND
+            ? this._canvasBackground
+            : this._canvasHighlights;
+        const webglContext =
+          index === EffectIndex.BACKGROUND ? this._glBackground : this._glObjects;
         await effect.setup({
-          width: this._decodedVideo.width,
-          height: this._decodedVideo.height,
-          canvas: offCanvas,
-          gl: webglContext,
+          width,
+          height,
+          canvas: offCanvas ?? undefined,
+          gl: webglContext ?? undefined,
         });
       }
     }
@@ -552,7 +556,9 @@ export default class VideoWorkerContext {
     canvas.width = width;
     canvas.height = height;
     // Set WebGL contexts right after the first frame decoded
-    this.initializeWebGLContext(width, height);
+    if (this._effects.some(effect => effect instanceof BaseGLEffect)) {
+      this.initializeWebGLContext(width, height);
+    }
 
     // Initialize effect once first frame was decoded.
     for (const [i, effect] of this._effects.entries()) {
@@ -560,18 +566,13 @@ export default class VideoWorkerContext {
         i === EffectIndex.BACKGROUND
           ? this._canvasBackground
           : this._canvasHighlights;
-      invariant(offCanvas != null, 'need canvas to render effects');
       const webglContext =
         i === EffectIndex.BACKGROUND ? this._glBackground : this._glObjects;
-      invariant(
-        webglContext != null,
-        'need WebGL context to render effects',
-      );
       await effect.setup({
         width,
         height,
-        canvas: offCanvas,
-        gl: webglContext,
+        canvas: offCanvas ?? undefined,
+        gl: webglContext ?? undefined,
       });
     }
 

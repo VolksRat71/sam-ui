@@ -20,10 +20,13 @@
 // composite. Meta's 2D effects (Original, Desaturate, ...) draw straight on
 // the form and get no context.
 //
-// Browsers cap live WebGL contexts (Chrome: 16, then the oldest is lost and
-// draws nothing), so an effect's context lives only while the preview or a
-// running export draws with it, and a context lost anyway is set up again on
-// the next draw.
+// Browsers cap live WebGL contexts (Chrome: 16 per page but 4 per worker,
+// measured; past that the oldest is lost and draws nothing), so an effect's
+// context lives only while the preview or a running export draws with it,
+// and a context lost anyway is set up again on the next draw.
+// ponytail: one context per GL effect, so more than four distinct GL effects
+// in use evict each other (each rebuild recompiles its shaders); a context
+// shared by every GL effect, rebinding its program per pass, if that bites.
 import type {
   Effect,
   EffectFrameContext,
