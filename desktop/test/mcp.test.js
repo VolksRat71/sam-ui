@@ -15,7 +15,7 @@ const net = require('node:net');
 const {test, before, after} = require('node:test');
 const {backendClient} = require('../src/ae-roto');
 const {createMcpServer, loadOrCreateToken, tokenFile} = require('../src/mcp-server');
-const {closingPart} = require('../src/mcp-tools');
+const {closingPart, createTools, parseView} = require('../src/mcp-tools');
 
 const EXPORT_ROOT = '/Users/someone/Movies/sam-ui';
 const OBJECT = {
@@ -50,6 +50,7 @@ const fake = http.createServer((req, res) => {
       const q = body.query;
       if (q.includes('videos')) return reply(200, {data: {videos: {edges: [{node: {path: 'gallery/01_dog.mp4', width: 1280, height: 720}}]}}});
       if (q.includes('startSession')) return reply(200, {data: {startSession: {sessionId: 's1', objects: [OBJECT]}}});
+      if (q.includes('objectTracks') && body.variables.s === 'gone') return reply(200, {errors: [{message: 'Cannot find session gone; it might have expired'}]});
       if (q.includes('objectTracks')) return reply(200, {data: {objectTracks: [OBJECT]}});
       if (q.includes('addPoints')) return reply(200, {data: {addPoints: {frameIndex: body.variables.i.frameIndex}}});
       if (q.includes('closeSession')) return reply(200, {data: {closeSession: {success: true}}});
@@ -168,7 +169,7 @@ test('initialize, tools/list, notifications and bad JSON', async () => {
   assert.strictEqual(init.result.serverInfo.name, 'sam-ui');
   assert.match(init.result.instructions, /sam_capture/);
   const names = (await rpc('tools/list')).result.tools.map(t => t.name);
-  assert.deepStrictEqual(names, ['sam_query', 'sam_session', 'sam_edit', 'sam_track', 'sam_review', 'sam_capture', 'sam_export']);
+  assert.deepStrictEqual(names, ['sam_query', 'sam_session', 'sam_edit', 'sam_track', 'sam_review', 'sam_capture', 'sam_export', 'sam_studio']);
   assert.strictEqual((await raw({body: '{"jsonrpc":"2.0","method":"notifications/initialized"}'})).status, 202);
   assert.strictEqual(JSON.parse((await raw({body: '{nope'})).body).error.code, -32700);
   assert.strictEqual((await rpc('nope/nope')).error.code, -32601);
@@ -441,4 +442,167 @@ test('deleting the token file revokes the token, and "null" never passes', async
     fs.writeFileSync(tokenFile(), saved, {mode: 0o600});
   }
   assert.notStrictEqual((await raw({})).status, 401);
+});
+
+// -- studio awareness (issue #73) ---------------------------------------------
+
+const VIEW = {
+  open: true, video_id: 'gallery/01_dog.mp4', session_id: 'studio-1', frame: 7, n_frames: 10, playing: false,
+  active_object: 1, engine: 'sam2', hidden_objects: [], colors: {1: '#ff00ff'}, next_object_id: 5,
+};
+
+/** Tools over the fake backend with a studio whose view the test sets, and the changes it was told. */
+function studioTools(view = VIEW) {
+  const s = {view, events: []};
+  s.tools = createTools({backend: backendClient({port: fake.address().port}), exportRoot: EXPORT_ROOT,
+    studio: {view: () => parseView(s.view)}, onChange: e => s.events.push(e), now: () => 1000});
+  s.call = async (name, args) => s.tools.callTool(name, args);
+  return s;
+}
+
+test('parseView keeps a good report and drops a bad one whole', () => {
+  assert.deepStrictEqual(parseView(VIEW), {...VIEW});
+  assert.deepStrictEqual(parseView({open: false, video_id: 'x'}), {open: false});
+  const bad = [
+    null, 'open', [VIEW], {}, {open: 'yes'},
+    {...VIEW, frame: 10}, {...VIEW, frame: -1}, {...VIEW, frame: 1.5}, {...VIEW, n_frames: 2 ** 60},
+    {...VIEW, video_id: ''}, {...VIEW, video_id: 'a\nb'}, {...VIEW, video_id: 'x'.repeat(513)}, {...VIEW, video_id: 7},
+    {...VIEW, session_id: '../s'}, {...VIEW, session_id: 'x'.repeat(129)},
+    {...VIEW, engine: 'SAM 2'}, {...VIEW, active_object: -1}, {...VIEW, active_object: '1'}, {...VIEW, playing: 0},
+    {...VIEW, hidden_objects: [1, -2]}, {...VIEW, hidden_objects: Array(1001).fill(1)}, {...VIEW, hidden_objects: 'all'},
+    {...VIEW, colors: {1: 'red'}}, {...VIEW, colors: {x: '#ff00ff'}}, {...VIEW, colors: ['#ff00ff']},
+    {...VIEW, colors: JSON.parse('{"__proto__": "#ff00ff"}')},
+    {...VIEW, colors: Object.fromEntries(Array.from({length: 1001}, (_, i) => [i, '#000000']))},
+    {...VIEW, next_object_id: null}, {...VIEW, pad: 'x'.repeat(64 * 1024)},
+  ];
+  for (const v of bad) assert.strictEqual(parseView(v), null, JSON.stringify(v)?.slice(0, 80));
+  const cyclic = {...VIEW};
+  cyclic.self = cyclic;
+  assert.strictEqual(parseView(cyclic), null);
+  assert.strictEqual(parseView({...VIEW, extra: 1}).extra, undefined); // only known keys are copied
+});
+
+test('sam_studio state: closed on its own, the view with the layer\'s name in the app', async () => {
+  assert.deepStrictEqual(textOf(await call('sam_studio', {command: 'state'})), {open: false});
+  const s = studioTools();
+  const t = textOf(await s.call('sam_studio', {command: 'state'}));
+  assert.deepStrictEqual(t.active_object, {id: 1, name: 'dog'});
+  assert.strictEqual(t.frame, 7);
+  assert.strictEqual(t.session_id, 'studio-1');
+  s.view = {open: false};
+  assert.deepStrictEqual(textOf(await s.call('sam_studio', {command: 'state'})), {open: false});
+  s.view = {...VIEW, frame: 99}; // a report that failed its checks counts as none
+  assert.deepStrictEqual(textOf(await s.call('sam_studio', {command: 'state'})), {open: false});
+});
+
+test('open on studio\'s video shares its session, pictures the person\'s frame, and close leaves it open', async () => {
+  const s = studioTools();
+  const before = seen.length;
+  const t = textOf(await s.call('sam_session', {command: 'open', video_id: 'gallery/01_dog.mp4'}));
+  assert.strictEqual(t.session_id, 'studio-1');
+  assert.strictEqual(t.shared, true);
+  assert.strictEqual(t.studio_frame, 7);
+  assert.strictEqual(t.next_id, 5); // studio's next id beats the server's 2
+  assert.ok(!seen.slice(before).some(q => q.url === '/graphql' && q.body.query.includes('startSession')));
+  assert.deepStrictEqual(last('/capture').body, {session_id: 'studio-1', frames: [7], colors: {1: '#ff00ff'}});
+  const closing = seen.length;
+  assert.deepStrictEqual(textOf(await s.call('sam_session', {command: 'close', session_id: 'studio-1'})), {closed: false, shared: true});
+  assert.strictEqual(seen.length, closing);
+  // another video: a session of its own, and a close that closes it
+  const own = textOf(await s.call('sam_session', {command: 'open', video_id: 'gallery/02_cat.mp4'}));
+  assert.strictEqual(own.shared, false);
+  assert.strictEqual(own.session_id, 's1');
+  assert.strictEqual(own.next_id, 2);
+  assert.deepStrictEqual(textOf(await s.call('sam_session', {command: 'close', session_id: 's1'})), {closed: true});
+});
+
+test('a shared session the person closed says so', async () => {
+  const s = studioTools({...VIEW, session_id: 'gone'});
+  await s.call('sam_session', {command: 'open', video_id: 'gallery/01_dog.mp4'});
+  const r = await s.call('sam_query', {command: 'objects', session_id: 'gone'});
+  assert.strictEqual(r.isError, true);
+  assert.strictEqual(r.content[0].text, 'The person closed this video in studio. sam_session open it again.');
+});
+
+const CHANGES = [
+  [{command: 'points', object_id: 2, frame: 4, points: [[0.5, 0.5, 1]], capture: false}, 'sam_edit', {kind: 'points', object_ids: [2], frame: 4}],
+  [{command: 'text', object_id: 1, frame: 3, text: 'dog', capture: false}, 'sam_edit', {kind: 'text', object_ids: [1], frame: 3}],
+  [{command: 'range', object_id: 1, start: 2, end: 5, state: 'absent'}, 'sam_edit', {kind: 'range', object_ids: [1], frame: 2, end: 5, state: 'absent'}],
+  [{command: 'undo', object_id: 1}, 'sam_edit', {kind: 'undo', object_ids: [1]}],
+  [{command: 'redo', object_id: 1}, 'sam_edit', {kind: 'redo', object_ids: [1]}],
+  [{command: 'remove', object_id: 1}, 'sam_edit', {kind: 'remove', object_ids: [1]}],
+  [{command: 'mark', object_id: 1, frame: 4}, 'sam_review', {kind: 'review', object_ids: [1], frame: 4, state: 'reviewed'}],
+  [{command: 'mark', object_id: 1, frame: 4, reviewed: false}, 'sam_review', {kind: 'review', object_ids: [1], frame: 4, state: 'unreviewed'}],
+  [{name: 'dog-73', object_ids: [1]}, 'sam_export', {kind: 'export', object_ids: [1], name: 'dog-73'}],
+];
+
+for (const [args, tool, want] of CHANGES) {
+  test(`${tool} ${args.command ?? ''} tells studio ${want.kind}`, async () => {
+    const s = studioTools();
+    const r = await s.call(tool, {session_id: 'studio-1', ...args});
+    assert.ok(!r.isError, JSON.stringify(r));
+    assert.deepStrictEqual(s.events, [{video_id: 'gallery/01_dog.mp4', ...want, at: 1000}]);
+  });
+}
+
+test('reads, refusals and unknown sessions tell studio nothing', async () => {
+  const s = studioTools();
+  for (const [tool, args] of [
+    ['sam_query', {command: 'objects', session_id: 'studio-1'}],
+    ['sam_capture', {command: 'frame', session_id: 'studio-1'}],
+    ['sam_review', {command: 'queue', session_id: 'studio-1'}],
+    ['sam_track', {command: 'status', session_id: 'studio-1'}],
+    ['sam_studio', {command: 'state'}],
+    ['sam_edit', {command: 'points', session_id: 'studio-1', object_id: 1, frame: 0, points: [[2, 0.5, 1]]}],
+    ['sam_track', {command: 'start', session_id: 'studio-1', engine: 'nope'}],
+    ['sam_edit', {command: 'remove', session_id: 'from-another-launch', object_id: 1}],
+  ]) await s.call(tool, args);
+  assert.deepStrictEqual(s.events, []);
+});
+
+test('a session opened here is told under its video', async () => {
+  const s = studioTools({open: false});
+  await s.call('sam_session', {command: 'open', video_id: 'gallery/03_blocks.mp4'});
+  await s.call('sam_edit', {command: 'undo', session_id: 's1', object_id: 1});
+  assert.deepStrictEqual(s.events, [{video_id: 'gallery/03_blocks.mp4', kind: 'undo', object_ids: [1], at: 1000}]);
+});
+
+test('a track tells its start with the job, and its end once the stream closes', async () => {
+  const s = studioTools();
+  await s.call('sam_track', {command: 'start', session_id: 'studio-1', object_ids: [1]});
+  assert.deepStrictEqual(s.events, [{video_id: 'gallery/01_dog.mp4', kind: 'track_start', object_ids: [1], job_id: 'job-1', at: 1000}]);
+  s.view = {open: false}; // the person moves off: the end is still told under the job's video
+  track.end(part({frame_index: -1, results: [], done: true, job_id: 'job-1', engine: 'sam2', objects: [1], tracked: [1], failed: {}}));
+  await s.call('sam_track', {command: 'wait', session_id: 'studio-1', job_id: 'job-1', timeout_s: 5});
+  assert.deepStrictEqual(s.events[1], {video_id: 'gallery/01_dog.mp4', kind: 'track_done', object_ids: [1], job_id: 'job-1', state: 'done', at: 1000});
+  s.view = VIEW;
+  await s.call('sam_track', {command: 'start', session_id: 'studio-1'});
+  await s.call('sam_track', {command: 'cancel', session_id: 'studio-1', job_id: 'job-1'});
+  await s.call('sam_track', {command: 'wait', session_id: 'studio-1', job_id: 'job-1', timeout_s: 5});
+  assert.deepStrictEqual(s.events.slice(2).map(e => e.kind), ['track_start', 'track_cancel']); // no second word for the cancel
+  s.tools.close();
+});
+
+test('capture on studio\'s session takes the person\'s frame, colours, engine and hidden layers; args win', async () => {
+  const s = studioTools({...VIEW, engine: 'sam3', hidden_objects: [1]});
+  const r = await s.call('sam_capture', {command: 'frame', session_id: 'studio-1'});
+  assert.deepStrictEqual(last('/capture').body, {session_id: 'studio-1', object_ids: [], engine: 'sam3', colors: {1: '#ff00ff'}, frames: [7]});
+  assert.deepStrictEqual(textOf(r).hidden, [1]);
+  await s.call('sam_capture', {command: 'frame', session_id: 'studio-1', frame: 2, object_ids: [1], engine: 'sam2'});
+  assert.deepStrictEqual(last('/capture').body, {session_id: 'studio-1', object_ids: [1], engine: 'sam2', colors: {1: '#ff00ff'}, frames: [2]});
+  await s.call('sam_capture', {command: 'sheet', session_id: 'studio-1', frames: [0, 1]});
+  assert.deepStrictEqual(last('/capture').body, {session_id: 'studio-1', object_ids: [], engine: 'sam3', colors: {1: '#ff00ff'}, sheet: true, frames: [0, 1]});
+  s.view = {...VIEW, engine: 'browser-sam2'}; // the page's own engine: the backend's default instead
+  await s.call('sam_capture', {command: 'frame', session_id: 'studio-1'});
+  assert.strictEqual(last('/capture').body.engine, undefined);
+  const elsewhere = await s.call('sam_capture', {command: 'frame', session_id: 's9'});
+  assert.strictEqual(elsewhere.isError, true);
+  assert.match(elsewhere.content[0].text, /^frame must be given: studio is not on this video/);
+});
+
+test('next_id is past studio\'s own next id on its video', async () => {
+  const s = studioTools();
+  assert.strictEqual(textOf(await s.call('sam_query', {command: 'objects', session_id: 'studio-1'})).next_id, 5);
+  s.view = {...VIEW, next_object_id: 0};
+  assert.strictEqual(textOf(await s.call('sam_query', {command: 'objects', session_id: 'studio-1'})).next_id, 2);
 });
