@@ -4,7 +4,7 @@
 // Jobs know nothing about it: studio tells main a job ended (app-preload.js,
 // `jobs.done`), and this decides. It shows one only when the setting is on
 // (sam-ui > Notify When a Track Finishes, "notifyJobDone" in settings.json)
-// and the window is not focused. A click brings the window back and hands
+// and no sam-ui window is focused (the SAM 3 setup window counts too). A click brings the window back and hands
 // studio the job's objects, and studio jumps to their first unreviewed
 // review-queue stop, else the start of the track.
 // The page sends ids and one object's name, never the text: main writes that.
@@ -47,9 +47,10 @@ function notificationText({ok, objectIds, name}) {
  *   Notification  Electron's class (or a fake with on/show/close)
  *   enabled()     the setting, read on every call
  *   getWindow()   the main window, or null once it is gone
+ *   appFocused()  true while any app window has focus (BrowserWindow.getFocusedWindow() != null)
  * jobDone.showing() is the notification on screen, or null.
  */
-function createJobNotifier({Notification, enabled, getWindow, now = Date.now}) {
+function createJobNotifier({Notification, enabled, getWindow, appFocused, now = Date.now}) {
   // macOS drops the click of a notification nothing references any more, so
   // the one on screen is kept here until it is clicked, closed or replaced
   let showing = null;
@@ -60,7 +61,7 @@ function createJobNotifier({Notification, enabled, getWindow, now = Date.now}) {
   function jobDone(payload) {
     const job = parseJobDone(payload);
     const win = getWindow();
-    if (job == null || win == null || !enabled() || win.isFocused()) return false;
+    if (job == null || win == null || !enabled() || appFocused()) return false;
     if (job.ok && now() - shownAt < MIN_GAP_MS) return false;
     showing?.close();
     const n = new Notification(notificationText(job));

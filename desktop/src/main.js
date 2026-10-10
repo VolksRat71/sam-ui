@@ -465,6 +465,7 @@ const jobDone = createJobNotifier({
   Notification,
   enabled: () => notifyEnabled(readSettings()),
   getWindow: () => (mainWindow != null && !mainWindow.isDestroyed() ? mainWindow : null),
+  appFocused: () => BrowserWindow.getFocusedWindow() != null,
 });
 ipcMain.on('jobs:done', (event, payload) => {
   if (isMainWindow(event)) jobDone(payload);
