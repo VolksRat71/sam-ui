@@ -124,7 +124,9 @@ Everything sam-ui does, area by area. How each control in studio works is in
   focused, failures included. Clicking it opens that track's first review stop.
 - **Agents (MCP)** (off by default): **Agents > Allow agents (MCP)** runs an MCP
   server on `127.0.0.1:8793` so an agent can open videos, click, track, review,
-  capture frames and export. See [the desktop README](../desktop/README.md).
+  capture frames and export. Studio shows an agent's edits and tracks as they
+  happen, names them in a topbar Agent chip with Go to, and agents can read the
+  frame and layer you are on. See [the desktop README](../desktop/README.md).
 
 ## Experimental
 

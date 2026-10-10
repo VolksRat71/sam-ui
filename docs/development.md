@@ -124,10 +124,30 @@ videos, objects and jobs by id, never by path:
 | `sam_review` | `queue`, `mark` |
 | `sam_capture` | `frame`, `sheet` (`POST /capture`) |
 | `sam_export` | a folder `name`, written to `~/Movies/sam-ui/<name>`; never `force` |
+| `sam_studio` | `state` (the person's video, session, frame, selected layer, engine, hidden layers, colours, next layer id), `goto` (show the person a frame or layer, only when they aren't playing or scrubbing) |
 
 The server holds a track's stream open itself (a dropped reader cancels the job)
 and keeps a finished job's result for 30 minutes. Its backend client never sends
 the link token, so agents can't open files in place.
+
+**Studio awareness (#73), in the desktop app only.** Studio reports the person's
+view to main over IPC (`agent:view`, checked whole by `parseView` in
+`mcp-tools.js` or dropped, kept in memory only), and main tells studio each
+change an agent made (`agent:changed`, sent only while agents are allowed).
+Studio re-reads the changed objects through its `serial` queue, so they show
+as the person's own edits do, and lists them in the topbar's Agent chip.
+
+- `sam_session open` on the video studio has open shares studio's session
+  (`shared: true`); `close` on it does nothing, and once the person leaves the
+  video its id says so. Studio's undo steps back an agent's change like its own.
+- `sam_track start` on that session asks studio to run the job (`agent:track`),
+  so its lanes fill frame by frame; the tools follow it for `wait` and `status`.
+  With no answer from studio they read the stream themselves, as on any other
+  session. Leaving the video ends such a job.
+- `sam_capture` on studio's session defaults to the person's frame, colours,
+  engine and visible layers. `next_id` is past studio's own next layer id.
+- A dev run can move the MCP port with `SAM_UI_MCP_PORT` (an unpackaged app
+  only), to run beside the installed app, which holds 8793.
 
 ## Tests
 
