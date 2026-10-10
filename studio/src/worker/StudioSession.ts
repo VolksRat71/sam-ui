@@ -1028,17 +1028,24 @@ export default class StudioSession {
   /**
    * Show objects someone else changed on the backend (an agent, issue #73):
    * their clicks, seed masks and cached track, as an undo shows them; one the
-   * backend no longer lists is dropped. Answers every object, for the sync.
+   * backend no longer lists is dropped, as removeObject drops it. `busy`:
+   * objects a job of this tab is tracking, whose streamed masks stay until the
+   * job ends (their ranges still update). Answers every object, for the sync.
    */
-  async refreshObjects(objectIds: number[]): Promise<ServerObject[]> {
+  async refreshObjects(objectIds: number[], busy: number[] = []): Promise<ServerObject[]> {
     const objects = await this.objectTracks();
     const listed = new Map(objects.map(o => [o.objectId, o]));
     const changed: ServerObject[] = [];
     for (const id of objectIds) {
       const o = listed.get(id);
       if (o != null) {
-        changed.push(o);
+        if (!busy.includes(id)) {
+          changed.push(o);
+        }
       } else if (this._tracklets.has(id)) {
+        if (this._storeKey != null) {
+          await this._local.store.delete(this._storeKey, id); // a later object with this id starts clean
+        }
         this._forget(id);
       }
     }

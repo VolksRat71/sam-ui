@@ -305,11 +305,20 @@ export function isTracking(o: StudioObject): boolean {
  * Tracked objects are never re-run, and their masks stay on screen. A press
  * while a job runs starts a second job for the rest.
  */
-export function dirtyIds(state: StudioState): number[] {
+export function dirtyIds(state: Pick<StudioState, 'objects'>): number[] {
   return state.objects
     .filter(o => hasSeeds(o) && o.state !== 'tracked' && !isTracking(o))
     .map(o => o.id)
     .sort((a, b) => a - b);
+}
+
+/**
+ * dirtyIds for a job on `engine`, from the backend's objects as they are now:
+ * an agent's track with no ids (issue #73) picks by the engine it runs on,
+ * not the one the person has on screen.
+ */
+export function dirtyOn(objects: ReadonlyArray<ServerObject>, engine: string): number[] {
+  return dirtyIds({objects: objects.map(o => fromServer(o, engine))});
 }
 
 /**

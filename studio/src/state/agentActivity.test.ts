@@ -1,7 +1,8 @@
 // sam-ui (Apache-2.0). New file, not from SAM 2.
 import {describe, expect, it} from 'vitest';
-import type {AgentChange} from '~/lib/desktop';
-import {ACTIVITY_LIMIT, ageLabel, appendActivity, describeChange, describeEntry, layerCount, viewReport} from './agentActivity';
+import type {AgentChange, AgentTrack} from '~/lib/desktop';
+import {type ServerObject, dirtyOn} from '~/state/objects';
+import {ACTIVITY_LIMIT, ageLabel, appendActivity, describeChange, describeEntry, layerCount, planAgentTrack, viewReport} from './agentActivity';
 
 const change = (c: Partial<AgentChange>): AgentChange => ({
   videoId: 'gallery/03_blocks.mp4', kind: 'points', objectIds: [1], frame: 120, end: null, state: null, jobId: null, name: null, at: 0, ...c,
@@ -75,6 +76,30 @@ describe('describeChange', () => {
 
   it('counts the layers a set of changes touched', () => {
     expect(layerCount([change({objectIds: [1, 2]}), change({objectIds: [2]})])).toBe(2);
+  });
+});
+
+describe('planAgentTrack', () => {
+  const at = {videoPath: 'gallery/03_blocks.mp4', ready: true};
+  const ask = (c: Partial<AgentTrack>): AgentTrack => ({videoId: 'gallery/03_blocks.mp4', objectIds: null, engine: null, ...c});
+  const stale2 = (objectId: number, sam2: string, sam3: string): ServerObject => ({
+    objectId, state: sam2, frames: null, nFrames: 0, seeds: [{frameIndex: 0, points: [[0.5, 0.5]], labels: [1]}],
+    tracks: [{engine: 'sam2', state: sam2, frames: null, nFrames: 0}, {engine: 'sam3', state: sam3, frames: null, nFrames: 0}],
+  });
+
+  it('with no ids and the person on SAM 3, picks what is dirty on SAM 2, the job\'s engine', () => {
+    const plan = planAgentTrack(ask({}), at);
+    expect(plan).toEqual({engine: 'sam2', ids: null});
+    const objects = [stale2(1, 'stale', 'tracked'), stale2(2, 'tracked', 'stale')];
+    expect(dirtyOn(objects, (plan as {engine: string}).engine)).toEqual([1]);
+  });
+
+  it('keeps the agent\'s ids and engine, and refuses the browser engine or another video', () => {
+    expect(planAgentTrack(ask({objectIds: [4], engine: 'sam3'}), at)).toEqual({engine: 'sam3', ids: [4]});
+    expect(planAgentTrack(ask({engine: 'browser-sam2'}), at)).toHaveProperty('refuse');
+    expect(planAgentTrack(ask({videoId: 'gallery/01_dog.mp4'}), at)).toEqual({refuse: 'studio is not on that video'});
+    expect(planAgentTrack(ask({}), {...at, ready: false})).toHaveProperty('refuse');
+    expect(planAgentTrack(null, at)).toHaveProperty('refuse');
   });
 });
 

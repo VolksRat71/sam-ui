@@ -4,7 +4,9 @@
 // and its list: the desktop app tells studio each change (lib/desktop.ts
 // AgentChange), and this keeps the last few and says them in studio's words
 // (layers, keyframe clicks, 1-based frames). In memory only, per video.
-import type {AgentChange, AgentView} from '~/lib/desktop';
+import type {AgentChange, AgentTrack, AgentView} from '~/lib/desktop';
+import {BROWSER_ENGINE, engineLabel} from '~/state/engines';
+import {DEFAULT_ENGINE} from '~/state/objects';
 
 export const ACTIVITY_LIMIT = 20;
 
@@ -83,6 +85,25 @@ export function describeChange(c: AgentChange, nameOf: (id: number) => string): 
 /** The entry's words with the selection called out: the person's own layer. */
 export function describeEntry(e: AgentEntry, nameOf: (id: number) => string): string {
   return e.onSelected ? `${describeChange(e.change, nameOf)} (your selected layer)` : describeChange(e.change, nameOf);
+}
+
+/**
+ * How studio runs an agent's track (sam_track start on its video): refused,
+ * or on `engine` (the agent's, else the backend's default, never the one the
+ * person shows) for `ids`, or (null) for what is dirty on that engine, which
+ * the caller reads fresh from the backend (state/objects.ts dirtyOn).
+ */
+export function planAgentTrack(
+  r: AgentTrack | null,
+  at: {videoPath: string; ready: boolean},
+): {refuse: string} | {engine: string; ids: number[] | null} {
+  if (r == null || r.videoId !== at.videoPath || !at.ready) {
+    return {refuse: 'studio is not on that video'};
+  }
+  if (r.engine === BROWSER_ENGINE) {
+    return {refuse: `${engineLabel(BROWSER_ENGINE)} runs in the person's browser only`};
+  }
+  return {engine: r.engine ?? DEFAULT_ENGINE, ids: r.objectIds};
 }
 
 /** "now", "40 s", "3 min", "2 h": a change's age, in the list's tabular column. */

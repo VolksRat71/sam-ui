@@ -12,7 +12,7 @@ import type {
 import {useCallback, useEffect, useMemo, useReducer, useRef, useState} from 'react';
 import StudioBridge from '~/bridge/StudioBridge';
 import {type AgentChange, type AgentTrackReply, agentBridge, asAgentChange, asAgentGoto, asAgentTrack, asJobOpen, jobsBridge} from '~/lib/desktop';
-import {type AgentEntry, appendActivity, viewReport} from '~/state/agentActivity';
+import {type AgentEntry, appendActivity, planAgentTrack, viewReport} from '~/state/agentActivity';
 import {explainGraphQLError} from '~/lib/errors';
 import {
   EffectMap,
@@ -50,6 +50,7 @@ import {
   clearTarget,
   comparableIds,
   dirtyIds,
+  dirtyOn,
   groupDirtyIds,
   orderedObjects,
   preferredEngine,
@@ -735,11 +736,13 @@ export default function useStudioSession(video: VideoItem) {
     setEngines(list => list.map(e => (e.name === engine && !e.loaded ? {...e, loading: true} : e)));
     // read before trackFinished/trackFailed drops the job: the ids the backend
     // claimed (trackAttached), and whether it was canceled here (no news)
-    const tell = (ok: boolean) => {
+    const tell = (ok: boolean, canceled = false) => {
       const job = stateRef.current.jobs.find(j => j.key === key);
       const held = job?.ids ?? ids;
       held.forEach(id => toldHere.current.set(id, Date.now()));
-      if (!job?.canceling && held.length > 0) {
+      // an agent's track that never started, or that it cancelled, is the agent's news (a tool error), not the person's
+      const agentQuiet = opts.onStarted != null && (job?.jobId == null || canceled);
+      if (!job?.canceling && !agentQuiet && held.length > 0) {
         tellJobDone(held, ok, engine);
       }
     };
@@ -748,7 +751,8 @@ export default function useStudioSession(video: VideoItem) {
       const {outcome} = await bridge.call('track', {objectIds: ids, key, engine});
       result = outcome;
       setEngines(list => list.map(e => (e.name === engine ? {...e, loaded: outcome.ok || e.loaded, loading: false} : e)));
-      tell(outcome.ok && Object.keys(outcome.failed).length === 0); // one object failing is a failed job
+      // one object failing is a failed job
+      tell(outcome.ok && Object.keys(outcome.failed).length === 0, !outcome.ok && outcome.error === 'canceled');
       if (outcome.ok) {
         dispatch({type: 'trackFinished', key, tracked: outcome.tracked, failed: outcome.failed});
       } else {
@@ -1533,21 +1537,37 @@ export default function useStudioSession(video: VideoItem) {
       refreshing.current = wanted;
       serial(async () => {
         refreshing.current = null; // a change from here on waits for the next refresh
-        const objects = await bridge.call('refreshObjects', {objectIds: [...wanted]});
+        // a layer this page is tracking keeps its streamed masks; the job's end repaints it
+        const busy = stateRef.current.objects.filter(o => o.running).map(o => o.id);
+        const objects = await bridge.call('refreshObjects', {objectIds: [...wanted], busy});
         dispatch({type: 'sync', objects});
       });
     },
     [bridge, serial],
   );
 
+  /** Objects agents changed while the session was opening. */
+  const whenReady = useRef(new Set<number>());
+  useEffect(() => {
+    if (status === 'ready' && whenReady.current.size > 0) {
+      refreshAgentObjects([...whenReady.current]);
+      whenReady.current.clear();
+    }
+  }, [status, refreshAgentObjects]);
+
   useEffect(
     () =>
       agent?.onChanged(raw => {
         const c = asAgentChange(raw);
-        if (c == null || c.videoId !== video.path || status !== 'ready') {
+        if (c == null || c.videoId !== video.path) {
           return;
         }
         setAgentActivity(list => appendActivity(list, c, stateRef.current.activeId));
+        if (status !== 'ready') {
+          // the session is still opening: one refresh of these once it is ready
+          c.objectIds.forEach(id => whenReady.current.add(id));
+          return;
+        }
         switch (c.kind) {
           case 'track_start':
             if (c.jobId != null) {
@@ -1556,9 +1576,15 @@ export default function useStudioSession(video: VideoItem) {
             }
             void serial(sync); // the objects read as tracking: the follow path takes it from here
             break;
-          case 'track_cancel':
+          case 'track_cancel': {
+            // the agent cancelled it: the job ends quietly, as a cancel here does
+            const job = stateRef.current.jobs.find(j => j.jobId != null && j.jobId === c.jobId);
+            if (job != null) {
+              dispatch({type: 'trackCanceling', key: job.key});
+            }
             void serial(sync);
             break;
+          }
           case 'review':
             setReviewTick(t => t + 1);
             break;
@@ -1633,25 +1659,30 @@ export default function useStudioSession(video: VideoItem) {
   useEffect(
     () =>
       agent?.onTrack?.((raw, reply) => {
-        const r = asAgentTrack(raw);
-        if (r == null || r.videoId !== video.path || status !== 'ready') {
-          reply({stage: 'refused', error: 'studio is not on that video'});
-          return;
-        }
-        if (r.engine === BROWSER_ENGINE) {
-          reply({stage: 'refused', error: `${engineLabel(BROWSER_ENGINE)} runs in the person's browser only`});
+        const plan = planAgentTrack(asAgentTrack(raw), {videoPath: video.path, ready: status === 'ready'});
+        if ('refuse' in plan) {
+          reply({stage: 'refused', error: plan.refuse});
           return;
         }
         let started = false;
         agentTracks.current.add(reply);
-        void runTrack(undefined, {
-          ids: r.objectIds ?? undefined,
-          engine: r.engine ?? DEFAULT_ENGINE, // as the backend's default, whatever the person shows
-          onStarted: job => {
-            started = true;
-            reply({stage: 'started', job_id: job.jobId, objects: job.selected, bounded: job.bounded});
-          },
-        }).then(outcome => {
+        const run = async () => {
+          if (bridge == null) {
+            return null;
+          }
+          // no ids: what is dirty on the job's engine, read fresh after any clicks still on their way
+          await queue.current;
+          const ids = plan.ids ?? dirtyOn(await bridge.call('objectTracks', {}), plan.engine);
+          return ids.length === 0 ? null : runTrack(undefined, {
+            ids,
+            engine: plan.engine,
+            onStarted: job => {
+              started = true;
+              reply({stage: 'started', job_id: job.jobId, objects: job.selected, bounded: job.bounded});
+            },
+          });
+        };
+        void run().catch((error: unknown) => ({ok: false as const, error: message(error), objects: []})).then(outcome => {
           if (!agentTracks.current.delete(reply)) {
             return; // the video closed first, and said so
           }
@@ -1667,7 +1698,7 @@ export default function useStudioSession(video: VideoItem) {
           });
         });
       }),
-    [agent, video.path, status, runTrack],
+    [agent, bridge, video.path, status, runTrack],
   );
   useEffect(
     () => () => {

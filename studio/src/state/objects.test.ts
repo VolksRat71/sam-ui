@@ -9,6 +9,7 @@ import {
   comparableIds,
   preferredEngine,
   dirtyIds,
+  dirtyOn,
   groupDirtyIds,
   initialState,
   orderedObjects,
@@ -41,6 +42,29 @@ function server(
 }
 
 const byId = (s: StudioState, id: number) => s.objects.find(o => o.id === id)!;
+
+describe('dirtyOn: what an agent track with no ids picks (#73)', () => {
+  const twoEngines = (objectId: number, sam2: string, sam3: string): ServerObject => ({
+    ...server(objectId, sam2),
+    tracks: [
+      {engine: 'sam2', state: sam2, frames: null, nFrames: 0},
+      {engine: 'sam3', state: sam3, frames: null, nFrames: 0},
+    ],
+  });
+
+  it('picks by the job\'s engine, not the one the person shows', () => {
+    const objects = [twoEngines(1, 'stale', 'tracked'), twoEngines(2, 'tracked', 'stale'), twoEngines(3, 'untracked', 'untracked')];
+    // the person is on SAM 3, the agent's job runs on SAM 2
+    const onScreen = run([{type: 'setEngine', engine: 'sam3'}, {type: 'restore', objects}]);
+    expect(dirtyIds(onScreen)).toEqual([2, 3]);
+    expect(dirtyOn(objects, 'sam2')).toEqual([1, 3]);
+    expect(dirtyOn(objects, 'sam3')).toEqual([2, 3]);
+  });
+
+  it('leaves out tracking objects and ones with no clicks', () => {
+    expect(dirtyOn([twoEngines(1, 'tracking', 'untracked'), {...twoEngines(2, 'stale', 'stale'), seeds: []}], 'sam2')).toEqual([]);
+  });
+});
 
 describe('id allocation', () => {
   it('starts at 0', () => {
