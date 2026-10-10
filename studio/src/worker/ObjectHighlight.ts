@@ -38,6 +38,8 @@ export default class ObjectHighlight extends AbstractEffect {
   public hidden: (objectId: number) => boolean = () => false;
   private _effects = new Map<number, ObjectEffectSpec>();
   private _ready = new Map<string, Ready>();
+  /** Effects whose setup failed, skipped (drawn as Overlay) until the next setEffects. */
+  private _failed = new Set<string>();
 
   constructor(
     private readonly _overlay: MaskOverlayEffect,
@@ -67,6 +69,7 @@ export default class ObjectHighlight extends AbstractEffect {
   /** Set every object's effect (objects not listed get the Overlay); frees effects no object uses. */
   async setEffects(effects: Record<number, ObjectEffectSpec>): Promise<void> {
     this._effects = new Map(Object.entries(effects).map(([k, v]) => [Number(k), v]));
+    this._failed.clear();
     const names = new Set([...this._effects.values()].map(e => e.name).filter(n => n !== OVERLAY));
     for (const name of [...this._ready.keys()]) {
       if (!names.has(name)) {
@@ -84,7 +87,7 @@ export default class ObjectHighlight extends AbstractEffect {
    * their GL work synchronously, so a draw can rebuild a lost one and use it.
    */
   private _prepare(name: string): Promise<void> | undefined {
-    if (this._ready.get(name)?.gl.isContextLost() === false) {
+    if (this._ready.get(name)?.gl.isContextLost() === false || this._failed.has(name)) {
       return;
     }
     this._ready.delete(name);
@@ -96,7 +99,9 @@ export default class ObjectHighlight extends AbstractEffect {
     const canvas = this._newCanvas(width, height);
     const gl = canvas.getContext('webgl2');
     if (gl == null) {
-      throw new Error(`no WebGL2 context for the ${name} effect`);
+      this._failed.add(name);
+      console.warn(`no WebGL2 context for the ${name} effect; drawn as Overlay`);
+      return;
     }
     canvas.addEventListener('webglcontextlost', () => {
       if (this._ready.get(name)?.gl === gl) {
@@ -104,7 +109,13 @@ export default class ObjectHighlight extends AbstractEffect {
       }
     });
     this._ready.set(name, {effect, gl});
-    return effect.setup({width, height, canvas, gl});
+    return effect.setup({width, height, canvas, gl}).catch(error => {
+      this._failed.add(name);
+      if (this._ready.get(name)?.gl === gl) {
+        this._ready.delete(name);
+      }
+      console.warn(`the ${name} effect failed to set up; drawn as Overlay`, error);
+    });
   }
 
   /** Free effect `name`'s GL resources and its context. */

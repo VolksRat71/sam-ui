@@ -1,5 +1,5 @@
 // sam-ui (Apache-2.0). New file, not from SAM 2.
-import {describe, expect, it} from 'vitest';
+import {describe, expect, it, vi} from 'vitest';
 import {AbstractEffect, type EffectFrameContext, type EffectInit} from '@/common/components/video/effects/Effect';
 import type {Effects} from '@/common/components/video/effects/Effects';
 import type {Tracklet} from '@/common/tracker/Tracker';
@@ -10,13 +10,14 @@ import ObjectHighlight from './ObjectHighlight';
 /** A WebGL2 context that only knows whether it is lost, and can be lost as Chrome's cap does. */
 class FakeCanvas {
   lost = false;
+  constructor(private _noContext = false) {}
   private _onLost: (() => void)[] = [];
   private _gl = {
     isContextLost: () => this.lost,
     getExtension: (name: string) => (name === 'WEBGL_lose_context' ? {loseContext: () => this.lose()} : null),
   };
   getContext(): unknown {
-    return this._gl;
+    return this._noContext ? null : this._gl;
   }
   addEventListener(type: string, listener: () => void): void {
     if (type === 'webglcontextlost') {
@@ -32,9 +33,13 @@ class FakeCanvas {
 class FakeEffect extends AbstractEffect {
   gl: unknown = null;
   cleanups = 0;
+  fail = false;
   draws: {variant: number; ids: number[]}[] = [];
   async setup(init: EffectInit): Promise<void> {
     this.gl = init.gl;
+    if (this.fail) {
+      throw new Error('setup failed');
+    }
   }
   async cleanup(): Promise<void> {
     this.cleanups++;
@@ -49,7 +54,7 @@ class FakeEffect extends AbstractEffect {
 
 const NAMES = ['Cutout', 'EraseForeground', 'VibrantMask', 'PixelateMask', 'Replace', 'Burst', 'Scope', 'NoisyMask'];
 
-function setup() {
+function setup(noContext = false) {
   const canvases: FakeCanvas[] = [];
   const meta: Record<string, FakeEffect> = Object.fromEntries(NAMES.map(n => [n, new FakeEffect(3)]));
   const plain: number[][] = [];
@@ -59,7 +64,7 @@ function setup() {
     cleanup: async () => {},
   } as unknown as MaskOverlayEffect;
   const highlight = new ObjectHighlight(overlay, meta as unknown as Effects, () => ({width: 4, height: 4}), () => {
-    const c = new FakeCanvas();
+    const c = new FakeCanvas(noContext);
     canvases.push(c);
     return c as unknown as OffscreenCanvas;
   });
@@ -111,6 +116,34 @@ describe('ObjectHighlight WebGL contexts', () => {
     expect(canvases).toHaveLength(3);
     expect(meta.EraseForeground.draws).toHaveLength(2);
     expect(plain).toEqual([]);
+  });
+
+  it('draws an effect without a context as the Overlay, trying once per setEffects', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const {highlight, canvases, plain, draw} = setup(true);
+    await highlight.setEffects({1: {name: 'Burst', variant: 0}});
+    draw([1]);
+    draw([1]);
+    expect(plain).toEqual([[1], [1]]);
+    expect(canvases).toHaveLength(1);
+    expect(warn).toHaveBeenCalledOnce();
+    warn.mockRestore();
+  });
+
+  it('draws an effect whose setup failed as the Overlay, until the next setEffects', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const {highlight, meta, canvases, plain, draw} = setup();
+    meta.Scope.fail = true;
+    await highlight.setEffects({1: {name: 'Scope', variant: 0}});
+    draw([1]);
+    expect(plain).toEqual([[1]]);
+    expect(canvases).toHaveLength(1);
+    meta.Scope.fail = false;
+    await highlight.setEffects({1: {name: 'Scope', variant: 0}});
+    draw([1]);
+    expect(meta.Scope.draws).toHaveLength(1);
+    expect(warn).toHaveBeenCalledOnce();
+    warn.mockRestore();
   });
 
   it('groups objects by effect and variant, three masks per pass, others as the Overlay', async () => {
