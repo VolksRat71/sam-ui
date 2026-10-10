@@ -54,7 +54,7 @@ export const backgroundEffects: DemoEffect[] = [
   {title: 'Desaturate', Icon: ColorSwitch, effectName: 'Desaturate'},
   {title: 'Text', Icon: TextFont, effectName: 'BackgroundText'},
   {title: 'Blur', Icon: Humidity, effectName: 'BackgroundBlur'},
-  {title: 'Outline', Icon: AppleDash, effectName: 'Sobel'},
+  {title: 'Edges', Icon: AppleDash, effectName: 'Sobel'}, // sam-ui: 'Outline' is the layer effect
 ];
 
 export const highlightEffects: DemoEffect[] = [

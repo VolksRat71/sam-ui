@@ -9,7 +9,8 @@
 import type {EffectParams} from './Effect';
 
 export type ParamSpec =
-  | {kind: 'number'; min: number; max: number; step: number; default: number; label: string}
+  // percentOfHeight: a fraction of the frame height, shown to people as a percentage (stored as the fraction)
+  | {kind: 'number'; min: number; max: number; step: number; default: number; label: string; percentOfHeight?: true}
   | {kind: 'color'; default: string; label: string} // '#rrggbb' or 'layer' (follow the layer's mask colour)
   | {kind: 'choice'; options: string[]; default: string; label: string};
 export type EffectSpec = {params: Record<string, ParamSpec>; styles: Record<string, Partial<EffectParams>>};
@@ -46,7 +47,7 @@ export const EFFECT_SPECS: Record<string, EffectSpec> = {
   NoisyMask: variants('Noise'),
   Outline: {
     params: {
-      width: {kind: 'number', min: 0.002, max: 0.05, step: 0.001, default: 0.006, label: 'Width'},
+      width: {kind: 'number', min: 0.002, max: 0.05, step: 0.001, default: 0.006, label: 'Width', percentOfHeight: true},
       color: {kind: 'color', default: 'layer', label: 'Colour'},
       opacity: {kind: 'number', min: 0, max: 1, step: 0.05, default: 1, label: 'Opacity'},
       softness: {kind: 'number', min: 0, max: 1, step: 0.05, default: 0.25, label: 'Softness'},

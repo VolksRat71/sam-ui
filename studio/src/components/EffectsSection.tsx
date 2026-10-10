@@ -182,12 +182,16 @@ function ClipSettings({clip, session, layerColor, title}: {clip: EffectClip; ses
       );
     }
     const v = Number(clip.params[key]);
+    // the field shows a percentage of the frame height for such settings; the slider and the doc keep the fraction
+    const k = p.percentOfHeight ? 100 : 1;
+    const shown = (x: number) => Math.round(x * k * 1e6) / 1e6;
+    const label = p.percentOfHeight ? `${p.label}, % of frame height` : p.label;
     return (
       <div className="fx-param" key={key}>
-        <label className="fx-param-label" htmlFor={id}>{p.label}</label>
+        <label className="fx-param-label" htmlFor={id} title={label}>{p.percentOfHeight ? `${p.label} %` : p.label}</label>
         <div className="fx-number">
-          <input id={id} type="range" min={p.min} max={p.max} step={p.step} value={v} onChange={e => set(key, e.target.valueAsNumber)} />
-          <NumberField label={`${p.label}, ${p.min} to ${p.max}`} value={v} min={p.min} max={p.max} step={p.step} onCommit={x => set(key, x)} />
+          <input id={id} type="range" min={p.min} max={p.max} step={p.step} value={v} aria-valuetext={p.percentOfHeight ? `${shown(v)} %` : undefined} onChange={e => set(key, e.target.valueAsNumber)} />
+          <NumberField label={`${label}, ${shown(p.min)} to ${shown(p.max)}`} value={shown(v)} min={shown(p.min)} max={shown(p.max)} step={shown(p.step)} onCommit={x => set(key, x / k)} />
         </div>
       </div>
     );

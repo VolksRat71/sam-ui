@@ -7,7 +7,7 @@ describe('effect clip names', () => {
   it('uses the tile titles, the style when there is a choice, and frames as people count them', () => {
     const pim = {kind: 'object', id: 0} as const;
     expect(effectTitle(pim, 'PixelateMask')).toBe('Pixelate');
-    expect(effectTitle({kind: 'background'}, 'Sobel')).toBe('Outline');
+    expect(effectTitle({kind: 'background'}, 'Sobel')).toBe('Edges'); // the layer effect is 'Outline'
     expect(effectTitle(pim, 'Sparkle')).toBe('Sparkle'); // a newer build's effect
     expect(clipTitle({target: pim, effect: 'Outline', params: normalizeParams('Outline', {style: 'Glow'})})).toBe('Outline · Glow');
     expect(clipTitle({target: pim, effect: 'Outline', params: normalizeParams('Outline', {})})).toBe('Outline');
