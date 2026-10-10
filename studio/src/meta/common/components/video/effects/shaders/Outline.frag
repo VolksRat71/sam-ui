@@ -4,14 +4,14 @@
 // Outline pass 3 of 3: the vertical half of the distance search, then the
 // stroke. Outline: solid out to uWidth with a soft outer edge. Glow: a short
 // solid core, then a wide falloff to 0 at uWidth. Alpha is 0 inside each
-// mask (bar a half-pixel anti-aliased overlap at the edge) and beyond the
-// width, so the result composites as decoration over whatever is below.
-// Masks are composited in order (later on top), premultiplied.
+// mask (distance 0; no inner anti-aliasing, which lit pinholes in noisy
+// masks) and beyond the width, so the result composites as decoration over
+// whatever is below. Masks are composited in order (later on top),
+// premultiplied.
 
 precision highp float;
 
 uniform sampler2D uSpread;
-uniform sampler2D uCover;
 uniform int uNumMasks;
 uniform int uRadius;
 uniform float uWidth; // px
@@ -24,7 +24,7 @@ uniform vec3 uColor2;
 
 out vec4 fragColor;
 
-float stroke(float d, float inside) {
+float stroke(float d) {
   float e = d - 0.5; // pixel centres to the mask's edge, which lies half a pixel out
   float a;
   if (uGlow) {
@@ -35,7 +35,7 @@ float stroke(float d, float inside) {
     float feather = max(1.0, uSoftness * uWidth * 0.5);
     a = 1.0 - smoothstep(uWidth - feather, uWidth, e);
   }
-  return a * (1.0 - smoothstep(0.5, 0.9, inside)) * uOpacity;
+  return d > 0.0 ? a * uOpacity : 0.0;
 }
 
 void main() {
@@ -47,19 +47,18 @@ void main() {
     d2 = min(d2, h * h + float(j * j));
   }
   vec3 d = sqrt(d2);
-  vec3 cover = texelFetch(uCover, p, 0).rgb;
 
   vec4 color = vec4(0.0);
   if (uNumMasks > 0) {
-    float a = stroke(d.r, cover.r);
+    float a = stroke(d.r);
     color = vec4(uColor0 * a, a) + color * (1.0 - a);
   }
   if (uNumMasks > 1) {
-    float a = stroke(d.g, cover.g);
+    float a = stroke(d.g);
     color = vec4(uColor1 * a, a) + color * (1.0 - a);
   }
   if (uNumMasks > 2) {
-    float a = stroke(d.b, cover.b);
+    float a = stroke(d.b);
     color = vec4(uColor2 * a, a) + color * (1.0 - a);
   }
   fragColor = color;

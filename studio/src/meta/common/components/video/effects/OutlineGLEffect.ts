@@ -174,7 +174,6 @@ export default class OutlineGLEffect extends BaseGLEffect {
     gl.activeTexture(gl.TEXTURE0 + SPREAD_UNIT);
     gl.bindTexture(gl.TEXTURE_2D, this._targets[1]);
     gl.uniform1i(at(program, 'uSpread'), SPREAD_UNIT);
-    gl.uniform1i(at(program, 'uCover'), COVER_UNIT);
     gl.uniform1i(at(program, 'uNumMasks'), masks.length);
     gl.uniform1i(at(program, 'uRadius'), radius);
     gl.uniform1f(at(program, 'uWidth'), widthPx);

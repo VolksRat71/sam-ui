@@ -4,9 +4,8 @@
 // Outline pass 1 of 3: up to three masks into one RGBA texture, each channel
 // the mask's coverage under a small blur. Pass 2 thresholds it at 0.5, which
 // drops specks smaller than the blur (single-pixel noise would otherwise grow
-// into a blob the size of the outline) and smooths jagged edges; pass 3 uses
-// the coverage itself to anti-alias the inner edge. Output rows run bottom-up
-// (row = gl_FragCoord.y); pass 3 flips back.
+// into a blob the size of the outline), fills pinholes and smooths jagged
+// edges. Output rows run bottom-up (row = gl_FragCoord.y); pass 3 flips back.
 
 precision highp float;
 
