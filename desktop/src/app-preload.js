@@ -33,6 +33,17 @@ contextBridge.exposeInMainWorld('samUiDesktop', {
       return () => ipcRenderer.removeListener('jobs:open', listener);
     },
   },
+  // agents (main.js, mcp-tools.js, issue #73): studio reports what the person
+  // sees (main checks it whole, keeps it in memory, and answers sam_studio
+  // with it), and hears each change an agent made, while agents are allowed
+  agent: {
+    report: view => ipcRenderer.send('agent:view', view),
+    onChanged: cb => {
+      const listener = (_e, change) => cb(change);
+      ipcRenderer.on('agent:changed', listener);
+      return () => ipcRenderer.removeListener('agent:changed', listener);
+    },
+  },
   setupSam3: () => ipcRenderer.send('app:setup-sam3'),
   ae: {
     status: () => ipcRenderer.invoke('ae:status'),
