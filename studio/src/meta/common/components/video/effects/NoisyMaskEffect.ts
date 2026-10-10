@@ -13,6 +13,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+// Modified by sam-ui: the per-mask texture is deleted after its draw (it
+// leaked one texture per mask per frame).
 import BaseGLEffect from '@/common/components/video/effects/BaseGLEffect';
 import {
   EffectFrameContext,
@@ -101,6 +103,7 @@ export default class NoisyMaskEffect extends BaseGLEffect {
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      gl.deleteTexture(maskTexture);
     });
 
     const ctx = form.ctx;

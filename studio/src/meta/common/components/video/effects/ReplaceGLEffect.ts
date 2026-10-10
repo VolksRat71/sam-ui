@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+// Modified by sam-ui: cleanup deletes the emoji texture.
 import angeryIcon from '@/assets/icons/angery.png';
 import heartIcon from '@/assets/icons/heart.png';
 import whistleIcon from '@/assets/icons/whistle.png';
@@ -186,6 +187,8 @@ export default class ReplaceGLEffect extends BaseGLEffect {
         }
       });
       this._maskTextures = [];
+      this._gl.deleteTexture(this._extraTexture);
+      this._extraTexture = null;
     }
   }
 }

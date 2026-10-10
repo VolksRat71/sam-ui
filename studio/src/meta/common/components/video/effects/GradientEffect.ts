@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+// Modified by sam-ui: cleanup deletes the LUT textures.
 import BaseGLEffect from '@/common/components/video/effects/BaseGLEffect';
 import {
   EffectFrameContext,
@@ -99,5 +100,11 @@ export default class GradientEffect extends BaseGLEffect {
     const ctx = form.ctx;
     invariant(this._canvas !== null, 'canvas is required');
     ctx.drawImage(this._canvas, 0, 0);
+  }
+
+  async cleanup(): Promise<void> {
+    super.cleanup();
+    this._lutTextures.forEach(texture => this._gl?.deleteTexture(texture));
+    this._lutTextures = [];
   }
 }

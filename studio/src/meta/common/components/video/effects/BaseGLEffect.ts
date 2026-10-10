@@ -13,6 +13,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+// Modified by sam-ui: cleanup also deletes the program and the buffers it
+// created (studio sets effects up again on new contexts).
 import Logger from '@/common/logger/Logger';
 import {Tracklet} from '@/common/tracker/Tracker';
 import invariant from 'invariant';
@@ -32,6 +34,7 @@ export default abstract class BaseGLEffect extends AbstractEffect {
 
   protected _vertexShader: WebGLShader | null = null;
   protected _fragmentShader: WebGLShader | null = null;
+  protected _buffers: (WebGLBuffer | null)[] = [];
 
   async setup(init: EffectInit): Promise<void> {
     const {canvas, gl} = init;
@@ -126,6 +129,10 @@ export default abstract class BaseGLEffect extends AbstractEffect {
         this._gl.detachShader(this._program, this._fragmentShader);
         this._gl.deleteShader(this._fragmentShader);
       }
+      this._buffers.forEach(buffer => this._gl?.deleteBuffer(buffer));
+      this._buffers = [];
+      this._gl.deleteProgram(this._program);
+      this._program = null;
     }
   }
 
@@ -149,6 +156,7 @@ export default abstract class BaseGLEffect extends AbstractEffect {
     gl.bufferData(gl.ARRAY_BUFFER, texCoordBufferData, gl.STATIC_DRAW);
     gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 0, 0);
     gl.enableVertexAttribArray(1);
+    this._buffers = [vertexBuffer, texCoordBuffer];
   }
 
   protected setupUniforms(
