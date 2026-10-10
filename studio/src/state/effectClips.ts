@@ -196,6 +196,72 @@ export function removeClip(doc: EffectDoc, id: string): EffectDoc {
   return {...doc, clips: doc.clips.filter(c => c.id !== id)};
 }
 
+/**
+ * Split a clip at `frame` into [start, frame) and [frame, end), the right
+ * part as `newId`: both keep the effect, settings and row, and the right
+ * part's phase continues the animation, so every frame looks as before.
+ * Only strictly inside the clip; anywhere else nothing changes.
+ */
+export function splitClip(doc: EffectDoc, id: string, frame: number, newId = newClipId(doc)): EffectDoc {
+  const f = Math.round(frame);
+  const c = doc.clips.find(x => x.id === id);
+  if (c == null || f <= c.start || f >= c.end) {
+    return doc;
+  }
+  // the new part goes last, where a redo (editJournal.applyEntry) puts it back
+  const right = {...c, id: newId, start: f, phase: c.phase + (f - c.start)};
+  return {...doc, clips: [...doc.clips.map(x => (x === c ? {...c, end: f} : x)), right]};
+}
+
+/**
+ * A copy of a clip as `newId`, its animation from the beginning (phase 0):
+ * right after the original on the same row when it fits there (inside the
+ * video, over no other clip of that row), else on a new top row at the
+ * original's frames.
+ */
+export function duplicateClip(doc: EffectDoc, id: string, newId: string, numFrames: number): EffectDoc {
+  const c = doc.clips.find(x => x.id === id);
+  if (c == null) {
+    return doc;
+  }
+  const after = {...c, id: newId, start: c.end, end: 2 * c.end - c.start, phase: 0};
+  const fits =
+    after.end <= numFrames && !clipsOf(doc, c.target).some(o => o.row === c.row && o.start < after.end && after.start < o.end);
+  return fits ? {...doc, clips: [...doc.clips, after]} : addClip(doc, {...c, id: newId, phase: 0});
+}
+
+/** A target's clips in stack order: the one drawn first (lowest row) first; equal rows in doc order. */
+export function stackOf(doc: EffectDoc, target: EffectTarget): EffectClip[] {
+  return clipsOf(doc, target).sort((a, b) => a.row - b.row);
+}
+
+/**
+ * Move a clip one place up (drawn later, on top) or down its target's stack,
+ * swapping places with its neighbour there; the target's rows become 0..n-1.
+ * At the top (or the bottom) nothing changes.
+ */
+export function reorderClip(doc: EffectDoc, id: string, direction: 'up' | 'down'): EffectDoc {
+  const c = doc.clips.find(x => x.id === id);
+  if (c == null) {
+    return doc;
+  }
+  const stack = stackOf(doc, c.target);
+  const at = stack.indexOf(c);
+  const to = at + (direction === 'up' ? 1 : -1);
+  if (to < 0 || to >= stack.length) {
+    return doc;
+  }
+  [stack[at], stack[to]] = [stack[to], stack[at]];
+  const rows = new Map(stack.map((x, i) => [x.id, i]));
+  return {
+    ...doc,
+    clips: doc.clips.map(x => {
+      const row = rows.get(x.id);
+      return row == null || row === x.row ? x : {...x, row};
+    }),
+  };
+}
+
 /** Drop the clips of objects that no longer exist (background clips stay). */
 export function pruneClips(doc: EffectDoc, objectIds: ReadonlyArray<number>): EffectDoc {
   const keep = new Set(objectIds);

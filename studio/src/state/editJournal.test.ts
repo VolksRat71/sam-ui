@@ -3,7 +3,18 @@
 // Acceptance check U9 (vault 06-acceptance-test-plan): one Cmd-Z across the
 // person's effect and seed edits, newest first, never stepping an agent's.
 import {describe, expect, it} from 'vitest';
-import {type EffectClip, type EffectDoc, EMPTY_DOC, addClip, newClip, removeClip, updateClip} from './effectClips';
+import {
+  type EffectClip,
+  type EffectDoc,
+  EMPTY_DOC,
+  addClip,
+  duplicateClip,
+  newClip,
+  removeClip,
+  reorderClip,
+  splitClip,
+  updateClip,
+} from './effectClips';
 import {
   EMPTY_JOURNAL,
   type Journal,
@@ -86,6 +97,25 @@ describe('edit journal (U9)', () => {
     expect(changes).toEqual([{id: 'c1', before: doc.clips[0], after: null}]);
     expect(applyEntry(gone, changes, 'undo').clips).toEqual(doc.clips);
     expect(applyEntry(doc, changes, 'redo').clips).toEqual([]);
+  });
+
+  it('a split, a duplicate and a reorder are one step each: undo restores the doc exactly, redo puts it back', () => {
+    const doc = addClip(addClip(EMPTY_DOC, outline('c1', 30)), outline('c2', 60));
+    const edits: Array<[string, (d: EffectDoc) => EffectDoc]> = [
+      ['split', d => splitClip(d, 'c1', 50, 'c3')],
+      ['duplicate', d => duplicateClip(d, 'c2', 'c4', 300)],
+      ['reorder', d => reorderClip(d, 'c2', 'down')],
+    ];
+    for (const [what, edit] of edits) {
+      const after = edit(doc);
+      const j = recordEffect(EMPTY_JOURNAL, doc, after, `edit:${what}`, 0);
+      expect(j.undo, what).toHaveLength(1);
+      const s = {doc: after, journal: j};
+      press(s, 'undo', () => {});
+      expect(s.doc, what).toEqual(doc);
+      press(s, 'redo', () => {});
+      expect(s.doc, what).toEqual(after);
+    }
   });
 
   it('merges a drag (same key, close together) into one step, but not separate edits', () => {
