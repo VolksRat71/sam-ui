@@ -27,6 +27,9 @@ export type EffectOptions = {
   variant: number;
 };
 
+export type EffectParamValue = number | string | boolean;
+export type EffectParams = Record<string, EffectParamValue>;
+
 export type EffectInit = {
   width: number;
   height: number;
@@ -74,6 +77,7 @@ export interface Effect {
 export abstract class AbstractEffect implements Effect {
   public numVariants: number;
   public variant: number;
+  params: EffectParams = {};
 
   constructor(numVariants: number) {
     this.numVariants = numVariants;
@@ -91,6 +95,10 @@ export abstract class AbstractEffect implements Effect {
 
   async update(options: EffectOptions): Promise<void> {
     this.variant = options.variant;
+  }
+
+  setParams(params: EffectParams): void {
+    this.params = params;
   }
 
   async cleanup(): Promise<void> {

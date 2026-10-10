@@ -26,6 +26,7 @@ import CutoutGLEffect from './CutoutGLEffect';
 import EraseForegroundGLEffect from './EraseForegroundGLEffect';
 import GradientEffect from './GradientEffect';
 import NoisyMaskEffect from './NoisyMaskEffect';
+import OutlineGLEffect from './OutlineGLEffect';
 import PixelateEffect from './PixelateEffect';
 import PixelateMaskGLEffect from './PixelateMaskGLEffect';
 import ReplaceGLEffect from './ReplaceGLEffect';
@@ -54,6 +55,7 @@ export type Effects = {
   Burst: Effect;
   PixelateMask: Effect;
   Arrow: Effect;
+  Outline: Effect;
 
   /* More Effects */
   NoisyMask: Effect;
@@ -80,6 +82,7 @@ export default {
   Burst: new BurstGLEffect(),
   PixelateMask: new PixelateMaskGLEffect(),
   Arrow: new ArrowGLEffect(),
+  Outline: new OutlineGLEffect(),
 
   /* More Effects */
   NoisyMask: new NoisyMaskEffect(),
