@@ -14,6 +14,7 @@ import {
   EffectInit,
   EffectParams,
 } from '@/common/components/video/effects/Effect';
+import {EFFECT_SPECS, type ParamSpec} from '@/common/components/video/effects/EffectParamSpecs';
 import vertexShaderSource from '@/common/components/video/effects/shaders/DefaultVert.vert?raw';
 import fragmentShaderSource from '@/common/components/video/effects/shaders/Outline.frag?raw';
 import coverShaderSource from '@/common/components/video/effects/shaders/OutlineCover.frag?raw';
@@ -30,23 +31,27 @@ const MASK_SLOTS = 3;
 const COVER_UNIT = MASK_SLOTS;
 const SPREAD_UNIT = MASK_SLOTS + 1;
 
-// ponytail: duplicates the Outline defaults/ranges in EFFECT_SPECS (feat/effect-clips); read them from there once merged
-export const OUTLINE_DEFAULTS = {width: 0.006, color: 'layer', opacity: 1, softness: 0.25, style: 'Outline'};
-
 export type OutlineSettings = {width: number; color: string; opacity: number; softness: number; glow: boolean};
 
-/** The effect's settings from raw params: defaults for missing or invalid values, numbers clamped to range. */
+const SPEC = EFFECT_SPECS.Outline.params;
+
+/**
+ * The effect's settings from raw params, a second check behind the session's
+ * normalizeParams: EFFECT_SPECS defaults for missing or invalid values,
+ * numbers clamped to its ranges.
+ */
 export function resolveOutlineParams(params: EffectParams): OutlineSettings {
-  const num = (key: 'width' | 'opacity' | 'softness', min: number, max: number) => {
+  const num = (key: 'width' | 'opacity' | 'softness') => {
+    const spec = SPEC[key] as Extract<ParamSpec, {kind: 'number'}>;
     const v = params[key];
-    return typeof v === 'number' && Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : OUTLINE_DEFAULTS[key];
+    return typeof v === 'number' && Number.isFinite(v) ? Math.min(spec.max, Math.max(spec.min, v)) : spec.default;
   };
   const color = params.color;
   return {
-    width: num('width', 0.002, 0.05),
+    width: num('width'),
     color: typeof color === 'string' && /^#[0-9a-f]{6}$/i.test(color) ? color : 'layer',
-    opacity: num('opacity', 0, 1),
-    softness: num('softness', 0, 1),
+    opacity: num('opacity'),
+    softness: num('softness'),
     glow: params.style === 'Glow',
   };
 }

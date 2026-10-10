@@ -7,12 +7,11 @@ import {DataArray, encode} from '@/jscocotools/mask';
 import type {CanvasForm} from 'pts';
 import {describe, expect, it, vi} from 'vitest';
 import type {EffectFrameContext} from './Effect';
-import OutlineGLEffect, {OUTLINE_DEFAULTS, outlineRgb, resolveOutlineParams} from './OutlineGLEffect';
+import OutlineGLEffect, {outlineRgb, resolveOutlineParams} from './OutlineGLEffect';
 
 describe('resolveOutlineParams', () => {
   it('defaults every missing param', () => {
     expect(resolveOutlineParams({})).toEqual({width: 0.006, color: 'layer', opacity: 1, softness: 0.25, glow: false});
-    expect(OUTLINE_DEFAULTS.style).toBe('Outline');
   });
 
   it('clamps numbers to range and ignores wrong types', () => {
