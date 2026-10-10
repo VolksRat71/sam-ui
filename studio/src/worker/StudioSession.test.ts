@@ -213,3 +213,29 @@ it('keeps a newer click mask when another object refreshes or applies a detail',
     expect(repaint).toHaveBeenCalledWith([2]);
   } finally {vi.unstubAllGlobals();}
 });
+
+it('runs one Find in clip scan per object: a second is refused while the first runs', async () => {
+  const s = new StudioSession({} as never, {} as never, () => {});
+  s.init('http://backend.test');
+  (s as unknown as {_sessionId: string})._sessionId = 's';
+  const pending: Array<() => void> = [];
+  vi.stubGlobal('fetch', async (url: string) => {
+    if (url.endsWith('/discover_text')) {
+      await new Promise<void>(r => pending.push(r));
+      return new Response(JSON.stringify({intervals: []}));
+    }
+    return new Response(JSON.stringify({data: {objectTracks: []}}));
+  });
+  try {
+    const first = s.discoverText(1, 'dog', 'sam3');
+    await expect(s.discoverText(1, 'dog', 'sam3')).rejects.toThrow(/already scanning/);
+    const other = s.discoverText(2, 'cat', 'sam3'); // another object is not held up
+    await vi.waitFor(() => expect(pending).toHaveLength(2));
+    pending.forEach(r => r());
+    await Promise.all([first, other]);
+    const again = s.discoverText(1, 'dog', 'sam3'); // free once it ended
+    await vi.waitFor(() => expect(pending).toHaveLength(3));
+    pending[2]();
+    expect((await again).objectId).toBe(1);
+  } finally {vi.unstubAllGlobals();}
+});

@@ -690,6 +690,8 @@ export default class StudioSession {
   private _offline: OfflineService | null = null;
   /** "Looks right" marks on the browser engine's queue: in OPFS with no backend, else in this tab. */
   private _reviews = new KvReviewStore(new MemoryKv());
+  /** "session:object" pairs with a Find in clip scan in flight: one per object, whatever the UI remounts. */
+  private _discovering = new Set<string>();
   private readonly _local: LocalEngine;
 
   constructor(
@@ -957,11 +959,25 @@ export default class StudioSession {
    * looks for the phrase on a few frames across the clip, and writes each
    * appearance as a candidate range of the object. No seed, mask or track
    * changes. cancelPropagateInVideo cancels it (nothing is then written).
+   * One scan per object at a time: a second is refused while the first runs.
    */
   async discoverText(objectId: number, text: string, engine: string): Promise<DiscoverTextResult> {
     if (this._offline != null) {
       throw new Error('finding by text needs SAM 3 in the desktop app');
     }
+    const key = `${this.sessionId}:${objectId}`;
+    if (this._discovering.has(key)) {
+      throw new Error('Find in clip is already scanning this object; wait for it or cancel it first');
+    }
+    this._discovering.add(key);
+    try {
+      return await this._discoverText(objectId, text, engine);
+    } finally {
+      this._discovering.delete(key);
+    }
+  }
+
+  private async _discoverText(objectId: number, text: string, engine: string): Promise<DiscoverTextResult> {
     const response = await fetch(`${this._endpoint}/discover_text`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
