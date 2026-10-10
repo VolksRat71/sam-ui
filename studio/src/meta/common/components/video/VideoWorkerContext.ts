@@ -843,6 +843,8 @@ export default class VideoWorkerContext {
         this._stats.effect1?.begin();
       }
 
+      // pts 1.0 skips style writes it thinks are applied; the clear, canvas resizes and effects' save/restore desync it.
+      CanvasForm.resetStyleCache(form.ctx);
       effect.apply(form, effectParams, tracklets);
 
       if (i === 0) {
