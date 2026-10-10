@@ -214,6 +214,27 @@ it('keeps a newer click mask when another object refreshes or applies a detail',
   } finally {vi.unstubAllGlobals();}
 });
 
+it('refreshObjects shows the objects an agent changed and drops one it removed (#73)', async () => {
+  const s = new StudioSession({clearTrackletMasks: () => {}} as never, {} as never, () => {});
+  const inside = s as unknown as {_render: () => void; _tracklets: Map<number, unknown>; _storeKey: string | null;
+    _local: {store: {delete: (key: string, id: number) => Promise<void>}};
+    _showChanged: (objects: Array<{objectId: number}>) => Promise<void>};
+  const listed = [{objectId: 1}, {objectId: 3}, {objectId: 4}];
+  vi.spyOn(s, 'objectTracks').mockResolvedValue(listed as never);
+  const shown: number[][] = [];
+  inside._showChanged = async objects => void shown.push(objects.map(o => o.objectId));
+  inside._render = () => {};
+  inside._storeKey = 'video-key';
+  const dropped = vi.spyOn(inside._local.store, 'delete').mockResolvedValue();
+  inside._tracklets.set(2, {id: 2, masks: []});
+  inside._tracklets.set(3, {id: 3, masks: []});
+  expect(await s.refreshObjects([1, 2, 4], [4])).toBe(listed);
+  expect(shown).toEqual([[1]]); // only the changed ones: not 3, and not 4, which a job here is tracking
+  expect(inside._tracklets.has(2)).toBe(false);
+  expect(dropped).toHaveBeenCalledWith('video-key', 2); // its browser track goes too, as removeObject does
+  expect(inside._tracklets.has(3)).toBe(true);
+});
+
 it('runs one Find in clip scan per object: a second is refused while the first runs', async () => {
   const s = new StudioSession({} as never, {} as never, () => {});
   s.init('http://backend.test');

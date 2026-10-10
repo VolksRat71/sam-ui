@@ -33,6 +33,34 @@ contextBridge.exposeInMainWorld('samUiDesktop', {
       return () => ipcRenderer.removeListener('jobs:open', listener);
     },
   },
+  // agents (main.js, mcp-tools.js, issue #73): studio reports what the person
+  // sees (main checks it whole, keeps it in memory, and answers sam_studio
+  // with it), and hears each change an agent made, while agents are allowed
+  agent: {
+    report: view => ipcRenderer.send('agent:view', view),
+    onChanged: cb => {
+      const listener = (_e, change) => cb(change);
+      ipcRenderer.on('agent:changed', listener);
+      return () => ipcRenderer.removeListener('agent:changed', listener);
+    },
+    // sam_studio goto: cb answers {moved, reason?} (or a promise of it), sent back to main
+    onGoto: cb => {
+      const listener = (_e, req) =>
+        Promise.resolve()
+          .then(() => cb(req))
+          .catch(() => ({moved: false, reason: 'studio could not move'}))
+          .then(result => ipcRenderer.send('agent:goto-done', {id: req?.id, result}));
+      ipcRenderer.on('agent:goto', listener);
+      return () => ipcRenderer.removeListener('agent:goto', listener);
+    },
+    // sam_track start on studio's video: studio runs the job as its own, and
+    // tells main through reply ({stage: started | refused | done, ...})
+    onTrack: cb => {
+      const listener = (_e, req) => cb(req, msg => ipcRenderer.send('agent:track-reply', {...msg, id: req?.id}));
+      ipcRenderer.on('agent:track', listener);
+      return () => ipcRenderer.removeListener('agent:track', listener);
+    },
+  },
   setupSam3: () => ipcRenderer.send('app:setup-sam3'),
   ae: {
     status: () => ipcRenderer.invoke('ae:status'),

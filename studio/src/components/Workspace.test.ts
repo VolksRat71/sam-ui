@@ -4,7 +4,7 @@ import {expect, it, vi} from 'vitest';
 import {initialState} from '~/state/objects';
 import Workspace from './Workspace';
 
-vi.mock('~/workspace/useStudioSession', () => ({default: () => ({state: initialState, dirty: [], meta: {numFrames: 0}, engines: [], backend: true, webgpu: true, foreignJobs: [], warning: null})}));
+vi.mock('~/workspace/useStudioSession', () => ({default: () => ({state: initialState, dirty: [], meta: {numFrames: 0}, engines: [], backend: true, webgpu: true, foreignJobs: [], warning: null, agentActivity: [], agentJobIds: new Set()})}));
 vi.mock('react-resizable-panels', () => ({Panel: ({children}: {children: ReactNode}) => children, PanelGroup: ({children}: {children: ReactNode}) => children, PanelResizeHandle: () => null}));
 vi.mock('./Sidebar', () => ({default: ({sections}: {sections: {id: string}[]}) => createElement('div', null, sections.map(s => createElement('span', {key: s.id, 'data-panel': s.id})))}));
 vi.mock('./Preview', () => ({default: () => null}));

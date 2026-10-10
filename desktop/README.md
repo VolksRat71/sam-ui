@@ -75,6 +75,14 @@ claude mcp add --transport http --scope user sam-ui http://127.0.0.1:8793/mcp --
 Claude Desktop connects through `mcp-remote` with the same URL and header. The
 tools are listed in [docs/development.md](../docs/development.md#agents-mcp).
 
+While agents are allowed they can see and change the video you have open, as
+the menu says. Their edits and tracks show in studio as they make them, and the
+**Agent** chip in the top bar names the latest change, with **Go to** and a list
+of the last 20. Your undo (Cmd-Z) on a layer steps back its last change, an
+agent's included. An agent can read your frame and selected layer
+(`sam_studio state`), and can move you to a frame only when you aren't playing
+or scrubbing. A change to another video shows a toast with **Open**.
+
 ## Develop
 
 ```sh

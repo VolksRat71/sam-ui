@@ -436,6 +436,28 @@ def test_undo_and_redo_keep_the_sessions_sam2_state_in_step(world):
     assert cond_frames(a, sid, 1) == {0, 3}
 
 
+def test_an_undo_in_one_session_steps_back_a_click_made_in_another(world):
+    """Studio's session and an agent's on one video (issue #73): the agent
+    corrects a tracked frame, the person's undo takes it back, and the
+    person's next click there refines the restored track, not the agent's."""
+    make, stub, path = world
+    api = make()
+    person = start(api, path)
+    click(api, person, 1, 0, [[0.5, 0.5]], [1])
+    ctx = api.track_context(person)
+    list(ctx.service.track(ctx.video, ctx.path, [1], video_handle=ctx.video_handle))
+    tracked = api.tracks.tracks.mask_at(ctx.video, 1, "fake", 4)
+    agent = start(api, path)
+    click(api, agent, 1, 4, [[0.5, 0.5], [0.1, 0.1]], [1, 0])
+    assert sorted(api.tracks.seeds.seeds(ctx.video, 1)) == [0, 4]
+    info = api.undo_seeds(person, 1)
+    assert sorted(info["seeds"]) == [0] and info["state"] == "tracked"
+    assert api.tracks.tracks.mask_at(ctx.video, 1, "fake", 4) == tracked
+    stub.mask_calls.clear()
+    click(api, person, 1, 4, [[0.5, 0.5]], [1])
+    assert stub.mask_calls == [(4, 1)]  # primed from the restored track's frame
+
+
 def test_moving_a_frames_clicks_to_another_object_is_one_undo_per_object(world):
     make, _, path = world
     a = make()

@@ -11,8 +11,9 @@
 // After Effects (ae-bridge.js, ae-roto.js) is reached from here only, never
 // from the page: its bridge refuses browser origins, and only this process
 // holds the token that lets the backend open a file in place.
-// Agents (MCP, mcp-server.js) are served from here too, on 127.0.0.1:8793, once
-// the person allows them (Agents menu).
+// Agents (MCP, mcp-server.js) are served from here too, on 127.0.0.1:8793 (a dev
+// run can move it with SAM_UI_MCP_PORT), once the person allows them (Agents
+// menu). Studio reports the person's view here and hears agents' changes.
 'use strict';
 
 const {app, BrowserWindow, Menu, Notification, clipboard, dialog, ipcMain, shell} = require('electron');
@@ -26,7 +27,9 @@ const {createAeClient, describeError} = require('./ae-bridge');
 const roto = require('./ae-roto');
 const {downloadRepo, downloadVerified} = require('./hf-download');
 const {createJobNotifier, notifyEnabled} = require('./job-notify');
-const {DEFAULT_PORT: MCP_PORT, claudeAddCommand, createMcpServer} = require('./mcp-server');
+const {DEFAULT_PORT, claudeAddCommand, createMcpServer} = require('./mcp-server');
+const {parseView} = require('./mcp-tools');
+const {createStudioJobs} = require('./studio-jobs');
 const {autoCheckEnabled, createUpdateChecker, fileLogger, fileStore, releasePageUrl} = require('./update-check');
 
 const CHECKPOINT_URL = 'https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_large.pt';
@@ -225,13 +228,65 @@ function stopBackend() {
 let mcp = null; // set before listen() resolves, so a second tick never starts a second server
 let agentsItem = null; // the menu checkbox, unticked when the server cannot start
 
+/**
+ * The fixed port, or SAM_UI_MCP_PORT in a dev run only (a second app beside the
+ * installed one, which holds 8793): a packaged app never moves.
+ */
+function mcpPort() {
+  const asked = Number(process.env.SAM_UI_MCP_PORT);
+  return !app.isPackaged && Number.isInteger(asked) && asked >= 1024 && asked <= 65535 ? asked : DEFAULT_PORT;
+}
+const MCP_PORT = mcpPort();
+
+// Studio awareness (issue #73): what the person sees, as studio last reported
+// it (parseView: checked whole, or null), in memory only and never logged; and
+// each agent change, sent to the window while agents are allowed.
+let studioView = null;
+// sam_studio goto: main asks the window and waits (3 s at most) for its answer
+let gotoSeq = 0;
+const gotoWaits = new Map(); // id -> resolve
+const studio = {
+  view: () => studioView,
+  goto: req =>
+    new Promise(resolve => {
+      if (mainWindow == null || mainWindow.isDestroyed()) return resolve({moved: false, reason: 'studio is not open'});
+      const id = ++gotoSeq;
+      const timer = setTimeout(() => {
+        gotoWaits.delete(id);
+        resolve({moved: false, reason: 'studio did not answer'});
+      }, 3000);
+      gotoWaits.set(id, reply => {
+        clearTimeout(timer);
+        resolve(reply);
+      });
+      mainWindow.webContents.send('agent:goto', {id, ...req});
+    }),
+  // sam_track start on studio's session: studio runs the job itself, so it draws on
+  // the person's lanes as their own tracks do (studio-jobs.js)
+  track: req => studioJobs.track(req),
+};
+const studioJobs = createStudioJobs({
+  send: request => {
+    if (mainWindow == null || mainWindow.isDestroyed()) return false;
+    mainWindow.webContents.send('agent:track', request);
+    return true;
+  },
+});
+const dropStudioJobs = () => studioJobs.drop();
+function tellStudio(change) {
+  if (mcp != null && mainWindow != null && !mainWindow.isDestroyed()) mainWindow.webContents.send('agent:changed', change);
+}
+
 async function startMcp() {
   if (mcp != null || backendPort == null) return;
   let server = null;
   try {
     server = createMcpServer({
       backend: roto.backendClient({port: backendPort}),
+      port: MCP_PORT,
       exportRoot: path.join(app.getPath('home'), 'Movies', 'sam-ui'),
+      studio,
+      onChange: tellStudio,
     });
     mcp = server;
     await server.listen();
@@ -313,7 +368,7 @@ function menu(p) {
       submenu: [
         {
           id: 'allow-agents',
-          label: 'Allow agents (MCP)',
+          label: 'Allow agents (MCP): they can see and change your open video',
           type: 'checkbox',
           checked: readSettings().allowAgents === true,
           click: item => setAgents(item.checked),
@@ -374,6 +429,17 @@ async function main() {
     }
   });
   mainWindow.webContents.session.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
+  // a reload or a crash leaves no view behind: the new page reports its own
+  mainWindow.webContents.on('did-start-navigation', details => {
+    if (details.isMainFrame && !details.isSameDocument) {
+      studioView = null;
+      dropStudioJobs();
+    }
+  });
+  mainWindow.webContents.on('render-process-gone', () => {
+    studioView = null;
+    dropStudioJobs();
+  });
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
     if (!splashWin.isDestroyed()) splashWin.close();
@@ -469,6 +535,24 @@ const jobDone = createJobNotifier({
 });
 ipcMain.on('jobs:done', (event, payload) => {
   if (isMainWindow(event)) jobDone(payload);
+});
+
+// -- studio's view, for agents (mcp-tools.js parseView) --------------------
+// Only the main window reports; a report that fails its checks is dropped whole.
+
+ipcMain.on('agent:view', (event, payload) => {
+  if (isMainWindow(event)) studioView = parseView(payload);
+});
+// studio's answer to a goto; mcp-tools.js parseGotoReply reads what it says
+ipcMain.on('agent:goto-done', (event, reply) => {
+  const done = isMainWindow(event) && Number.isInteger(reply?.id) ? gotoWaits.get(reply.id) : undefined;
+  if (done == null) return;
+  gotoWaits.delete(reply.id);
+  done(reply.result);
+});
+// studio's word on a job it runs for an agent: started (or refused), then done
+ipcMain.on('agent:track-reply', (event, msg) => {
+  if (isMainWindow(event)) studioJobs.reply(msg);
 });
 
 // -- SAM 3 download --------------------------------------------------------

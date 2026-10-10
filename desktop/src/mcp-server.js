@@ -168,9 +168,12 @@ function createRpc({tools, callTool}) {
 /**
  * The server over `backend` (a backendClient with no link token). `port` 0
  * lets the OS pick (tests only). listen() rejects when the port is taken.
+ * `studio` and `onChange` are the desktop window's view and change hooks
+ * (mcp-tools.js); on its own the server has no studio, so sam_studio answers
+ * {open: false} and changes go nowhere.
  */
-function createMcpServer({backend, port = DEFAULT_PORT, exportRoot, log = () => {}}) {
-  const tools = createTools({backend, exportRoot});
+function createMcpServer({backend, port = DEFAULT_PORT, exportRoot, studio = null, onChange, log = () => {}}) {
+  const tools = createTools({backend, exportRoot, studio, onChange});
   const rpc = createRpc(tools);
   loadOrCreateToken();
 

@@ -1,6 +1,9 @@
 // sam-ui (Apache-2.0). New file, not from SAM 2.
-import {useCallback, useState} from 'react';
+import {Bot} from '@carbon/icons-react';
+import {useCallback, useEffect, useMemo, useState} from 'react';
 import DeleteVideoModal from '~/components/DeleteVideoModal';
+import {agentBridge, asAgentChange} from '~/lib/desktop';
+import {videoDisplayName} from '~/lib/uploadNames';
 import MediaSection from '~/components/MediaSection';
 import Workspace from '~/components/Workspace';
 import {whenClosed} from '~/lib/sessionClose';
@@ -130,6 +133,54 @@ function App({media}: {media: MediaApi}) {
     <>
       <Workspace key={current.path} video={current} renderMedia={renderMedia} />
       {dialog}
+      <AgentElsewhere current={current.path} videos={videos} onOpen={select} />
     </>
+  );
+}
+
+/**
+ * An agent changed a video other than the open one (issue #73): one toast,
+ * which a newer change replaces, with Open and Dismiss. The open video's own
+ * changes show in its Workspace.
+ */
+function AgentElsewhere({current, videos, onOpen}: {current: string; videos: VideoItem[]; onOpen: (v: VideoItem) => void}) {
+  const agent = useMemo(agentBridge, []);
+  const [news, setNews] = useState<{videoId: string; layers: ReadonlySet<number>} | null>(null);
+  useEffect(
+    () =>
+      agent?.onChanged(raw => {
+        const c = asAgentChange(raw);
+        if (c == null || c.videoId === current) {
+          return;
+        }
+        // the layers touched, not every change: a busy agent never grows this
+        setNews(n => ({videoId: c.videoId, layers: new Set([...(n?.videoId === c.videoId ? n.layers : []), ...c.objectIds])}));
+      }),
+    [agent, current],
+  );
+  useEffect(() => {
+    setNews(n => (n?.videoId === current ? null : n)); // opened, by the toast or otherwise
+  }, [current]);
+  if (news == null) {
+    return null;
+  }
+  const video = videos.find(v => v.path === news.videoId);
+  const n = news.layers.size;
+  return (
+    <div className="toast agent-toast" role="status">
+      <Bot size={16} aria-hidden="true" />
+      <span>
+        An agent changed {videoDisplayName(news.videoId)}
+        {n > 0 ? ` (${n} ${n === 1 ? 'layer' : 'layers'})` : ''}
+      </span>
+      {video != null && (
+        <button className="link-button" onClick={() => onOpen(video)}>
+          Open
+        </button>
+      )}
+      <button className="link-button" onClick={() => setNews(null)}>
+        Dismiss
+      </button>
+    </div>
   );
 }

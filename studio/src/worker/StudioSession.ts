@@ -1020,6 +1020,15 @@ export default class StudioSession {
         input: {sessionId: this.sessionId, objectId},
       });
     }
+    if (this._storeKey != null) {
+      await this._local.store.delete(this._storeKey, objectId);
+    }
+    this._forget(objectId);
+    this._render(true);
+  }
+
+  /** Drop everything the preview holds for an object. */
+  private _forget(objectId: number): void {
     const t = this._tracklets.get(objectId);
     this._tracklets.delete(objectId);
     this._baseMasks.delete(objectId);
@@ -1027,13 +1036,41 @@ export default class StudioSession {
     this._seedMasks.delete(objectId);
     this._seedPoints.delete(objectId);
     this._ranges.delete(objectId);
-    if (this._storeKey != null) {
-      await this._local.store.delete(this._storeKey, objectId);
-    }
     if (t != null) {
       this._context.clearTrackletMasks(t);
     }
-    this._render(true);
+  }
+
+  /**
+   * Show objects someone else changed on the backend (an agent, issue #73):
+   * their clicks, seed masks and cached track, as an undo shows them; one the
+   * backend no longer lists is dropped, as removeObject drops it. `busy`:
+   * objects a job of this tab is tracking, whose streamed masks stay until the
+   * job ends (their ranges still update). Answers every object, for the sync.
+   */
+  async refreshObjects(objectIds: number[], busy: number[] = []): Promise<ServerObject[]> {
+    const objects = await this.objectTracks();
+    const listed = new Map(objects.map(o => [o.objectId, o]));
+    const changed: ServerObject[] = [];
+    for (const id of objectIds) {
+      const o = listed.get(id);
+      if (o != null) {
+        if (!busy.includes(id)) {
+          changed.push(o);
+        }
+      } else if (this._tracklets.has(id)) {
+        if (this._storeKey != null) {
+          await this._local.store.delete(this._storeKey, id); // a later object with this id starts clean
+        }
+        this._forget(id);
+      }
+    }
+    if (changed.length > 0) {
+      await this._showChanged(changed);
+    } else {
+      this._render(true);
+    }
+    return objects;
   }
 
   // -- tracks ----------------------------------------------------------------
