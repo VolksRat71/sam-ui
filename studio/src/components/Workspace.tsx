@@ -14,6 +14,7 @@ import {historyShortcut} from '~/state/history';
 import {jobProgress} from '~/state/objects';
 import useStudioSession, {type VideoItem} from '~/workspace/useStudioSession';
 import AeExportModal from './AeExportModal';
+import AgentActivity from './AgentActivity';
 import ConfirmModal from './ConfirmModal';
 import {DemoBanner, DemoTag, UnsupportedNotice} from './DemoNotice';
 import {pageNotice} from '~/state/notices';
@@ -154,9 +155,12 @@ export default function Workspace({video, renderMedia}: Props) {
             </span>
           ))}
           {session.foreignJobs.map(job => (
-            <span key={job.jobId} className="job-chip foreign" title="A job started in another tab or session">
+            <span
+              key={job.jobId}
+              className="job-chip foreign"
+              title={session.agentJobIds.has(job.jobId) ? 'A track an agent started' : 'A job started in another tab or session'}>
               <span className="spinner small" />
-              Elsewhere: {job.objects.map(nameOf).join(', ')}
+              {session.agentJobIds.has(job.jobId) ? 'Agent' : 'Elsewhere'}: {job.objects.map(nameOf).join(', ')}
               <span className="muted">
                 {job.framesDone}
                 {job.nFrames != null ? `/${job.nFrames}` : ''}
@@ -176,6 +180,7 @@ export default function Workspace({video, renderMedia}: Props) {
               <span className="error">Last track did not finish: {state.notice}</span>
             ) : null
           )}
+          <AgentActivity session={session} />
         </div>
         <div className="topbar-actions">
           <button className="button subtle" onClick={() => setShortcutsOpen(true)} aria-label="Keyboard shortcuts (?)">Shortcuts <kbd>?</kbd></button>

@@ -261,3 +261,22 @@ input:not([type='checkbox']):not([type='radio']):not([type='range']) { min-heigh
 .detail-crop { width: auto; height: auto; max-width: 100%; max-height: 256px; align-self: center; cursor: crosshair; image-rendering: pixelated; }
 @media (pointer: coarse) { .detail-entry summary, .detail-panel input, .detail-panel select, .detail-panel button { min-height: 44px; } }
 @media (max-width: 599.98px) { .detail-tool:has(.detail-panel) { position: fixed; top: auto; bottom: 8px; right: 8px; } .detail-panel { max-height: 65vh; } }
+/* Agent activity (issue #73): a sibling of the foreign job chip. Neutral on purpose: blue is the
+   person's own work, amber is review marks; the glyph and the word "Agent" carry the meaning. */
+.agent-chip { display: inline-flex; flex: 0 1 auto; align-items: center; gap: 4px; min-width: 0; max-width: min(560px, 100%); min-height: 30px; padding: 0 10px 0 2px; border: 1px solid var(--gray-600); border-radius: 2px; background: var(--panel-raised); color: var(--text); font-size: var(--type-label); }
+.agent-chip-toggle { display: inline-flex; align-items: center; gap: 6px; min-width: 0; height: 26px; padding: 0 6px; border: 0; border-radius: 2px; background: none; color: inherit; font: inherit; cursor: pointer; }
+.agent-chip-toggle:hover { background: var(--line); }
+.agent-chip-toggle svg, .agent-toast svg { flex: none; fill: var(--text-muted); }
+.agent-chip-word { flex: none; font-weight: 600; }
+.agent-chip-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--gray-200); font-variant-numeric: tabular-nums; }
+.agent-chip-go, .agent-go { flex: none; font-size: var(--type-label); color: var(--text); text-decoration: underline; text-underline-offset: 2px; text-decoration-color: var(--gray-600); }
+.agent-chip-go:hover, .agent-go:hover { text-decoration-color: currentColor; }
+.agent-list.floating { position: fixed; z-index: 100; overflow-y: auto; margin: 0; border: 1px solid var(--gray-700); border-radius: var(--radius); background: var(--panel-raised); box-shadow: 0 8px 24px #0009; font-size: var(--type-label); }
+.agent-rows { margin: 0; padding: 0; list-style: none; }
+.agent-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: baseline; gap: 12px; padding: 6px 12px; border-bottom: 1px solid var(--line); }
+.agent-row-words { line-height: 1.45; overflow-wrap: anywhere; }
+.agent-row-age { color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.agent-list-note { max-width: 65ch; margin: 0; padding: 8px 12px; color: var(--text-muted); line-height: 1.45; }
+/* the workspace's own toast sits in the corner: the other-video toast stacks above it */
+body:has(.app > .toast) .agent-toast { bottom: 72px; }
+@media (pointer: coarse), (max-width: 1023.98px) { .agent-chip-toggle { height: auto; min-height: 44px; } .agent-chip-go, .agent-go { min-height: 44px; } }

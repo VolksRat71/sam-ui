@@ -233,6 +233,10 @@ Each row combines a narrow swatch, ellipsized layer name, state badge, and align
 
 A compact queue row has an amber marker, frame/layer information, a score when available, and wrapping explanatory text. The current stop has a white border; hovered non-current rows gain a stronger neutral border. Keyboard focus remains visible on the jump action. Current-stop actions stay above the queue, with secondary options behind disclosure.
 
+### Agent activity
+
+In the desktop app, once an agent (MCP) changes the open video, an Agent chip joins the topbar status beside the job chips. It is a sibling of the foreign job chip: raised grey, seam border, control radius, label-role type. It is neutral on purpose. Blue stays the person's own work and amber stays review marks; a Carbon `Bot` glyph and the word "Agent" carry the meaning, so colour is never the only signal. For 30 s it names the latest change in studio's words ("set clicks on Blocks 2, frame 121", with "(your selected layer)" when it was) beside a Go to link; after that it counts the changes. The chip opens a floating list (the menu's overlay radius and shadow) of the last 20 changes, each with a tabular age and Go to, and a note that undo on a layer steps back its last change, an agent's included. There is no accept or reject: agent changes are already applied. A track an agent started reads "Agent:" on the foreign job chip. A change to another video shows one toast with Open and Dismiss, stacked above the workspace's own toast. Nothing animates beyond the existing job spinner, and layer rows, lanes and marks gain nothing for agent-made work.
+
 ### Viewer matte status
 
 A full-width status strip sits in the viewer chrome before the effect stage. Changed uses dashed seams; Updating uses solid blue seams. It names the affected layer or changed-layer count and explains the next action. This status is independent of the selected visual effect and uses an announced status region.

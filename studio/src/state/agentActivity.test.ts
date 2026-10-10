@@ -1,7 +1,7 @@
 // sam-ui (Apache-2.0). New file, not from SAM 2.
 import {describe, expect, it} from 'vitest';
 import type {AgentChange} from '~/lib/desktop';
-import {ACTIVITY_LIMIT, appendActivity, describeChange, describeEntry, layerCount, viewReport} from './agentActivity';
+import {ACTIVITY_LIMIT, ageLabel, appendActivity, describeChange, describeEntry, layerCount, viewReport} from './agentActivity';
 
 const change = (c: Partial<AgentChange>): AgentChange => ({
   videoId: 'gallery/03_blocks.mp4', kind: 'points', objectIds: [1], frame: 120, end: null, state: null, jobId: null, name: null, at: 0, ...c,
@@ -64,6 +64,10 @@ describe('describeChange', () => {
 
   it('calls out the person\'s selected layer', () => {
     expect(describeEntry(appendActivity([], change({}), 1)[0], nameOf)).toBe('set clicks on Blocks 2, frame 121 (your selected layer)');
+  });
+
+  it('says a change\'s age briefly', () => {
+    expect([0, 4_000, 40_000, 200_000, 7_300_000].map(ageLabel)).toEqual(['now', 'now', '40 s', '3 min', '2 h']);
   });
 
   it('counts the layers a set of changes touched', () => {

@@ -83,6 +83,15 @@ export function describeEntry(e: AgentEntry, nameOf: (id: number) => string): st
   return e.onSelected ? `${describeChange(e.change, nameOf)} (your selected layer)` : describeChange(e.change, nameOf);
 }
 
+/** "now", "40 s", "3 min", "2 h": a change's age, in the list's tabular column. */
+export function ageLabel(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 5) return 'now';
+  if (s < 60) return `${s} s`;
+  if (s < 3600) return `${Math.floor(s / 60)} min`;
+  return `${Math.floor(s / 3600)} h`;
+}
+
 /** How many layers a change touched, for the other-video toast. */
 export function layerCount(changes: ReadonlyArray<AgentChange>): number {
   return new Set(changes.flatMap(c => c.objectIds)).size;
