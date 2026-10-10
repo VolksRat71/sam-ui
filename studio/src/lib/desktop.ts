@@ -123,13 +123,13 @@ export type AgentBridge = {
   report(view: AgentView): void;
   /** An agent's change; returns the unsubscribe. Not trusted: see asAgentChange. */
   onChanged(cb: (change: unknown) => void): () => void;
-  /** sam_studio goto: cb answers whether studio moved. Not trusted: see asAgentGoto. Absent before #73's goto. */
-  onGoto?(cb: (request: unknown) => GotoAnswer): () => void;
+  /** sam_studio goto: cb answers whether studio moved. Not trusted: see asAgentGoto. */
+  onGoto(cb: (request: unknown) => GotoAnswer): () => void;
   /**
    * sam_track start on the open video: studio runs the job as its own, so it
    * draws on the lanes, and answers through `reply`. Not trusted: see asAgentTrack.
    */
-  onTrack?(cb: (request: unknown, reply: (msg: AgentTrackReply) => void) => void): () => void;
+  onTrack(cb: (request: unknown, reply: (msg: AgentTrackReply) => void) => void): () => void;
 };
 
 export type AgentTrack = {videoId: string; objectIds: number[] | null; engine: string | null};
@@ -163,7 +163,8 @@ export function jobsBridge(): JobsBridge | null {
 /** The agents half of the desktop bridge, or null (a browser, or an older desktop app). */
 export function agentBridge(): AgentBridge | null {
   const agent = desktopBridge()?.agent;
-  return agent != null && typeof agent.report === 'function' && typeof agent.onChanged === 'function' ? agent : null;
+  const ok = agent != null && (['report', 'onChanged', 'onGoto', 'onTrack'] as const).every(k => typeof agent[k] === 'function');
+  return ok ? agent : null;
 }
 
 const STATES = new Set(['absent', 'present', 'clear', 'done', 'failed', 'reviewed', 'unreviewed']);

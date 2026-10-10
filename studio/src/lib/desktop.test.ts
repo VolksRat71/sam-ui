@@ -17,7 +17,7 @@ describe('agentBridge', () => {
   });
 
   it('is the bridge when the desktop app exposes it', () => {
-    const agent = {report: () => {}, onChanged: () => () => {}};
+    const agent = {report: () => {}, onChanged: () => () => {}, onGoto: () => () => {}, onTrack: () => () => {}};
     g.samUiDesktop = {setupSam3: () => {}, agent};
     expect(agentBridge()).toBe(agent);
   });

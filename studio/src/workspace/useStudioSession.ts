@@ -1626,7 +1626,7 @@ export default function useStudioSession(video: VideoItem) {
   }, [frame, state.activeId]);
   useEffect(
     () =>
-      agent?.onGoto?.(raw => {
+      agent?.onGoto(raw => {
         const g = asAgentGoto(raw);
         if (g == null || g.videoId !== video.path || status !== 'ready') {
           return {moved: false, reason: 'studio is not on that video'};
@@ -1658,7 +1658,7 @@ export default function useStudioSession(video: VideoItem) {
   const agentTracks = useRef(new Set<(msg: AgentTrackReply) => void>()); // replies still owed a 'done'
   useEffect(
     () =>
-      agent?.onTrack?.((raw, reply) => {
+      agent?.onTrack((raw, reply) => {
         const plan = planAgentTrack(asAgentTrack(raw), {videoPath: video.path, ready: status === 'ready'});
         if ('refuse' in plan) {
           reply({stage: 'refused', error: plan.refuse});
