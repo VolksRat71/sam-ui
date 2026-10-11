@@ -43,3 +43,11 @@ Approved comp: .impeccable/mocks/comp-1.png (the decision render; Codex image_ge
 Nate explicitly answered "Yes, measuring-only composite (Recommended)" and "Yes, real footage only (Recommended)" via Claude. `.impeccable/mocks/comp-1-filmstrip-measurement.png` is the separately named measuring reference: comp-1 stays untouched; only comp-2's 112 px filmstrip band (source y608–720, target y572–684) carries. The viewer shortens 112 px; comp-1's slate, timeline, controls and Track clapper stripe retain their geometry. Bottom gate brackets and rule relocate within the shortened viewer. This is a measuring composite, not a new art direction or a generated shipping asset.
 
 The viewer and filmstrip use real runtime decoded footage and actual mattes. Their reference pixels are static comp specimens; the UI must retain its live canvas/decoded-frame behavior and must never ship synthetic footage as a substitute. Source hashes and exact unchanged-pixel verification are in `.impeccable/build/composite-verification.json`.
+
+## Gate 1 filmstrip correction — Nate's native review
+
+Native review approved 136 components and requested two revisions. Nate's exact feedback: "We want a film strip with a playhead similar to the original on, not a frame by frame selector." This latest instruction overrides only the filmstrip interaction and its adjacent-frame specimen content; it does not reopen the wider art direction.
+
+The x8, y572, w1583, h112 band is one continuous accessible scrubber with seven passive real whole-clip samples. Zero-based sample indices: 0, 41, 82, 123, 164, 205, 246; displayed labels: 1, 42, 83, 124, 165, 206, 247. The blue playhead spans the full 112 px band height at frame index 216/246, or 87.804878%; its exact x coordinate is 8 + 1583*216/246 = 1397.951219512195 px and width 2 px. Existing slot IDs named 214..220 remain stable identities, not runtime frame numbers. There are no individual thumbnail selection buttons or centered-frame rectangle.
+
+Original comp-1 and the authorized measuring composite remain untouched as source evidence; their old centered-selector pixels are superseded by this explicit filmstrip-only user correction. No source pixels or approval records are rewritten. Scalar feedback evidence: `.impeccable/build/gate1-filmstrip-feedback.json`; the native capture/review workflow preserves unaffected approvals.
