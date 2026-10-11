@@ -67,6 +67,10 @@ const SPOTLIGHT_STYLES: Record<string, Partial<EffectParams>> = {
   'Soft ring': {shape: 'Ring', color: 'layer'},
 };
 
+/** The Sticker's built-in shapes (StickerEffect's SHAPES, in order), and those that take a label. */
+const STICKER_SHAPES = ['Star', 'Heart', 'Arrow', 'Speech bubble', 'Price tag', 'Sparkle', 'Crown', 'Label'];
+const STICKER_LABELS = ['Label', 'Price tag', 'Speech bubble'];
+
 export const EFFECT_SPECS: Record<string, EffectSpec> = {
   /* Backgrounds */
   Original: variants('Plain', 'Vivid', 'Dimmed'),
@@ -163,6 +167,39 @@ export const EFFECT_SPECS: Record<string, EffectSpec> = {
       Outline: {style: 'Outline', softness: 0.25},
       Glow: {style: 'Glow', width: 0.02, softness: 0.8, opacity: 0.9},
       Scribble: {style: 'Scribble', width: 0.005, softness: 0.25, opacity: 1, wobble: 0.008, boil: 8},
+    },
+  },
+  // a built-in shape or a stored picture that follows the layer's box (StickerEffect); the style is the sticker
+  Sticker: {
+    params: {
+      image: {kind: 'image', default: '', label: 'Picture', onlyWhen: {style: ['Your picture']}},
+      // '' draws no label
+      text: {kind: 'text', default: '', label: 'Label', maxLength: 24, maxLines: 2, onlyWhen: {style: STICKER_LABELS}},
+      color: {kind: 'color', default: '#ffd23f', label: 'Colour', onlyWhen: {style: STICKER_SHAPES}},
+      textColor: {kind: 'color', default: '#111111', label: 'Label colour', followsLayer: false, onlyWhen: {style: STICKER_LABELS}},
+      outline: {kind: 'color', default: '#ffffff', label: 'Outline colour', onlyWhen: {style: STICKER_SHAPES}},
+      // in sticker heights
+      outlineWidth: {kind: 'number', min: 0, max: 0.2, step: 0.01, default: 0.05, label: 'Outline width', onlyWhen: {style: STICKER_SHAPES}},
+      position: {kind: 'choice', options: ['Top', 'Top-left', 'Top-right', 'Centre', 'Bottom'], default: 'Top', label: 'Position'},
+      // in the subject's (bounding box) heights; never under minSize of the frame's
+      size: {kind: 'number', min: 0.05, max: 2, step: 0.01, default: 0.3, label: 'Size, of the subject height'},
+      minSize: {kind: 'number', min: 0, max: 0.3, step: 0.005, default: 0.05, label: 'Smallest size', percentOfHeight: true},
+      offsetX: {kind: 'number', min: -2, max: 2, step: 0.01, default: 0, label: 'Move across, subject heights'},
+      offsetY: {kind: 'number', min: -2, max: 2, step: 0.01, default: 0, label: 'Move down, subject heights'},
+      // the box averaged over this many tracked frames each side
+      smooth: {kind: 'number', min: 0, max: 6, step: 1, default: 2, label: 'Smoothing, frames each side'},
+      style: {kind: 'choice', options: [...STICKER_SHAPES, 'Your picture'], default: 'Star', label: 'Sticker'},
+    },
+    styles: {
+      Star: {style: 'Star', color: '#ffd23f', outline: '#ffffff'},
+      Heart: {style: 'Heart', color: '#ff3b5c', outline: '#ffffff'},
+      Arrow: {style: 'Arrow', color: '#ffffff', outline: '#1a1a1a'},
+      'Speech bubble': {style: 'Speech bubble', color: '#ffffff', outline: '#1a1a1a', textColor: '#111111'},
+      'Price tag': {style: 'Price tag', color: '#ffd23f', outline: '#1a1a1a', textColor: '#111111'},
+      Sparkle: {style: 'Sparkle', color: '#fff4b0', outline: '#ffffff'},
+      Crown: {style: 'Crown', color: '#ffc400', outline: '#1a1a1a'},
+      Label: {style: 'Label', color: '#ffffff', outline: '#1a1a1a', textColor: '#111111'},
+      'Your picture': {style: 'Your picture'},
     },
   },
 };

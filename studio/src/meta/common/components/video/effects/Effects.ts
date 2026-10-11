@@ -32,6 +32,7 @@ import PixelateMaskGLEffect from './PixelateMaskGLEffect';
 import ReplaceGLEffect from './ReplaceGLEffect';
 import ScopeGLEffect from './ScopeGLEffect';
 import SobelEffect from './SobelEffect';
+import StickerEffect from './StickerEffect';
 import SubjectsBackgroundGLEffect from './SubjectsBackgroundGLEffect';
 import TitleEffect from './TitleEffect';
 import VibrantMaskEffect from './VibrantMaskEffect';
@@ -62,6 +63,7 @@ export type Effects = {
   Arrow: Effect;
   Outline: Effect;
   BlurMask: Effect;
+  Sticker: Effect;
 
   /* More Effects */
   NoisyMask: Effect;
@@ -96,6 +98,7 @@ export function createEffects(): Effects {
     Arrow: new ArrowGLEffect(),
     Outline: new OutlineGLEffect(),
     BlurMask: new BlurGLEffect(true),
+    Sticker: new StickerEffect(),
 
     /* More Effects */
     NoisyMask: new NoisyMaskEffect(),

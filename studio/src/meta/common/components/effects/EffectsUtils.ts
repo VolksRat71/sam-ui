@@ -17,6 +17,7 @@ import {Effects} from '@/common/components/video/effects/Effects';
 import type {CarbonIconType} from '@carbon/icons-react';
 import {
   AppleDash,
+  Badge,
   Asterisk,
   Barcode,
   CenterCircle,
@@ -79,6 +80,7 @@ export const highlightEffects: DemoEffect[] = [
   {title: 'Burst', Icon: Asterisk, effectName: 'Burst'},
   {title: 'Spotlight', Icon: CenterCircle, effectName: 'Scope'},
   {title: 'Outline', Icon: Lasso, effectName: 'Outline'},
+  {title: 'Sticker', Icon: Badge, effectName: 'Sticker'}, // sam-ui: a shape or picture that follows the layer
 ];
 
 export const moreEffects: DemoEffect[] = [
