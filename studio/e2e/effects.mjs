@@ -10,7 +10,8 @@
 // here rather than by Playwright so its stderr can be read: Chrome logs "Too
 // many active WebGL contexts" there, never to the page console. It opens
 // 05_default_juggle.mp4 from the gallery, adds two layers (A the person, with
-// clicks on frames 1 and 121, B the ball), tracks them, then:
+// clicks on frames 1 and 121, B the ball), tracks them, adds C (the tree trunk,
+// clicked on frame 201 only and never tracked, so it draws on no other frame), then:
 //   B1  Add effect -> Outline at frame 31: one clip, selected, from the playhead;
 //       width and style edit that clip; Add effect again adds a second one
 //   B5  removing the later of two overlapping clips (Erase over Glow) shows the one
@@ -74,6 +75,10 @@
 //       from before the clip), the first copy appears `spacing` frames later; a
 //       tinted Strobe's export matches the preview (A on Original) within B7's tolerance;
 //       Echo on A (the person, the top layer) leaves the ball's pixels inside its mask as they are
+//   CB  slice 5 combined, frame 201: Glitter (max density) on A, Echo on B and a magenta Label
+//       Sticker on C on the same frame: all three draw; identical after play/pause through
+//       it, a jump from far away and back, and on a fresh worker; the export matches the
+//       preview there within B7's tolerance
 //   OB  the layer Blur draws on A, its settings carry the tracking caveat, and a
 //       larger radius changes it; with the background Blur under it, frames 31 and
 //       101 (A in different places) differ as the video does there, and each
@@ -136,6 +141,7 @@ const DIFF_PCT = 0.3;
 // B7: an export frame may be this far below the capture floor (H.264 smooths thin strokes and noise)
 const TOLERANCE_DB = 3;
 const PARITY_FRAMES = [10, 60, 100, 180, 240];
+const FC = 200; // CB's frame, the only one where C has a mask
 const INFERENCE = ['setPoints', 'textPrompt', 'discoverText', 'track', 'clearTrack', 'moveClicks', 'detailRequest', 'restoreVersion', 'undo', 'redo'];
 fs.mkdirSync(OUT, {recursive: true});
 
@@ -442,10 +448,17 @@ await page.waitForFunction(() => document.querySelectorAll('.object-row').length
 const t0 = Date.now();
 await page.click('.cta');
 await page.waitForFunction(() => !document.querySelector('.job-chip') && document.querySelector('.cta')?.innerText === 'Nothing to track', null, {timeout: 600000});
+const t1 = Date.now();
+// C: the tree trunk on frame 201 only (CB's third layer); untracked, so the other steps never see it
+await jump(FC);
+await page.click('button:has-text("Add layer")');
+await clickAt(0.21, 0.36);
+await settle();
+await page.waitForFunction(() => document.querySelectorAll('[data-lane]').length === 3, null, {timeout: 60000});
 const rows = await page.$$eval('.object-row .layer-summary', rs => rs.map(r => r.innerText.replace(/\n/g, ' ')));
-check('setup', rows.length === 2 && rows.every(r => /Tracked/.test(r)), `two layers tracked in ${Math.round((Date.now() - t0) / 1000)} s ${JSON.stringify(rows)}`);
+check('setup', rows.length === 3 && rows.filter(r => /Tracked/.test(r)).length === 2, `two layers tracked in ${Math.round((t1 - t0) / 1000)} s, C on frame ${FC + 1} only ${JSON.stringify(rows)}`);
 // layer ids in creation order (A first); rows hold their frame lanes
-const [aId, bId] = (await page.$$eval('[data-lane]', ls => ls.map(l => Number(l.dataset.lane)))).sort((x, y) => x - y);
+const [aId, bId, cId] = (await page.$$eval('[data-lane]', ls => ls.map(l => Number(l.dataset.lane)))).sort((x, y) => x - y);
 const rowOf = id => page.$$eval('.object-row', (rs, id) => rs.findIndex(r => r.querySelector(`[data-lane="${id}"]`) != null), id);
 const [A, B] = [await rowOf(aId), await rowOf(bId)];
 console.log(`A (person): id ${aId}, row ${A}; B (ball): id ${bId}, row ${B}`);
@@ -642,7 +655,7 @@ await step('B7', async () => {
 
 // slice 3: A and B's masks on frame 101 (RB), shared by CP and SP
 const F3 = 100;
-const [tA, tB, tBG] = [{kind: 'object', id: aId}, {kind: 'object', id: bId}, {kind: 'background'}];
+const [tA, tB, tC, tBG] = [{kind: 'object', id: aId}, {kind: 'object', id: bId}, {kind: 'object', id: cId}, {kind: 'background'}];
 // the layers draw nothing (a transparent Outline): the background clip shows inside their masks too
 const clear = () => [clipOn(tA, 'Outline', {style: 'Outline', opacity: 0}, 'oa'), clipOn(tB, 'Outline', {style: 'Outline', opacity: 0}, 'ob')];
 let inside = null, outside = null, plain3 = null;
@@ -1273,6 +1286,52 @@ await step('EC', async () => {
   const drawn = share(and(not(ball), framed), i => off(echoA, plainE, i) > PIXEL_TOL);
   check('EC', kept.n > 500 && kept.pct === 100 && drawn.n > 0 && drawn.pct > 0.1, `the person's copies stay behind the ball: inside its mask (eroded 2 px, ${kept.n} px) ${kept.pct} % unchanged; ${drawn.pct} % of the rest changed`, {kept, drawn});
   await clearClips();
+});
+
+await step('CB', async () => {
+  if (tolerance == null) throw new Error('no B7 tolerance');
+  // A selected throughout: it has no clicks on FC, so no editing aids show there (C's are on FC)
+  const at = async (clips, name) => {
+    if (clips != null) await putClips(clips);
+    await sel(A);
+    await jump(FC);
+    return cap(name);
+  };
+  const plainDoc = [clipOn(tA, 'Cutout', {style: 'Unchanged'}, 'pa'), clipOn(tB, 'Cutout', {style: 'Unchanged'}, 'pb'), clipOn(tC, 'Cutout', {style: 'Unchanged'}, 'pc')];
+  const three = [
+    clipOn(tA, 'Glitter', {style: 'Glitter', density: 400, color: '#ffd23f'}, 'cg'),
+    clipOn(tB, 'Echo', {style: 'Echo', count: 6, spacing: 3}, 'ce'),
+    clipOn(tC, 'Sticker', {style: 'Label', color: '#ff00ff', outlineWidth: 0, position: 'Centre', size: 0.3, smooth: 2}, 'cs'),
+  ];
+  const plain = await at(plainDoc, `CB-0_plain_f${FC + 1}`);
+  // each effect alone (the other layers plain) changes the frame
+  const alone = {};
+  for (const [i, k] of ['Glitter', 'Echo', 'Sticker'].entries()) {
+    alone[k] = compare(plain, await at(plainDoc.map((p, j) => (j === i ? three[i] : p)), `CB-1_${k}-alone_f${FC + 1}`)).changedPct;
+  }
+  const all = await at(three, `CB-2_glitter-A_echo-B_sticker-C_f${FC + 1}`);
+  const magenta = countPx(all, (r, g, b) => r > 200 && g < 60 && b > 200);
+  check('CB', differs(compare(plain, all)) && Object.values(alone).every(pct => pct > 0) && magenta > 200, `all three draw on frame ${FC + 1}: ${compare(plain, all).changedPct} % off plain; alone ${Object.entries(alone).map(([k, pct]) => `${k} ${pct} %`).join(', ')}; ${magenta} magenta sticker px`, {alone, magenta});
+  await jump(FC - 8);
+  await page.evaluate(() => document.activeElement?.blur());
+  await page.keyboard.press(' ');
+  await page.waitForTimeout(700); // through FC at 24 fps
+  await page.keyboard.press(' ');
+  await page.waitForTimeout(800);
+  await seekTo(FC);
+  const played = await cap(`CB-3_f${FC + 1}_play-pause`);
+  await jump(20);
+  const far = await at(null, `CB-4_f${FC + 1}_from-f21`);
+  await reload();
+  const fresh = await at(null, `CB-5_f${FC + 1}_fresh-worker`);
+  for (const [what, png] of [['play/pause through it', played], ['a jump from frame 21', far], ['a fresh worker', fresh]]) {
+    const s = compare(all, png);
+    check('CB', s.changedPct === 0, `frame ${FC + 1} identical after ${what}: MAD ${s.mad}`, s);
+  }
+  const file = await exportVideo('CB_glitter-echo-sticker');
+  const s = stats(decode(all, small), exportFrames(file, [FC])[0]);
+  check('CB', s.psnr >= tolerance, `export frame ${FC + 1} matches the preview: ${s.psnr} dB (needs >= ${tolerance} dB)`, s);
+  await putClips([]);
 });
 
 await step('OB', async () => {
