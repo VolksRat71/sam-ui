@@ -10,7 +10,8 @@ import {describe, expect, it} from 'vitest';
 import {EMPTY_DOC, type EffectClip, clipsMissingImages, imageKeys, normalizeParams} from '~/state/effectClips';
 import type {EffectFrameContext, EffectParams} from './Effect';
 import {EFFECT_SPECS, paramShown} from './EffectParamSpecs';
-import StickerEffect, {type Bounds, SHAPES, placeSticker, smoothedBounds} from './StickerEffect';
+import StickerEffect, {type Bounds, SHAPES, keepInside, placeSticker, smoothedBounds} from './StickerEffect';
+import {MARGIN} from './TitleEffect';
 
 type Call = [string, ...unknown[]];
 const HASH = 'a'.repeat(64);
@@ -121,6 +122,20 @@ describe('placeSticker', () => {
 
   it("moves by its offsets in subject heights (y down)", () => {
     expect(place('Top', {offsetX: 0.5, offsetY: -0.25})).toEqual({x: 450, y: 25, h: 50});
+  });
+});
+
+describe('keepInside', () => {
+  const m = MARGIN * 720; // 21.6 px
+  it('leaves a box inside the frame less its margins where it is', () => {
+    expect(keepInside(640, 360, 50, 50, 1280, 720)).toEqual([640, 360]);
+  });
+  it('moves a box past an edge in just far enough, on each axis', () => {
+    expect(keepInside(640, -20, 50, 30, 1280, 720)).toEqual([640, m + 30]);
+    expect(keepInside(1300, 710, 50, 30, 1280, 720)).toEqual([1280 - m - 50, 720 - m - 30]);
+  });
+  it('centres a box too big for the frame less its margins', () => {
+    expect(keepInside(0, 0, 700, 400, 1280, 720)).toEqual([640, 360]);
   });
 });
 
@@ -236,6 +251,20 @@ describe('StickerEffect', () => {
   it('draws no text for a shape without a label, or an empty label', () => {
     expect(of(draw({style: 'Star', text: 'hi'}), 'fillText')).toEqual([]);
     expect(of(draw({style: 'Label', text: ''}), 'fillText')).toEqual([]);
+  });
+
+  it('stays inside the frame: a Top sticker over a subject at the top edge comes down to the margin, outline included', () => {
+    // bbox 100 x 200 at the frame's top: Top would centre it 50 px above the frame
+    const top = draw({style: 'Heart', position: 'Top', size: 0.5, minSize: 0, outlineWidth: 0.1}, {masks: [{bitmap: {} as never, bounds: [[500, 0], [600, 200]]}]});
+    expect(of(top, 'translate')).toEqual([['translate', 550, MARGIN * H + 50 + 10]]);
+    // a picture past the right edge: in by its half width
+    const pic = draw({style: 'Your picture', image: HASH, position: 'Top-right', size: 0.5, minSize: 0}, {masks: [{bitmap: {} as never, bounds: [[1180, 300], [1280, 500]]}]});
+    expect(of(pic, 'translate')).toEqual([['translate', W - MARGIN * H - 100, 300]]);
+    // a turned Arrow by its turned extent: (w + h) / sqrt(2) / 2 plus the outline
+    const arrow = draw({style: 'Arrow', position: 'Top-left', size: 0.5, minSize: 0, outlineWidth: 0}, {masks: [{bitmap: {} as never, bounds: [[0, 0], [100, 200]]}]});
+    const half = ((70 + 100) * Math.SQRT1_2) / 2;
+    expect(of(arrow, 'translate')[0][1]).toBeCloseTo(MARGIN * H + half, 6);
+    expect(of(arrow, 'translate')[0][2]).toBeCloseTo(MARGIN * H + half, 6);
   });
 
   it('draws the same calls for the same frame and settings (seek, replay, export)', () => {

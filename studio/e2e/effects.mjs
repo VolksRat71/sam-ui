@@ -55,7 +55,8 @@
 //       the clip, the export matches the preview within B7's tolerance
 //   ST  slice 5, the Sticker on A (B on Original): a magenta Label at Centre sits on the middle of A's
 //       mask's bounding box (a green Erase probe on the same frame) at 0.2 of its height, on frames
-//       31 and 101 (A elsewhere), so it follows the box; with labelled stickers on A and B (smoothed),
+//       31 and 101 (A elsewhere), so it follows the box; at Top over A's head near the frame's top on
+//       101 it stays whole inside the frame (3 % margin); with labelled stickers on A and B (smoothed),
 //       the export matches the preview within B7's tolerance
 //   SC  Scribble (boiling Outline) on frame 101: identical after a scrub away and
 //       back and play/pause, redrawn when boil is on (differs from boil 0, which
@@ -986,6 +987,16 @@ await step('ST', async () => {
   const moved = Math.hypot(found[0].centre[0] - found[1].centre[0], found[0].centre[1] - found[1].centre[1]);
   const followed = Math.hypot(found[0].at[0] - found[1].at[0], found[0].at[1] - found[1].at[1]);
   check('ST', near && moved >= 5 && Math.abs(followed - moved) <= 4, `the sticker sits on the middle of A's box at 0.2 of its height: ${found.map(r => `f${r.frame} at (${r.at}) for (${r.centre}), ${r.height} px tall for ${r.want.toFixed(1)}`).join('; ')}; the box moved ${moved.toFixed(1)} px, the sticker ${followed.toFixed(1)}`, found);
+
+  // Top over A on frame 101, whose head nears the frame's top: above the box it would leave the frame; it comes down to the 3 % margin, whole
+  await putClips([clipOn(tA, 'Sticker', {style: 'Label', color: '#ff00ff', outlineWidth: 0, position: 'Top', size: 0.2, minSize: 0, smooth: 0}, 'st'), plainB]);
+  await sel(A);
+  await seekTo(F3);
+  const topImg = pixels(await cap('ST-1b_label-top_head-near-frame-top_f101'));
+  const t = inkBox(topImg, isMagenta);
+  const f101 = found[1];
+  const margin = 0.03 * topImg.h;
+  check('ST', f101.box[1] - f101.want < margin && t[1] >= margin - 2 && t[3] - t[1] + 1 >= f101.want - 4 && Math.abs((t[0] + t[2]) / 2 - f101.centre[0]) <= 3, `Top over a head ${f101.box[1]} px from the frame's top (the sticker is ${f101.want.toFixed(1)} px tall) stays whole inside the frame: ink y ${t[1]}-${t[3]} (margin ${margin.toFixed(1)}), centred at x ${(t[0] + t[2]) / 2} for ${f101.centre[0]}`, {box: t});
 
   // export: labelled stickers on both layers, smoothed, at every position
   await putClips([

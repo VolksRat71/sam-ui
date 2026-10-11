@@ -9,16 +9,17 @@
 // f-k..f+k, from the masks the layer already has (Tracklet.masks, with their
 // bounds), narrowed evenly at the video's ends and at an untracked frame so it
 // stays centred; it depends on nothing but those masks, so seek, replay and
-// export draw the same. No rotation follows the subject (a mask has none);
-// only the Arrow turns, to point at the subject from where it sits. A frame
-// with no mask has no sticker. Label, Price tag and Speech bubble can carry
+// export draw the same. The sticker stays inside the frame (the Title's 3 %
+// margin), so one over a subject at the edge stays in view. No rotation
+// follows the subject (a mask has none); only the Arrow turns, to point at
+// the subject from where it sits. A frame with no mask has no sticker. Label, Price tag and Speech bubble can carry
 // a label (the Title's text rules, drawn with fillText in Inter). Canvas 2D
 // only, drawn on the layer's pass: above the layer, below clips on higher rows.
 import type {Tracklet} from '@/common/tracker/Tracker';
 import type {CanvasForm} from 'pts';
 import {AbstractEffect, type EffectFrameContext} from './Effect';
 import {numberParam} from './EffectParamSpecs';
-import {LINE_HEIGHT, interLoaded} from './TitleEffect';
+import {LINE_HEIGHT, clampCentre, interLoaded} from './TitleEffect';
 
 export type Bounds = [[number, number], [number, number]];
 
@@ -206,6 +207,15 @@ export const SHAPES: Record<string, Shape> = {
   },
 };
 
+/**
+ * The centre (x, y) of a box hw x hh (half sizes) moved as little as it takes
+ * to be inside the frame less the Title's margin, or centred when it cannot
+ * be: a sticker over a subject at the frame's edge stays in view.
+ */
+export function keepInside(x: number, y: number, hw: number, hh: number, width: number, height: number): [number, number] {
+  return clampCentre(x, y, 2 * hw, 1, 2 * hh, width, height); // one line of a 2hh font is a 2hw x 2hh box
+}
+
 /** The Arrow's turn at each position (from pointing down), so it points at the subject. */
 const ARROW_TURN: Record<string, number> = {Bottom: Math.PI, 'Top-left': -Math.PI / 4, 'Top-right': Math.PI / 4};
 /** A labelled shape widens to its text plus this many heights, up to MAX_ASPECT heights wide. */
@@ -246,9 +256,9 @@ export default class StickerEffect extends AbstractEffect {
         context.height,
       );
       ctx.save();
-      ctx.translate(x, y);
       if (picture != null) {
         const w = (h * picture.width) / picture.height;
+        ctx.translate(...keepInside(x, y, w / 2, h / 2, context.width, context.height));
         ctx.drawImage(picture, -w / 2, -h / 2, w, h);
         ctx.restore();
         return;
@@ -271,12 +281,16 @@ export default class StickerEffect extends AbstractEffect {
           widths = lines.map(l => ctx.measureText(l).width);
         }
       }
-      if (style === 'Arrow' && ARROW_TURN[String(p.position)] != null) {
-        ctx.rotate(ARROW_TURN[String(p.position)]);
+      const turn = style === 'Arrow' ? (ARROW_TURN[String(p.position)] ?? 0) : 0;
+      const outline = numberParam('Sticker', 'outlineWidth', p) * h;
+      // the turned box, with the outline outside it, kept inside the frame
+      const [c, sn] = [Math.abs(Math.cos(turn)), Math.abs(Math.sin(turn))];
+      ctx.translate(...keepInside(x, y, (c * w + sn * h) / 2 + outline, (sn * w + c * h) / 2 + outline, context.width, context.height));
+      if (turn !== 0) {
+        ctx.rotate(turn);
       }
       ctx.beginPath();
       shape.path(ctx, w, h);
-      const outline = numberParam('Sticker', 'outlineWidth', p) * h;
       ctx.lineJoin = 'round';
       if (outline > 0) {
         ctx.strokeStyle = p.outline === 'layer' ? context.maskColors[i] : String(p.outline);
