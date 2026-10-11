@@ -193,7 +193,7 @@ function ClipSettings({clip, session, layerColor, title}: {clip: EffectClip; ses
     }
     if (p.kind === 'image') {
       const picked = String(clip.params[key] ?? '');
-      const missing = picked !== '' && session.missingImages.has(picked);
+      const problem = picked === '' ? undefined : session.missingImages.get(picked);
       return (
         <div className="fx-param" key={key}>
           <label className="fx-param-label" htmlFor={id}>{p.label}</label>
@@ -211,7 +211,9 @@ function ClipSettings({clip, session, layerColor, title}: {clip: EffectClip; ses
             }}
           />
           <p className="effect-note" id={`${id}-note`}>
-            {missing
+            {problem === 'unreadable'
+              ? "This picture can't be read, so the colour shows instead. Choose it again, or another one."
+              : problem === 'missing'
               ? 'This picture is not stored in this browser (another browser, or cleared site data), so the colour shows instead. Choose it again to use it.'
               : picked === ''
                 ? 'PNG, JPEG or WebP, up to 50 MB; kept no larger than the video needs. The colour shows until you choose one.'

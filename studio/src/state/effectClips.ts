@@ -112,8 +112,8 @@ export function imageKeys(doc: EffectDoc): string[] {
   return [...new Set(doc.clips.flatMap(c => Object.values(c.params).filter(isImageHash)))].sort();
 }
 
-/** How many of `doc`'s clips draw a picture in `missing` (one this browser has no copy of): they draw their colour instead. */
-export function clipsMissingImages(doc: EffectDoc, missing: ReadonlySet<string>): number {
+/** How many of `doc`'s clips draw a picture in `missing` (one this browser has no copy of, or cannot decode): they draw their colour instead. */
+export function clipsMissingImages(doc: EffectDoc, missing: {has(key: string): boolean}): number {
   return doc.clips.filter(c =>
     Object.entries(EFFECT_SPECS[c.effect]?.params ?? {}).some(([k, p]) => p.kind === 'image' && missing.has(String(c.params[k])) && paramShown(p, c.params)),
   ).length;

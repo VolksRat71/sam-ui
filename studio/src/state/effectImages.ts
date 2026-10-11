@@ -93,15 +93,22 @@ export async function storeEffectImage(file: Blob, maxWidth: number, maxHeight: 
   return key;
 }
 
-/** The picture stored under `key`, decoded; null when this browser has no (readable) copy. */
-export async function loadEffectImage(key: string, kv?: Kv): Promise<ImageBitmap | null> {
+/** Why a clip's picture cannot be drawn: this browser has no copy, or the copy does not decode. */
+export type ImageProblem = 'missing' | 'unreadable';
+
+/** The picture stored under `key`, decoded, or why it cannot be. */
+export async function loadEffectImage(key: string, kv?: Kv): Promise<ImageBitmap | ImageProblem> {
   if (!isImageHash(key)) {
-    return null;
+    return 'missing';
   }
+  let blob: Blob | null;
   try {
-    const blob = await (kv ?? store()).blob(`${DIR}/${key}`);
-    return blob == null ? null : await createImageBitmap(blob);
+    blob = await (kv ?? store()).blob(`${DIR}/${key}`);
   } catch {
-    return null;
+    return 'missing';
   }
+  if (blob == null) {
+    return 'missing';
+  }
+  return createImageBitmap(blob).catch(() => 'unreadable' as const);
 }

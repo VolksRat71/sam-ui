@@ -1,5 +1,5 @@
 // sam-ui (Apache-2.0). New file, not from SAM 2.
-import {describe, expect, it} from 'vitest';
+import {describe, expect, it, vi} from 'vitest';
 import {MemoryKv} from '~/local/kv';
 import {clipsMissingImages, imageKeys} from './effectClips';
 import {MAX_IMAGE_BYTES, coverSize, loadEffectImage, sha256Hex, storeEffectImage} from './effectImages';
@@ -17,11 +17,18 @@ describe('effect pictures', () => {
     expect(await sha256Hex(new TextEncoder().encode('abc'))).toBe('ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
   });
 
-  it("load as null when this browser has no copy, or the key isn't one (the clip then draws its colour)", async () => {
+  it("load as 'missing' when this browser has no copy or the key isn't one, 'unreadable' when the copy doesn't decode (the clip draws its colour)", async () => {
     const kv = new MemoryKv();
-    expect(await loadEffectImage('ab'.repeat(32), kv)).toBeNull();
+    expect(await loadEffectImage('ab'.repeat(32), kv)).toBe('missing');
     await kv.write('effect-images/x', new Uint8Array([1]));
-    expect(await loadEffectImage('../effect-images/x', kv)).toBeNull();
+    expect(await loadEffectImage('../effect-images/x', kv)).toBe('missing');
+    await kv.write(`effect-images/${'cd'.repeat(32)}`, new Uint8Array([1, 2, 3]));
+    vi.stubGlobal('createImageBitmap', () => Promise.reject(new Error('InvalidStateError')));
+    try {
+      expect(await loadEffectImage('cd'.repeat(32), kv)).toBe('unreadable');
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('refuse a file that is not PNG, JPEG or WebP before reading it', async () => {

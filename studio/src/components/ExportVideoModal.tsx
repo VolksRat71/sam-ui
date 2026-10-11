@@ -56,7 +56,7 @@ export default function ExportVideoModal({session, videoName, onClose}: Props) {
           </p>
           {missingPictures > 0 && (
             <p className="effect-note">
-              {missingPictures === 1 ? '1 clip uses a picture' : `${missingPictures} clips use pictures`} not stored in this browser:{' '}
+              {missingPictures === 1 ? '1 clip uses a picture' : `${missingPictures} clips use pictures`} not stored in this browser or unreadable:{' '}
               {missingPictures === 1 ? 'it draws its colour' : 'they draw their colour'} instead.
             </p>
           )}
