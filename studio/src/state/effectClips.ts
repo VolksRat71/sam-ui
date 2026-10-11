@@ -357,20 +357,23 @@ export function pickOnTarget(
 export function pickOnGroup(
   doc: EffectDoc,
   o: {members: number[]; effect: string; frame: number; numFrames: number; fps: number},
-): {doc: EffectDoc; changed: number; added: number} {
+): {doc: EffectDoc; changed: number; added: number; whole: number} {
   let params: EffectParams | undefined;
   let changed = 0;
+  let whole = 0;
   for (const id of o.members) {
     const target: EffectTarget = {kind: 'object', id};
     const clip = clipToEdit(doc, target, o.frame, null);
     params ??= pickedParams(clip, o.effect);
     if (clip != null) {
       changed++;
+    } else if (!doc.clips.some(c => sameTarget(c.target, target))) {
+      whole++;
     }
     // the single-layer rule (pickOnTarget), so a member with no clips yet gets the whole video like a one-layer pick
     doc = pickOnTarget(doc, {target, effect: o.effect, frame: o.frame, numFrames: o.numFrames, fps: o.fps, selectedId: null, newId: newClipId(doc), params}).doc;
   }
-  return {doc, changed, added: o.members.length - changed};
+  return {doc, changed, added: o.members.length - changed - whole, whole};
 }
 
 function parseTarget(raw: unknown): EffectTarget | null {

@@ -228,7 +228,7 @@ describe('adding, editing and removing clips', () => {
       clips: [clip({id: 'a', target: A, start: 50, end: 80, effect: 'Burst', params: normalizeParams('Burst', {style: 'Colour rays'})}), clip({id: 'c', target: C, start: 0, end: 20})],
     };
     const r = pickOnGroup(doc, {members: [0, 1, 2], effect: 'Burst', frame: 60, numFrames: 300, fps: 10});
-    expect([r.changed, r.added]).toEqual([1, 2]);
+    expect([r.changed, r.added, r.whole]).toEqual([1, 1, 1]);
     const style = r.doc.clips.find(c => c.id === 'a')!.params.style;
     expect(style).toBe('White rays'); // the same effect again: its next style, for every member
     expect(r.doc.clips.filter(c => sameTarget(c.target, C) && c.start === 60)).toEqual([
