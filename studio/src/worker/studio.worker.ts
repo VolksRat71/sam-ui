@@ -140,8 +140,8 @@ const handlers: Handlers = {
     context.goToFrame(context.frameIndex);
   },
   setEffectImage: ({key, image}) => {
-    if (!isImageHash(key)) {
-      throw new Error('not a picture key');
+    if (!isImageHash(key) || !(image instanceof ImageBitmap)) {
+      throw new Error('not a picture key and bitmap');
     }
     highlight.images.get(key)?.close();
     highlight.images.set(key, image);

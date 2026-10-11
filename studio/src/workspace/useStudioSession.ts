@@ -1275,7 +1275,11 @@ export default function useStudioSession(video: VideoItem) {
         }
         const image = await loadEffectImage(key);
         if (image != null) {
-          await bridge.call('setEffectImage', {key, image});
+          try {
+            await bridge.call('setEffectImage', {key, image});
+          } finally {
+            image.close(); // the worker has its own copy
+          }
           sentImages.current.add(key);
         }
         setMissingImages(m => (m.has(key) === (image == null) ? m : image == null ? new Set([...m, key]) : new Set([...m].filter(k => k !== key))));
