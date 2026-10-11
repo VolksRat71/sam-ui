@@ -18,6 +18,7 @@ import type {EffectParams} from '@/common/components/video/effects/Effect';
 import * as clips from '~/state/effectClips';
 import type {EffectClip, EffectDoc, EffectTarget, UntouchedMode} from '~/state/effectClips';
 import * as journals from '~/state/editJournal';
+import {type ImageProblem, loadEffectImage, storeEffectImage} from '~/state/effectImages';
 import {clipTitle} from '~/components/effectPresentation';
 import {parseObjectColors} from '~/state/objectColors';
 import {isOffline} from '~/lib/mode';
@@ -1258,6 +1259,73 @@ export default function useStudioSession(video: VideoItem) {
     }
   }, [bridge, effectDoc, drawKey]);
 
+  // Pictures the clips use (Replace background), from this browser's store
+  // (state/effectImages.ts), sent to the worker once each, and again to a new
+  // worker or once the doc has dropped and regained them (the worker frees a
+  // picture no clip uses). One this browser lacks, or cannot decode, is in
+  // `missingImages` with why: the clip draws its colour.
+  const sentImages = useRef(new Set<string>());
+  const [missingImages, setMissingImages] = useState<ReadonlyMap<string, ImageProblem>>(new Map());
+  useEffect(() => {
+    sentImages.current = new Set();
+  }, [bridge]);
+  const sendImages = useCallback(
+    async (doc: EffectDoc | null) => {
+      const keys = clips.imageKeys(doc ?? clips.EMPTY_DOC);
+      if (doc === docRef.current) {
+        sentImages.current.forEach(k => !keys.includes(k) && sentImages.current.delete(k));
+      }
+      for (const key of keys) {
+        if (bridge == null || sentImages.current.has(key)) {
+          continue;
+        }
+        const image = await loadEffectImage(key);
+        const problem = typeof image === 'string' ? image : null;
+        if (typeof image !== 'string') {
+          try {
+            await bridge.call('setEffectImage', {key, image});
+          } finally {
+            image.close(); // the worker has its own copy
+          }
+          sentImages.current.add(key);
+        }
+        setMissingImages(m => {
+          if ((m.get(key) ?? null) === problem) {
+            return m;
+          }
+          const next = new Map(m);
+          if (problem == null) {
+            next.delete(key);
+          } else {
+            next.set(key, problem);
+          }
+          return next;
+        });
+      }
+    },
+    [bridge],
+  );
+  const imagesKey = effectDoc == null ? '' : clips.imageKeys(effectDoc).join(',');
+  useEffect(() => {
+    void sendImages(docRef.current).catch(error => setWarning(message(error)));
+  }, [sendImages, imagesKey]);
+  /** Store a picked picture and make it clip `id`'s image (one undo step); a refusal becomes the warning. */
+  const pickEffectImage = useCallback(
+    async (id: string, file: File) => {
+      try {
+        const key = await storeEffectImage(file, meta.width, meta.height);
+        const clip = docRef.current?.clips.find(c => c.id === id);
+        if (clip != null) {
+          editDoc(d => clips.updateClip(d, id, {params: {...clip.params, image: key}}), ownStep());
+        }
+        await sendImages(docRef.current); // also when the key is unchanged: a missing picture picked again
+      } catch (error) {
+        setWarning(message(error));
+      }
+    },
+    [editDoc, sendImages, meta.width, meta.height],
+  );
+
   /** Add a clip of `effect` on `target` at the playhead (3 s, clamped to the end) on top of its clips, and select it. */
   const addClip = useCallback(
     (target: EffectTarget, effect: string, params?: EffectParams): string | null => {
@@ -1549,13 +1617,15 @@ export default function useStudioSession(video: VideoItem) {
       setExportProgress(0);
       try {
         const drawOrder = orderedObjects(stateRef.current).map(o => o.id).reverse();
-        const buffer = await bridge.call('exportVideo', {doc: docRef.current ?? clips.EMPTY_DOC, drawOrder, untouched});
+        const doc = docRef.current ?? clips.EMPTY_DOC;
+        await sendImages(doc);
+        const buffer = await bridge.call('exportVideo', {doc, drawOrder, untouched});
         return new Blob([buffer], {type: 'video/mp4'});
       } finally {
         setExportProgress(null);
       }
     },
-    [bridge],
+    [bridge, sendImages],
   );
 
   // Where SAM 2 and SAM 3 disagree, for objects both track with current
@@ -2104,6 +2174,9 @@ export default function useStudioSession(video: VideoItem) {
     splitClip,
     duplicateClip,
     reorderClip,
+    pickEffectImage,
+    /** Picture keys the clips use that this browser has no copy of, or cannot decode, and which (drawn as the clip's colour). */
+    missingImages,
     /** What the last split, duplicate or reorder did (or why it did nothing), for a live region; cleared after a few seconds. */
     clipNote,
     stepEdits,

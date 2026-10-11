@@ -24,10 +24,12 @@ import {
   ColorSwitch,
   Development,
   Erase,
+  ImageReference,
   FaceWink,
   Humidity,
   Image,
   Lasso,
+  Opacity,
   Overlay,
   TextFont,
 } from '@carbon/icons-react';
@@ -55,6 +57,9 @@ export const backgroundEffects: DemoEffect[] = [
   {title: 'Text', Icon: TextFont, effectName: 'BackgroundText'},
   {title: 'Blur', Icon: Humidity, effectName: 'BackgroundBlur'},
   {title: 'Edges', Icon: AppleDash, effectName: 'Sobel'}, // sam-ui: 'Outline' is the layer effect
+  // sam-ui: backgrounds that keep the tracked subjects sharp
+  {title: 'Replace background', Icon: ImageReference, effectName: 'ReplaceBackground'},
+  {title: 'Colour pop', Icon: Opacity, effectName: 'ColorPop'},
 ];
 
 export const highlightEffects: DemoEffect[] = [

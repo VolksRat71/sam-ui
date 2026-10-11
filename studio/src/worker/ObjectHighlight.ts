@@ -18,7 +18,15 @@
 // masks, so consecutive objects sharing an effect and settings are drawn three
 // at a time; the effects are transparent outside their masks, so the passes
 // composite. Meta's 2D effects (Original, Desaturate, ...) draw straight on
-// the form and get no context.
+// the form and get no context. A background clip gets no masks, except for
+// an effect that keeps the tracked subjects as they are (EffectSpec.subjects:
+// Replace background, Colour pop): it gets every layer's mask on the frame in
+// one pass (it draws their union), less layers a hidden group keeps off the
+// preview. Spotlight's darkened outside is drawn once a frame, just before
+// the first Spotlight pass, outside every Spotlight circle on the frame at
+// the strongest darken among them, so Spotlights never dim each other's
+// circles or darken the outside twice. Pictures the clips use (`images`, sent by the page) reach every
+// effect with the frame.
 //
 // Browsers cap live WebGL contexts (Chrome: 16 per page but 4 per worker,
 // measured; past that the oldest is lost and draws nothing), so an effect's
@@ -34,7 +42,8 @@ import type {
 } from '@/common/components/video/effects/Effect';
 import {AbstractEffect} from '@/common/components/video/effects/Effect';
 import BaseGLEffect from '@/common/components/video/effects/BaseGLEffect';
-import {styleIndex} from '@/common/components/video/effects/EffectParamSpecs';
+import {EFFECT_SPECS, numberParam, styleIndex} from '@/common/components/video/effects/EffectParamSpecs';
+import type ScopeGLEffect from '@/common/components/video/effects/ScopeGLEffect';
 import type {Effects} from '@/common/components/video/effects/Effects';
 import type {Tracklet} from '@/common/tracker/Tracker';
 import {CanvasForm} from 'pts';
@@ -47,6 +56,7 @@ import {
   type UntouchedMode,
   activeClips,
   clipTime,
+  imageKeys,
   normalizeParams,
 } from '~/state/effectClips';
 import type MaskOverlayEffect from './MaskOverlayEffect';
@@ -61,6 +71,7 @@ type Ready = {effect: Effect; gl: WebGL2RenderingContext | null};
 type Pass = {effect: string; params: EffectParams; time?: number; duration?: number; key: string; idx: number[]};
 
 const META_MASK_SLOTS = 3;
+const SPOTLIGHT = 'Scope';
 /** The Overlay and Original's first styles: an untouched object's look. */
 const TINT = normalizeParams(OVERLAY, {});
 const UNCHANGED = normalizeParams(ORIGINAL, {});
@@ -73,6 +84,8 @@ function canonical(params: EffectParams): string {
 export default class ObjectHighlight extends AbstractEffect {
   /** Objects kept off the preview (a hidden group's members; never off an export). */
   public hidden: (objectId: number) => boolean = () => false;
+  /** Pictures the clips use, by key (state/effectImages.ts). */
+  public readonly images = new Map<string, ImageBitmap>();
   private _preview: DrawState = {doc: EMPTY_DOC, drawOrder: [], untouched: null};
   /** Canvases drawn from a state of their own (an export's), not the preview's. */
   private _forms = new WeakMap<CanvasForm, DrawState>();
@@ -116,10 +129,22 @@ export default class ObjectHighlight extends AbstractEffect {
     await this._sync();
   }
 
-  /** Keep effects set up for exactly the preview's and running exports' clips (unregistered ones draw as the stage default). */
+  /**
+   * Keep effects set up, and pictures, for exactly the preview's and running
+   * exports' clips (unregistered effects draw as the stage default); a dropped
+   * picture is closed, and the page sends it again if a clip uses it again.
+   */
   private async _sync(): Promise<void> {
+    const states = [this._preview, ...this._exports];
+    const used = new Set(states.flatMap(s => imageKeys(s.doc)));
+    for (const [key, image] of this.images) {
+      if (!used.has(key)) {
+        image.close();
+        this.images.delete(key);
+      }
+    }
     const names = new Set<string>();
-    for (const state of [this._preview, ...this._exports]) {
+    for (const state of states) {
       state.doc.clips.forEach(c => names.add(c.effect));
       if (state.untouched === 'original') {
         names.add(ORIGINAL);
@@ -213,11 +238,12 @@ export default class ObjectHighlight extends AbstractEffect {
     // one pass per clip, merged with the pass below when it is the same effect
     // and settings (three masks at most for Meta's shaders, any for the Overlay)
     // a clip's clock: its time, and its animation's length (frames trimmed off the start still count, as phase)
-    const add = (effect: string, params: EffectParams, clip: EffectClip | null, i: number | null) => {
+    const add = (effect: string, params: EffectParams, clip: EffectClip | null, i: number | null, subjects: number[] = []) => {
       const fps = context.fps > 0 ? context.fps : 30;
       const t = clip == null || effect === OVERLAY ? undefined : clipTime(clip, frame, context.fps);
       const duration = t == null ? undefined : (clip!.end - clip!.start + clip!.phase) / fps;
-      const key = `${effect}\u0000${canonical(params)}\u0000${t ?? ''}\u0000${duration ?? ''}`;
+      // darken is drawn once a frame (dim), not by the pass: clips differing only in it share a pass
+      const key = `${effect}\u0000${canonical(effect === SPOTLIGHT ? {...params, darken: 0} : params)}\u0000${t ?? ''}\u0000${duration ?? ''}`;
       const last = passes[passes.length - 1];
       if (
         i != null &&
@@ -228,18 +254,21 @@ export default class ObjectHighlight extends AbstractEffect {
       ) {
         last.idx.push(i);
       } else {
-        passes.push({effect, params, time: t, duration, key, idx: i == null ? [] : [i]});
+        passes.push({effect, params, time: t, duration, key, idx: i == null ? subjects : [i]});
       }
     };
 
     // background clips by row; an effect this build lacks leaves the plain frame below
+    const shown = tracklets.flatMap((t, i) => (preview && this.hidden(t.id) ? [] : [i]));
     for (const c of active) {
       if (c.target.kind === 'background' && ready(c.effect)) {
-        add(c.effect, c.params, c, null);
+        add(c.effect, c.params, c, null, EFFECT_SPECS[c.effect]?.subjects ? shown : []);
       }
     }
 
     // objects with a mask on this frame, bottom layer first (ids the order does not name yet go below it)
+    const circles = new Map<number, number>(); // tracklet index -> circle size
+    let darken = 0;
     const at = new Map(tracklets.map((t, i) => [t.id, i]));
     const listed = new Set(state.drawOrder);
     const ids = [...tracklets.map(t => t.id).filter(id => !listed.has(id)), ...state.drawOrder.filter(id => at.has(id))];
@@ -256,6 +285,11 @@ export default class ObjectHighlight extends AbstractEffect {
       for (const c of mine) {
         if (c.effect === OVERLAY || ready(c.effect)) {
           add(c.effect, c.params, c, i);
+          if (c.effect === SPOTLIGHT) {
+            // one circle per layer (its largest, with several Spotlight clips)
+            circles.set(i, Math.max(circles.get(i) ?? 0, numberParam(SPOTLIGHT, 'size', c.params)));
+            darken = Math.max(darken, numberParam(SPOTLIGHT, 'darken', c.params));
+          }
         } else {
           add(OVERLAY, TINT, null, i); // unknown, or not set up yet
         }
@@ -271,6 +305,7 @@ export default class ObjectHighlight extends AbstractEffect {
         maskColors: p.idx.map(i => context.maskColors[i]),
         time: p.time,
         duration: p.duration,
+        images: this.images,
       };
       const objects = p.idx.map(i => tracklets[i]);
       if (p.effect === OVERLAY) {
@@ -282,6 +317,11 @@ export default class ObjectHighlight extends AbstractEffect {
         }
       } else {
         const effect = this._ready.get(p.effect)!.effect;
+        if (p.effect === SPOTLIGHT && darken > 0) {
+          // ponytail: dim cuts out at most DIM_CIRCLES (16, the default object limit) circles; layers past it are dimmed too
+          (effect as unknown as ScopeGLEffect).dim(form, context, [...circles].map(([i, size]) => ({mask: context.masks[i], size})), darken);
+          darken = 0; // once a frame
+        }
         effect.setParams(p.params);
         effect.variant = styleIndex(p.effect, p.params);
         effect.apply(form, ctx, objects);

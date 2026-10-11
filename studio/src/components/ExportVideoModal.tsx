@@ -7,7 +7,7 @@
 import {useEffect, useState} from 'react';
 import {saveBlob} from '~/lib/download';
 import {defaultExportName, exportFileName} from '~/state/fileNames';
-import type {UntouchedMode} from '~/state/effectClips';
+import {type UntouchedMode, clipsMissingImages} from '~/state/effectClips';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
 import FileNameField from './FileNameField';
 
@@ -21,6 +21,7 @@ export default function ExportVideoModal({session, videoName, onClose}: Props) {
   const [done, setDone] = useState<{name: string; size: number} | null>(null);
   const busy = session.exportProgress != null;
   const clips = session.effectDoc?.clips ?? [];
+  const missingPictures = session.effectDoc == null ? 0 : clipsMissingImages(session.effectDoc, session.missingImages);
   const untouchedCount = session.state.objects.filter(
     o => !clips.some(c => c.target.kind === 'object' && c.target.id === o.id),
   ).length;
@@ -53,6 +54,12 @@ export default function ExportVideoModal({session, videoName, onClose}: Props) {
             An MP4 of the whole video, each object with its own effect and the background effect. Point markers and
             selection highlights are not included.
           </p>
+          {missingPictures > 0 && (
+            <p className="effect-note">
+              {missingPictures === 1 ? '1 clip uses a picture' : `${missingPictures} clips use pictures`} not stored in this browser or unreadable:{' '}
+              {missingPictures === 1 ? 'it draws its colour' : 'they draw their colour'} instead.
+            </p>
+          )}
           <FileNameField value={file} onChange={setFile} disabled={busy} />
           <fieldset className="radio-group" disabled={busy}>
             <legend>

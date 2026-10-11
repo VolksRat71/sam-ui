@@ -61,6 +61,8 @@ export type EffectFrameContext = {
   time?: number;
   /** The clip's animation length in seconds: (clip.end - clip.start + clip.phase) / fps (sam-ui). */
   duration?: number;
+  /** Pictures the clips use, by their key (state/effectImages.ts); missing ones are not in this browser (sam-ui). */
+  images?: ReadonlyMap<string, ImageBitmap>;
   actionPoint: EffectActionPoint | null;
 };
 

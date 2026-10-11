@@ -17,10 +17,11 @@ import {
   type DemoEffect,
 } from '@/common/components/effects/EffectsUtils';
 import type {EffectParams} from '@/common/components/video/effects/Effect';
-import {EFFECT_SPECS, type ParamSpec, styleIndex} from '@/common/components/video/effects/EffectParamSpecs';
+import {EFFECT_SPECS, type ParamSpec, paramShown, styleIndex} from '@/common/components/video/effects/EffectParamSpecs';
 import {Add, BringForward, ChevronDown, ChevronRight, Copy, Cut, Reset, SendBackward, TrashCan} from '@carbon/icons-react';
 import {useEffect, useState, type ReactNode} from 'react';
 import {readJson, writeJson} from '~/lib/storage';
+import {IMAGE_TYPES} from '~/state/effectImages';
 import {
   BACKGROUND_DEFAULT,
   type EffectClip,
@@ -146,7 +147,9 @@ function ClipSettings({clip, session, layerColor, title}: {clip: EffectClip; ses
   const set = (key: string, v: EffectParams[string], step = `${clip.id}:${key}`) =>
     session.updateClip(clip.id, {params: {...clip.params, [key]: v}}, step);
   const style = String(clip.params.style ?? '');
-  const styled = spec == null ? clip.params : withStyle(clip.effect, normalizeParams(clip.effect, {}), style);
+  // Reset keeps a picked picture: content, not a setting
+  const pictures = Object.fromEntries(Object.entries(spec?.params ?? {}).flatMap(([k, p]) => (p.kind === 'image' ? [[k, clip.params[k]]] : [])));
+  const styled = spec == null ? clip.params : {...withStyle(clip.effect, normalizeParams(clip.effect, {}), style), ...pictures};
   const atStyle = JSON.stringify(styled) === JSON.stringify(clip.params);
   const canSplit = clip.start < session.frame && session.frame < clip.end;
   const passes = (direction: 'up' | 'down') => session.effectDoc != null && overlapNeighbour(session.effectDoc, clip.id, direction) != null;
@@ -178,11 +181,44 @@ function ClipSettings({clip, session, layerColor, title}: {clip: EffectClip; ses
           <label className="fx-param-label" htmlFor={id}>{p.label}</label>
           <div className="fx-color">
             <input id={id} type="color" value={hex} disabled={follow} onChange={e => set(key, e.target.value)} />
-            <label className="fx-follow">
-              <input type="checkbox" checked={follow} onChange={e => session.updateClip(clip.id, {params: {...clip.params, [key]: e.target.checked ? 'layer' : layerColor}})} />
-              Follow layer colour
-            </label>
+            {p.followsLayer !== false && (
+              <label className="fx-follow">
+                <input type="checkbox" checked={follow} onChange={e => session.updateClip(clip.id, {params: {...clip.params, [key]: e.target.checked ? 'layer' : layerColor}})} />
+                Follow layer colour
+              </label>
+            )}
           </div>
+        </div>
+      );
+    }
+    if (p.kind === 'image') {
+      const picked = String(clip.params[key] ?? '');
+      const problem = picked === '' ? undefined : session.missingImages.get(picked);
+      return (
+        <div className="fx-param" key={key}>
+          <label className="fx-param-label" htmlFor={id}>{p.label}</label>
+          <input
+            id={id}
+            type="file"
+            accept={IMAGE_TYPES.join(',')}
+            aria-describedby={`${id}-note`}
+            onChange={e => {
+              const file = e.target.files?.[0];
+              e.target.value = ''; // the same file again is a new pick
+              if (file != null) {
+                void session.pickEffectImage(clip.id, file);
+              }
+            }}
+          />
+          <p className="effect-note" id={`${id}-note`}>
+            {problem === 'unreadable'
+              ? "This picture can't be read, so the colour shows instead. Choose it again, or another one."
+              : problem === 'missing'
+              ? 'This picture is not stored in this browser (another browser, or cleared site data), so the colour shows instead. Choose it again to use it.'
+              : picked === ''
+                ? 'PNG, JPEG or WebP, up to 50 MB; kept no larger than the video needs. The colour shows until you choose one.'
+                : 'PNG, JPEG or WebP, kept in this browser. Choose another to replace it.'}
+          </p>
         </div>
       );
     }
@@ -248,7 +284,7 @@ function ClipSettings({clip, session, layerColor, title}: {clip: EffectClip; ses
         <p className="effect-note">This effect comes from a newer build of sam-ui: its settings are kept as they are.</p>
       ) : (
         Object.entries(spec.params)
-          .filter(([, p]) => p.kind !== 'number' || p.onlyStyles == null || p.onlyStyles.includes(style))
+          .filter(([, p]) => paramShown(p, clip.params))
           .map(([key, p]) => control(key, p))
       )}
       {OBSCURING.has(clip.effect) && (

@@ -17,7 +17,7 @@ import {type EffectClip, type EffectDoc, normalizeParams} from '~/state/effectCl
 import type MaskOverlayEffect from './MaskOverlayEffect';
 import ObjectHighlight from './ObjectHighlight';
 
-type Drawn = {effect: string; params: EffectParams; variant: number; ids: number[]; time?: number; duration?: number; active?: number | null};
+type Drawn = {effect: string; params: EffectParams; variant: number; ids: number[]; time?: number; duration?: number; active?: number | null; masks?: unknown[]; images?: unknown};
 
 function fakeEffect(name: string, log: Drawn[]) {
   return {
@@ -28,8 +28,9 @@ function fakeEffect(name: string, log: Drawn[]) {
       this.params = p;
     },
     setup: vi.fn(async () => {}),
+    cleanup: vi.fn(async () => {}),
     apply(_form: CanvasForm, ctx: EffectFrameContext, ts: Tracklet[]) {
-      log.push({effect: name, params: {...this.params}, variant: this.variant, ids: ts.map(t => t.id), time: ctx.time, duration: ctx.duration});
+      log.push({effect: name, params: {...this.params}, variant: this.variant, ids: ts.map(t => t.id), time: ctx.time, duration: ctx.duration, masks: ctx.masks, images: ctx.images});
     },
   };
 }
@@ -45,8 +46,11 @@ function setup() {
     },
   };
   const meta = Object.fromEntries(
-    ['Outline', 'Cutout', 'PixelateMask', 'BackgroundBlur'].map(n => [n, fakeEffect(n, log)]),
+    ['Outline', 'Cutout', 'PixelateMask', 'BackgroundBlur', 'ReplaceBackground', 'ColorPop', 'Desaturate', 'Scope'].map(n => [n, fakeEffect(n, log)]),
   ) as unknown as Effects;
+  // Spotlight's once-a-frame darkened outside
+  (meta.Scope as unknown as {dim: unknown}).dim = (_f: CanvasForm, _c: EffectFrameContext, circles: {mask: {bitmap: {id: number}}; size: number}[], darken: number) =>
+    log.push({effect: 'dim', params: {darken}, variant: 0, ids: circles.map(c => c.mask.bitmap.id), masks: circles.map(c => c.size)});
   const h = new ObjectHighlight(overlay as unknown as MaskOverlayEffect, meta, () => ({width: 8, height: 8}));
   return {h, log, overlay};
 }
@@ -180,6 +184,95 @@ describe('ObjectHighlight', () => {
     await h.setDoc(doc(clip(1, 'FutureEffect', {k: 1}), clip('bg', 'FutureBackground')), [1]);
     h.apply(preview, ...frame([1]));
     expect(log.map(p => [p.effect, p.ids, p.variant])).toEqual([['Overlay', [1], 0]]);
+  });
+
+  it("gives a subjects background (Replace background, Colour pop) every shown layer's mask in one pass; others none (D8)", async () => {
+    const {h, log} = setup();
+    // 5 layers: more than Meta's three slots; layer 4 has no mask on this frame (absent), 2 is in a hidden group
+    h.hidden = id => id === 2;
+    const d = doc(clip('bg', 'Desaturate'), clip('bg', 'ReplaceBackground', {}, {row: 1}), clip('bg', 'ColorPop', {}, {row: 2}), clip(1, 'Outline'));
+    await h.setDoc(d, [1, 2, 3, 4, 5, 6]);
+    const [ctx, tracklets] = frame([6, 1, 2, 3, 5]);
+    h.apply(preview, ctx, tracklets);
+    const by = Object.fromEntries(log.map(p => [p.effect, p]));
+    expect(log.map(p => [p.effect, p.ids])).toEqual([['Desaturate', []], ['ReplaceBackground', [6, 1, 3, 5]], ['ColorPop', [6, 1, 3, 5]], ['Outline', [1]], ['Overlay', [3, 5, 6]]]);
+    expect(by.Desaturate.ids).toEqual([]);
+    expect(by.Desaturate.masks).toEqual([]);
+    for (const name of ['ReplaceBackground', 'ColorPop']) {
+      expect(by[name].ids, name).toEqual([6, 1, 3, 5]);
+      expect(by[name].masks, name).toEqual([6, 1, 3, 5].map(id => ctx.masks[tracklets.findIndex(t => t.id === id)]));
+    }
+    // an export draws hidden layers: the union has them too
+    log.length = 0;
+    const state = {doc: d, drawOrder: [1, 2, 3, 4, 5, 6], untouched: 'shown' as const};
+    await h.prepare(state);
+    h.drawWith(exportForm, state);
+    h.apply(exportForm, ...frame([6, 1, 2, 3, 5]));
+    expect(log.find(p => p.effect === 'ReplaceBackground')?.ids).toEqual([6, 1, 2, 3, 5]);
+    // a frame with no layer on it: an empty union, the whole frame replaced
+    log.length = 0;
+    h.apply(preview, ...frame([]));
+    expect(log.find(p => p.effect === 'ReplaceBackground')?.ids).toEqual([]);
+  });
+
+  it("darkens once a frame for every Spotlight: before the first Spotlight pass, outside all their circles, at the strongest darken", async () => {
+    const {h, log} = setup();
+    h.hidden = id => id === 4;
+    // 1 and 2 differ (two passes), 3 has darken 0 (its circle is still cut out), 4 is hidden in the preview
+    const d = doc(
+      clip(1, 'Scope', {darken: 0.3}),
+      clip(2, 'Scope', {darken: 0.6, size: 1.5}),
+      clip(3, 'Scope', {style: 'White ring'}),
+      clip(4, 'Scope', {darken: 0.9}),
+      clip(5, 'Outline'),
+    );
+    await h.setDoc(d, [5, 1, 2, 3, 4]);
+    h.apply(preview, ...frame([1, 2, 3, 4, 5]));
+    expect(log.map(p => [p.effect, p.ids])).toEqual([['Outline', [5]], ['dim', [1, 2, 3]], ['Scope', [1]], ['Scope', [2]], ['Scope', [3]]]);
+    expect(log[1].params.darken).toBe(0.6);
+    expect(log[1].masks).toEqual([1, 1.5, 1]);
+    // no darken anywhere: no dim pass (old clips draw as before)
+    const plain = setup();
+    await plain.h.setDoc(doc(clip(1, 'Scope', {style: 'Colour disc'}), clip(2, 'Scope', {style: 'Soft ring'})), [1, 2]);
+    plain.h.apply(preview, ...frame([1, 2]));
+    expect(plain.log.map(p => p.effect)).toEqual(['Scope', 'Scope']);
+  });
+
+  it('cuts out one circle per layer (its largest) and merges Spotlight clips that differ only in darken', async () => {
+    const {h, log} = setup();
+    await h.setDoc(doc(clip(1, 'Scope', {size: 2, darken: 0.5}), clip(1, 'Scope', {darken: 0.2}, {row: 1}), clip(2, 'Scope', {darken: 0.7})), [1, 2]);
+    h.apply(preview, ...frame([1, 2]));
+    expect(log.map(p => [p.effect, p.ids])).toEqual([['dim', [1, 2]], ['Scope', [1]], ['Scope', [1, 2]]]);
+    expect(log[0].masks).toEqual([2, 1]);
+    expect(log[0].params.darken).toBe(0.7);
+  });
+
+  it('frees pictures no clip of the preview or a running export uses', async () => {
+    const {h} = setup();
+    const [a, b] = ['ab'.repeat(32), 'cd'.repeat(32)];
+    const pic = () => ({close: vi.fn()}) as unknown as ImageBitmap;
+    const [pa, pb] = [pic(), pic()];
+    const uses = (k: string) => doc(clip('bg', 'ReplaceBackground', {style: 'Image', image: k}));
+    const state = {doc: uses(b), drawOrder: [], untouched: 'shown' as const};
+    await h.setDoc(uses(a), []);
+    h.images.set(a, pa).set(b, pb); // sent by the page, b for the export
+    await h.prepare(state);
+    expect([...h.images.keys()].sort()).toEqual([a, b]);
+    await h.setDoc(doc(), []);
+    expect([...h.images.keys()]).toEqual([b]); // the export still draws it
+    expect(pa.close).toHaveBeenCalled();
+    await h.finish(state);
+    expect(h.images.size).toBe(0);
+    expect(pb.close).toHaveBeenCalled();
+  });
+
+  it('hands every effect the pictures the page sent', async () => {
+    const {h, log} = setup();
+    const pic = {width: 2, height: 2} as ImageBitmap;
+    h.images.set('ab'.repeat(32), pic);
+    await h.setDoc(doc(clip('bg', 'ReplaceBackground', {style: 'Image', image: 'ab'.repeat(32)}), clip(1, 'Outline')), [1]);
+    h.apply(preview, ...frame([1]));
+    expect(log.filter(p => p.effect !== 'Overlay').map(p => (p.images as Map<string, ImageBitmap>)?.get('ab'.repeat(32)))).toEqual([pic, pic]);
   });
 
   it('hides hidden objects in the preview only', async () => {

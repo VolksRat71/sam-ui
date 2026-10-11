@@ -35,7 +35,7 @@ import type {
   StudioReply,
 } from './protocol';
 import StudioSession from './StudioSession';
-import type {EffectDoc, UntouchedMode} from '~/state/effectClips';
+import {type EffectDoc, type UntouchedMode, isImageHash} from '~/state/effectClips';
 
 registerSerializableConstructors();
 
@@ -137,6 +137,14 @@ const handlers: Handlers = {
   setReviewed: args => session.setReviewed(args),
   setEffectDoc: async ({doc, drawOrder}) => {
     await highlight.setDoc(doc, drawOrder);
+    context.goToFrame(context.frameIndex);
+  },
+  setEffectImage: ({key, image}) => {
+    if (!isImageHash(key) || !(image instanceof ImageBitmap)) {
+      throw new Error('not a picture key and bitmap');
+    }
+    highlight.images.get(key)?.close();
+    highlight.images.set(key, image);
     context.goToFrame(context.frameIndex);
   },
   exportVideo: ({doc, drawOrder, untouched}) => exportVideo(doc, drawOrder, untouched),

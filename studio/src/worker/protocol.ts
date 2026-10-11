@@ -218,6 +218,8 @@ export type StudioMethods = {
    * ids in drawing order (bottom layer first). It only redraws: no tracking.
    */
   setEffectDoc: {args: {doc: EffectDoc; drawOrder: number[]}; result: void};
+  /** A picture effect clips use (Replace background), by its key (state/effectImages.ts); kept until the worker ends. */
+  setEffectImage: {args: {key: string; image: ImageBitmap}; result: void};
   /** Browser-local display colors only; no annotation or tracking writes. */
   setObjectColors: {args: {colors: Record<number, string>}; result: void};
   /**
