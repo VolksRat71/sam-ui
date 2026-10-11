@@ -6,6 +6,7 @@ import {RelayEnvironmentProvider} from 'react-relay';
 import {LocalApp, ServerApp} from './App';
 import {API_ENDPOINT, NO_BACKEND_BUILD} from './config';
 import {waitForBackend} from './lib/mode';
+import {freeUnusedEffectImages} from './state/effectImages';
 import './styles.css';
 import './responsive.css';
 import './suite.css';
@@ -90,6 +91,8 @@ function connect() {
       ),
   );
 }
+
+void freeUnusedEffectImages(); // once a start; never throws
 
 if (NO_BACKEND_BUILD) {
   mount(false);

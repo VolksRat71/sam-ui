@@ -1475,15 +1475,15 @@ export default function useStudioSession(video: VideoItem) {
 
   /** Give every member of a group the effect `name` (clips.pickOnGroup), as one undo step; what it changed and added. */
   const setGroupEffect = useCallback(
-    (groupId: string, name: string): {changed: number; added: number} | null => {
+    (groupId: string, name: string): {changed: number; added: number; whole: number} | null => {
       const members = stateRef.current.layout.groups.find(g => g.id === groupId)?.members ?? [];
       const d = docRef.current;
       if (d == null || members.length === 0 || meta.numFrames <= 0) {
         return null;
       }
-      const {doc, changed, added} = clips.pickOnGroup(d, {members, effect: name, frame, numFrames: meta.numFrames, fps: meta.fps});
+      const {doc, changed, added, whole} = clips.pickOnGroup(d, {members, effect: name, frame, numFrames: meta.numFrames, fps: meta.fps});
       editDoc(() => doc, ownStep());
-      return {changed, added};
+      return {changed, added, whole};
     },
     [editDoc, frame, meta.numFrames, meta.fps],
   );
