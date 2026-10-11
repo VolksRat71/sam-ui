@@ -24,6 +24,19 @@
 //       with every layer on Original, nothing drawn over the video)
 //   B6  Noisy (animated) on frame 101 is pixel-identical after a wait, a scrub
 //       away and back, and play/pause; its export frame is checked by B7
+//   RB  slice 3, Replace background on frame 101 (A and B on a transparent Outline, so
+//       what is under them shows): inside their masks (a green Erase on each, eroded
+//       2 px) the frame is as the plain video, outside (dilated 2 px; 6 px off the
+//       capture's edge) the fill: a
+//       colour, then a picture picked in the settings (four coloured quadrants, 2x the
+//       video, stored scaled down in OPFS by its hash); a key this browser lacks
+//       draws the colour and the settings say so; with Colour pop on later frames,
+//       the export matches the preview within B7's tolerance
+//   CP  Colour pop: outside the masks grey, inside as the plain video (colour kept)
+//   SP  Spotlight: darken 0.6 dims everything outside the circle to 0.4 and leaves
+//       A as it was; each of Meta's six styles, saved style-only as earlier builds
+//       saved them, draws pixel-identically to the base build (BASE_SERVE, served
+//       at /sam-ui-base/ on the same origin, so the same tracks and doc)
 //   SC  Scribble (boiling Outline) on frame 101: identical after a scrub away and
 //       back and play/pause, redrawn when boil is on (differs from boil 0, which
 //       is itself steady); its export matches the preview within B7's tolerance
@@ -65,7 +78,9 @@
 // for the clicks and the track before it. The checks after it only draw.
 //
 // Settings (env): URL (http://127.0.0.1:7488/sam-ui/), SERVE (a build folder
-// to serve at URL), OUT (e2e/out/effects), CHROME (its binary), CDP_PORT (9493).
+// to serve at URL), BASE_SERVE (a build of the commit before slice 3 with
+// VITE_BASE=/sam-ui-base/, for SP's parity; skipped without it), OUT
+// (e2e/out/effects), CHROME (its binary), CDP_PORT (9493).
 import {execFileSync, spawn} from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -133,10 +148,11 @@ const countPx = (png, test) => {
 const red = png => countPx(png, (r, g, b) => r > 200 && g < 60 && b < 60);
 const blue = png => countPx(png, (r, g, b) => b > 200 && r < 60 && g < 90);
 
-const server = process.env.SERVE ? await serve(process.env.SERVE, URL_) : null;
-// a fresh profile; Chrome's stderr kept for B11
+const BASE_URL = new URL('../sam-ui-base/', URL_).href;
+const server = process.env.SERVE ? await serve(process.env.SERVE, URL_, process.env.BASE_SERVE ? {[new URL(BASE_URL).pathname]: process.env.BASE_SERVE} : {}) : null;
+// a fresh profile; Chrome's stderr kept for B11; sRGB output, so a capture's colours are the page's (RB's fills)
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'sam-ui-effects-'));
-const chrome = spawn(CHROME, [`--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check', '--enable-unsafe-webgpu', '--enable-logging=stderr', 'about:blank'], {
+const chrome = spawn(CHROME, [`--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check', '--enable-unsafe-webgpu', '--enable-logging=stderr', '--force-color-profile=srgb', 'about:blank'], {
   stdio: ['ignore', 'ignore', 'pipe'],
 });
 let stderr = '';
@@ -271,6 +287,62 @@ const exportVideo = async name => {
   await page.click('.modal button:has-text("Close")').catch(() => {});
   return file;
 };
+// a doc written as builds save it, then loaded by a fresh page (this build, or the base at BASE_URL)
+const clipOn = (target, effect, params, id, start = 0, end = FRAMES) => ({id, target, effect, params, start, end, row: 0, phase: 0});
+const putClips = async (clips, url = null) => {
+  const key = await page.evaluate(() => Object.keys(localStorage).find(k => k.startsWith('sam-ui-studio:effects:v2:local/')));
+  await page.evaluate(([k, c]) => localStorage.setItem(k, JSON.stringify({version: 2, clips: c})), [key, clips]);
+  if (url == null) {
+    await reload();
+  } else {
+    await harvest();
+    await page.goto(url);
+    await opened();
+    await page.waitForFunction(() => document.querySelectorAll('.swimlane-segment').length >= 2, null, {timeout: 60000});
+  }
+};
+// full-size pixels of a capture, and masks over them (1 = in)
+const pixels = png => {
+  const [w, h] = pngSize(png);
+  return {d: decode(png), w, h};
+};
+const where = (img, test) => {
+  const m = new Uint8Array(img.w * img.h);
+  for (let i = 0; i < m.length; i++) m[i] = test(img.d[3 * i], img.d[3 * i + 1], img.d[3 * i + 2], i % img.w, Math.floor(i / img.w)) ? 1 : 0;
+  return m;
+};
+// grow (dilate) or shrink (erode) a mask by r px (a square), past the frame's edge counting as unchanged
+const morph = (m, w, h, r, grow) => {
+  const pass = (src, dx, dy) => {
+    const out = new Uint8Array(src.length);
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++) {
+        let v = grow ? 0 : 1;
+        for (let k = -r; k <= r; k++) {
+          const [xx, yy] = [x + k * dx, y + k * dy];
+          if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+          v = grow ? v | src[yy * w + xx] : v & src[yy * w + xx];
+        }
+        out[y * w + x] = v;
+      }
+    return out;
+  };
+  return pass(pass(m, 1, 0), 0, 1);
+};
+const not = m => m.map(v => 1 - v);
+const and = (a, b) => a.map((v, i) => v & b[i]);
+// the share of mask m's pixels (in %) where ok(i) holds
+const share = (m, ok) => {
+  let n = 0, good = 0;
+  for (let i = 0; i < m.length; i++) if (m[i]) (n++, ok(i) && good++);
+  return {n, pct: n === 0 ? 0 : Math.round((good / n) * 10000) / 100};
+};
+const off = (a, b, i) => Math.max(Math.abs(a.d[3 * i] - b.d[3 * i]), Math.abs(a.d[3 * i + 1] - b.d[3 * i + 1]), Math.abs(a.d[3 * i + 2] - b.d[3 * i + 2]));
+const offRgb = (a, i, [r, g, b]) => Math.max(Math.abs(a.d[3 * i] - r), Math.abs(a.d[3 * i + 1] - g), Math.abs(a.d[3 * i + 2] - b));
+const chroma = (a, i) => Math.max(a.d[3 * i], a.d[3 * i + 1], a.d[3 * i + 2]) - Math.min(a.d[3 * i], a.d[3 * i + 1], a.d[3 * i + 2]);
+const luma = (a, i) => 0.3 * a.d[3 * i] + 0.59 * a.d[3 * i + 1] + 0.11 * a.d[3 * i + 2];
+const PIXEL_TOL = 12; // a capture's channel may be this far off where the same pixels are drawn (scaling, colour conversion)
+
 // export frames and preview captures at 320x180, the assessment's comparison size
 const small = 'scale=320:180';
 const exportFrames = (file, frames) => {
@@ -517,6 +589,163 @@ await step('B7', async () => {
   const shifted = stats(shots[PARITY_FRAMES.indexOf(100)], frames[PARITY_FRAMES.indexOf(180)]);
   check('B7', shifted.psnr < tolerance, `a mismatched frame falls below it (f101 vs export f181: ${shifted.psnr} dB)`, shifted);
   await clearClips();
+});
+
+// slice 3: A and B's masks on frame 101 (RB), shared by CP and SP
+const F3 = 100;
+const [tA, tB, tBG] = [{kind: 'object', id: aId}, {kind: 'object', id: bId}, {kind: 'background'}];
+// the layers draw nothing (a transparent Outline): the background clip shows inside their masks too
+const clear = () => [clipOn(tA, 'Outline', {style: 'Outline', opacity: 0}, 'oa'), clipOn(tB, 'Outline', {style: 'Outline', opacity: 0}, 'ob')];
+let inside = null, outside = null, plain3 = null;
+// a picture twice the video's size: four quadrants of colour
+const QUADS = [[255, 64, 0], [0, 200, 255], [255, 230, 0], [140, 0, 255]]; // top left, top right, bottom left, bottom right
+const PICTURE = path.join(OUT, 'RB-picture_2560x1440_quadrants.png');
+{
+  const [w, h] = [2560, 1440];
+  const raw = Buffer.alloc(w * h * 3);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) raw.set(QUADS[(y < h / 2 ? 0 : 2) + (x < w / 2 ? 0 : 1)], 3 * (y * w + x));
+  execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-s', `${w}x${h}`, '-i', 'pipe:0', '-frames:v', '1', PICTURE], {input: raw});
+}
+const quadrant = (img, x, y) => QUADS[(y < img.h / 2 ? 0 : 2) + (x < img.w / 2 ? 0 : 1)];
+const nearSeam = (img, x, y) => Math.abs(x - img.w / 2) < 6 || Math.abs(y - img.h / 2) < 6;
+const pictureKey = () => doc().then(d => d?.clips.find(c => c.id === 'rb')?.params.image ?? '');
+
+await step('RB', async () => {
+  if (tolerance == null) throw new Error('no B7 tolerance');
+  await putClips([clipOn(tA, 'EraseForeground', {style: 'Green'}, 'ga'), clipOn(tB, 'EraseForeground', {style: 'Green'}, 'gb')]);
+  await sel(A);
+  await seekTo(F3);
+  const green = pixels(await cap('RB-0_mask-probe_green-erase_f101'));
+  const m = where(green, (r, g, b) => g > 200 && r < 90 && b < 90);
+  // the capture's outermost rows and columns are part frame, part page
+  const framed = where(green, (_r, _g, _b, x, y) => x >= 6 && y >= 6 && x < green.w - 6 && y < green.h - 6);
+  inside = and(morph(m, green.w, green.h, 2, false), framed);
+  outside = and(not(morph(m, green.w, green.h, 2, true)), framed);
+  await putClips([clipOn(tA, 'Cutout', {style: 'Unchanged'}, 'pa'), clipOn(tB, 'Cutout', {style: 'Unchanged'}, 'pb')]);
+  await sel(A);
+  await seekTo(F3);
+  plain3 = pixels(await cap('RB-1_plain_f101'));
+  const masked = share(inside, () => true).n;
+  check('RB', masked > 2000 && share(outside, () => true).n > masked, `A and B's masks on frame 101: ${masked} px inside (eroded 2 px), ${share(outside, () => true).n} outside (dilated 2 px)`);
+
+  await putClips([clipOn(tBG, 'ReplaceBackground', {style: 'Colour', color: '#ff00ff'}, 'rb'), ...clear()]);
+  await sel(A);
+  await seekTo(F3);
+  const colour = pixels(await cap('RB-2_colour-magenta_f101'));
+  const kept = share(inside, i => off(colour, plain3, i) <= PIXEL_TOL);
+  const filled = share(outside, i => offRgb(colour, i, [255, 0, 255]) <= PIXEL_TOL);
+  check('RB', kept.pct >= 99.5 && filled.pct >= 99.5, `Colour: subjects as the video inside their masks (${kept.pct} % of ${kept.n} px within ${PIXEL_TOL}), magenta outside (${filled.pct} %)`, {kept, filled});
+
+  await putClips([clipOn(tBG, 'ReplaceBackground', {style: 'Image', color: '#ff00ff'}, 'rb'), ...clear()]);
+  await sel(A);
+  await seekTo(F3);
+  await page.locator('.fx-clip[data-clip="rb"]').click();
+  const picker = fx.locator('input[type=file]');
+  const name = await picker.evaluate(e => e.labels?.[0]?.innerText ?? '');
+  const before = await fx.locator('.fx-param .effect-note').innerText();
+  await picker.setInputFiles(PICTURE);
+  await page.waitForFunction(() => {
+    const k = Object.keys(localStorage).find(k => k.startsWith('sam-ui-studio:effects:v2:local/'));
+    return /^[0-9a-f]{64}$/.test(JSON.parse(localStorage.getItem(k)).clips.find(c => c.id === 'rb')?.params.image ?? '');
+  }, null, {timeout: 20000});
+  await page.waitForTimeout(1000);
+  const key = await pictureKey();
+  const stored = await page.evaluate(async k => {
+    const dir = await (await (await navigator.storage.getDirectory()).getDirectoryHandle('sam-ui')).getDirectoryHandle('effect-images');
+    const file = await (await dir.getFileHandle(k)).getFile();
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(b => b.toString(16).padStart(2, '0')).join('');
+    const bmp = await createImageBitmap(file);
+    return {hash, width: bmp.width, height: bmp.height};
+  }, key);
+  check('RB', name === 'Image' && /colour shows until you choose one/.test(before) && stored.hash === key && stored.width === 1280 && stored.height === 720, `the picker ("${name}") stores the picture by its hash, scaled down to the video: ${stored.width}x${stored.height}, key ${key.slice(0, 12)}... (hash ${stored.hash === key ? 'matches' : 'differs'})`, stored);
+  const picture = pixels(await cap('RB-3_image-quadrants_f101'));
+  const pkept = share(inside, i => off(picture, plain3, i) <= PIXEL_TOL);
+  const placed = share(outside, i => {
+    const [x, y] = [i % picture.w, Math.floor(i / picture.w)];
+    return nearSeam(picture, x, y) || offRgb(picture, i, quadrant(picture, x, y)) <= PIXEL_TOL;
+  });
+  check('RB', pkept.pct >= 99.5 && placed.pct >= 99.5, `Image (Cover): subjects as the video (${pkept.pct} % of ${pkept.n} px), each quadrant of the picture in its place outside (${placed.pct} %)`, {kept: pkept, placed});
+
+  // a key this browser has no copy of (another browser's doc, or cleared site data)
+  await putClips([clipOn(tBG, 'ReplaceBackground', {style: 'Image', color: '#ff00ff', image: 'ab'.repeat(32)}, 'rb'), ...clear()]);
+  await sel(A);
+  await seekTo(F3);
+  await page.locator('.fx-clip[data-clip="rb"]').click();
+  const missing = pixels(await cap('RB-4_missing-picture_colour-instead_f101'));
+  const said = await fx.locator('.fx-param .effect-note').innerText();
+  const fallback = share(outside, i => offRgb(missing, i, [255, 0, 255]) <= PIXEL_TOL);
+  check('RB', fallback.pct >= 99.5 && /not stored in this browser/.test(said), `a picture this browser lacks draws the colour (${fallback.pct} % magenta outside); the settings say: "${said}"`, fallback);
+  const live = await page.$$eval('.effects [role=status], .effects [aria-live]', es => es.map(e => e.innerText).filter(t => /\d/.test(t)));
+  check('RB', live.length === 0, `no numbers in the effects panel's live regions (${JSON.stringify(live)})`);
+
+  // export: the picture on frames 1-124, Colour pop from 125 (CP's), against the preview
+  const docAll = [clipOn(tBG, 'ReplaceBackground', {style: 'Image', color: '#ff00ff', image: key}, 'rb', 0, 124), clipOn(tBG, 'ColorPop', {style: 'Gray'}, 'cp', 124, FRAMES), ...clear()];
+  await putClips(docAll);
+  await sel(A);
+  const shots = await preview('RB-5_picture-then-colour-pop');
+  const file = await exportVideo('RB_picture-then-colour-pop');
+  const frames = exportFrames(file, PARITY_FRAMES);
+  const rows = PARITY_FRAMES.map((f, i) => ({frame: f + 1, ...stats(shots[i], frames[i])}));
+  check('RB', rows.every(r => r.psnr >= tolerance), `export matches the preview (picture f1-124, Colour pop after): ${rows.map(r => `f${r.frame} ${r.psnr} dB`).join(', ')} (needs >= ${tolerance} dB)`, rows);
+});
+
+await step('CP', async () => {
+  if (inside == null) throw new Error('no masks from RB');
+  await putClips([clipOn(tBG, 'ColorPop', {style: 'Gray'}, 'cp'), ...clear()]);
+  await sel(A);
+  await seekTo(F3);
+  const pop = pixels(await cap('CP-1_colour-pop_f101'));
+  const grey = share(outside, i => chroma(pop, i) <= PIXEL_TOL);
+  const wasColour = share(outside, i => chroma(plain3, i) > 3 * PIXEL_TOL);
+  const kept = share(inside, i => off(pop, plain3, i) <= PIXEL_TOL);
+  const colourful = share(inside, i => chroma(plain3, i) > 40);
+  check('CP', grey.pct >= 99.5 && wasColour.pct >= 5, `outside the subjects grey (${grey.pct} % within ${PIXEL_TOL} of grey; ${wasColour.pct} % of it was coloured)`, {grey, wasColour});
+  check('CP', kept.pct >= 99.5 && colourful.pct * colourful.n >= 100 * 100, `inside them as the video, colour kept (${kept.pct} % of ${kept.n} px; ${Math.round((colourful.pct * colourful.n) / 100)} of them strongly coloured)`, {kept, colourful});
+});
+
+await step('SP', async () => {
+  if (inside == null) throw new Error('no masks from RB');
+  const spot = async (params, tag) => {
+    await putClips([clipOn(tA, 'Scope', params, 'sp')]);
+    await sel(A);
+    await seekTo(F3);
+    return pixels(await cap(tag));
+  };
+  const s0 = await spot({style: 'Colour disc'}, 'SP-1_colour-disc_f101');
+  const s1 = await spot({style: 'Colour disc', darken: 0.6}, 'SP-2_colour-disc_darken-0.6_f101');
+  const all = new Uint8Array(s0.w * s0.h).fill(1);
+  const dimmed = where(s0, (_r, _g, _b, x, y) => off(s0, s1, y * s0.w + x) > 8);
+  let [l0, l1] = [0, 0];
+  dimmed.forEach((v, i) => v && ((l0 += luma(s0, i)), (l1 += luma(s1, i))));
+  const ratio = Math.round((l1 / l0) * 1000) / 1000;
+  const changed = share(all, i => dimmed[i] === 1);
+  const aKept = share(inside, i => off(s0, s1, i) <= PIXEL_TOL);
+  check('SP', changed.pct >= 30 && ratio > 0.36 && ratio < 0.44 && aKept.pct >= 99.5, `darken outside 0.6: ${changed.pct} % of the frame dimmed to ${ratio} of its brightness (0.4 wanted), the subjects inside unchanged (${aKept.pct} %)`, {changed, ratio, aKept});
+
+  if (!process.env.BASE_SERVE) {
+    console.log('SKIP SP old-style parity: BASE_SERVE not set');
+    (results.SP ??= []).push({ok: true, skipped: true, what: 'old-style parity: BASE_SERVE not set'});
+    await putClips([]);
+    return;
+  }
+  const styles = ['Colour disc', 'Colour ring', 'White disc', 'White ring', 'Soft disc', 'Soft ring'];
+  const rows = [];
+  for (const style of styles) {
+    const slug = style.toLowerCase().replace(/[^a-z]+/g, '-');
+    const clips = [clipOn(tA, 'Scope', {style}, 'sp')];
+    await putClips(clips, BASE_URL);
+    await sel(A);
+    await seekTo(F3);
+    const base = await cap(`SP-3_${slug}_base-build_f101`);
+    await putClips(clips, URL_);
+    await sel(A);
+    await seekTo(F3);
+    const now = await cap(`SP-3_${slug}_this-build_f101`);
+    rows.push({style, drawn: compare(ref[F3], now).changedPct, ...compare(base, now)});
+  }
+  check('SP', rows.every(r => r.changedPct === 0 && r.drawn > DIFF_PCT), `each old style draws pixel-identically to the base build: ${rows.map(r => `${r.style} ${r.changedPct} % (MAD ${r.mad})`).join(', ')}`, rows);
+  await putClips([]);
 });
 
 await step('SC', async () => {
