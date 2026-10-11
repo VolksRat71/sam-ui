@@ -70,6 +70,8 @@ export type EffectFrameContext = {
   duration?: number;
   /** Pictures the clips use, by their key (state/effectImages.ts); missing ones are not in this browser (sam-ui). */
   images?: ReadonlyMap<string, ImageBitmap>;
+  /** Every shown layer's mask on the frame, for an effect whose spec has `subjects` (sam-ui). */
+  subjects?: EffectMask[];
   /** The frames this clip's effect asked for (historyFrames), by frame index; one missing was not fetched (sam-ui). */
   history?: ReadonlyMap<number, HistoryFrame>;
   actionPoint: EffectActionPoint | null;

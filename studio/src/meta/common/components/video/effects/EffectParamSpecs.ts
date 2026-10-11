@@ -25,7 +25,9 @@ export type ParamSpec = (
 /**
  * subjects: a background effect drawn knowing every tracked layer's mask on
  * the frame (their union), to keep those subjects as they are in the video.
- * Other background effects get no masks: a layer clip draws over them.
+ * Other background effects get no masks: a layer clip draws over them. A
+ * layer effect with it gets its own masks as usual and every layer's in
+ * EffectFrameContext.subjects (Echo keeps its copies behind all subjects).
  */
 export type EffectSpec = {params: Record<string, ParamSpec>; styles: Record<string, Partial<EffectParams>>; subjects?: true};
 
@@ -175,12 +177,14 @@ export const EFFECT_SPECS: Record<string, EffectSpec> = {
       falloff: {kind: 'number', min: 0, max: 0.9, step: 0.05, default: 0.3, label: 'Fade per echo', onlyWhen: {style: ['Echo']}},
       tint: {kind: 'choice', options: ['None', 'Layer colour', 'Custom'], default: 'None', label: 'Tint'},
       color: {kind: 'color', default: '#ffffff', label: 'Tint colour', followsLayer: false, onlyWhen: {tint: ['Custom']}},
+      tintStrength: {kind: 'number', min: 0, max: 1, step: 0.05, default: 0.6, label: 'Tint strength', onlyWhen: {tint: ['Layer colour', 'Custom']}},
       style: {kind: 'choice', options: ['Echo', 'Strobe'], default: 'Echo', label: 'Style'},
     },
     styles: {
       Echo: {style: 'Echo', count: 4, spacing: 3, opacity: 0.6, falloff: 0.3},
       Strobe: {style: 'Strobe', count: 4, spacing: 6, opacity: 0.6},
     },
+    subjects: true,
   },
 };
 

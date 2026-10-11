@@ -77,8 +77,8 @@ type Pass = {effect: string; params: EffectParams; time?: number; duration?: num
 
 const META_MASK_SLOTS = 3;
 const SPOTLIGHT = 'Scope';
-/** Earlier frames fetched for one draw at most (decoded and held until it ends): one Echo clip's six. */
-export const HISTORY_CAP = 6;
+/** Earlier frames fetched for one draw at most (decoded and held until it ends): two Echo clips' six each. */
+export const HISTORY_CAP = 12;
 /** The Overlay and Original's first styles: an untouched object's look. */
 const TINT = normalizeParams(OVERLAY, {});
 const UNCHANGED = normalizeParams(ORIGINAL, {});
@@ -242,7 +242,7 @@ export default class ObjectHighlight extends AbstractEffect {
         this._meta[c.effect as keyof Effects]?.historyFrames?.(c, frame).forEach(i => wanted.add(i));
       }
     }
-    // ponytail: past the cap the farthest frames are dropped (two Echo layers with different spacing); a larger cap if that bites
+    // ponytail: past the cap the farthest frames are dropped (three or more Echo layers with different spacing); a larger cap if that bites
     return [...wanted].sort((a, b) => b - a).slice(0, HISTORY_CAP);
   }
 
@@ -332,6 +332,7 @@ export default class ObjectHighlight extends AbstractEffect {
         time: p.time,
         duration: p.duration,
         images: this.images,
+        subjects: EFFECT_SPECS[p.effect]?.subjects ? shown.map(i => context.masks[i]) : undefined,
         history: p.history == null ? undefined : new Map(p.history.flatMap(i => (context.history?.has(i) ? [[i, context.history.get(i)!] as const] : []))),
       };
       const objects = p.idx.map(i => tracklets[i]);

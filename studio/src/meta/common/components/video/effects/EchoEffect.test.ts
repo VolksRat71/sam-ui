@@ -2,15 +2,16 @@
 //
 // Echo: which earlier frames a clip draws from (inside the clip only, count
 // and spacing, at most six), each copy's opacity, and the compositing order on
-// recording 2D contexts: the layer as the stage has it is cut out first, the
-// copies drawn farthest first, then the layer put back on top. A frame's
+// recording 2D contexts: the stage inside every subject's mask is cut out
+// first, the copies drawn farthest first, then the subjects put back on top
+// (the layer's own and every other shown layer's). A frame's
 // drawing depends only on what it is given, never on frames drawn before.
 import type {Tracklet} from '@/common/tracker/Tracker';
 import type {CanvasForm} from 'pts';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {normalizeParams} from '~/state/effectClips';
 import type {EffectFrameContext, EffectMask, EffectParams, HistoryFrame} from './Effect';
-import EchoEffect, {TINT_STRENGTH, echoAlpha, echoFrames} from './EchoEffect';
+import EchoEffect, {echoAlpha, echoFrames} from './EchoEffect';
 
 const params = (p: EffectParams = {}) => normalizeParams('Echo', p);
 
@@ -115,11 +116,11 @@ describe('EchoEffect', () => {
   const mask = (bounds: EffectMask['bounds'] = [[0, 0], [2, 2]]): EffectMask => ({bitmap: {size: [H, W], counts: '035'} as never, bounds});
   const past = (name: string, ids: number[]): HistoryFrame => ({frame: {name} as unknown as ImageBitmap, masks: new Map(ids.map(id => [id, mask()]))});
 
-  function draw(p: EffectParams, history: Map<number, HistoryFrame> | undefined, frameIndex = 20, effect = new EchoEffect()) {
+  function draw(p: EffectParams, history: Map<number, HistoryFrame> | undefined, frameIndex = 20, effect = new EchoEffect(), over: Partial<EffectFrameContext> = {}, ids = [7]) {
     const calls: Call[] = [];
     effect.setParams(params(p));
-    const context = {frameIndex, totalFrames: 100, fps: 10, width: W, height: H, masks: [mask()], maskColors: ['#00ff00'], frame: {}, actionPoint: null, history} as unknown as EffectFrameContext;
-    effect.apply({ctx: recorder(calls, stage, 'form')} as unknown as CanvasForm, context, [{id: 7} as Tracklet]);
+    const context = {frameIndex, totalFrames: 100, fps: 10, width: W, height: H, masks: ids.map(() => mask()), maskColors: ids.map(() => '#00ff00'), frame: {}, actionPoint: null, history, ...over} as unknown as EffectFrameContext;
+    effect.apply({ctx: recorder(calls, stage, 'form')} as unknown as CanvasForm, context, ids.map(id => ({id}) as Tracklet));
     return {calls, effect};
   }
   const draws = () => seq.filter(c => /drawImage/.test(c[0])).map(c => [c[0], (c[1] as {name?: string; tag?: string}).name ?? (c[1] as {tag: string}).tag]);
@@ -176,8 +177,36 @@ describe('EchoEffect', () => {
     expect(tints({tint: 'Custom', color: '#ff00aa'})).toEqual(['#ff00aa']);
     const copy = canvases.find(c => c.tag === 'copy')!.calls;
     expect(copy.findIndex(c => c[0] === 'globalCompositeOperation=' && c[1] === 'source-atop')).toBeGreaterThan(copy.findIndex(c => c[0] === 'drawImage'));
-    expect(copy.find(c => c[0] === 'globalAlpha=')?.[1]).toBe(TINT_STRENGTH);
+    expect(copy.find(c => c[0] === 'globalAlpha=')?.[1]).toBe(0.6); // the default strength
+    canvases.length = 0;
+    draw({count: 1, spacing: 2, tint: 'Custom', tintStrength: 0.25}, history);
+    expect(canvases.find(c => c.tag === 'copy')!.calls.find(c => c[0] === 'globalAlpha=')?.[1]).toBe(0.25);
     expect(canvases.find(c => c.tag === 'cut')!.calls.some(c => c[0] === 'fillStyle=')).toBe(false);
+  });
+
+  it("keeps the copies behind every subject: the cut is the union of all shown layers' masks, taken once and put back last", () => {
+    // another layer (the ball) whose mask covers (3,0) and (3,1), outside this layer's: column-major, 6 out then 2 in
+    const ball: EffectMask = {bitmap: {size: [H, W], counts: '62'} as never, bounds: [[3, 0], [4, 2]]};
+    const history = new Map([18, 16].map(i => [i, past(`f${i}`, [7, 8])]));
+    draw({count: 2, spacing: 2}, history, 20, new EchoEffect(), {subjects: [mask(), mask(), ball]}, [7, 8]);
+    expect(draws()).toEqual([
+      ['cut:drawImage', 'stage'],
+      ['copy:drawImage', 'f16'],
+      ['form:drawImage', 'copy'],
+      ['copy:drawImage', 'f18'],
+      ['form:drawImage', 'copy'],
+      ['copy:drawImage', 'f16'],
+      ['form:drawImage', 'copy'],
+      ['copy:drawImage', 'f18'],
+      ['form:drawImage', 'copy'],
+      ['form:drawImage', 'cut'],
+    ]);
+    const cut = canvases.find(c => c.tag === 'cut')!;
+    const put = cut.calls[0][1] as {data: Uint8ClampedArray};
+    expect([...Array(W * H).keys()].filter(i => put.data[i * 4 + 3] === 255)).toEqual([0, 1, 3, 4, 7]);
+    // within the union's bounds, the whole frame here
+    expect(cut.calls[0].slice(2)).toEqual([0, 0, 0, 0, 4, 2]);
+    expect(seq.at(-1)!.slice(2)).toEqual([0, 0, 4, 2, 0, 0, 4, 2]);
   });
 
   it('draws a frame the same whatever it drew before (no state carried between frames)', () => {

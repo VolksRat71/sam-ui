@@ -18,7 +18,7 @@ import type MaskOverlayEffect from './MaskOverlayEffect';
 import {echoFrames} from '@/common/components/video/effects/EchoEffect';
 import ObjectHighlight, {HISTORY_CAP} from './ObjectHighlight';
 
-type Drawn = {effect: string; params: EffectParams; variant: number; ids: number[]; time?: number; duration?: number; active?: number | null; masks?: unknown[]; images?: unknown; history?: number[]};
+type Drawn = {effect: string; params: EffectParams; variant: number; ids: number[]; time?: number; duration?: number; active?: number | null; masks?: unknown[]; images?: unknown; history?: number[]; subjects?: unknown[]};
 
 function fakeEffect(name: string, log: Drawn[]) {
   return {
@@ -31,7 +31,7 @@ function fakeEffect(name: string, log: Drawn[]) {
     setup: vi.fn(async () => {}),
     cleanup: vi.fn(async () => {}),
     apply(_form: CanvasForm, ctx: EffectFrameContext, ts: Tracklet[]) {
-      log.push({effect: name, params: {...this.params}, variant: this.variant, ids: ts.map(t => t.id), time: ctx.time, duration: ctx.duration, masks: ctx.masks, images: ctx.images, history: ctx.history == null ? undefined : [...ctx.history.keys()]});
+      log.push({effect: name, params: {...this.params}, variant: this.variant, ids: ts.map(t => t.id), time: ctx.time, duration: ctx.duration, masks: ctx.masks, images: ctx.images, history: ctx.history == null ? undefined : [...ctx.history.keys()], subjects: ctx.subjects});
     },
   };
 }
@@ -359,13 +359,34 @@ describe('ObjectHighlight', () => {
     await h.setDoc(doc(echo(1, 3, 2, {start: 18, end: 30})), [1]);
     expect(h.historyFor(preview, 20)).toEqual([18]);
     expect(h.historyFor(preview, 30)).toEqual([]);
-    // twelve wanted: the six nearest
+    // two Echo layers at six each: all twelve; a third with other frames: the twelve nearest
     await h.setDoc(doc(echo(1, 6, 1), echo(2, 6, 7)), [1, 2]);
-    expect(HISTORY_CAP).toBe(6);
-    expect(h.historyFor(preview, 60)).toEqual([59, 58, 57, 56, 55, 54]);
+    expect(HISTORY_CAP).toBe(12);
+    expect(h.historyFor(preview, 60)).toEqual([59, 58, 57, 56, 55, 54, 53, 46, 39, 32, 25, 18]);
+    await h.setDoc(doc(echo(1, 6, 1), echo(2, 6, 7), echo(3, 6, 5)), [1, 2, 3]);
+    expect(h.historyFor(preview, 60)).toEqual([59, 58, 57, 56, 55, 54, 53, 50, 46, 45, 40, 39]);
     // no effect that draws from earlier frames: none
     await h.setDoc(doc(clip(1, 'Outline'), clip('bg', 'Title')), [1]);
     expect(h.historyFor(preview, 60)).toEqual([]);
+  });
+
+  it("gives an Echo pass its own masks and every shown layer's in subjects (hidden ones too in an export); other layer effects get no subjects", async () => {
+    const {h, log} = setup();
+    h.hidden = id => id === 3;
+    const d = doc(clip(1, 'Echo'), clip(2, 'Outline'));
+    await h.setDoc(d, [1, 2, 3]);
+    const ids = (ms: unknown[] | undefined) => ms?.map(m => (m as {bitmap: {id: number}}).bitmap.id);
+    h.apply(preview, ...frame([1, 2, 3]));
+    expect(log.map(p => [p.effect, ids(p.masks), ids(p.subjects)])).toEqual([
+      ['Echo', [1], [1, 2]],
+      ['Outline', [2], undefined],
+    ]);
+    log.length = 0;
+    const state = {doc: d, drawOrder: [1, 2, 3], untouched: 'shown' as const};
+    await h.prepare(state);
+    h.drawWith(exportForm, state);
+    h.apply(exportForm, ...frame([1, 2, 3]));
+    expect(log.filter(p => p.effect === 'Echo').map(p => ids(p.subjects))).toEqual([[1, 2, 3]]);
   });
 
   it("a layer the preview hides asks for no earlier frames; an export's canvas asks for its own clips' frames, hidden layers too", async () => {

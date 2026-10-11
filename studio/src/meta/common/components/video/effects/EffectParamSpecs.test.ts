@@ -53,8 +53,8 @@ describe('effect param specs', () => {
 });
 
 describe('Replace background and Colour pop', () => {
-  it('are subjects backgrounds (they get the masks), as is the Title; no other effect is (D8)', () => {
-    expect(Object.keys(EFFECT_SPECS).filter(n => EFFECT_SPECS[n].subjects)).toEqual(['ReplaceBackground', 'Title', 'ColorPop']);
+  it('are subjects backgrounds (they get the masks), as is the Title; of the layer effects only Echo gets them (D8)', () => {
+    expect(Object.keys(EFFECT_SPECS).filter(n => EFFECT_SPECS[n].subjects)).toEqual(['ReplaceBackground', 'Title', 'ColorPop', 'Echo']);
   });
 
   it('start from their defaults: a colour fill with no picture, a full grey', () => {
