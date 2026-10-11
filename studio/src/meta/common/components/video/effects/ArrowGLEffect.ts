@@ -13,6 +13,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+// Modified by sam-ui: the three mask textures are allocated once in setup
+// and freed in cleanup (it created one per mask per frame and never freed it).
 import BaseGLEffect from '@/common/components/video/effects/BaseGLEffect';
 import {
   EffectFrameContext,
@@ -21,7 +23,10 @@ import {
 import fragmentShaderSource from '@/common/components/video/effects/shaders/Arrow.frag?raw';
 import vertexShaderSource from '@/common/components/video/effects/shaders/DefaultVert.vert?raw';
 import {Tracklet} from '@/common/tracker/Tracker';
-import {normalizeBounds} from '@/common/utils/ShaderUtils';
+import {
+  normalizeBounds,
+  preAllocateTextures,
+} from '@/common/utils/ShaderUtils';
 import {RLEObject, decode} from '@/jscocotools/mask';
 import invariant from 'invariant';
 import {CanvasForm} from 'pts';
@@ -32,6 +37,7 @@ export default class ArrowGLEffect extends BaseGLEffect {
 
   // Must from start 1, main texture takes.
   private _masksTextureUnitStart: number = 1;
+  private _maskTextures: WebGLTexture[] = [];
 
   constructor() {
     super(4);
@@ -48,6 +54,8 @@ export default class ArrowGLEffect extends BaseGLEffect {
 
     this._numMasksUniformLocation = gl.getUniformLocation(program, 'uNumMasks');
     gl.uniform1i(this._numMasksUniformLocation, this._numMasks);
+    // We know the max number of textures, pre-allocate 3.
+    this._maskTextures = preAllocateTextures(gl, 3);
   }
 
   apply(form: CanvasForm, context: EffectFrameContext, _tracklets: Tracklet[]) {
@@ -97,11 +105,10 @@ export default class ArrowGLEffect extends BaseGLEffect {
 
     // Create and bind 2D textures for each mask
     context.masks.forEach((mask, index) => {
-      const maskTexture = gl.createTexture();
       const decodedMask = decode([mask.bitmap as RLEObject]);
       const maskData = decodedMask.data as Uint8Array;
       gl.activeTexture(gl.TEXTURE0 + index + this._masksTextureUnitStart);
-      gl.bindTexture(gl.TEXTURE_2D, maskTexture);
+      gl.bindTexture(gl.TEXTURE_2D, this._maskTextures[index]);
 
       const boundaries = normalizeBounds(
         mask.bounds[0],
@@ -145,5 +152,11 @@ export default class ArrowGLEffect extends BaseGLEffect {
     const ctx = form.ctx;
     invariant(this._canvas !== null, 'canvas is required');
     ctx.drawImage(this._canvas, 0, 0);
+  }
+
+  async cleanup(): Promise<void> {
+    super.cleanup();
+    this._maskTextures.forEach(texture => this._gl?.deleteTexture(texture));
+    this._maskTextures = [];
   }
 }
