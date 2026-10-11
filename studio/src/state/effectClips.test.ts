@@ -472,4 +472,22 @@ describe('clipLines (timeline band layout)', () => {
     expect(clipLines([clip({id: 'a', start: 0, end: 10}), clip({id: 'b', row: 1, start: 10, end: 20})]).count).toBe(1);
     expect(clipLines([]).count).toBe(0);
   });
+
+  it("shows on top the clip drawn on top when a split's parts or a duplicate overlap on one row", () => {
+    const base: EffectDoc = {version: 2, clips: [clip({id: 'c', start: 0, end: 60})]};
+    const overlapped = [
+      trimClip(splitClip(base, 'c', 30, 'r'), 'r', 'start', 20, 100), // the right part's start back over the left part
+      trimClip(splitClip(base, 'c', 30, 'r'), 'c', 'end', 40, 100), // the left part's end over the right part
+      moveClip(duplicateClip(base, 'c', 'r', 200), 'r', 25, 200), // the copy moved back over the original
+    ];
+    for (const doc of overlapped) {
+      expect(doc.clips.map(c => c.row)).toEqual([0, 0]);
+      const drawnTop = activeClips(doc, 35).at(-1)!.id;
+      const {line} = clipLines(doc.clips);
+      const shownTop = [...line].sort((a, b) => a[1] - b[1])[0][0];
+      expect(drawnTop).toBe('r');
+      expect(shownTop).toBe(drawnTop);
+      expect(clipToEdit(doc, A, 35, null)?.id).toBe(drawnTop); // an effect pick edits the one on top too
+    }
+  });
 });

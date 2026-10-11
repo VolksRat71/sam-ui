@@ -105,9 +105,18 @@ export function withStyle(effect: string, params: EffectParams, style: string): 
   return normalizeParams(effect, {...params, ...(EFFECT_SPECS[effect]?.styles[style] ?? {})});
 }
 
-/** The clips drawn on `frame` (start <= frame < end), lowest row first. */
+/**
+ * Clips in the order they are drawn, last on top: lowest row first, equal rows
+ * (a split's parts, a duplicate) in doc order. The one draw order the renderer,
+ * the timeline band and the stack operations all use.
+ */
+function drawOrder(clips: ReadonlyArray<EffectClip>): EffectClip[] {
+  return [...clips].sort((a, b) => a.row - b.row);
+}
+
+/** The clips drawn on `frame` (start <= frame < end), in draw order. */
 export function activeClips(doc: EffectDoc, frame: number): EffectClip[] {
-  return doc.clips.filter(c => c.start <= frame && frame < c.end).sort((a, b) => a.row - b.row);
+  return drawOrder(doc.clips.filter(c => c.start <= frame && frame < c.end));
 }
 
 /** A clip's own clock on `frame`, in seconds of video: it travels with the clip. */
@@ -202,7 +211,9 @@ export function removeClip(doc: EffectDoc, id: string): EffectDoc {
  * Split a clip at `frame` into [start, frame) and [frame, end), the right
  * part as `newId`: both keep the effect, settings and row, and the right
  * part's phase continues the animation, so every frame looks as before.
- * Only strictly inside the clip; anywhere else nothing changes.
+ * The exception: an animation paced over the clip's length (Text) re-paces
+ * the shorter left part. Only strictly inside the clip; anywhere else
+ * nothing changes.
  */
 export function splitClip(doc: EffectDoc, id: string, frame: number, newId = newClipId(doc)): EffectDoc {
   const f = Math.round(frame);
@@ -232,9 +243,9 @@ export function duplicateClip(doc: EffectDoc, id: string, newId: string, numFram
   return fits ? {...doc, clips: [...doc.clips, after]} : addClip(doc, {...c, id: newId, phase: 0});
 }
 
-/** A target's clips in stack order: the one drawn first (lowest row) first; equal rows in doc order. */
+/** A target's clips in draw order. */
 function stackOf(doc: EffectDoc, target: EffectTarget): EffectClip[] {
-  return clipsOf(doc, target).sort((a, b) => a.row - b.row);
+  return drawOrder(clipsOf(doc, target));
 }
 
 /**
@@ -290,8 +301,7 @@ export function pruneClips(doc: EffectDoc, objectIds: ReadonlyArray<number>): Ef
  */
 export function clipToEdit(doc: EffectDoc, target: EffectTarget, frame: number, selectedId: string | null): EffectClip | null {
   const mine = clipsOf(doc, target);
-  const top = (cs: EffectClip[]) => cs.reduce<EffectClip | null>((t, c) => (t == null || c.row > t.row ? c : t), null);
-  return mine.find(c => c.id === selectedId) ?? top(mine.filter(c => c.start <= frame && frame < c.end));
+  return mine.find(c => c.id === selectedId) ?? drawOrder(mine.filter(c => c.start <= frame && frame < c.end)).at(-1) ?? null;
 }
 
 /** What picking `effect` gives a clip: the effect it has again moves to its next style; another starts at its defaults. */
@@ -458,16 +468,17 @@ export function saveEffectDoc(path: string, doc: EffectDoc): void {
 }
 
 /**
- * Where a target's clips sit on its timeline band: line 0 at the top. A clip
- * goes one line below every higher-row clip it overlaps, so of two
- * overlapping clips the one drawn on top is always shown higher; clips that
- * do not overlap share a line, keeping the band as short as it can be.
+ * Where a target's clips (in doc order) sit on its timeline band: line 0 at
+ * the top. A clip goes one line below every clip drawn over it that it
+ * overlaps, so of two overlapping clips the one drawn on top is always shown
+ * higher; clips that do not overlap share a line, keeping the band as short
+ * as it can be.
  */
 export function clipLines(clips: ReadonlyArray<EffectClip>): {line: Map<string, number>; count: number} {
   const line = new Map<string, number>();
   const placed: EffectClip[] = [];
   let count = 0;
-  for (const c of [...clips].sort((a, b) => b.row - a.row || a.start - b.start)) {
+  for (const c of drawOrder(clips).reverse()) {
     const below = placed.filter(p => p.start < c.end && c.start < p.end).reduce((m, p) => Math.max(m, line.get(p.id)! + 1), 0);
     line.set(c.id, below);
     placed.push(c);
