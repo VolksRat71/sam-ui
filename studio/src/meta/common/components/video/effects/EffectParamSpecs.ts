@@ -165,6 +165,23 @@ export const EFFECT_SPECS: Record<string, EffectSpec> = {
       Scribble: {style: 'Scribble', width: 0.005, softness: 0.25, opacity: 1, wobble: 0.008, boil: 8},
     },
   },
+  // delayed copies of the layer from earlier frames of the clip, behind it (EchoEffect)
+  Echo: {
+    params: {
+      count: {kind: 'number', min: 1, max: 6, step: 1, default: 4, label: 'Echoes'},
+      spacing: {kind: 'number', min: 1, max: 30, step: 1, default: 3, label: 'Frames apart'},
+      opacity: {kind: 'number', min: 0.05, max: 1, step: 0.05, default: 0.6, label: 'Opacity'},
+      // Echo: each copy this much fainter than the one before it
+      falloff: {kind: 'number', min: 0, max: 0.9, step: 0.05, default: 0.3, label: 'Fade per echo', onlyWhen: {style: ['Echo']}},
+      tint: {kind: 'choice', options: ['None', 'Layer colour', 'Custom'], default: 'None', label: 'Tint'},
+      color: {kind: 'color', default: '#ffffff', label: 'Tint colour', followsLayer: false, onlyWhen: {tint: ['Custom']}},
+      style: {kind: 'choice', options: ['Echo', 'Strobe'], default: 'Echo', label: 'Style'},
+    },
+    styles: {
+      Echo: {style: 'Echo', count: 4, spacing: 3, opacity: 0.6, falloff: 0.3},
+      Strobe: {style: 'Strobe', count: 4, spacing: 6, opacity: 0.6},
+    },
+  },
 };
 
 /** Setting `key` of `effect` from raw params: a number clamped to its range, else its default (behind normalizeParams, at the worker). */

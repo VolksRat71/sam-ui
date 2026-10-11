@@ -42,6 +42,13 @@ export type EffectMask = {
   bounds: [[number, number], [number, number]];
 };
 
+/** A frame before the one drawn, fetched for an effect that asked for it (Effect.historyFrames) (sam-ui). */
+export type HistoryFrame = {
+  frame: ImageBitmap;
+  /** Each layer's mask on that frame, by object id (layers with none are missing). */
+  masks: ReadonlyMap<number, EffectMask>;
+};
+
 export type EffectActionPoint = {
   objectId: number;
   position: [number, number];
@@ -63,6 +70,8 @@ export type EffectFrameContext = {
   duration?: number;
   /** Pictures the clips use, by their key (state/effectImages.ts); missing ones are not in this browser (sam-ui). */
   images?: ReadonlyMap<string, ImageBitmap>;
+  /** The frames this clip's effect asked for (historyFrames), by frame index; one missing was not fetched (sam-ui). */
+  history?: ReadonlyMap<number, HistoryFrame>;
   actionPoint: EffectActionPoint | null;
 };
 
@@ -86,6 +95,12 @@ export interface Effect {
   params: EffectParams;
   nextVariant(): void;
   setParams(params: EffectParams): void;
+  /**
+   * Frames before `frame` this effect draws from for `clip` (sam-ui): fetched
+   * with their masks before the draw (apply is synchronous) and passed as
+   * EffectFrameContext.history. A pure function of the clip and the frame.
+   */
+  historyFrames?(clip: {start: number; params: EffectParams}, frame: number): number[];
   setup(init: EffectInit): Promise<void>;
   update(options: EffectOptions): Promise<void>;
   cleanup(): Promise<void>;

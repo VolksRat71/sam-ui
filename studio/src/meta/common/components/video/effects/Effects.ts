@@ -15,6 +15,7 @@
  */
 import BackgroundTextEffect from './BackgroundTextEffect';
 import DesaturateEffect from './DesaturateEffect';
+import EchoEffect from './EchoEffect';
 import {Effect} from './Effect';
 import EraseBackgroundEffect from './EraseBackgroundEffect';
 import OriginalEffect from './OriginalEffect';
@@ -62,6 +63,7 @@ export type Effects = {
   Arrow: Effect;
   Outline: Effect;
   BlurMask: Effect;
+  Echo: Effect;
 
   /* More Effects */
   NoisyMask: Effect;
@@ -96,6 +98,7 @@ export function createEffects(): Effects {
     Arrow: new ArrowGLEffect(),
     Outline: new OutlineGLEffect(),
     BlurMask: new BlurGLEffect(true),
+    Echo: new EchoEffect(),
 
     /* More Effects */
     NoisyMask: new NoisyMaskEffect(),
