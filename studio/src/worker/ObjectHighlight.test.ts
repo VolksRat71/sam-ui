@@ -28,6 +28,7 @@ function fakeEffect(name: string, log: Drawn[]) {
       this.params = p;
     },
     setup: vi.fn(async () => {}),
+    cleanup: vi.fn(async () => {}),
     apply(_form: CanvasForm, ctx: EffectFrameContext, ts: Tracklet[]) {
       log.push({effect: name, params: {...this.params}, variant: this.variant, ids: ts.map(t => t.id), time: ctx.time, duration: ctx.duration, masks: ctx.masks, images: ctx.images});
     },
@@ -235,6 +236,34 @@ describe('ObjectHighlight', () => {
     await plain.h.setDoc(doc(clip(1, 'Scope', {style: 'Colour disc'}), clip(2, 'Scope', {style: 'Soft ring'})), [1, 2]);
     plain.h.apply(preview, ...frame([1, 2]));
     expect(plain.log.map(p => p.effect)).toEqual(['Scope', 'Scope']);
+  });
+
+  it('cuts out one circle per layer (its largest) and merges Spotlight clips that differ only in darken', async () => {
+    const {h, log} = setup();
+    await h.setDoc(doc(clip(1, 'Scope', {size: 2, darken: 0.5}), clip(1, 'Scope', {darken: 0.2}, {row: 1}), clip(2, 'Scope', {darken: 0.7})), [1, 2]);
+    h.apply(preview, ...frame([1, 2]));
+    expect(log.map(p => [p.effect, p.ids])).toEqual([['dim', [1, 2]], ['Scope', [1]], ['Scope', [1, 2]]]);
+    expect(log[0].masks).toEqual([2, 1]);
+    expect(log[0].params.darken).toBe(0.7);
+  });
+
+  it('frees pictures no clip of the preview or a running export uses', async () => {
+    const {h} = setup();
+    const [a, b] = ['ab'.repeat(32), 'cd'.repeat(32)];
+    const pic = () => ({close: vi.fn()}) as unknown as ImageBitmap;
+    const [pa, pb] = [pic(), pic()];
+    const uses = (k: string) => doc(clip('bg', 'ReplaceBackground', {style: 'Image', image: k}));
+    const state = {doc: uses(b), drawOrder: [], untouched: 'shown' as const};
+    await h.setDoc(uses(a), []);
+    h.images.set(a, pa).set(b, pb); // sent by the page, b for the export
+    await h.prepare(state);
+    expect([...h.images.keys()].sort()).toEqual([a, b]);
+    await h.setDoc(doc(), []);
+    expect([...h.images.keys()]).toEqual([b]); // the export still draws it
+    expect(pa.close).toHaveBeenCalled();
+    await h.finish(state);
+    expect(h.images.size).toBe(0);
+    expect(pb.close).toHaveBeenCalled();
   });
 
   it('hands every effect the pictures the page sent', async () => {

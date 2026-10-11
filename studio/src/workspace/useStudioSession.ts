@@ -1261,7 +1261,8 @@ export default function useStudioSession(video: VideoItem) {
 
   // Pictures the clips use (Replace background), from this browser's store
   // (state/effectImages.ts), sent to the worker once each, and again to a new
-  // worker. One this browser lacks is `missing`: the clip draws its colour.
+  // worker or once the doc has dropped and regained them (the worker frees a
+  // picture no clip uses). One this browser lacks is `missing`: the clip draws its colour.
   const sentImages = useRef(new Set<string>());
   const [missingImages, setMissingImages] = useState<ReadonlySet<string>>(new Set());
   useEffect(() => {
@@ -1269,7 +1270,11 @@ export default function useStudioSession(video: VideoItem) {
   }, [bridge]);
   const sendImages = useCallback(
     async (doc: EffectDoc | null) => {
-      for (const key of clips.imageKeys(doc ?? clips.EMPTY_DOC)) {
+      const keys = clips.imageKeys(doc ?? clips.EMPTY_DOC);
+      if (doc === docRef.current) {
+        sentImages.current.forEach(k => !keys.includes(k) && sentImages.current.delete(k));
+      }
+      for (const key of keys) {
         if (bridge == null || sentImages.current.has(key)) {
           continue;
         }
