@@ -144,7 +144,7 @@ function NumberField({label, value, min, max, step, onCommit}: {label: string; v
 /**
  * A text setting: kept as typed while focused, sent on (cleaned) whenever it
  * is valid text, so clearing it to retype never snaps back to the default;
- * blur shows the stored value. A plain textarea, so the video's and the
+ * blur shows the stored value. Lines past the last join it. A plain textarea, so the video's and the
  * timeline's shortcuts leave its keys alone.
  */
 function TextField({id, label, value, maxLength, maxLines, onCommit}: {id: string; label: string; value: string; maxLength: number; maxLines: number; onCommit: (v: string) => void}) {
@@ -162,10 +162,9 @@ function TextField({id, label, value, maxLength, maxLines, onCommit}: {id: strin
           spellCheck={false}
           value={shown}
           onChange={e => {
-            const v = e.target.value;
-            if (v.split('\n').length > maxLines) {
-              return; // a line past the last one: not taken
-            }
+            // a line past the last one (Enter there, or a paste) joins it, as stored text does
+            const lines = e.target.value.split('\n');
+            const v = lines.length <= maxLines ? e.target.value : [...lines.slice(0, maxLines - 1), lines.slice(maxLines - 1).join(' ')].join('\n');
             setDraft(v);
             const clean = cleanText(v, maxLength, maxLines);
             if (clean !== '') {

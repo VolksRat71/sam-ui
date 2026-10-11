@@ -79,15 +79,17 @@ describe('TitleEffect', () => {
   type Call = [string, ...unknown[]];
 
   /** A 2D context that records what is drawn, with the state a draw reads. */
-  function recorder(calls: Call[]) {
-    const state: Record<string, unknown> = {};
+  /** Draw calls on every recorder, in order: `form:fillText`, `cut:drawImage`. */
+  const seq: string[] = [];
+  function recorder(calls: Call[], canvas: unknown = null, tag = 'form') {
+    const state: Record<string, unknown> = {canvas};
     return new Proxy(state, {
       get(target, key: string) {
         if (key === 'measureText') {
           return (s: string) => ({width: s.length * 10});
         }
         if (['save', 'restore', 'translate', 'scale', 'fillText', 'drawImage', 'putImageData'].includes(key)) {
-          return (...args: unknown[]) => calls.push([key, ...args]);
+          return (...args: unknown[]) => (seq.push(`${tag}:${key}`), calls.push([key, ...args]));
         }
         return target[key];
       },
@@ -113,7 +115,7 @@ describe('TitleEffect', () => {
         cuts.push(this);
       }
       getContext() {
-        return recorder(this.calls);
+        return recorder(this.calls, this, 'cut');
       }
     },
   );
@@ -133,6 +135,8 @@ describe('TitleEffect', () => {
   const W = 4;
   const H = 2;
   const frame = {} as ImageBitmap;
+  /** The form's canvas: the stage the background clips below drew. */
+  const stage = {name: 'stage'};
   // column-major RLE: 0 out, then 3 in (x 0: y 0-1, x 1: y 0), then the rest out
   const mask: EffectMask = {bitmap: {size: [H, W], counts: '035'} as never, bounds: [[0, 0], [W, H]]};
 
@@ -141,7 +145,7 @@ describe('TitleEffect', () => {
     const effect = new TitleEffect();
     effect.setParams(normalizeParams('Title', params));
     const context = {frameIndex: 0, totalFrames: 10, fps: 10, width: W, height: H, masks: [mask], maskColors: ['#fff'], frame, actionPoint: null, time: 5, ...over} as EffectFrameContext;
-    effect.apply({ctx: recorder(calls)} as unknown as CanvasForm, context, []);
+    effect.apply({ctx: recorder(calls, stage)} as unknown as CanvasForm, context, []);
     return {calls, effect, context};
   }
   const of = (calls: Call[], name: string) => calls.filter(c => c[0] === name);
@@ -166,8 +170,10 @@ describe('TitleEffect', () => {
     expect(of(draw({animation: 'Rise', entrance: 1, placement: 'In front'}, {time: 0.000001}).calls, 'translate')[0][2]).toBeCloseTo(1 + 0.12, 4);
   });
 
-  it("Behind subjects puts the frame back inside the subjects' union, over the text; In front does not", () => {
+  it("Behind subjects cuts the stage below out inside the subjects' union before the text and puts it back over it; In front does not", () => {
+    seq.length = 0;
     const behind = draw({});
+    expect(seq.filter(c => /drawImage|fillText/.test(c))).toEqual(['cut:drawImage', 'form:fillText', 'form:drawImage']);
     expect(cuts).toHaveLength(1);
     const cut = cuts[0];
     // the union's alpha, rows from the column-major mask: (0,0) (0,1) (1,0) in
@@ -175,7 +181,7 @@ describe('TitleEffect', () => {
     expect([...Array(W * H).keys()].filter(i => put.data[i * 4 + 3] === 255)).toEqual([0, 1, 4]);
     expect(cut.calls.map(c => c[0])).toEqual(['putImageData', 'globalCompositeOperation=', 'drawImage', 'globalCompositeOperation=']);
     expect(of(cut.calls, 'globalCompositeOperation=')[0][1]).toBe('source-in');
-    expect(of(cut.calls, 'drawImage')[0][1]).toBe(frame);
+    expect(of(cut.calls, 'drawImage')[0][1]).toBe(stage); // what the clips below drew there, not the raw frame
     // on the form after the text, at the origin
     const names = behind.calls.map(c => c[0]);
     expect(names.lastIndexOf('drawImage')).toBeGreaterThan(names.lastIndexOf('fillText'));

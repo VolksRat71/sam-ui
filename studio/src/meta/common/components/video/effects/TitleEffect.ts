@@ -2,10 +2,11 @@
 //
 // Title: an editable title on the background stage, in the bundled Inter (the
 // worker loads it, VideoWorkerContext). Behind subjects (the default), the
-// frame's own pixels inside every tracked layer's mask on the frame (their
-// union, EffectSpec.subjects; ObjectHighlight passes them) are put back over
-// the text, so the subjects stand in front of it; a layer's own clips still
-// draw over them. In front, the text is simply drawn. Canvas 2D only: no WebGL
+// pixels inside every tracked layer's mask on the frame (their union,
+// EffectSpec.subjects; ObjectHighlight passes them) are put back over the
+// text as they were before it (the video, or what background clips below
+// made of it), so the subjects stand in front of it; a layer's own clips
+// still draw over them. In front, the text is simply drawn. Canvas 2D only: no WebGL
 // context, so it never counts against the worker's four. The typed text is
 // drawn with fillText alone, never parsed as markup. Its entrance runs on the
 // clip's clock, so a frame looks the same however it is reached.
@@ -81,6 +82,8 @@ export default class TitleEffect extends AbstractEffect {
     const {width, height} = context;
     const size = numberParam('Title', 'size', p) * height;
     const {alpha, rise, scale} = entranceAt(String(p.animation), effectTime(context), numberParam('Title', 'entrance', p));
+    // the stage so far inside the subjects' union, cut out before the text and put back over it
+    const cut = p.placement !== 'In front' && context.masks.length > 0 ? this._cutSubjects(ctx, context) : null;
     if (alpha > 0) {
       const lines = String(p.text ?? '').split('\n', MAX_LINES);
       const align = String(p.align);
@@ -97,19 +100,23 @@ export default class TitleEffect extends AbstractEffect {
       lines.forEach((l, i) => ctx.fillText(l, at[i][0], at[i][1]));
       ctx.restore();
     }
-    if (p.placement !== 'In front' && context.masks.length > 0) {
-      this._subjectsOver(ctx, context);
+    if (cut != null) {
+      ctx.drawImage(cut, 0, 0);
     }
   }
 
-  /** Draw the frame's pixels inside the subjects' union over `ctx`, exactly (the union is all or nothing). */
-  private _subjectsOver(ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, context: EffectFrameContext): void {
+  /**
+   * `ctx`'s pixels inside the subjects' union (exactly: the union is all or
+   * nothing), on a canvas of their own: what the background clips below drew
+   * there, so the Title adds only its text and never undoes them.
+   */
+  private _cutSubjects(ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, context: EffectFrameContext): OffscreenCanvas | null {
     const {width: w, height: h} = context;
     if (this._cut == null || this._cut.canvas.width !== w || this._cut.canvas.height !== h) {
       const canvas = new OffscreenCanvas(w, h);
       const c = canvas.getContext('2d');
       if (c == null) {
-        return;
+        return null;
       }
       this._cut = {canvas, ctx: c, image: new ImageData(w, h)};
       this._union = new Uint8Array(w * h);
@@ -118,16 +125,16 @@ export default class TitleEffect extends AbstractEffect {
     unionMasks(context.masks, this._union);
     // the union as alpha (column-major to rows); rgb stays 0
     const a = image.data;
-    for (let x = 0, i = 0; x < w; x++) {
-      for (let y = 0; y < h; y++, i++) {
-        a[(y * w + x) * 4 + 3] = this._union[i];
+    for (let y = 0, j = 3; y < h; y++) {
+      for (let x = 0; x < w; x++, j += 4) {
+        a[j] = this._union[x * h + y];
       }
     }
     cut.putImageData(image, 0, 0);
     cut.globalCompositeOperation = 'source-in';
-    cut.drawImage(context.frame, 0, 0);
+    cut.drawImage(ctx.canvas, 0, 0);
     cut.globalCompositeOperation = 'source-over';
-    ctx.drawImage(canvas, 0, 0);
+    return canvas;
   }
 
   async cleanup(): Promise<void> {

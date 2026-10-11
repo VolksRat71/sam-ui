@@ -43,11 +43,11 @@
 //   TT  slice 4, the Title on frame 101 over A and B (on a transparent Outline):
 //       In front, magenta text drawn where its position says and over the subjects;
 //       Behind subjects, the same text outside their masks and the plain video inside
-//       (RB's masks); its ink as wide as Inter's at weights 900 and 300 (measured in
+//       (RB's masks), and over a Desaturate below as that drew them; its ink as wide as Inter's at weights 900 and 300 (measured in
 //       the page with the same font file), not the fallback sans-serif's; a Fade at
 //       the clip's first frame draws nothing, at its entrance's end all of it; the
-//       text field takes typed text (shortcut keys too) with its count, refuses a
-//       fourth line, keeps the title while emptied; Top moves it; Reset keeps the text; with a Rise over
+//       text field takes typed text (shortcut keys too) with its count, joins a
+//       fourth line onto the third, keeps the title while emptied; Top moves it; Reset keeps the text; with a Rise over
 //       the clip, the export matches the preview within B7's tolerance
 //   SC  Scribble (boiling Outline) on frame 101: identical after a scrub away and
 //       back and play/pause, redrawn when boil is on (differs from boil 0, which
@@ -262,7 +262,7 @@ const sel = async i => {
 // group 0: the selected layer's tiles, 1: the background's
 const group = gi => page.locator('.effect-group').nth(gi);
 const tile = async (gi, title) => {
-  await group(gi).locator('.effect-button', {hasText: new RegExp(`^${title}`)}).first().click();
+  await group(gi).locator('.effect-button', {hasText: new RegExp(`^${title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`)}).first().click();
   await page.waitForTimeout(500);
 };
 const addEffect = async (gi, title) => {
@@ -799,6 +799,13 @@ await step('TT', async () => {
   const sameOut = share(outside, i => off(behind, front, i) <= PIXEL_TOL);
   check('TT', kept.pct >= 99.5 && sameOut.pct >= 99.5 && outText.pct * outText.n >= 100 * 2000, `Behind subjects: the subjects as the plain video inside their masks (${kept.pct} % of ${kept.n} px), the text outside them as In front draws it (${sameOut.pct} %; ${Math.round((outText.pct * outText.n) / 100)} magenta px there)`, {kept, sameOut, outText});
 
+  // a background clip below (Desaturate): the subjects stay as it drew them, not as the raw video
+  const grey = await shot([clipOn(tBG, 'Desaturate', {style: 'Gray'}, 'ds'), ...clear()], F3, 'TT-2b_desaturate_f101');
+  const over = await shot([clipOn(tBG, 'Desaturate', {style: 'Gray'}, 'ds'), {...title({}), row: 1}, ...clear()], F3, 'TT-2c_title-behind-over-desaturate_f101');
+  const keptGrey = share(inside, i => off(over, grey, i) <= PIXEL_TOL);
+  const unlikePlain = share(inside, i => off(over, plain3, i) > PIXEL_TOL);
+  check('TT', keptGrey.pct >= 99.5 && unlikePlain.pct >= 5, `over Desaturate, the subjects stay grey behind the title (${keptGrey.pct} % as Desaturate alone; ${unlikePlain.pct} % unlike the colour video)`, {keptGrey, unlikePlain});
+
   // Inter: the ink as wide as the font file gives it in the page, at both ends of the weights
   // ("rattle": 10 % wider than the fallback sans-serif at 900, 7 % narrower at 300)
   const WORD = 'rattle';
@@ -853,7 +860,7 @@ await step('TT', async () => {
   await page.waitForTimeout(800);
   const typed = (await doc()).clips.find(c => c.id === 'tt').params.text;
   const count = await field.evaluate(e => document.getElementById(e.getAttribute('aria-describedby'))?.innerText ?? '');
-  check('TT', emptied === 'TITLE' && typed === 'Hello, sofa. Yes\nTwo\nThreeFour' && (await frame()) === frameBefore && (await doc()).clips.length === clipsBefore && new RegExp(`^${typed.length}/80 characters`).test(count), `the text field: emptied keeps "${emptied}", typing (s, o, f, y, space, Enter) gives ${JSON.stringify(typed)}, no fourth line, frame ${(await frame()) + 1} and ${clipsBefore} clips unchanged (Space did not play); count "${count}"`, {emptied, typed, count});
+  check('TT', emptied === 'TITLE' && typed === 'Hello, sofa. Yes\nTwo\nThree Four' && (await frame()) === frameBefore && (await doc()).clips.length === clipsBefore && new RegExp(`^${typed.length}/80 characters`).test(count), `the text field: emptied keeps "${emptied}", typing (s, o, f, y, space, Enter) gives ${JSON.stringify(typed)} (a fourth line joins the third), frame ${(await frame()) + 1} and ${clipsBefore} clips unchanged (Space did not play); count "${count}"`, {emptied, typed, count});
   await fx.getByRole('button', {name: 'Top', exact: true}).click();
   await page.waitForTimeout(500);
   const top = (await doc()).clips.find(c => c.id === 'tt').params;
