@@ -71,10 +71,12 @@
 //       matches the preview within B7's tolerance
 //   EC  slice 5, Echo on B (the ball) on frame 101: copies drawn; identical after
 //       play/pause, a jump from far away and back, and on a fresh worker (cold
-//       frame cache); its clip's first frame looks as B on Original (no copies
-//       from before the clip), the first copy appears `spacing` frames later; a
+//       frame cache); its start trimmed to 101 leaves frame 101 as it was; a fresh
+//       clip's first frame looks as B on Original (no copies from before the
+//       clip), the first copy appears `spacing` frames later; a
 //       tinted Strobe's export matches the preview (A on Original) within B7's tolerance;
-//       Echo on A (the person, the top layer) leaves the ball's pixels inside its mask as they are
+//       Echo on A (the person, the top layer) leaves the ball's pixels inside its mask as they are;
+//       a split's right part (as splitClip leaves it) draws frame 85, whose copies cross the cut, identically
 //   CB  slice 5 combined, frame 201: Glitter (max density) on A, Echo on B and a magenta Label
 //       Sticker on C on the same frame: all three draw; identical after play/pause through
 //       it, a jump from far away and back, and on a fresh worker; the export matches the
@@ -1241,18 +1243,27 @@ await step('EC', async () => {
     const s = compare(echo, png);
     check('EC', s.changedPct === 0, `frame 101 identical after ${what}: MAD ${s.mad}`, s);
   }
-  // the clip from frame 101: there it has no earlier frames, so B is as on Original; 3 frames on, the first copy
+  // trimming its start to frame 101 keeps every frame as it was: frame 101 keeps its copies (they come from the animation's start, start - phase)
   await page.locator('.fx-clip').first().click();
   await fx.locator('input[aria-label="First frame"]').fill('101');
   await page.waitForTimeout(500);
-  const start = (await doc()).clips[0].start;
+  const trimmed = (await doc()).clips[0];
   await seekTo(100);
-  const first = compare(orig[100], await cap('EC-5_echo-from-f101_f101'));
+  const asBefore = compare(echo, await cap('EC-5_trimmed-to-f101_f101'));
+  // a fresh clip from frame 101 (phase 0): there it has no earlier frames, so B is as on Original; 3 frames on, the first copy
+  await putClips([{...trimmed, phase: 0}]);
+  await sel(B);
+  await jump(100);
+  const first = compare(orig[100], await cap('EC-6_fresh-echo-from-f101_f101'));
   await seekTo(103);
-  const later = compare(orig[103], await cap('EC-6_echo-from-f101_f104'));
+  const later = compare(orig[103], await cap('EC-7a_fresh-echo-from-f101_f104'));
   // (only a sliver of that copy shows: it passes behind the person, who is in front of every copy)
-  check('EC', start === 100 && first.changedPct === 0 && later.changedPct > 0, `a clip starting at frame 101 starts clean (${first.changedPct} % off B on Original), its first copy shows on frame 104 (${later.changedPct} %)`, {start, first, later});
-  await fx.locator('input[aria-label="First frame"]').fill('1');
+  check('EC', trimmed.start === 100 && trimmed.phase === 100 && asBefore.changedPct === 0, `its start trimmed to frame 101 (phase ${trimmed.phase}), frame 101 is as before (MAD ${asBefore.mad})`, asBefore);
+  check('EC', first.changedPct === 0 && later.changedPct > 0, `a fresh clip starting at frame 101 starts clean (${first.changedPct} % off B on Original), its first copy shows on frame 104 (${later.changedPct} %)`, {first, later});
+  await putClips([{...trimmed, start: 0, phase: 0}]);
+  await sel(B);
+  await page.locator('.fx-clip').first().click();
+  await page.waitForTimeout(500);
   await setting('style', 'Strobe');
   await fx.getByRole('button', {name: 'Custom', exact: true}).click();
   await fx.locator('input[type=color]').fill('#ff00ff');
@@ -1285,6 +1296,18 @@ await step('EC', async () => {
   const kept = share(ball, i => off(echoA, plainE, i) <= PIXEL_TOL);
   const drawn = share(and(not(ball), framed), i => off(echoA, plainE, i) > PIXEL_TOL);
   check('EC', kept.n > 500 && kept.pct === 100 && drawn.n > 0 && drawn.pct > 0.1, `the person's copies stay behind the ball: inside its mask (eroded 2 px, ${kept.n} px) ${kept.pct} % unchanged; ${drawn.pct} % of the rest changed`, {kept, drawn});
+  // split at frame 81 (as splitClip leaves it: the right part [80, 120) at phase 40): frame 85's copies (82, 79, 76, 73) cross the cut and stay
+  const ecOn = (id, start, end, phase) => ({...clipOn(tB, 'Echo', {style: 'Echo', count: 4, spacing: 3}, id, start, end), phase});
+  const at85 = async (clips, name) => {
+    await putClips([clipOn(tA, 'Cutout', {style: 'Unchanged'}, 'pa'), ...clips]);
+    await sel(A);
+    await jump(84);
+    return cap(name);
+  };
+  const unsplitE = await at85([ecOn('es', 40, 120, 0)], 'EC-11_echo-41-120_f85');
+  const splitE = await at85([ecOn('es', 40, 80, 0), ecOn('er', 80, 120, 40)], 'EC-12_split-at-81_right-part_f85');
+  const cut = compare(unsplitE, splitE);
+  check('EC', differs(compare(await at85([clipOn(tB, 'Cutout', {style: 'Unchanged'}, 'pb')], 'EC-13_B-original_f85'), unsplitE)) && cut.changedPct === 0, `a split's right part keeps its copies: frame 85 identical to the unsplit clip (MAD ${cut.mad})`, cut);
   await clearClips();
 });
 
