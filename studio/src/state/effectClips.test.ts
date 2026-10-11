@@ -139,6 +139,13 @@ describe("Title's text setting (cleanText)", () => {
     expect(clean('one\u2028two\u2029three')).toBe('one\ntwo\nthree');
   });
 
+  it('keeps the non-joiner (Persian, Indic) and subdivision flags; drops stray tag characters', () => {
+    expect(clean('\u0645\u06cc\u200c\u0631\u0648\u0645')).toBe('\u0645\u06cc\u200c\u0631\u0648\u0645'); // "می‌روم"
+    const england = '\u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}';
+    expect(clean(`go ${england}`)).toBe(`go ${england}`);
+    expect(clean('a\u{E0067}b\u{E007F}c\u{1F3F4}')).toBe('abc\u{1F3F4}'); // tags outside a flag; a plain black flag stays
+  });
+
   it('counts and cuts in characters as people see them (graphemes), never inside one', () => {
     const family = '\u{1F468}\u200d\u{1F469}\u200d\u{1F467}'; // 8 UTF-16 units, one character
     const flag = '\u{1F1EF}\u{1F1F5}';

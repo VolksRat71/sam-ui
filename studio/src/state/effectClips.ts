@@ -81,7 +81,9 @@ export function graphemes(s: string): string[] {
  * Typed text as a text setting keeps it: line breaks (and Unicode's line and
  * paragraph separators) as '\n', tabs as spaces, other control characters and
  * invisible format characters (bidi overrides, zero-width spaces; not the
- * zero-width joiner emoji need) dropped, trimmed, lines past `maxLines`
+ * zero-width joiner emoji need, the non-joiner Persian and Indic scripts need,
+ * or the tag characters of a subdivision flag like England's) dropped,
+ * trimmed, lines past `maxLines`
  * joined onto the last one, cut to `maxLength` characters as people count
  * them (graphemes). '' when nothing is left.
  */
@@ -92,7 +94,7 @@ export function cleanText(v: unknown, maxLength: number, maxLines: number): stri
   const t = v
     .replace(/\r\n?|[\u2028\u2029]/g, '\n')
     .replace(/\t/g, ' ')
-    .replace(/[^\P{Cc}\n]|[^\P{Cf}\u200d]/gu, '')
+    .replace(/\u{1F3F4}[\u{E0020}-\u{E007E}]+\u{E007F}|[^\P{Cc}\n]|[^\P{Cf}\u200c\u200d]/gu, m => (m.startsWith('\u{1F3F4}') ? m : ''))
     .trim();
   const lines = t.split('\n');
   const s = lines.length <= maxLines ? t : [...lines.slice(0, maxLines - 1), lines.slice(maxLines - 1).join(' ')].join('\n');
