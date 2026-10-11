@@ -2,7 +2,7 @@
 import {describe, expect, it, vi} from 'vitest';
 import {MemoryKv} from '~/local/kv';
 import {clipsMissingImages, imageKeys} from './effectClips';
-import {MAX_IMAGE_BYTES, coverSize, loadEffectImage, sha256Hex, storeEffectImage} from './effectImages';
+import {KEEP_NEW_MS, MAX_IMAGE_BYTES, coverSize, freeUnusedEffectImages, loadEffectImage, savedImageKeys, sha256Hex, storeEffectImage, unusedImages} from './effectImages';
 
 describe('effect pictures', () => {
   it('are kept at the size Cover needs on the video: never scaled up, a panorama capped at twice the video', () => {
@@ -52,5 +52,50 @@ describe('effect pictures', () => {
     const doc = {version: 2 as const, clips: [clip('c1', {style: 'Image', image: a}), clip('c2', {style: 'Image', image: a}), clip('c3', {style: 'Colour', image: a}), clip('c4', {style: 'Image', image: b})]};
     expect(clipsMissingImages(doc, new Set([a]))).toBe(2);
     expect(clipsMissingImages(doc, new Set())).toBe(0);
+  });
+
+  it('still used are found in every saved doc by their image setting; a doc that does not parse frees nothing', () => {
+    const [a, b, c] = ['ab'.repeat(32), 'cd'.repeat(32), 'ef'.repeat(32)];
+    const clip = (id: string, effect: string, params: Record<string, string>) => ({id, target: {kind: 'background'}, effect, params, start: 0, end: 1, row: 0, phase: 0});
+    const doc = (...clips: unknown[]) => JSON.stringify({version: 2, clips});
+    const entries: Array<[string, string | null]> = [
+      ['sam-ui-studio:effects:v2:a.mp4', doc(clip('c1', 'ReplaceBackground', {style: 'Image', image: a}), clip('c2', 'ReplaceBackground', {style: 'Colour', image: b}))],
+      ['sam-ui-studio:effects:v2:b.mp4', doc(clip('c1', 'FromANewerBuild', {sticker: c}))], // an effect this build does not know keeps its key
+      ['sam-ui-studio:video', JSON.stringify('dd'.repeat(32))], // not a doc
+    ];
+    expect([...savedImageKeys(entries)!].sort()).toEqual([a, b, c]);
+    expect(savedImageKeys([...entries, ['sam-ui-studio:effects:v2:c.mp4', '{not json']])).toBeNull();
+  });
+
+  it('are freed only when no saved doc uses them and they are older than 10 minutes (an unknown age is kept)', () => {
+    const [a, b, c, d] = ['ab'.repeat(32), 'cd'.repeat(32), 'ef'.repeat(32), '01'.repeat(32)];
+    const now = 1e12;
+    const files = [
+      {name: a, modified: now - KEEP_NEW_MS}, // unused, old enough
+      {name: b, modified: now - KEEP_NEW_MS - 1}, // used
+      {name: c, modified: now - KEEP_NEW_MS + 1}, // unused but new
+      {name: d, modified: null}, // age unknown
+      {name: 'x.crswap', modified: 0}, // not a picture (a write in progress)
+    ];
+    expect(unusedImages(files, new Set([b]), now)).toEqual([a]);
+  });
+
+  it('no saved doc uses are removed from storage at start', async () => {
+    const [a, b] = ['ab'.repeat(32), 'cd'.repeat(32)];
+    const now = 1e12;
+    const kv = new MemoryKv();
+    await kv.write(`effect-images/${a}`, new Uint8Array([1]));
+    await kv.write(`effect-images/${b}`, new Uint8Array([2]));
+    kv.blob = async path => new File([], path, {lastModified: now - KEEP_NEW_MS}); // OPFS hands out Files, with their age
+    const saved = new Map([['sam-ui-studio:effects:v2:a.mp4', JSON.stringify({version: 2, clips: [{id: 'c1', target: {kind: 'background'}, effect: 'ReplaceBackground', params: {style: 'Image', image: b}, start: 0, end: 1}]})]]);
+    const storage = {length: saved.size, key: (i: number) => [...saved.keys()][i] ?? null, getItem: (k: string) => saved.get(k) ?? null} as Storage;
+    await freeUnusedEffectImages(kv, storage, now);
+    expect([...kv.files.keys()]).toEqual([`effect-images/${b}`]);
+    const broken = {get length(): number { throw new Error('SecurityError'); }} as Storage;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await expect(freeUnusedEffectImages(kv, broken, now)).resolves.toBeUndefined(); // blocked storage frees nothing, never throws
+    expect(warn).toHaveBeenCalledOnce();
+    warn.mockRestore();
+    expect(kv.files.size).toBe(1);
   });
 });

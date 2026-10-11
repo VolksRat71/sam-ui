@@ -38,7 +38,8 @@ vec3 fill(vec2 uv) {
   if (uFill == 2) {
     vec2 st = (uv - uImageRect.xy) / uImageRect.zw;
     if (all(greaterThanEqual(st, vec2(0.0))) && all(lessThanEqual(st, vec2(1.0)))) {
-      return texture(uImage, st).rgb;
+      vec4 t = texture(uImage, st); // premultiplied (an ImageBitmap): a transparent part shows the colour
+      return t.rgb + uColor * (1.0 - t.a);
     }
   }
   return uColor; // a contained picture's bars too
