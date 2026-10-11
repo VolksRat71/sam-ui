@@ -130,6 +130,7 @@ describe('Title', () => {
     expect(p).toMatchObject({weight: 900, size: 0.4, x: 0, y: 1, entrance: 0.1, align: 'Centre', animation: 'Fade', placement: 'Behind subjects', color: '#ffffff'});
     expect(normalizeParams('Title', {weight: 250, size: 0}).weight).toBe(300);
     expect(normalizeParams('Title', {weight: 640}).weight).toBe(600);
+    expect(normalizeParams('Title', {color: 'layer'}).color).toBe('#ffffff'); // a background's colour: no layer to follow
   });
 
   it('shows the entrance length only with an entrance', () => {

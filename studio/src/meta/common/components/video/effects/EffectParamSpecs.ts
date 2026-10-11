@@ -97,7 +97,7 @@ export const EFFECT_SPECS: Record<string, EffectSpec> = {
       text: {kind: 'text', default: 'Your title', label: 'Text', maxLength: 80, maxLines: 3},
       weight: {kind: 'number', min: 300, max: 900, step: 100, default: 700, label: 'Weight'},
       size: {kind: 'number', min: 0.02, max: 0.4, step: 0.005, default: 0.12, label: 'Size', percentOfHeight: true},
-      color: {kind: 'color', default: '#ffffff', label: 'Colour'},
+      color: {kind: 'color', default: '#ffffff', label: 'Colour', followsLayer: false},
       align: {kind: 'choice', options: ['Left', 'Centre', 'Right'], default: 'Centre', label: 'Alignment'},
       // the text block's centre, as fractions of the frame's width and height
       x: {kind: 'number', min: 0, max: 1, step: 0.01, default: 0.5, label: 'Horizontal position'},
