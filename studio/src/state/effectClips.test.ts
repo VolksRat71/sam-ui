@@ -139,6 +139,13 @@ describe("Title's text setting (cleanText)", () => {
     expect(clean('one\u2028two\u2029three')).toBe('one\ntwo\nthree');
   });
 
+  it('keeps the non-joiner (Persian, Indic) and subdivision flags; drops stray tag characters', () => {
+    expect(clean('\u0645\u06cc\u200c\u0631\u0648\u0645')).toBe('\u0645\u06cc\u200c\u0631\u0648\u0645'); // "می‌روم"
+    const england = '\u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}';
+    expect(clean(`go ${england}`)).toBe(`go ${england}`);
+    expect(clean('a\u{E0067}b\u{E007F}c\u{1F3F4}')).toBe('abc\u{1F3F4}'); // tags outside a flag; a plain black flag stays
+  });
+
   it('counts and cuts in characters as people see them (graphemes), never inside one', () => {
     const family = '\u{1F468}\u200d\u{1F469}\u200d\u{1F467}'; // 8 UTF-16 units, one character
     const flag = '\u{1F1EF}\u{1F1F5}';
@@ -203,6 +210,9 @@ describe('clip time and phase (U6)', () => {
     }
     // and back out again restores it exactly
     expect(trimClip(doc, 'c', 'start', 10, 100).clips[0]).toMatchObject({start: 10, phase: 2});
+    // back past the animation's start (frame 8): the animation restarts at the new start
+    expect(trimClip(doc, 'c', 'start', 5, 100).clips[0]).toMatchObject({start: 5, phase: 0});
+    expect(trimClip({version: 2, clips: [clip()]}, 'c', 'start', 4, 100).clips[0]).toMatchObject({start: 4, phase: 0});
   });
 
   it('trimming the end leaves the phase; a clip keeps at least one frame and stays inside the video', () => {
@@ -281,7 +291,7 @@ describe('adding, editing and removing clips', () => {
       clips: [clip({id: 'a', target: A, start: 50, end: 80, effect: 'Burst', params: normalizeParams('Burst', {style: 'Colour rays'})}), clip({id: 'c', target: C, start: 0, end: 20})],
     };
     const r = pickOnGroup(doc, {members: [0, 1, 2], effect: 'Burst', frame: 60, numFrames: 300, fps: 10});
-    expect([r.changed, r.added]).toEqual([1, 2]);
+    expect([r.changed, r.added, r.whole]).toEqual([1, 1, 1]);
     const style = r.doc.clips.find(c => c.id === 'a')!.params.style;
     expect(style).toBe('White rays'); // the same effect again: its next style, for every member
     expect(r.doc.clips.filter(c => sameTarget(c.target, C) && c.start === 60)).toEqual([

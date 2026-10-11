@@ -647,7 +647,12 @@ function GroupBlock({
     if (r != null) {
       const title = GROUP_EFFECTS.find(fx => fx.effectName === name)?.title ?? name;
       const clips = (k: number) => `${k} ${k === 1 ? 'clip' : 'clips'}`;
-      const did = [r.changed > 0 && `changed ${clips(r.changed)} on the playhead`, r.added > 0 && `added ${clips(r.added)} at frame ${session.frame + 1}`];
+      const layers = (k: number) => `${k} ${k === 1 ? 'layer' : 'layers'}`;
+      const did = [
+        r.changed > 0 && `changed ${clips(r.changed)} on the playhead`,
+        r.added > 0 && `added ${clips(r.added)} at frame ${session.frame + 1}`,
+        r.whole > 0 && `gave ${layers(r.whole)} with no clips one over the whole video`,
+      ];
       setPicked(`${title}: ${did.filter(Boolean).join(', ')}.`);
     }
   };
@@ -760,7 +765,7 @@ function GroupBlock({
             value=""
             disabled={members.length === 0}
             aria-label={`Give every member of ${group.name} an effect`}
-            title="Give every member this effect: its clip on the playhead, else a new clip there"
+            title="Give every member this effect: its clip on the playhead, else a new clip there, or the whole video if it has no clips"
             onChange={e => e.target.value !== '' && pickEffect(e.target.value)}>
             <option value="" disabled>
               Effect…
