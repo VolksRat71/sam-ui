@@ -280,3 +280,54 @@ input:not([type='checkbox']):not([type='radio']):not([type='range']) { min-heigh
 /* the workspace's own toast sits in the corner: the other-video toast stacks above it */
 body:has(.app > .toast) .agent-toast { bottom: 72px; }
 @media (pointer: coarse), (max-width: 1023.98px) { .agent-chip-toggle { height: auto; min-height: 44px; } .agent-chip-go, .agent-go { min-height: 44px; } }
+/* Effect clips (slice 1). A clip is a solid, labelled neutral block on its own band under the layer's
+   row: none of the lane's marks (tracked bar, hatched absent, dotted candidate, bracket present, dashed
+   Changed) is a filled block with a name, so the span alphabet stays unambiguous. Blue marks the selected
+   clip (interaction), the layer's ink a thin left edge (identity). */
+:root { --fx-line: 24px; }
+.suite-lanes .fx-label { display: flex; align-items: center; gap: 6px; padding-inline: 24px 8px; border-inline-end: 1px solid var(--line); border-top: 1px solid var(--line); color: var(--text-muted); font-size: var(--type-label); }
+.fx-band { position: relative; height: calc(var(--fx-lines, 1) * var(--fx-line)); border-top: 1px solid var(--line); overflow: hidden; }
+.fx-background-row .fx-band { border-top: 0; }
+.fx-band .playhead { z-index: 1; }
+.fx-band .fx-clip { position: absolute; display: flex; align-items: center; height: calc(var(--fx-line) - 4px); min-width: 0; min-height: 0; margin-top: 2px; padding: 0 8px; border: 1px solid #5c5c62; border-left: 3px solid var(--lane-ink); border-radius: 0; background: var(--line); color: var(--text); font: inherit; font-size: var(--type-label); text-align: left; cursor: grab; touch-action: none; }
+.fx-band .fx-clip:hover { border-color: var(--text-muted); border-left-color: var(--lane-ink); }
+.fx-band .fx-clip.selected { border: 2px solid var(--primary); border-left: 3px solid var(--primary); background: #45454a; }
+.fx-band .fx-clip:active { cursor: grabbing; }
+.fx-band .fx-clip:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; z-index: 2; }
+.fx-clip-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
+.fx-clip-handle { position: absolute; top: 0; bottom: 0; width: 8px; cursor: ew-resize; }
+.fx-clip-handle[data-edge='start'] { left: -2px; }
+.fx-clip-handle[data-edge='end'] { right: -2px; }
+.fx-clip.selected .fx-clip-handle::before, .fx-clip:hover .fx-clip-handle::before { content: ''; position: absolute; top: 4px; bottom: 4px; left: 3px; width: 2px; background: var(--text); }
+.legend-swatch.fx-legend { border: 1px solid #5c5c62; border-left: 3px solid var(--lane-ink); background: var(--line); }
+.fx-background-row .layer-swatch { background: var(--text-muted); }
+@media (pointer: coarse), (max-width: 1023.98px) {
+  :root { --fx-line: 48px; } /* a 44px clip target with its 2px gaps */
+  .fx-clip-handle { width: 16px; }
+}
+/* The selected clip in the viewer chrome: the matte status keeps its own strip below. */
+.chip.fx-context { background: var(--panel-raised); border: 1px solid var(--line); border-radius: var(--radius); font-size: var(--type-label); }
+/* Effects dock: what the tiles change, Add effect, and the selected clip's settings */
+.fx-command { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 8px; }
+.fx-command .effect-note { flex: 1; margin: 0; color: var(--text-muted); line-height: 1.45; }
+.fx-command .effect-note strong { color: var(--text); font-weight: 600; }
+.fx-command .button { flex: none; display: inline-flex; align-items: center; gap: 4px; }
+.fx-command .button[aria-pressed='true'] { border-color: var(--primary); }
+.fx-settings { display: grid; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+.fx-settings-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: var(--type-label); }
+.fx-param { display: grid; grid-template-columns: 72px minmax(0, 1fr); align-items: center; gap: 8px; font-size: var(--type-label); }
+.fx-param-label { color: var(--text-muted); }
+.fx-number { display: grid; grid-template-columns: minmax(0, 1fr) 76px; align-items: center; gap: 8px; }
+.fx-number input[type='range'] { width: 100%; accent-color: var(--primary); }
+.fx-settings input[type='number'] { width: 100%; min-width: 0; padding: 0 6px; border: 1px solid var(--line); border-radius: var(--radius); background: #000; color: #fff; font: inherit; font-size: var(--type-control); }
+.fx-range { display: grid; grid-template-columns: 76px auto 76px; align-items: center; gap: 8px; justify-content: start; color: var(--text-muted); }
+.fx-color { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.fx-color input[type='color'] { width: var(--target); height: var(--target); min-height: var(--target); padding: 2px; border: 1px solid var(--line); background: #000; cursor: pointer; }
+.fx-color input[type='color']:disabled { cursor: default; opacity: .6; }
+.fx-follow { display: inline-flex; align-items: center; gap: 6px; min-height: var(--target); color: var(--text); }
+.fx-choice { display: flex; flex-wrap: wrap; gap: 4px; }
+.fx-choice button { padding: 0 8px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-raised); color: var(--text); font: inherit; font-size: var(--type-label); cursor: pointer; }
+.fx-choice button:hover { border-color: var(--text-muted); }
+.fx-choice button[aria-pressed='true'] { border-color: var(--text); background: #45454a; font-weight: 600; }
+.fx-settings > .button { justify-self: start; display: inline-flex; align-items: center; gap: 4px; }
+@media (pointer: coarse) { .fx-choice button, .fx-follow input { min-height: 44px; } }

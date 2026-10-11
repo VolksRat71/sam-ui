@@ -64,14 +64,20 @@ export function normalizeHistory(h: ServerHistory | null | undefined): SeedHisto
 
 type KeyLike = {key: string; metaKey: boolean; ctrlKey: boolean; shiftKey: boolean; target: unknown};
 
+/** Inputs that take typed text (and so their own Cmd-Z); a slider, colour or checkbox does not. */
+const TEXT_INPUTS = new Set(['text', 'search', 'email', 'url', 'tel', 'password', 'number']);
+
 /** Whether a key event's target takes typing (a field), where Cmd-Z is the field's own. */
 export function isTypingTarget(target: unknown): boolean {
   if (target == null || typeof target !== 'object') {
     return false;
   }
-  const t = target as {tagName?: unknown; isContentEditable?: unknown};
+  const t = target as {tagName?: unknown; type?: unknown; isContentEditable?: unknown};
   const tag = typeof t.tagName === 'string' ? t.tagName.toUpperCase() : '';
-  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || t.isContentEditable === true;
+  if (tag === 'INPUT') {
+    return TEXT_INPUTS.has(typeof t.type === 'string' ? t.type.toLowerCase() : 'text');
+  }
+  return tag === 'TEXTAREA' || tag === 'SELECT' || t.isContentEditable === true;
 }
 
 /** Cmd-Z (or Ctrl-Z) undoes, Shift-Cmd-Z (or Ctrl-Y) redoes; never while typing in a field. */

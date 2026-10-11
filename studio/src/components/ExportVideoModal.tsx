@@ -1,13 +1,13 @@
 // sam-ui (Apache-2.0). New file, not from SAM 2.
 //
-// Export the video with every object's own effect, as an MP4 made in the
-// browser. Objects nobody gave an effect render as Original by default, so
+// Export the video with its effect clips, as an MP4 made in the browser. An
+// object renders as Original on frames where it has no clip, by default, so
 // nothing the user did not choose ends up in the file; "keep as shown" keeps
-// their Overlay instead. No point markers, selection emphasis or watermark.
+// its Overlay there instead. No point markers, selection emphasis or watermark.
 import {useEffect, useState} from 'react';
 import {saveBlob} from '~/lib/download';
 import {defaultExportName, exportFileName} from '~/state/fileNames';
-import type {UntouchedMode} from '~/state/objectEffects';
+import type {UntouchedMode} from '~/state/effectClips';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
 import FileNameField from './FileNameField';
 
@@ -20,7 +20,10 @@ export default function ExportVideoModal({session, videoName, onClose}: Props) {
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<{name: string; size: number} | null>(null);
   const busy = session.exportProgress != null;
-  const untouchedCount = session.state.objects.filter(o => session.objectEffects[o.id] == null).length;
+  const clips = session.effectDoc?.clips ?? [];
+  const untouchedCount = session.state.objects.filter(
+    o => !clips.some(c => c.target.kind === 'object' && c.target.id === o.id),
+  ).length;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && !busy && onClose();
@@ -53,7 +56,7 @@ export default function ExportVideoModal({session, videoName, onClose}: Props) {
           <FileNameField value={file} onChange={setFile} disabled={busy} />
           <fieldset className="radio-group" disabled={busy}>
             <legend>
-              Objects without a chosen effect{untouchedCount > 0 ? ` (${untouchedCount})` : ''}
+              Objects on frames without an effect clip{untouchedCount > 0 ? ` (${untouchedCount} with none at all)` : ''}
             </legend>
             <label>
               <input

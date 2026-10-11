@@ -26,6 +26,7 @@ import CutoutGLEffect from './CutoutGLEffect';
 import EraseForegroundGLEffect from './EraseForegroundGLEffect';
 import GradientEffect from './GradientEffect';
 import NoisyMaskEffect from './NoisyMaskEffect';
+import OutlineGLEffect from './OutlineGLEffect';
 import PixelateEffect from './PixelateEffect';
 import PixelateMaskGLEffect from './PixelateMaskGLEffect';
 import ReplaceGLEffect from './ReplaceGLEffect';
@@ -54,36 +55,44 @@ export type Effects = {
   Burst: Effect;
   PixelateMask: Effect;
   Arrow: Effect;
+  Outline: Effect;
 
   /* More Effects */
   NoisyMask: Effect;
 };
 
-export default {
-  /* Backgrounds */
-  Original: new OriginalEffect(),
-  EraseBackground: new EraseBackgroundEffect(),
-  Desaturate: new DesaturateEffect(),
-  Pixelate: new PixelateEffect(),
-  Sobel: new SobelEffect(),
-  BackgroundText: new BackgroundTextEffect(),
-  BackgroundBlur: new BackgroundBlurEffect(),
-  Gradient: new GradientEffect(),
+// Modified by sam-ui: a factory, so studio's effect clips draw with instances
+// of their own, never the ones Meta's context slots hold.
+export function createEffects(): Effects {
+  return {
+    /* Backgrounds */
+    Original: new OriginalEffect(),
+    EraseBackground: new EraseBackgroundEffect(),
+    Desaturate: new DesaturateEffect(),
+    Pixelate: new PixelateEffect(),
+    Sobel: new SobelEffect(),
+    BackgroundText: new BackgroundTextEffect(),
+    BackgroundBlur: new BackgroundBlurEffect(),
+    Gradient: new GradientEffect(),
 
-  /* Highlights */
-  Overlay: new OverlayEffect(),
-  EraseForeground: new EraseForegroundGLEffect(),
-  Cutout: new CutoutGLEffect(),
-  Scope: new ScopeGLEffect(),
-  VibrantMask: new VibrantMaskEffect(),
-  Replace: new ReplaceGLEffect(),
-  Burst: new BurstGLEffect(),
-  PixelateMask: new PixelateMaskGLEffect(),
-  Arrow: new ArrowGLEffect(),
+    /* Highlights */
+    Overlay: new OverlayEffect(),
+    EraseForeground: new EraseForegroundGLEffect(),
+    Cutout: new CutoutGLEffect(),
+    Scope: new ScopeGLEffect(),
+    VibrantMask: new VibrantMaskEffect(),
+    Replace: new ReplaceGLEffect(),
+    Burst: new BurstGLEffect(),
+    PixelateMask: new PixelateMaskGLEffect(),
+    Arrow: new ArrowGLEffect(),
+    Outline: new OutlineGLEffect(),
 
-  /* More Effects */
-  NoisyMask: new NoisyMaskEffect(),
-} as Effects;
+    /* More Effects */
+    NoisyMask: new NoisyMaskEffect(),
+  } as Effects;
+}
+
+export default createEffects();
 
 export enum EffectIndex {
   BACKGROUND = 0,

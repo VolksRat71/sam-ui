@@ -27,6 +27,7 @@ import {
   FaceWink,
   Humidity,
   Image,
+  Lasso,
   Overlay,
   TextFont,
 } from '@carbon/icons-react';
@@ -53,7 +54,7 @@ export const backgroundEffects: DemoEffect[] = [
   {title: 'Desaturate', Icon: ColorSwitch, effectName: 'Desaturate'},
   {title: 'Text', Icon: TextFont, effectName: 'BackgroundText'},
   {title: 'Blur', Icon: Humidity, effectName: 'BackgroundBlur'},
-  {title: 'Outline', Icon: AppleDash, effectName: 'Sobel'},
+  {title: 'Edges', Icon: AppleDash, effectName: 'Sobel'}, // sam-ui: 'Outline' is the layer effect
 ];
 
 export const highlightEffects: DemoEffect[] = [
@@ -69,6 +70,7 @@ export const highlightEffects: DemoEffect[] = [
   {title: 'Emoji', Icon: FaceWink, effectName: 'Replace'},
   {title: 'Burst', Icon: Asterisk, effectName: 'Burst'},
   {title: 'Spotlight', Icon: CenterCircle, effectName: 'Scope'},
+  {title: 'Outline', Icon: Lasso, effectName: 'Outline'},
 ];
 
 export const moreEffects: DemoEffect[] = [

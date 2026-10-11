@@ -2,7 +2,7 @@
 //
 // The Objects list: one row per object with Meta's colour-block thumbnail,
 // its track state, and its own Clear track / Remove actions. The selected
-// object also has Undo / Redo (Cmd-Z / Shift-Cmd-Z), its kept track versions,
+// object also has its own Undo / Redo (Cmd-Z steps the window's newest edit), its kept track versions,
 // and "Move these clicks to" for clicks on this frame that went to it by mistake.
 // Objects can be dragged into another order and into named, coloured groups
 // (issue #21); Alt-Up / Alt-Down, the arrow buttons and the Group menu do
@@ -172,14 +172,14 @@ function HistoryControls({o, session}: {o: StudioObject; session: StudioSessionA
           className="link-button"
           disabled={busy || blocked('undo') != null}
           onClick={() => session.stepSeeds('undo', o.id)}
-          title={blocked('undo') ?? 'Undo the last click or range change (⌘Z); a kept track comes back with no re-track'}>
+          title={blocked('undo') ?? 'Undo this layer’s last click or range change; a kept track comes back with no re-track. ⌘Z steps your newest edit on any layer'}>
           <Undo size={14} /> Undo
         </button>
         <button
           className="link-button"
           disabled={busy || blocked('redo') != null}
           onClick={() => session.stepSeeds('redo', o.id)}
-          title={blocked('redo') ?? 'Redo (⇧⌘Z)'}>
+          title={blocked('redo') ?? 'Redo this layer’s last undone change'}>
           <Redo size={14} /> Redo
         </button>
         <button
@@ -640,6 +640,22 @@ function GroupBlock({
   const {state, busy} = session;
   const [drop, setDrop] = useState<'into' | 'before' | null>(null);
   const [renaming, setRenaming] = useState(false);
+  // what the last group effect pick did, for the status line beside it
+  const [picked, setPicked] = useState('');
+  const pickEffect = (name: string) => {
+    const r = session.setGroupEffect(group.id, name);
+    if (r != null) {
+      const title = GROUP_EFFECTS.find(fx => fx.effectName === name)?.title ?? name;
+      const clips = (k: number) => `${k} ${k === 1 ? 'clip' : 'clips'}`;
+      const layers = (k: number) => `${k} ${k === 1 ? 'layer' : 'layers'}`;
+      const did = [
+        r.changed > 0 && `changed ${clips(r.changed)} on the playhead`,
+        r.added > 0 && `added ${clips(r.added)} at frame ${session.frame + 1}`,
+        r.whole > 0 && `gave ${layers(r.whole)} with no clips one over the whole video`,
+      ];
+      setPicked(`${title}: ${did.filter(Boolean).join(', ')}.`);
+    }
+  };
   const members = group.members.map(id => state.objects.find(o => o.id === id)).filter((o): o is StudioObject => o != null);
   const toTrack = groupDirtyIds(state, group.id);
   const clearable = members.filter(o => clearTarget(o, state.engine) != null);
@@ -749,8 +765,8 @@ function GroupBlock({
             value=""
             disabled={members.length === 0}
             aria-label={`Give every member of ${group.name} an effect`}
-            title="Give every member this effect"
-            onChange={e => e.target.value !== '' && session.setGroupEffect(group.id, e.target.value)}>
+            title="Give every member this effect: its clip on the playhead, else a new clip there, or the whole video if it has no clips"
+            onChange={e => e.target.value !== '' && pickEffect(e.target.value)}>
             <option value="" disabled>
               Effect…
             </option>
@@ -760,6 +776,7 @@ function GroupBlock({
               </option>
             ))}
           </select>
+          <span className="muted small" role="status">{picked}</span>
           <button
             className="link-button"
             disabled={!moves(layout, stepAction(-1))}

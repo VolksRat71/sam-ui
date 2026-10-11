@@ -7,6 +7,7 @@
 import type {JobOutcome} from '~/api/trackStream';
 import type {LocalModelStatus, LocalOptions} from '~/local/LocalEngine';
 import type {QueueEntry, ReasonKind, ReviewQueue} from '~/state/audit';
+import type {EffectDoc, UntouchedMode} from '~/state/effectClips';
 import type {Layout} from '~/state/layout';
 import type {ExportedObject, ExportGroup, ExportKind} from '~/state/maskExport';
 import type {NormPoint, ServerObject} from '~/state/objects';
@@ -212,14 +213,19 @@ export type StudioMethods = {
     args: {objectId: number; frame: number; engine: string; reviewed: boolean; span: [number, number]; reasons: ReasonKind[]};
     result: void;
   };
-  /** Every object's own selected-object effect (objects not listed: Overlay). */
-  setObjectEffects: {args: {effects: Record<number, {name: string; variant: number}>}; result: void};
+  /**
+   * The effect clips the preview draws (state/effectClips.ts), and the object
+   * ids in drawing order (bottom layer first). It only redraws: no tracking.
+   */
+  setEffectDoc: {args: {doc: EffectDoc; drawOrder: number[]}; result: void};
   /** Browser-local display colors only; no annotation or tracking writes. */
   setObjectColors: {args: {colors: Record<number, string>}; result: void};
-  /** How many variants each highlight effect has. */
-  effectVariants: {args: {names: string[]}; result: Record<string, number>};
-  /** Render the video with these per-object effects as an MP4 (no editing aids). */
-  exportVideo: {args: {effects: Record<number, {name: string; variant: number}>}; result: ArrayBuffer};
+  /**
+   * Render the video from these clips as an MP4 (no editing aids, hidden
+   * groups included). `untouched`: how an object with no clip on a frame is
+   * drawn there. Rejects, naming the frame, if a frame fails to draw.
+   */
+  exportVideo: {args: {doc: EffectDoc; drawOrder: number[]; untouched: UntouchedMode}; result: ArrayBuffer};
   /**
    * Name an object (null: back to its default). `saved` is false when the
    * backend predates names (it keeps the name for this session only).

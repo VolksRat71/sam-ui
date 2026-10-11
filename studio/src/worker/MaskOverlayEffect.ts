@@ -26,8 +26,6 @@ export default class MaskOverlayEffect extends AbstractEffect {
    * white, and the others dimmed (off in exports).
    */
   public activeObjectId: number | null = null;
-  /** Each object's own Overlay variant (per-object effects); `variant` otherwise. */
-  public variantOf: (objectId: number) => number | undefined = () => undefined;
   /** Whether an object's mask on a frame is from a stale track (drawn faded; off in exports). */
   public faded: (objectId: number, frameIndex: number) => boolean = () => false;
 
@@ -53,12 +51,12 @@ export default class MaskOverlayEffect extends AbstractEffect {
     if (masks.length === 0 || width < 1 || height < 1) {
       return;
     }
-    const variants = tracklets.map(t => this.variantOf(t.id) ?? this.variant);
+    const variant = this.variant; // the drawing clip's style (ObjectHighlight sets it per pass)
     const faded = tracklets.map(t => this.faded(t.id, context.frameIndex));
     const key =
       `${width}x${height}:${this.activeObjectId}:` +
       masks
-        .map((m, i) => `${this._idOf(m.bitmap)}${maskColors[i]}v${variants[i]}${faded[i] ? 'f' : ''}`)
+        .map((m, i) => `${this._idOf(m.bitmap)}${maskColors[i]}v${variant}${faded[i] ? 'f' : ''}`)
         .join(',');
     let canvas = this._cache.get(key);
     if (canvas == null) {
@@ -70,7 +68,7 @@ export default class MaskOverlayEffect extends AbstractEffect {
       const image = ctx.createImageData(width, height);
       const pixels = new Uint32Array(image.data.buffer);
       masks.forEach((m, i) => {
-        const fill = VARIANT_FILL[variants[i] % VARIANT_FILL.length] * (faded[i] ? STALE_FADE : 1);
+        const fill = VARIANT_FILL[variant % VARIANT_FILL.length] * (faded[i] ? STALE_FADE : 1);
         const active = tracklets[i]?.id === this.activeObjectId;
         paintMask(
           pixels,

@@ -21,6 +21,9 @@
 // The review queue's stops (draft 7) sit above their lane as downward
 // triangles, a check once reviewed; with one on screen, the transport says
 // why it is there and offers Looks right (Y) and the next stop (.).
+// A layer with effect clips gets a band under its row (EffectClipBand): solid
+// labelled blocks, apart from the lane's marks; the background's clips get a
+// Background row at the bottom, where AE keeps the lowest layer.
 import {
   ChevronLeft,
   ChevronRight,
@@ -50,6 +53,8 @@ import {
 import type {StudioObject} from '~/state/objects';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
 import ObjectsSection from './ObjectsSection';
+import EffectClipBand from './EffectClipBand';
+import {sameTarget, type EffectTarget} from '~/state/effectClips';
 import LaneActions from './LaneActions';
 import {reviewSpans} from './reviewPresentation';
 import {ReviewGlyph} from './ReviewSection';
@@ -236,10 +241,21 @@ export default function Timeline({session, actions, inspector}: Props) {
   const active = state.objects.find(o => o.id === state.activeId);
   const activeView = active == null ? [] : timelineView(active.ranges, active.marks);
   const kindHere = stateAt(activeView, frame);
+  const clipsOf = (t: EffectTarget) => session.effectDoc?.clips.filter(c => sameTarget(c.target, t)) ?? [];
+  const backgroundClips = clipsOf({kind: 'background'});
   const markHere = activeView.find(r => r.start <= frame && frame <= r.end);
 
   return (
-    <div className="timeline">
+    <div
+      className="timeline"
+      onKeyDown={e => {
+        // Delete or Backspace with focus in the timeline removes the selected effect clip (a focused clip handles its own)
+        const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement).tagName);
+        if ((e.key === 'Delete' || e.key === 'Backspace') && !typing && session.selectedClipId != null && !e.metaKey && !e.ctrlKey) {
+          e.preventDefault();
+          session.removeClip(session.selectedClipId);
+        }
+      }}>
       <div className="timeline-tools">
       <div className="suite-timeline-header">
         <strong>Layers</strong><span className="muted">{state.objects.length}</span>
@@ -445,7 +461,8 @@ export default function Timeline({session, actions, inspector}: Props) {
           <ObjectsSection session={session} inspector={inspector} renderLane={o => {
             const lane = tracklets.get(o.id);
             const sel = selection?.id === o.id && span != null ? span : null;
-            return (
+            const effects = clipsOf({kind: 'object', id: o.id});
+            return (<>
               <div
                 key={o.id}
                 className={`swimlane${o.id === state.activeId ? ' active' : ''}${o.state === 'stale' ? ' changed' : ''}${o.running || o.state === 'tracking' ? ' updating' : ''}`}
@@ -590,8 +607,18 @@ export default function Timeline({session, actions, inspector}: Props) {
                   />
                 ))}
               </div>
-            );
+              {effects.length > 0 && <>
+                <div className="fx-label" onClick={e => e.stopPropagation()}>Effects <span className="muted">{effects.length}</span></div>
+                <EffectClipBand clips={effects} name={objectName(o)} session={session} pos={pos} />
+              </>}
+            </>);
           }} />
+          {backgroundClips.length > 0 && (
+            <div className="object-row fx-background-row">
+              <div className="layer-controls"><div className="layer-summary"><span className="layer-swatch" aria-hidden="true" />Background</div></div>
+              <EffectClipBand clips={backgroundClips} name="Background" session={session} pos={pos} />
+            </div>
+          )}
       </div>
       {session.ordered.length > 0 && (
         <div className={`lane-footer${legendOpen ? ' open' : ''}`}>
@@ -623,6 +650,10 @@ export default function Timeline({session, actions, inspector}: Props) {
             <li>
               <span className="legend-swatch swimlane-absent" />
               absent
+            </li>
+            <li>
+              <span className="legend-swatch fx-legend" />
+              effect clip
             </li>
             <li>
               <span className="legend-glyph">

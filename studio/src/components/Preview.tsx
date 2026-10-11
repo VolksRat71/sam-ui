@@ -21,6 +21,7 @@ import {objectName} from '~/state/fileNames';
 import {FIT, panBy, toScreen, zoomAt, zoomWheelDelta, type View} from '~/state/view';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
 import useTouchGestures from '~/workspace/useTouchGestures';
+import {effectTitle} from './effectPresentation';
 
 export type LabelMode = 'positive' | 'negative';
 
@@ -89,6 +90,9 @@ export default function Preview({session, mode, onModeChange}: Props) {
   const points = active?.points[frame] ?? [];
   const track = active == null ? null : trackPresentation(active.state, active.running);
   const changedCount = state.objects.filter(o => o.state === 'stale').length;
+  // the selected effect clip names what the Effects panel edits: "Pim · Outline"
+  const clip = session.effectDoc?.clips.find(c => c.id === session.selectedClipId);
+  const clipOff = clip != null && (frame < clip.start || frame >= clip.end);
 
   // zoom and pan
   const [view, setView] = useState<View>(FIT);
@@ -213,16 +217,25 @@ export default function Preview({session, mode, onModeChange}: Props) {
           </button>
         </div>
         <div className="preview-status">
-          {active != null ? (
-            <span className="chip">
-              <span className="swatch" style={{background: active.color}} />
-              {objectName(active)}
-            </span>
-          ) : (
-            <span className="muted">
-              {state.objects.length === 0 ? 'Click the footage to add a layer' : 'Select a layer, or click to add one'}
-            </span>
-          )}
+          <span role="status">
+            {clip?.target.kind === 'background' ? (
+              <span className="chip fx-context" title="The selected effect clip: the Effects panel edits it">
+                Background · {effectTitle(clip.target, clip.effect)}
+              </span>
+            ) : active != null ? (
+              <span className={clip != null ? 'chip fx-context' : 'chip'} title={clip != null ? 'The selected effect clip: the Effects panel edits it' : undefined}>
+                <span className="swatch" style={{background: active.color}} />
+                {objectName(active)}
+                {clip != null && <> · {effectTitle(clip.target, clip.effect)}</>}
+              </span>
+            ) : (
+              <span className="muted">
+                {state.objects.length === 0 ? 'Click the footage to add a layer' : 'Select a layer, or click to add one'}
+              </span>
+            )}
+          </span>
+          {/* outside the live region: it toggles at the clip's ends during playback */}
+          {clipOff && <span className="muted"> not on this frame</span>}
         </div>
         <div className="zoom-controls">
           <button className="icon-button" onClick={() => zoomBy(1 / 1.5)} disabled={view.zoom <= 1} title="Zoom out">

@@ -15,6 +15,7 @@
     "merge-schemas": "tsx schemas/merge-schemas.ts",
     "smoke": "node e2e/smoke.mjs",
     "memory": "node e2e/memory.mjs",
+    "effects": "node e2e/effects.mjs",
     "test:memory-server": "node --test e2e/static-server.test.mjs"
   },
   "dependencies": {
