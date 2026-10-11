@@ -7,9 +7,12 @@
 // picture larger than Cover needs on the video is scaled down to that first.
 // Another browser, or cleared site data, has no copy: the clip then draws its colour.
 import {type Kv, OpfsKv} from '~/local/kv';
-import {isImageHash} from './effectClips';
+import {imageKeys, isImageHash, parseEffectDoc} from './effectClips';
 
 const DIR = 'effect-images';
+const DOC_PREFIX = 'sam-ui-studio:effects:v2:';
+/** A stored picture younger than this is never freed: a clip may be about to save it. */
+export const KEEP_NEW_MS = 10 * 60 * 1000;
 export const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
 /** Refused before reading: a file this big, or a picture of more pixels, would spike memory to decode. */
 export const MAX_IMAGE_BYTES = 50 * 1024 * 1024;
@@ -111,4 +114,64 @@ export async function loadEffectImage(key: string, kv?: Kv): Promise<ImageBitmap
     return 'missing';
   }
   return createImageBitmap(blob).catch(() => 'unreadable' as const);
+}
+
+/**
+ * The picture keys every saved effect doc uses, from localStorage's
+ * [key, value] entries: each doc's image settings (whatever effect has one),
+ * and hash values of an effect this build does not know. Null when a saved
+ * doc does not parse: nothing can then be freed safely.
+ */
+export function savedImageKeys(entries: Iterable<[string, string | null]>): Set<string> | null {
+  const keys = new Set<string>();
+  for (const [k, v] of entries) {
+    if (k.startsWith(DOC_PREFIX) && v != null) {
+      let raw: unknown;
+      try {
+        raw = JSON.parse(v);
+      } catch {
+        return null;
+      }
+      imageKeys(parseEffectDoc(raw)).forEach(key => keys.add(key));
+    }
+  }
+  return keys;
+}
+
+/** The stored pictures to free: no saved doc uses them and they are older than KEEP_NEW_MS (an unknown age is kept). */
+export function unusedImages(files: Array<{name: string; modified: number | null}>, used: ReadonlySet<string>, now: number): string[] {
+  return files
+    .filter(f => isImageHash(f.name) && !used.has(f.name) && f.modified != null && now - f.modified >= KEEP_NEW_MS)
+    .map(f => f.name);
+}
+
+/**
+ * Free the stored pictures no saved effect doc uses (run once, at app
+ * start: the undo journal is not persisted, so nothing else can bring one
+ * back). Never throws: a failure only leaves pictures stored.
+ */
+export async function freeUnusedEffectImages(kv?: Kv, storage?: Storage, now = Date.now()): Promise<void> {
+  // ponytail: another tab open for over KEEP_NEW_MS can still undo back to a freed picture (its clip then draws its colour); share the journal if that bites
+  try {
+    if (kv == null && !OpfsKv.available()) {
+      return;
+    }
+    const k = kv ?? store();
+    const ls = storage ?? window.localStorage;
+    const used = savedImageKeys(Array.from({length: ls.length}, (_, i) => ls.key(i)!).map(key => [key, ls.getItem(key)]));
+    if (used == null) {
+      return;
+    }
+    const files = await Promise.all(
+      (await k.list(DIR)).map(async name => {
+        const blob = await k.blob(`${DIR}/${name}`);
+        return {name, modified: blob instanceof File ? blob.lastModified : null};
+      }),
+    );
+    for (const name of unusedImages(files, used, now)) {
+      await k.remove(`${DIR}/${name}`);
+    }
+  } catch (error) {
+    console.warn('Could not free unused effect pictures', error);
+  }
 }
