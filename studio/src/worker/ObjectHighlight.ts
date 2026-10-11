@@ -56,6 +56,7 @@ import {
   type UntouchedMode,
   activeClips,
   clipTime,
+  imageKeys,
   normalizeParams,
 } from '~/state/effectClips';
 import type MaskOverlayEffect from './MaskOverlayEffect';
@@ -129,10 +130,22 @@ export default class ObjectHighlight extends AbstractEffect {
     await this._sync();
   }
 
-  /** Keep effects set up for exactly the preview's and running exports' clips (unregistered ones draw as the stage default). */
+  /**
+   * Keep effects set up, and pictures, for exactly the preview's and running
+   * exports' clips (unregistered effects draw as the stage default); a dropped
+   * picture is closed, and the page sends it again if a clip uses it again.
+   */
   private async _sync(): Promise<void> {
+    const states = [this._preview, ...this._exports];
+    const used = new Set(states.flatMap(s => imageKeys(s.doc)));
+    for (const [key, image] of this.images) {
+      if (!used.has(key)) {
+        image.close();
+        this.images.delete(key);
+      }
+    }
     const names = new Set<string>();
-    for (const state of [this._preview, ...this._exports]) {
+    for (const state of states) {
       state.doc.clips.forEach(c => names.add(c.effect));
       if (state.untouched === 'original') {
         names.add(ORIGINAL);
@@ -230,7 +243,8 @@ export default class ObjectHighlight extends AbstractEffect {
       const fps = context.fps > 0 ? context.fps : 30;
       const t = clip == null || effect === OVERLAY ? undefined : clipTime(clip, frame, context.fps);
       const duration = t == null ? undefined : (clip!.end - clip!.start + clip!.phase) / fps;
-      const key = `${effect}\u0000${canonical(params)}\u0000${t ?? ''}\u0000${duration ?? ''}`;
+      // darken is drawn once a frame (dim), not by the pass: clips differing only in it share a pass
+      const key = `${effect}\u0000${canonical(effect === SPOTLIGHT ? {...params, darken: 0} : params)}\u0000${t ?? ''}\u0000${duration ?? ''}`;
       const last = passes[passes.length - 1];
       if (
         i != null &&
@@ -254,7 +268,7 @@ export default class ObjectHighlight extends AbstractEffect {
     }
 
     // objects with a mask on this frame, bottom layer first (ids the order does not name yet go below it)
-    const circles: Parameters<ScopeGLEffect['dim']>[2][number][] = [];
+    const circles = new Map<number, number>(); // tracklet index -> circle size
     let darken = 0;
     const at = new Map(tracklets.map((t, i) => [t.id, i]));
     const listed = new Set(state.drawOrder);
@@ -273,7 +287,8 @@ export default class ObjectHighlight extends AbstractEffect {
         if (c.effect === OVERLAY || ready(c.effect)) {
           add(c.effect, c.params, c, i);
           if (c.effect === SPOTLIGHT) {
-            circles.push({mask: context.masks[i], size: numberParam(SPOTLIGHT, 'size', c.params)});
+            // one circle per layer (its largest, with several Spotlight clips)
+            circles.set(i, Math.max(circles.get(i) ?? 0, numberParam(SPOTLIGHT, 'size', c.params)));
             darken = Math.max(darken, numberParam(SPOTLIGHT, 'darken', c.params));
           }
         } else {
@@ -304,7 +319,8 @@ export default class ObjectHighlight extends AbstractEffect {
       } else {
         const effect = this._ready.get(p.effect)!.effect;
         if (p.effect === SPOTLIGHT && darken > 0) {
-          (effect as unknown as ScopeGLEffect).dim(form, context, circles, darken);
+          // ponytail: dim cuts out at most DIM_CIRCLES (16, the default object limit) circles; layers past it are dimmed too
+          (effect as unknown as ScopeGLEffect).dim(form, context, [...circles].map(([i, size]) => ({mask: context.masks[i], size})), darken);
           darken = 0; // once a frame
         }
         effect.setParams(p.params);

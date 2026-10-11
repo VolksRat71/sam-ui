@@ -87,7 +87,7 @@ describe('normalizeParams (U1, U2)', () => {
         } else {
           expect(at('#ABCDEF')).toBe('#abcdef');
           expect(at('#0f0')).toBe('#00ff00');
-          expect(at('layer')).toBe('layer');
+          expect(at('layer')).toBe(p.followsLayer === false ? p.default : 'layer'); // a background colour cannot follow a layer
           expect(at('red')).toBe(p.default);
           expect(at('#12345')).toBe(p.default);
         }

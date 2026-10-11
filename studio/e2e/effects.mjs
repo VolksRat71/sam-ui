@@ -34,6 +34,9 @@
 //       the picture; a Gradient (red to blue, top to bottom) lies on the red-blue line
 //       and runs the right way; feather 1 softens only a few px outside the masks; with
 //       Colour pop on later frames, the export matches the preview within B7's tolerance
+//   RO  a phone photo: a portrait JPEG stored landscape with EXIF Orientation 6 (made here), picked
+//       as the picture, is kept upright at the size Cover needs (1280x2560) and drawn
+//       upright in proportion (quadrants and a white band where they belong)
 //   CP  Colour pop: outside the masks grey, inside as the plain video (colour kept)
 //   SP  Spotlight: darken 0.6 dims everything outside the circle to 0.4 and leaves
 //       A as it was; on A and B with different settings it darkens once (0.4, not
@@ -621,6 +624,48 @@ const PICTURE = path.join(OUT, 'RB-picture_2560x1440_quadrants.png');
 const quadrant = (img, x, y) => QUADS[(y < img.h / 2 ? 0 : 2) + (x < img.w / 2 ? 0 : 1)];
 const nearSeam = (img, x, y) => Math.abs(x - img.w / 2) < 6 || Math.abs(y - img.h / 2) < 6;
 const pictureKey = () => doc().then(d => d?.clips.find(c => c.id === 'rb')?.params.image ?? '');
+// a stored picture as the browser decodes it (EXIF orientation applied), and whether its bytes hash to its key
+const storedPicture = key =>
+  page.evaluate(async k => {
+    const dir = await (await (await navigator.storage.getDirectory()).getDirectoryHandle('sam-ui')).getDirectoryHandle('effect-images');
+    const file = await (await dir.getFileHandle(k)).getFile();
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(b => b.toString(16).padStart(2, '0')).join('');
+    const bmp = await createImageBitmap(file);
+    return {hash, width: bmp.width, height: bmp.height};
+  }, key);
+// pick a picture for the background clip 'rb' in its settings; its new key
+const pickPicture = async file => {
+  const old = await pictureKey();
+  await page.locator('.fx-clip[data-clip="rb"]').click();
+  await fx.locator('input[type=file]').setInputFiles(file);
+  await page.waitForFunction(old => {
+    const k = Object.keys(localStorage).find(k => k.startsWith('sam-ui-studio:effects:v2:local/'));
+    const key = JSON.parse(localStorage.getItem(k)).clips.find(c => c.id === 'rb')?.params.image ?? '';
+    return /^[0-9a-f]{64}$/.test(key) && key !== old;
+  }, old, {timeout: 20000});
+  await page.waitForTimeout(1000);
+  return pictureKey();
+};
+// a phone photo: an upright 1600x3200 portrait (the quadrants, a white band at rows 1800-1849, which on
+// the video's 1280x720 under Cover lands on frame rows 520-560) stored turned 90 degrees counter-clockwise,
+// 3200x1600, with EXIF Orientation 6 (turn it clockwise to show it), as a camera writes it
+const PHONE = path.join(OUT, 'RO-picture_portrait-1600x3200_stored-landscape_exif6.jpg');
+{
+  const [W, H] = [1600, 3200];
+  const raw = Buffer.alloc(W * H * 3);
+  for (let sy = 0; sy < W; sy++)
+    for (let sx = 0; sx < H; sx++) {
+      const [ux, uy] = [W - 1 - sy, sx]; // the upright pixel stored here
+      raw.set(uy >= 1800 && uy < 1850 ? [255, 255, 255] : QUADS[(uy < H / 2 ? 0 : 2) + (ux < W / 2 ? 0 : 1)], 3 * (sy * H + sx));
+    }
+  const jpeg = execFileSync('ffmpeg', ['-v', 'error', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-s', `${H}x${W}`, '-i', 'pipe:0', '-frames:v', '1', '-q:v', '2', '-f', 'mjpeg', 'pipe:1'], {input: raw, maxBuffer: 1 << 28});
+  // APP1 Exif after SOI: a little-endian TIFF header and one IFD entry, Orientation (0x0112, SHORT) = 6
+  const tiff = Buffer.from([0x49, 0x49, 0x2a, 0, 8, 0, 0, 0, 1, 0, 0x12, 0x01, 3, 0, 1, 0, 0, 0, 6, 0, 0, 0, 0, 0, 0, 0]);
+  const exif = Buffer.concat([Buffer.from('Exif\0\0', 'binary'), tiff]);
+  const app1 = Buffer.concat([Buffer.from([0xff, 0xe1, (exif.length + 2) >> 8, (exif.length + 2) & 0xff]), exif]);
+  fs.writeFileSync(PHONE, Buffer.concat([jpeg.subarray(0, 2), app1, jpeg.subarray(2)]));
+}
 
 await step('RB', async () => {
   if (tolerance == null) throw new Error('no B7 tolerance');
@@ -689,14 +734,7 @@ await step('RB', async () => {
   }, null, {timeout: 20000});
   await page.waitForTimeout(1000);
   const key = await pictureKey();
-  const stored = await page.evaluate(async k => {
-    const dir = await (await (await navigator.storage.getDirectory()).getDirectoryHandle('sam-ui')).getDirectoryHandle('effect-images');
-    const file = await (await dir.getFileHandle(k)).getFile();
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(b => b.toString(16).padStart(2, '0')).join('');
-    const bmp = await createImageBitmap(file);
-    return {hash, width: bmp.width, height: bmp.height};
-  }, key);
+  const stored = await storedPicture(key);
   check('RB', name === 'Image' && /colour shows until you choose one/.test(before) && stored.hash === key && stored.width === 1280 && stored.height === 720, `the picker ("${name}") stores the picture by its hash, scaled down to the video: ${stored.width}x${stored.height}, key ${key.slice(0, 12)}... (hash ${stored.hash === key ? 'matches' : 'differs'})`, stored);
   const picture = pixels(await cap('RB-3_image-quadrants_f101'));
   const pkept = share(inside, i => off(picture, plain3, i) <= PIXEL_TOL);
@@ -731,7 +769,7 @@ await step('RB', async () => {
   const allowed = await page.locator('.modal button:has-text("Export MP4")').isEnabled();
   await page.keyboard.press('Escape');
   await page.waitForTimeout(300);
-  check('RB', /^1 clip uses a picture not stored in this browser: it draws its colour instead\.$/.test(warned) && allowed, `the export dialog warns ("${warned}") and still allows the export (${allowed})`);
+  check('RB', /^1 clip uses a picture not stored in this browser or unreadable: it draws its colour instead\.$/.test(warned) && allowed, `the export dialog warns ("${warned}") and still allows the export (${allowed})`);
   const live = await page.$$eval('.effects [role=status], .effects [aria-live]', es => es.map(e => e.innerText).filter(t => /\d/.test(t)));
   check('RB', live.length === 0, `no numbers in the effects panel's live regions (${JSON.stringify(live)})`);
 
@@ -744,6 +782,27 @@ await step('RB', async () => {
   const frames = exportFrames(file, PARITY_FRAMES);
   const rows = PARITY_FRAMES.map((f, i) => ({frame: f + 1, ...stats(shots[i], frames[i])}));
   check('RB', rows.every(r => r.psnr >= tolerance), `export matches the preview (picture f1-124, Colour pop after): ${rows.map(r => `f${r.frame} ${r.psnr} dB`).join(', ')} (needs >= ${tolerance} dB)`, rows);
+});
+
+await step('RO', async () => {
+  if (inside == null) throw new Error('no masks from RB');
+  await putClips([clipOn(tBG, 'ReplaceBackground', {style: 'Image', color: '#ff00ff'}, 'rb'), ...clear()]);
+  await sel(A);
+  await seekTo(F3);
+  const key = await pickPicture(PHONE);
+  const stored = await storedPicture(key);
+  check('RO', stored.hash === key && stored.width === 1280 && stored.height === 2560, `a 1600x3200 portrait stored landscape (EXIF 6) is kept upright at the size Cover needs: ${stored.width}x${stored.height}`, stored);
+  const shot = pixels(await cap('RO-1_phone-photo-exif6_f101'));
+  // upright: quadrants split at the frame's centre, a white band across frame rows 520-560 of 720
+  const band = share(outside, i => {
+    const y = Math.floor(i / shot.w) / shot.h;
+    return y < 0.74 || y > 0.76 || offRgb(shot, i, [255, 255, 255]) <= PIXEL_TOL;
+  });
+  const quads = share(outside, i => {
+    const [x, y] = [i % shot.w, Math.floor(i / shot.w)];
+    return (y / shot.h > 0.68 && y / shot.h < 0.82) || nearSeam(shot, x, y) || offRgb(shot, i, quadrant(shot, x, y)) <= PIXEL_TOL;
+  });
+  check('RO', band.pct >= 99.5 && quads.pct >= 99.5, `drawn upright and in proportion: the white band where it belongs (${band.pct} %), each quadrant in place (${quads.pct} %)`, {band, quads});
 });
 
 await step('CP', async () => {

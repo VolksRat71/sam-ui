@@ -18,7 +18,7 @@ import type {EffectParams} from '@/common/components/video/effects/Effect';
 import * as clips from '~/state/effectClips';
 import type {EffectClip, EffectDoc, EffectTarget, UntouchedMode} from '~/state/effectClips';
 import * as journals from '~/state/editJournal';
-import {loadEffectImage, storeEffectImage} from '~/state/effectImages';
+import {type ImageProblem, loadEffectImage, storeEffectImage} from '~/state/effectImages';
 import {clipTitle} from '~/components/effectPresentation';
 import {parseObjectColors} from '~/state/objectColors';
 import {isOffline} from '~/lib/mode';
@@ -1261,20 +1261,27 @@ export default function useStudioSession(video: VideoItem) {
 
   // Pictures the clips use (Replace background), from this browser's store
   // (state/effectImages.ts), sent to the worker once each, and again to a new
-  // worker. One this browser lacks is `missing`: the clip draws its colour.
+  // worker or once the doc has dropped and regained them (the worker frees a
+  // picture no clip uses). One this browser lacks, or cannot decode, is in
+  // `missingImages` with why: the clip draws its colour.
   const sentImages = useRef(new Set<string>());
-  const [missingImages, setMissingImages] = useState<ReadonlySet<string>>(new Set());
+  const [missingImages, setMissingImages] = useState<ReadonlyMap<string, ImageProblem>>(new Map());
   useEffect(() => {
     sentImages.current = new Set();
   }, [bridge]);
   const sendImages = useCallback(
     async (doc: EffectDoc | null) => {
-      for (const key of clips.imageKeys(doc ?? clips.EMPTY_DOC)) {
+      const keys = clips.imageKeys(doc ?? clips.EMPTY_DOC);
+      if (doc === docRef.current) {
+        sentImages.current.forEach(k => !keys.includes(k) && sentImages.current.delete(k));
+      }
+      for (const key of keys) {
         if (bridge == null || sentImages.current.has(key)) {
           continue;
         }
         const image = await loadEffectImage(key);
-        if (image != null) {
+        const problem = typeof image === 'string' ? image : null;
+        if (typeof image !== 'string') {
           try {
             await bridge.call('setEffectImage', {key, image});
           } finally {
@@ -1282,7 +1289,18 @@ export default function useStudioSession(video: VideoItem) {
           }
           sentImages.current.add(key);
         }
-        setMissingImages(m => (m.has(key) === (image == null) ? m : image == null ? new Set([...m, key]) : new Set([...m].filter(k => k !== key))));
+        setMissingImages(m => {
+          if ((m.get(key) ?? null) === problem) {
+            return m;
+          }
+          const next = new Map(m);
+          if (problem == null) {
+            next.delete(key);
+          } else {
+            next.set(key, problem);
+          }
+          return next;
+        });
       }
     },
     [bridge],
@@ -2157,7 +2175,7 @@ export default function useStudioSession(video: VideoItem) {
     duplicateClip,
     reorderClip,
     pickEffectImage,
-    /** Picture keys the clips use that this browser has no copy of (drawn as the clip's colour). */
+    /** Picture keys the clips use that this browser has no copy of, or cannot decode, and which (drawn as the clip's colour). */
     missingImages,
     /** What the last split, duplicate or reorder did (or why it did nothing), for a live region; cleared after a few seconds. */
     clipNote,
