@@ -18,7 +18,9 @@
 // decoded frame of the video; draws do not overlap, and a draw asked for
 // while one runs happens after it. Its two WebGL contexts are created only
 // for a GL effect in its slots (studio's are 2D), since a worker gets just
-// four live contexts.
+// four live contexts. Before a draw, the earlier frames its effects draw from
+// (historyFrames) are fetched with their masks and passed as the frame's
+// history, then closed when the draw ends.
 import type {ImageFrame} from '@/common/codecs/VideoDecoder';
 import {BASE_URL} from '~/config';
 import {FrameStore} from '~/worker/frameStore';
@@ -27,7 +29,9 @@ import {
   Effect,
   EffectActionPoint,
   EffectFrameContext,
+  EffectMask,
   EffectOptions,
+  HistoryFrame,
 } from '@/common/components/video/effects/Effect';
 import AllEffects, {
   EffectIndex,
@@ -117,6 +121,8 @@ export default class VideoWorkerContext {
 
   private _effects: Effect[];
   private _tracklets: Tracklet[] = [];
+  /** sam-ui: the earlier frames a draw of `frameIndex` on `form` needs (studio's worker: its effect clips'); none by default. */
+  public historyFrames: (form: CanvasForm, frameIndex: number) => number[] = () => [];
 
   public get width(): number {
     return this._decodedVideo?.width ?? 0;
@@ -632,6 +638,7 @@ export default class VideoWorkerContext {
       this._stats.memory?.begin();
     }
 
+    const history = new Map<number, HistoryFrame>();
     try {
       const bitmap = await store.frame(frameIndex);
 
@@ -670,6 +677,28 @@ export default class VideoWorkerContext {
 
       this._stats.maskBmp?.end();
 
+      // sam-ui: earlier frames the effects draw from, nearest first (a miss decodes a run backwards from it), each with every layer's mask then
+      const all = this._tracklets;
+      for (const i of this.historyFrames(form, frameIndex)) {
+        if (i >= 0 && i < this._decodedVideo.numFrames && i !== frameIndex && !history.has(i)) {
+          const past = await store.frame(i);
+          let image: ImageBitmap;
+          try {
+            image = await createImageBitmap(past);
+          } finally {
+            past.close();
+          }
+          const masks = new Map<number, EffectMask>();
+          for (const t of all) {
+            const m = t.masks[i];
+            if (m != null) {
+              masks.set(t.id, {bounds: m.bounds, bitmap: m.data as RLEObject});
+            }
+          }
+          history.set(i, {frame: image, masks});
+        }
+      }
+
       form.ctx.fillStyle = 'rgba(0, 0, 0, 0)';
       form.ctx.fillRect(0, 0, this.width, this.height);
 
@@ -682,6 +711,7 @@ export default class VideoWorkerContext {
         fps: this._decodedVideo.fps,
         width: frameBitmap.width,
         height: frameBitmap.height,
+        history,
         actionPoint: null,
       };
 
@@ -727,6 +757,8 @@ export default class VideoWorkerContext {
     } catch {
       this._sendRenderingError(new DrawFrameError('Failed to draw frame'));
       return false;
+    } finally {
+      history.forEach(h => h.frame.close());
     }
   }
 

@@ -376,6 +376,9 @@ function ClipSettings({clip, session, layerColor, title}: {clip: EffectClip; ses
             : 'Covers the whole frame: a layer drawn on top stays clear only where tracking found it.'}
         </p>
       )}
+      {clip.effect === 'Echo' && (
+        <p className="effect-note">Copies come from earlier frames of this clip, so its first frames have fewer. A frame where tracking missed the layer leaves its copy out.</p>
+      )}
       {spec != null && (
         <button className="button subtle compact" disabled={atStyle} onClick={() => session.updateClip(clip.id, {params: styled})}>
           <Reset size={14} /> Reset to {style !== '' ? `${style} defaults` : 'defaults'}

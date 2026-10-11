@@ -15,6 +15,7 @@
  */
 import BackgroundTextEffect from './BackgroundTextEffect';
 import DesaturateEffect from './DesaturateEffect';
+import EchoEffect from './EchoEffect';
 import {Effect} from './Effect';
 import EraseBackgroundEffect from './EraseBackgroundEffect';
 import OriginalEffect from './OriginalEffect';
@@ -66,6 +67,7 @@ export type Effects = {
   BlurMask: Effect;
   Glitter: Effect;
   Sticker: Effect;
+  Echo: Effect;
 
   /* More Effects */
   NoisyMask: Effect;
@@ -102,6 +104,7 @@ export function createEffects(): Effects {
     BlurMask: new BlurGLEffect(true),
     Glitter: new GlitterEffect(),
     Sticker: new StickerEffect(),
+    Echo: new EchoEffect(),
 
     /* More Effects */
     NoisyMask: new NoisyMaskEffect(),

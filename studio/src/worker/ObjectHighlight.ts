@@ -26,7 +26,11 @@
 // the first Spotlight pass, outside every Spotlight circle on the frame at
 // the strongest darken among them, so Spotlights never dim each other's
 // circles or darken the outside twice. Pictures the clips use (`images`, sent by the page) reach every
-// effect with the frame.
+// effect with the frame. An effect that draws from earlier frames (Echo)
+// names them (Effect.historyFrames); before the draw, the worker fetches the
+// frames historyFor here lists for every clip on the frame (nearest first,
+// at most HISTORY_CAP) with their masks, and each clip gets just the ones it
+// named.
 //
 // Browsers cap live WebGL contexts (Chrome: 16 per page but 4 per worker,
 // measured; past that the oldest is lost and draws nothing), so an effect's
@@ -69,10 +73,12 @@ export type DrawState = {doc: EffectDoc; drawOrder: number[]; untouched: Untouch
 
 /** setup: its effect.setup, which an export waits for even when a draw started it (Title waits there for its font). */
 type Ready = {effect: Effect; gl: WebGL2RenderingContext | null; setup?: Promise<void>};
-type Pass = {effect: string; params: EffectParams; time?: number; duration?: number; seed?: number; key: string; idx: number[]};
+type Pass = {effect: string; params: EffectParams; time?: number; duration?: number; seed?: number; history?: number[]; key: string; idx: number[]};
 
 const META_MASK_SLOTS = 3;
 const SPOTLIGHT = 'Scope';
+/** Earlier frames fetched for one draw at most (decoded and held until it ends): two Echo clips' six each. */
+export const HISTORY_CAP = 12;
 /** The Overlay and Original's first styles: an untouched object's look. */
 const TINT = normalizeParams(OVERLAY, {});
 const UNCHANGED = normalizeParams(ORIGINAL, {});
@@ -223,6 +229,23 @@ export default class ObjectHighlight extends AbstractEffect {
     }
   }
 
+  /**
+   * The earlier frames the clips drawing `form` on `frame` draw from
+   * (Effect.historyFrames), nearest first, at most HISTORY_CAP: the worker
+   * fetches them before the draw. A layer the preview hides asks for none.
+   */
+  historyFor(form: CanvasForm, frame: number): number[] {
+    const state = this._forms.get(form) ?? this._preview;
+    const wanted = new Set<number>();
+    for (const c of activeClips(state.doc, frame)) {
+      if (!(state.untouched == null && c.target.kind === 'object' && this.hidden(c.target.id))) {
+        this._meta[c.effect as keyof Effects]?.historyFrames?.(c, frame).forEach(i => wanted.add(i));
+      }
+    }
+    // ponytail: past the cap the farthest frames are dropped (three or more Echo layers with different spacing); a larger cap if that bites
+    return [...wanted].sort((a, b) => b - a).slice(0, HISTORY_CAP);
+  }
+
   apply(form: CanvasForm, context: EffectFrameContext, tracklets: Tracklet[]): void {
     const state = this._forms.get(form) ?? this._preview;
     const preview = state.untouched == null;
@@ -245,8 +268,10 @@ export default class ObjectHighlight extends AbstractEffect {
       const duration = t == null ? undefined : (clip!.end - clip!.start + clip!.phase) / fps;
       // a seeded effect's randomness is its clip's: its own pass
       const seed = clip != null && EFFECT_SPECS[effect]?.seeded ? clipSeed(clip.seed ?? clip.id) : undefined;
+      // the earlier frames it draws from: only clips naming the same ones share a pass
+      const history = clip == null ? undefined : this._meta[effect as keyof Effects]?.historyFrames?.(clip, frame);
       // darken is drawn once a frame (dim), not by the pass: clips differing only in it share a pass
-      const key = `${effect}\u0000${canonical(effect === SPOTLIGHT ? {...params, darken: 0} : params)}\u0000${t ?? ''}\u0000${duration ?? ''}\u0000${seed ?? ''}`;
+      const key = `${effect}\u0000${canonical(effect === SPOTLIGHT ? {...params, darken: 0} : params)}\u0000${t ?? ''}\u0000${duration ?? ''}\u0000${seed ?? ''}\u0000${history ?? ''}`;
       const last = passes[passes.length - 1];
       if (
         i != null &&
@@ -257,7 +282,7 @@ export default class ObjectHighlight extends AbstractEffect {
       ) {
         last.idx.push(i);
       } else {
-        passes.push({effect, params, time: t, duration, seed, key, idx: i == null ? subjects : [i]});
+        passes.push({effect, params, time: t, duration, seed, history, key, idx: i == null ? subjects : [i]});
       }
     };
 
@@ -310,6 +335,8 @@ export default class ObjectHighlight extends AbstractEffect {
         duration: p.duration,
         seed: p.seed,
         images: this.images,
+        subjects: EFFECT_SPECS[p.effect]?.subjects ? shown.map(i => context.masks[i]) : undefined,
+        history: p.history == null ? undefined : new Map(p.history.flatMap(i => (context.history?.has(i) ? [[i, context.history.get(i)!] as const] : []))),
       };
       const objects = p.idx.map(i => tracklets[i]);
       if (p.effect === OVERLAY) {
