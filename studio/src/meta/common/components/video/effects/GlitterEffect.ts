@@ -12,7 +12,9 @@
 // the mask's box), drift, size, twinkle phase and colour come from a hash, so
 // a frame looks the same however it is reached (seek, replay, export).
 // Particles spawned before the clip's start are not drawn, so a clip starts
-// clean and fills in over a life.
+// clean and fills in over a life. A frame draws the first N particles alive
+// by index, N in proportion to the mask's area on that frame (particleCount),
+// so a person and a ball look equally dense at one density.
 //
 // The spawn point is sampled from the CURRENT frame's mask, relative to its
 // box: the line (column or row) at u of the box, the point at v along that
@@ -45,6 +47,17 @@ const SPRITE = 64;
 const MAX_SPRITES = 64;
 /** Per-particle hashes, one block of this many per emitted particle. */
 const DRAWS = 16;
+/** Density is the particles on a subject covering this share of the frame; a subject's count goes with its mask's area, within these. */
+const REF_AREA = 0.1;
+const MIN_PARTICLES = 4;
+const MAX_PARTICLES = 800;
+/** Slots looked at per particle drawn: about 0.8 of slots have one alive once the clip has run a life. */
+const SLOTS_PER_PARTICLE = 1.5;
+
+/** How many particles a mask of `maskArea` pixels gets in a frame of `frameArea` at `density`: in proportion to its area, so subjects look equally dense. */
+export function particleCount(density: number, maskArea: number, frameArea: number): number {
+  return Math.min(MAX_PARTICLES, Math.max(MIN_PARTICLES, Math.round((density * maskArea) / frameArea / REF_AREA)));
+}
 
 function mix(h: number): number {
   h ^= h >>> 16;
@@ -116,18 +129,20 @@ export function particleAt(out: Particle, seed: number, slot: number, t: number,
 /** A mask's pixel counts per column and row of its box: inside, and on its edge along that line. */
 export type MaskLines = {colIn: Int32Array; colEdge: Int32Array; rowIn: Int32Array; rowEdge: Int32Array};
 
-/** Fill `l` for mask `m` (column-major, `h` rows, non-zero inside) in its box [x0, y0, x1, y1]. */
-export function maskLines(m: Uint8Array, h: number, box: Int32Array, l: MaskLines): void {
+/** Fill `l` for mask `m` (column-major, `h` rows, non-zero inside) in its box [x0, y0, x1, y1]; its area in pixels. */
+export function maskLines(m: Uint8Array, h: number, box: Int32Array, l: MaskLines): number {
   const [x0, y0, x1, y1] = box;
   l.colIn.fill(0);
   l.colEdge.fill(0);
   l.rowIn.fill(0);
   l.rowEdge.fill(0);
+  let area = 0;
   for (let x = x0; x < x1; x++) {
     for (let y = y0, i = x * h + y0; y < y1; y++, i++) {
       if (m[i] === 0) {
         continue;
       }
+      area++;
       l.colIn[x]++;
       l.rowIn[y]++;
       if (y === y0 || y === y1 - 1 || m[i - 1] === 0 || m[i + 1] === 0) {
@@ -138,6 +153,7 @@ export function maskLines(m: Uint8Array, h: number, box: Int32Array, l: MaskLine
       }
     }
   }
+  return area;
 }
 
 /** The position along line `line` (a column, or a row) of its k-th mask (or edge) pixel between lo and hi. */
@@ -242,10 +258,10 @@ export default class GlitterEffect extends AbstractEffect {
     const style = LOOKS[String(p.style)] != null ? String(p.style) : 'Glitter';
     const look = LOOKS[style];
     const t = effectTime(context) * numberParam('Glitter', 'speed', p);
-    const count = Math.round(numberParam('Glitter', 'density', p));
+    const density = numberParam('Glitter', 'density', p);
     const size = numberParam('Glitter', 'size', p) * h;
     const spread = numberParam('Glitter', 'spread', p) * h;
-    const area = String(p.area);
+    const where = String(p.area);
     const multi = p.colours === 'Multicolour';
     if (this._mask.length !== w * h) {
       this._mask = new Uint8Array(w * h);
@@ -269,16 +285,23 @@ export default class GlitterEffect extends AbstractEffect {
       }
       this._one[0] = mask;
       unionMasks(this._one, this._mask);
-      maskLines(this._mask, h, box, this._lines);
+      const area = maskLines(this._mask, h, box, this._lines);
+      if (area === 0) {
+        continue;
+      }
+      // the first `count` particles alive, by index: the same ones however the frame is reached
+      const count = particleCount(density, area, w * h);
+      const slots = Math.ceil(count * SLOTS_PER_PARTICLE);
       const cx = (box[0] + box[2]) / 2;
       const cy = (box[1] + box[3]) / 2;
       const seed = ((context.seed ?? 0) + Math.imul(k, 0x9e3779b9)) >>> 0;
       const colour = p.color === 'layer' ? (context.maskColors[k] ?? '#ffffff') : String(p.color);
-      for (let i = 0; i < count; i++) {
+      for (let i = 0, alive = 0; i < slots && alive < count; i++) {
         if (!particleAt(q, seed, i, t, look.life)) {
           continue;
         }
-        const edge = area === 'Edge' || (area === 'Both' && q.kind < 0.5);
+        alive++;
+        const edge = where === 'Edge' || (where === 'Both' && q.kind < 0.5);
         if (!spawnPoint(at, this._mask, h, box, this._lines, q.u, q.v, edge, q.pick * (bw + bh) < bh)) {
           continue;
         }

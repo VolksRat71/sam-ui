@@ -155,7 +155,7 @@ export const EFFECT_SPECS: Record<string, EffectSpec> = {
   // sparkles emitted from the layer's mask, drifting out and twinkling (GlitterEffect.ts)
   Glitter: {
     params: {
-      // particles per layer: about this many are alive at once, a life after the clip starts
+      // particles alive at once on a subject covering a tenth of the frame (a life after the clip starts); a subject gets them in proportion to its mask's area (4-800)
       density: {kind: 'number', min: 10, max: 400, step: 10, default: 120, label: 'Density'},
       size: {kind: 'number', min: 0.004, max: 0.06, step: 0.001, default: 0.014, label: 'Size', percentOfHeight: true},
       colours: {kind: 'choice', options: ['One colour', 'Multicolour'], default: 'One colour', label: 'Colours'},

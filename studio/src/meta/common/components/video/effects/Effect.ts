@@ -63,7 +63,7 @@ export type EffectFrameContext = {
   duration?: number;
   /** Pictures the clips use, by their key (state/effectImages.ts); missing ones are not in this browser (sam-ui). */
   images?: ReadonlyMap<string, ImageBitmap>;
-  /** Its clip's id as a number (clipSeed), set for effects whose randomness is the clip's own (EffectSpec.seeded) (sam-ui). */
+  /** Its clip's seed (clip.seed, else its id) as a number (clipSeed), set for effects whose randomness is the clip's own (EffectSpec.seeded) (sam-ui). */
   seed?: number;
   actionPoint: EffectActionPoint | null;
 };

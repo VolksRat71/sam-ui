@@ -13,7 +13,7 @@ import {AbstractEffect, clipSeed, type EffectFrameContext, type EffectInit, type
 import AllEffects, {type Effects} from '@/common/components/video/effects/Effects';
 import type {Tracklet} from '@/common/tracker/Tracker';
 import type {CanvasForm} from 'pts';
-import {type EffectClip, type EffectDoc, normalizeParams} from '~/state/effectClips';
+import {type EffectClip, type EffectDoc, normalizeParams, splitClip} from '~/state/effectClips';
 import type MaskOverlayEffect from './MaskOverlayEffect';
 import ObjectHighlight from './ObjectHighlight';
 
@@ -137,6 +137,14 @@ describe('ObjectHighlight', () => {
       ['Glitter', [2], clipSeed(glitter[1].id)],
       ['PixelateMask', [3, 4], undefined],
     ]);
+  });
+
+  it("a split Glitter clip's right part draws with the unsplit clip's seed", async () => {
+    const {h, log} = setup();
+    const whole = clip(1, 'Glitter', {}, {start: 0, end: 100});
+    await h.setDoc(splitClip(doc(whole), whole.id, 50, 'right'), [1]);
+    h.apply(preview, ...frame([1], 70));
+    expect(log.map(p => p.seed)).toEqual([clipSeed(whole.id)]);
   });
 
   it('draws background clips, then objects bottom layer first, each by row; passes keep that order', async () => {

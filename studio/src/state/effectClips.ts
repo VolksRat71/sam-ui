@@ -28,6 +28,8 @@ export type EffectClip = {
   row: number;
   /** Frames of the clip's animation already elapsed at `start`. */
   phase: number;
+  /** A seeded effect's randomness (EffectSpec.seeded) when not its id: a split's right part keeps the left's. */
+  seed?: string;
 };
 export type EffectDoc = {version: 2; clips: EffectClip[]};
 
@@ -275,7 +277,7 @@ export function splitClip(doc: EffectDoc, id: string, frame: number, newId = new
     return doc;
   }
   // the new part goes last, where a redo (editJournal.applyEntry) puts it back
-  const right = {...c, id: newId, start: f, phase: c.phase + (f - c.start)};
+  const right = {...c, id: newId, start: f, phase: c.phase + (f - c.start), seed: c.seed ?? c.id};
   return {...doc, clips: [...doc.clips.map(x => (x === c ? {...c, end: f} : x)), right]};
 }
 
@@ -290,10 +292,13 @@ export function duplicateClip(doc: EffectDoc, id: string, newId: string, numFram
   if (c == null) {
     return doc;
   }
-  const after = {...c, id: newId, start: c.end, end: 2 * c.end - c.start, phase: 0};
+  // its own seed (its id), so seeded effects start afresh too
+  const fresh = {...c};
+  delete fresh.seed;
+  const after = {...fresh, id: newId, start: c.end, end: 2 * c.end - c.start, phase: 0};
   const fits =
     after.end <= numFrames && !clipsOf(doc, c.target).some(o => o.row === c.row && o.start < after.end && after.start < o.end);
-  return fits ? {...doc, clips: [...doc.clips, after]} : addClip(doc, {...c, id: newId, phase: 0});
+  return fits ? {...doc, clips: [...doc.clips, after]} : addClip(doc, {...fresh, id: newId, phase: 0});
 }
 
 /** A target's clips in draw order. */
@@ -432,6 +437,9 @@ function parseTarget(raw: unknown): EffectTarget | null {
   return t?.kind === 'object' && Number.isInteger(t.id) ? {kind: 'object', id: t.id as number} : null;
 }
 
+/** A stored seed: a short id-like string (a clip id), anything else dropped. */
+const SEED = /^[\w-]{1,64}$/;
+
 /** Read a stored v2 doc, dropping malformed clips and validating every clip's settings (it comes from localStorage). */
 export function parseEffectDoc(raw: unknown): EffectDoc {
   const list = (raw as {version?: unknown; clips?: unknown} | null)?.clips;
@@ -442,7 +450,7 @@ export function parseEffectDoc(raw: unknown): EffectDoc {
   const clips: EffectClip[] = [];
   for (const r of list as Array<Record<string, unknown> | null>) {
     const target = parseTarget(r?.target);
-    const {id, effect, start, end, row, phase} = r ?? {};
+    const {id, effect, start, end, row, phase, seed} = r ?? {};
     if (
       target == null ||
       typeof id !== 'string' ||
@@ -467,6 +475,7 @@ export function parseEffectDoc(raw: unknown): EffectDoc {
       end: end as number,
       row: Number.isInteger(row) ? (row as number) : 0,
       phase: typeof phase === 'number' && Number.isFinite(phase) ? phase : 0,
+      ...(typeof seed === 'string' && SEED.test(seed) && {seed}),
     });
   }
   return {version: 2, clips};

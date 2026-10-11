@@ -10,7 +10,7 @@ import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {normalizeParams} from '~/state/effectClips';
 import {clipSeed, type EffectFrameContext, type EffectMask, type EffectParams} from './Effect';
 import {EFFECT_SPECS} from './EffectParamSpecs';
-import GlitterEffect, {type MaskLines, type Particle, maskLines, newParticle, particleAt, rand, spawnPoint} from './GlitterEffect';
+import GlitterEffect, {type MaskLines, type Particle, maskLines, newParticle, particleAt, particleCount, rand, spawnPoint} from './GlitterEffect';
 import {unionMasks} from './SubjectsBackgroundGLEffect';
 
 const W = 64;
@@ -105,6 +105,22 @@ describe('particleAt', () => {
       expect(b / a).toBeGreaterThan(1.8);
       expect(b / a).toBeLessThan(2.2);
     }
+  });
+});
+
+describe('particleCount', () => {
+  it('is density on a subject covering a tenth of the frame, in proportion to its area, within 4-800', () => {
+    expect(particleCount(120, 1000, 10000)).toBe(120);
+    expect(particleCount(120, 2000, 10000)).toBe(240);
+    expect(particleCount(120, 250, 10000)).toBe(30);
+    expect(particleCount(120, 1, 10000)).toBe(4);
+    expect(particleCount(400, 10000, 10000)).toBe(800);
+  });
+});
+
+describe('maskLines', () => {
+  it("returns the mask's area", () => {
+    expect(maskLines(prepared(rect(10, 8, 30, 40)).m, H, Int32Array.of(10, 8, 30, 40), prepared(rect(0, 0, 1, 1)).lines)).toBe(640);
   });
 });
 
@@ -230,10 +246,21 @@ describe('GlitterEffect', () => {
     expect(draw({}, {}, [])).toEqual([]);
   });
 
-  it('density sets how many it draws', () => {
-    const n = (density: number) => draw({density}, {time: 5}).length;
-    expect(n(400) / n(100)).toBeGreaterThan(3.2);
-    expect(n(400) / n(100)).toBeLessThan(4.8);
+  it("draws the first N alive by index, N from density and the mask's area", () => {
+    // a 20x32 mask in a 64x48 frame: 0.208 of it, so 2.08x the density
+    for (const density of [50, 100, 200]) {
+      expect(draw({density}, {time: 5}).length).toBe(particleCount(density, 640, W * H));
+    }
+    expect(particleCount(100, 640, W * H)).toBe(208);
+    // more density adds particles after the ones already there
+    const [few, more] = [draw({density: 100}, {time: 5}), draw({density: 200}, {time: 5})];
+    expect(more.slice(0, few.length)).toEqual(few);
+  });
+
+  it('a subject four times the area gets four times the particles: equally dense', () => {
+    const [small, big] = [draw({density: 200}, {time: 5}, [rect(10, 10, 20, 20)]), draw({density: 200}, {time: 5}, [rect(10, 10, 30, 30)])];
+    expect(small.length).toBe(particleCount(200, 100, W * H));
+    expect(big.length).toBe(4 * small.length);
   });
 
   it('spread 0 keeps every particle on the mask; Edge keeps it on the edge', () => {

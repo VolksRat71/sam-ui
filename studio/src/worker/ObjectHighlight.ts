@@ -244,7 +244,7 @@ export default class ObjectHighlight extends AbstractEffect {
       const t = clip == null || effect === OVERLAY ? undefined : clipTime(clip, frame, context.fps);
       const duration = t == null ? undefined : (clip!.end - clip!.start + clip!.phase) / fps;
       // a seeded effect's randomness is its clip's: its own pass
-      const seed = clip != null && EFFECT_SPECS[effect]?.seeded ? clipSeed(clip.id) : undefined;
+      const seed = clip != null && EFFECT_SPECS[effect]?.seeded ? clipSeed(clip.seed ?? clip.id) : undefined;
       // darken is drawn once a frame (dim), not by the pass: clips differing only in it share a pass
       const key = `${effect}\u0000${canonical(effect === SPOTLIGHT ? {...params, darken: 0} : params)}\u0000${t ?? ''}\u0000${duration ?? ''}\u0000${seed ?? ''}`;
       const last = passes[passes.length - 1];
