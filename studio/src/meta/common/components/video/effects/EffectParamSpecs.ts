@@ -19,7 +19,7 @@ export type ParamSpec = (
   | {kind: 'choice'; options: string[]; default: string; label: string}
   // a picture stored in this browser (state/effectImages.ts), by the sha-256 of its bytes; '' for none
   | {kind: 'image'; default: ''; label: string}
-  // typed text, drawn only with canvas fillText: trimmed, no control characters but line breaks (normalizeParams)
+  // typed text, drawn only with canvas fillText: cleaned (normalizeParams, cleanText); maxLength in characters as people see them
   | {kind: 'text'; default: string; label: string; maxLength: number; maxLines: number}
 ) & {onlyWhen?: Record<string, string[]>};
 /**

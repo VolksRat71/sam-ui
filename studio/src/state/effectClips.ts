@@ -68,23 +68,36 @@ export function isImageHash(v: unknown): v is string {
   return typeof v === 'string' && /^[0-9a-f]{64}$/.test(v);
 }
 
+type Segmenter = {segment(s: string): Iterable<{segment: string}>};
+const SEGMENTER = (Intl as unknown as {Segmenter?: new (locale?: string, o?: {granularity: 'grapheme'}) => Segmenter}).Segmenter;
+const graphemer = SEGMENTER == null ? null : new SEGMENTER(undefined, {granularity: 'grapheme'});
+
+/** `s` as the characters people see (graphemes: an emoji family, a flag, an accented letter is one), else code points. */
+export function graphemes(s: string): string[] {
+  return graphemer == null ? Array.from(s) : Array.from(graphemer.segment(s), g => g.segment);
+}
+
 /**
- * Typed text as a text setting keeps it: line breaks as '\n', tabs as spaces,
- * other control characters dropped, trimmed, lines past `maxLines` joined onto
- * the last one, cut to `maxLength` (UTF-16 units, as a textarea's maxlength
- * counts them, never half a surrogate pair). '' when nothing is left.
+ * Typed text as a text setting keeps it: line breaks (and Unicode's line and
+ * paragraph separators) as '\n', tabs as spaces, other control characters and
+ * invisible format characters (bidi overrides, zero-width spaces; not the
+ * zero-width joiner emoji need) dropped, trimmed, lines past `maxLines`
+ * joined onto the last one, cut to `maxLength` characters as people count
+ * them (graphemes). '' when nothing is left.
  */
 export function cleanText(v: unknown, maxLength: number, maxLines: number): string {
   if (typeof v !== 'string') {
     return '';
   }
-  const t = v.replace(/\r\n?/g, '\n').replace(/\t/g, ' ').replace(/[^\P{Cc}\n]/gu, '').trim();
+  const t = v
+    .replace(/\r\n?|[\u2028\u2029]/g, '\n')
+    .replace(/\t/g, ' ')
+    .replace(/[^\P{Cc}\n]|[^\P{Cf}\u200d]/gu, '')
+    .trim();
   const lines = t.split('\n');
-  let s = lines.length <= maxLines ? t : [...lines.slice(0, maxLines - 1), lines.slice(maxLines - 1).join(' ')].join('\n');
-  if (s.length > maxLength) {
-    s = s.slice(0, /[\uD800-\uDBFF]/.test(s[maxLength - 1]) ? maxLength - 1 : maxLength);
-  }
-  return s.trim();
+  const s = lines.length <= maxLines ? t : [...lines.slice(0, maxLines - 1), lines.slice(maxLines - 1).join(' ')].join('\n');
+  const g = graphemes(s);
+  return (g.length > maxLength ? g.slice(0, maxLength).join('') : s).trim();
 }
 
 /**

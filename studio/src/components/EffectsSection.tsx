@@ -29,6 +29,7 @@ import {
   OVERLAY,
   cleanText,
   clipToEdit,
+  graphemes,
   normalizeParams,
   overlapNeighbour,
   sameTarget,
@@ -144,8 +145,9 @@ function NumberField({label, value, min, max, step, onCommit}: {label: string; v
 /**
  * A text setting: kept as typed while focused, sent on (cleaned) whenever it
  * is valid text, so clearing it to retype never snaps back to the default;
- * blur shows the stored value. Lines past the last join it. A plain textarea, so the video's and the
- * timeline's shortcuts leave its keys alone.
+ * blur shows the stored value. Enter on the last line does nothing; a paste
+ * past it joins it. Counted in characters as people see them. A plain
+ * textarea, so the video's and the timeline's shortcuts leave its keys alone.
  */
 function TextField({id, label, value, maxLength, maxLines, onCommit}: {id: string; label: string; value: string; maxLength: number; maxLines: number; onCommit: (v: string) => void}) {
   const [draft, setDraft] = useState<string | null>(null);
@@ -157,14 +159,26 @@ function TextField({id, label, value, maxLength, maxLines, onCommit}: {id: strin
         <textarea
           id={id}
           rows={Math.min(maxLines, Math.max(1, shown.split('\n').length))}
-          maxLength={maxLength}
           aria-describedby={`${id}-count`}
           spellCheck={false}
           value={shown}
+          onKeyDown={e => {
+            // Enter on the last line allowed: nothing (an IME's Enter commits its text, so it passes)
+            if (e.key === 'Enter' && !e.nativeEvent.isComposing && shown.split('\n').length >= maxLines) {
+              e.preventDefault();
+            }
+          }}
           onChange={e => {
-            // a line past the last one (Enter there, or a paste) joins it, as stored text does
-            const lines = e.target.value.split('\n');
-            const v = lines.length <= maxLines ? e.target.value : [...lines.slice(0, maxLines - 1), lines.slice(maxLines - 1).join(' ')].join('\n');
+            // a paste past the last line joins it, and past the length is cut, as stored text is
+            let v = e.target.value;
+            const lines = v.split('\n');
+            if (lines.length > maxLines) {
+              v = [...lines.slice(0, maxLines - 1), lines.slice(maxLines - 1).join(' ')].join('\n');
+            }
+            const g = graphemes(v);
+            if (g.length > maxLength) {
+              v = g.slice(0, maxLength).join('');
+            }
             setDraft(v);
             const clean = cleanText(v, maxLength, maxLines);
             if (clean !== '') {
@@ -174,7 +188,7 @@ function TextField({id, label, value, maxLength, maxLines, onCommit}: {id: strin
           onBlur={() => setDraft(null)}
         />
         <span className="fx-count" id={`${id}-count`}>
-          {shown.length}/{maxLength} characters, {maxLines} lines at most
+          {graphemes(shown).length}/{maxLength} characters, {maxLines} lines at most
         </span>
       </div>
     </div>
@@ -462,6 +476,7 @@ export default function EffectsSection({session}: Props) {
       settings:
         selected != null && target != null && sameTarget(selected.target, target) ? (
           <ClipSettings
+            key={selected.id} // a draft in one clip's fields never reaches another's
             clip={selected}
             session={session}
             layerColor={kind === 'object' ? (focusedObject?.color ?? '#ffffff') : '#ffffff'}

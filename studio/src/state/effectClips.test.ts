@@ -15,6 +15,7 @@ import {
   clipTime,
   clipToEdit,
   duplicateClip,
+  graphemes,
   loadEffectDoc,
   migrateV1,
   moveClip,
@@ -131,11 +132,20 @@ describe("Title's text setting (cleanText)", () => {
     expect(clean('a\tb')).toBe('a b');
   });
 
-  it('cuts at 80, never half a surrogate pair', () => {
+  it('drops invisible format characters (bidi overrides, zero-width spaces) but keeps the joiner emoji need; Unicode line separators break lines', () => {
+    expect(clean('a\u202eb\u202dc\u2066d\u2069e\u200bf\ufeffg\u00adh')).toBe('abcdefgh');
+    const family = '\u{1F468}\u200d\u{1F469}\u200d\u{1F467}';
+    expect(clean(`hi ${family}`)).toBe(`hi ${family}`);
+    expect(clean('one\u2028two\u2029three')).toBe('one\ntwo\nthree');
+  });
+
+  it('counts and cuts in characters as people see them (graphemes), never inside one', () => {
+    const family = '\u{1F468}\u200d\u{1F469}\u200d\u{1F467}'; // 8 UTF-16 units, one character
+    const flag = '\u{1F1EF}\u{1F1F5}';
+    expect(graphemes(`a${family}${flag}e\u0301`)).toEqual(['a', family, flag, 'e\u0301']);
     expect(clean('x'.repeat(100))).toBe('x'.repeat(80));
-    const emoji = `${'x'.repeat(79)}\u{1F600}`; // 81 UTF-16 units, the pair straddling 80
-    expect(clean(emoji)).toBe('x'.repeat(79));
-    expect(clean(`${'x'.repeat(78)}\u{1F600}`)).toBe(`${'x'.repeat(78)}\u{1F600}`);
+    expect(clean(family.repeat(85))).toBe(family.repeat(80));
+    expect(clean(`${'x'.repeat(79)}${family}${flag}`)).toBe(`${'x'.repeat(79)}${family}`);
   });
 
   it("is '' for nothing left or not a string, which normalizeParams turns into the default", () => {
