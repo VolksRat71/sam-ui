@@ -9,7 +9,7 @@
 import type {Tracklet} from '@/common/tracker/Tracker';
 import type {CanvasForm} from 'pts';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
-import {normalizeParams} from '~/state/effectClips';
+import {type EffectClip, type EffectDoc, normalizeParams, splitClip, trimClip} from '~/state/effectClips';
 import type {EffectFrameContext, EffectMask, EffectParams, HistoryFrame} from './Effect';
 import EchoEffect, {echoAlpha, echoFrames} from './EchoEffect';
 
@@ -36,6 +36,31 @@ describe('echoFrames', () => {
 
   it('is a pure function of the settings, the clip start and the frame', () => {
     expect(echoFrames(params({count: 5, spacing: 4}), 3, 77)).toEqual(echoFrames(params({count: 5, spacing: 4}), 3, 77));
+  });
+});
+
+describe('historyFrames: from the clip animation start (start - phase)', () => {
+  const echo = new EchoEffect();
+  const clip: EffectClip = {id: 'e', target: {kind: 'object', id: 1}, effect: 'Echo', params: params({count: 4, spacing: 3}), start: 20, end: 100, row: 0, phase: 0};
+  const doc: EffectDoc = {version: 2, clips: [clip]};
+  const frames = (c: EffectClip, from: number, to: number) => Array.from({length: to - from + 1}, (_, k) => echo.historyFrames(c, from + k));
+
+  it('a split at 50: the right part names the same frames on 50-62 as the unsplit clip', () => {
+    const right = splitClip(doc, 'e', 50, 'r').clips.find(c => c.id === 'r')!;
+    expect(right.start).toBe(50);
+    expect(frames(right, 50, 62)).toEqual(frames(clip, 50, 62));
+    expect(frames(right, 50, 50)[0]).toEqual([47, 44, 41, 38]);
+  });
+
+  it('a start trimmed to 50 likewise', () => {
+    const trimmed = trimClip(doc, 'e', 'start', 50, 247).clips[0];
+    expect(frames(trimmed, 50, 62)).toEqual(frames(clip, 50, 62));
+  });
+
+  it('a fresh clip (phase 0) still starts clean; never before frame 0', () => {
+    expect(echo.historyFrames(clip, 20)).toEqual([]);
+    expect(echo.historyFrames(clip, 23)).toEqual([20]);
+    expect(echo.historyFrames({...clip, start: 5, phase: 40}, 12)).toEqual([9, 6, 3, 0]);
   });
 });
 

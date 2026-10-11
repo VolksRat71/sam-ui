@@ -164,8 +164,8 @@ describe('earlier frames for effects that draw from them (historyFrames)', () =>
     vi.unstubAllGlobals();
   });
 
-  /** A context with a fake frame store and two layers (1 on every even frame, 2 on frames below 15), drawing with `effect`. */
-  function worker(effect: Effect, history: (form: CanvasForm, i: number) => number[]) {
+  /** A context with a fake frame store (failing to decode frame `broken`) and two layers (1 on every even frame, 2 on frames below 15), drawing with `effect`. */
+  function worker(effect: Effect, history: (form: CanvasForm, i: number) => number[], broken = -1) {
     const frames: Opened[] = [];
     const bitmaps: Opened[] = [];
     vi.stubGlobal('createImageBitmap', async (f: {index: number}) => {
@@ -175,6 +175,9 @@ describe('earlier frames for effects that draw from them (historyFrames)', () =>
     });
     const store = {
       frame: async (index: number) => {
+        if (index === broken) {
+          throw new Error('decode failed');
+        }
         const f = {index, closed: false, close: () => (f.closed = true)};
         frames.push(f);
         return f;
@@ -235,8 +238,21 @@ describe('earlier frames for effects that draw from them (historyFrames)', () =>
     const {frames, bitmaps, draw} = worker(recorder([], true), (_f, i) => [i - 1, i - 2]);
     expect(await draw(10)).toBe(false);
     expect(frames.map(f => f.index)).toEqual([10, 9, 8]);
-    // the history's (the current frame's bitmap is left to the collector on a failed draw, as before)
-    expect(frames.every(f => f.closed) && bitmaps.filter(b => b.index !== 10).every(b => b.closed)).toBe(true);
+    // the history's and the current frame's bitmap
+    expect(frames.every(f => f.closed) && bitmaps.every(b => b.closed)).toBe(true);
+  });
+
+  it('leaves out a history frame that fails to decode and still draws (and an export goes on)', async () => {
+    const seen: unknown[] = [];
+    const {frames, bitmaps, draw} = worker(recorder(seen), (_f, i) => [i - 2, i - 4, i - 6], 14);
+    expect(await draw(18)).toBe(true);
+    expect(seen).toEqual([
+      [
+        [16, 16, {1: 'm16'}],
+        [12, 12, {1: 'm12', 2: 'm112'}],
+      ],
+    ]);
+    expect(frames.every(f => f.closed) && bitmaps.every(b => b.closed)).toBe(true);
   });
 
   it('gives a frame the same history however it is reached (after a far frame, or again)', async () => {

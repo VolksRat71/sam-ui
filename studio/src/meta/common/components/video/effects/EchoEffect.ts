@@ -8,7 +8,8 @@
 // there before) is put back over the copies, as the Title does, so the
 // layer's own subject and the others all stay in front of its copies. Echo
 // fades each copy more than the one before; Strobe draws them alike. Only
-// frames inside the clip are used, so a clip starts clean, and the earlier
+// frames from the clip's animation start on are used (start - phase: a split
+// or trimmed clip keeps the copies it had), so a fresh clip starts clean, and the earlier
 // frames come from the worker (historyFrames, EffectFrameContext.history),
 // never from what was drawn before: a frame looks the same however it is
 // reached. Canvas 2D only: no WebGL context, so it never counts against the
@@ -22,7 +23,7 @@ import {unionMasks} from './SubjectsBackgroundGLEffect';
 type Scratch = {canvas: OffscreenCanvas; ctx: OffscreenCanvasRenderingContext2D};
 type Ctx2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 
-/** The frames clip `start`'s echoes on `frame` come from, nearest first: f - k * spacing for k = 1..count, none before the clip's start. */
+/** The frames the echoes on `frame` come from, nearest first: f - k * spacing for k = 1..count, none before `start` (the clip's animation start, clip.start - clip.phase). */
 export function echoFrames(params: EffectParams, start: number, frame: number): number[] {
   const count = numberParam('Echo', 'count', params);
   const spacing = numberParam('Echo', 'spacing', params);
@@ -50,8 +51,8 @@ export default class EchoEffect extends AbstractEffect {
     super(1);
   }
 
-  historyFrames(clip: {start: number; params: EffectParams}, frame: number): number[] {
-    return echoFrames(clip.params, clip.start, frame);
+  historyFrames(clip: {start: number; phase: number; params: EffectParams}, frame: number): number[] {
+    return echoFrames(clip.params, Math.max(0, clip.start - clip.phase), frame);
   }
 
   apply(form: CanvasForm, context: EffectFrameContext, tracklets: Tracklet[]): void {

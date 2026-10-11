@@ -113,7 +113,7 @@ export interface Effect {
    * with their masks before the draw (apply is synchronous) and passed as
    * EffectFrameContext.history. A pure function of the clip and the frame.
    */
-  historyFrames?(clip: {start: number; params: EffectParams}, frame: number): number[];
+  historyFrames?(clip: {start: number; phase: number; params: EffectParams}, frame: number): number[];
   setup(init: EffectInit): Promise<void>;
   update(options: EffectOptions): Promise<void>;
   cleanup(): Promise<void>;

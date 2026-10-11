@@ -122,7 +122,7 @@ export default class VideoWorkerContext {
   private _effects: Effect[];
   private _tracklets: Tracklet[] = [];
   /** sam-ui: the earlier frames a draw of `frameIndex` on `form` needs (studio's worker: its effect clips'); none by default. */
-  public historyFrames: (form: CanvasForm, frameIndex: number) => number[] = () => [];
+  public historyFrames: (form: CanvasForm, frameIndex: number, layers: ReadonlySet<number>) => number[] = () => [];
 
   public get width(): number {
     return this._decodedVideo?.width ?? 0;
@@ -639,6 +639,7 @@ export default class VideoWorkerContext {
     }
 
     const history = new Map<number, HistoryFrame>();
+    let frameBitmap: ImageBitmap | null = null;
     try {
       const bitmap = await store.frame(frameIndex);
 
@@ -647,7 +648,7 @@ export default class VideoWorkerContext {
       // Need to convert VideoFrame to ImageBitmap because Safari can only apply
       // globalCompositeOperation on ImageBitmap and fails on VideoFrame. FWIW,
       // Chrome treats VideoFrame similarly to ImageBitmap.
-      const frameBitmap = await createImageBitmap(bitmap);
+      frameBitmap = await createImageBitmap(bitmap);
       bitmap.close();
 
       this._stats.frameBmp?.end();
@@ -677,16 +678,21 @@ export default class VideoWorkerContext {
 
       this._stats.maskBmp?.end();
 
-      // sam-ui: earlier frames the effects draw from, nearest first (a miss decodes a run backwards from it), each with every layer's mask then
+      // sam-ui: earlier frames the effects draw from, nearest first (a miss decodes a run backwards from it), each with every layer's mask then;
+      // one that fails to decode is left out (an effect skips a missing frame), never failing the draw
       const all = this._tracklets;
-      for (const i of this.historyFrames(form, frameIndex)) {
+      for (const i of this.historyFrames(form, frameIndex, new Set(tracklets.map(t => t.id)))) {
         if (i >= 0 && i < this._decodedVideo.numFrames && i !== frameIndex && !history.has(i)) {
-          const past = await store.frame(i);
           let image: ImageBitmap;
           try {
-            image = await createImageBitmap(past);
-          } finally {
-            past.close();
+            const past = await store.frame(i);
+            try {
+              image = await createImageBitmap(past);
+            } finally {
+              past.close();
+            }
+          } catch {
+            continue;
           }
           const masks = new Map<number, EffectMask>();
           for (const t of all) {
@@ -758,6 +764,7 @@ export default class VideoWorkerContext {
       this._sendRenderingError(new DrawFrameError('Failed to draw frame'));
       return false;
     } finally {
+      frameBitmap?.close(); // already closed after a draw; not after a failure
       history.forEach(h => h.frame.close());
     }
   }

@@ -15,7 +15,7 @@ import type {Tracklet} from '@/common/tracker/Tracker';
 import type {CanvasForm} from 'pts';
 import {type EffectClip, type EffectDoc, normalizeParams, splitClip} from '~/state/effectClips';
 import type MaskOverlayEffect from './MaskOverlayEffect';
-import {echoFrames} from '@/common/components/video/effects/EchoEffect';
+import EchoEffect from '@/common/components/video/effects/EchoEffect';
 import ObjectHighlight, {HISTORY_CAP} from './ObjectHighlight';
 
 type Drawn = {effect: string; params: EffectParams; variant: number; ids: number[]; time?: number; duration?: number; seed?: number; active?: number | null; masks?: unknown[]; images?: unknown; history?: number[]; subjects?: unknown[]};
@@ -50,12 +50,12 @@ function setup() {
     ['Outline', 'Cutout', 'PixelateMask', 'BackgroundBlur', 'ReplaceBackground', 'ColorPop', 'Title', 'Desaturate', 'Scope', 'Glitter', 'Echo'].map(n => [n, fakeEffect(n, log)]),
   ) as unknown as Effects;
   // Echo draws from earlier frames, as the real one names them
-  (meta.Echo as unknown as {historyFrames: unknown}).historyFrames = (c: EffectClip, f: number) => echoFrames(c.params, c.start, f);
+  (meta.Echo as unknown as {historyFrames: unknown}).historyFrames = EchoEffect.prototype.historyFrames;
   // Spotlight's once-a-frame darkened outside
   (meta.Scope as unknown as {dim: unknown}).dim = (_f: CanvasForm, _c: EffectFrameContext, circles: {mask: {bitmap: {id: number}}; size: number}[], darken: number) =>
     log.push({effect: 'dim', params: {darken}, variant: 0, ids: circles.map(c => c.mask.bitmap.id), masks: circles.map(c => c.size)});
   const h = new ObjectHighlight(overlay as unknown as MaskOverlayEffect, meta, () => ({width: 8, height: 8}));
-  return {h, log, overlay};
+  return {h, log, overlay, meta};
 }
 
 const preview = {} as CanvasForm;
@@ -369,25 +369,43 @@ describe('ObjectHighlight', () => {
     ]);
   });
 
+  const ALL = new Set([1, 2, 3]);
+
   it('lists the earlier frames the clips on a frame draw from: nearest first, none before a clip starts, at most HISTORY_CAP', async () => {
     const {h} = setup();
     const echo = (id: number, count: number, spacing: number, over: Partial<EffectClip> = {}) => clip(id, 'Echo', {count, spacing}, over);
     await h.setDoc(doc(echo(1, 3, 2), echo(2, 3, 3), clip(3, 'Outline')), [1, 2, 3]);
-    expect(h.historyFor(preview, 20)).toEqual([18, 17, 16, 14, 11]);
-    expect(h.historyFor(preview, 0)).toEqual([]);
+    expect(h.historyFor(preview, 20, ALL)).toEqual([18, 17, 16, 14, 11]);
+    expect(h.historyFor(preview, 0, ALL)).toEqual([]);
     // a clip starting at 18: on frame 20 only 18; off its frames, none
     await h.setDoc(doc(echo(1, 3, 2, {start: 18, end: 30})), [1]);
-    expect(h.historyFor(preview, 20)).toEqual([18]);
-    expect(h.historyFor(preview, 30)).toEqual([]);
+    expect(h.historyFor(preview, 20, ALL)).toEqual([18]);
+    expect(h.historyFor(preview, 30, ALL)).toEqual([]);
     // two Echo layers at six each: all twelve; a third with other frames: the twelve nearest
     await h.setDoc(doc(echo(1, 6, 1), echo(2, 6, 7)), [1, 2]);
     expect(HISTORY_CAP).toBe(12);
-    expect(h.historyFor(preview, 60)).toEqual([59, 58, 57, 56, 55, 54, 53, 46, 39, 32, 25, 18]);
+    expect(h.historyFor(preview, 60, ALL)).toEqual([59, 58, 57, 56, 55, 54, 53, 46, 39, 32, 25, 18]);
     await h.setDoc(doc(echo(1, 6, 1), echo(2, 6, 7), echo(3, 6, 5)), [1, 2, 3]);
-    expect(h.historyFor(preview, 60)).toEqual([59, 58, 57, 56, 55, 54, 53, 50, 46, 45, 40, 39]);
+    expect(h.historyFor(preview, 60, ALL)).toEqual([59, 58, 57, 56, 55, 54, 53, 50, 46, 45, 40, 39]);
     // no effect that draws from earlier frames: none
     await h.setDoc(doc(clip(1, 'Outline'), clip('bg', 'Title')), [1]);
-    expect(h.historyFor(preview, 60)).toEqual([]);
+    expect(h.historyFor(preview, 60, ALL)).toEqual([]);
+  });
+
+  it('asks nothing for a layer with no mask on the frame, or an effect not set up', async () => {
+    const {h} = setup();
+    await h.setDoc(doc(clip(1, 'Echo', {count: 2, spacing: 3}), clip(2, 'Echo', {count: 2, spacing: 4})), [1, 2]);
+    expect(h.historyFor(preview, 20, new Set([2]))).toEqual([16, 12]);
+    expect(h.historyFor(preview, 20, new Set())).toEqual([]);
+    // an effect that failed to set up draws as the stage default: nothing to fetch for it
+    const other = setup();
+    other.meta.Echo.setup = vi.fn(async () => {
+      throw new Error('no setup');
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await other.h.setDoc(doc(clip(1, 'Echo', {count: 2, spacing: 3})), [1]);
+    warn.mockRestore();
+    expect(other.h.historyFor(preview, 20, ALL)).toEqual([]);
   });
 
   it("gives an Echo pass its own masks and every shown layer's in subjects (hidden ones too in an export); other layer effects get no subjects", async () => {
@@ -413,18 +431,18 @@ describe('ObjectHighlight', () => {
     const {h} = setup();
     h.hidden = id => id === 1;
     await h.setDoc(doc(clip(1, 'Echo', {count: 2, spacing: 5})), [1]);
-    expect(h.historyFor(preview, 20)).toEqual([]);
+    expect(h.historyFor(preview, 20, ALL)).toEqual([]);
     const state = {doc: doc(clip(1, 'Echo', {count: 2, spacing: 4})), drawOrder: [1], untouched: 'shown' as const};
     await h.prepare(state);
     h.drawWith(exportForm, state);
-    expect(h.historyFor(exportForm, 20)).toEqual([16, 12]);
-    expect(h.historyFor(preview, 20)).toEqual([]);
+    expect(h.historyFor(exportForm, 20, ALL)).toEqual([16, 12]);
+    expect(h.historyFor(preview, 20, ALL)).toEqual([]);
   });
 
   it('gives each Echo pass just the earlier frames its clip named; clips naming other frames never share a pass', async () => {
     const {h, log} = setup();
-    // 1 and 2: same settings and start, one pass; 3 starts at 16, so on frame 20 it names only 18 and 16
-    const d = doc(...[1, 2].map(id => clip(id, 'Echo', {count: 3, spacing: 2})), clip(3, 'Echo', {count: 3, spacing: 2}, {start: 16, end: 100, phase: 16}));
+    // 1 and 2: same settings and start, one pass; 3 is a fresh clip from 16 (phase 0), so on frame 20 it names only 18 and 16
+    const d = doc(...[1, 2].map(id => clip(id, 'Echo', {count: 3, spacing: 2})), clip(3, 'Echo', {count: 3, spacing: 2}, {start: 16, end: 100, phase: 0}));
     await h.setDoc(d, [1, 2, 3]);
     const [ctx, ts] = frame([1, 2, 3], 20);
     const fetched = new Map([18, 16, 14].map(i => [i, {frame: {} as ImageBitmap, masks: new Map()}]));

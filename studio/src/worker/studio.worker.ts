@@ -52,7 +52,7 @@ AllEffects.Overlay = highlight;
 
 const context = new VideoWorkerContext();
 // the earlier frames the effect clips on a frame draw from (Echo), fetched before each draw, preview and export alike
-context.historyFrames = (form, frameIndex) => highlight.historyFor(form, frameIndex);
+context.historyFrames = (form, frameIndex, layers) => highlight.historyFor(form, frameIndex, layers);
 
 let exporting = false;
 

@@ -232,13 +232,15 @@ export default class ObjectHighlight extends AbstractEffect {
   /**
    * The earlier frames the clips drawing `form` on `frame` draw from
    * (Effect.historyFrames), nearest first, at most HISTORY_CAP: the worker
-   * fetches them before the draw. A layer the preview hides asks for none.
+   * fetches them before the draw. A layer the preview hides, one with no mask
+   * on the frame (`layers`: those with one) and an effect not set up yet ask for none.
    */
-  historyFor(form: CanvasForm, frame: number): number[] {
+  historyFor(form: CanvasForm, frame: number, layers: ReadonlySet<number>): number[] {
     const state = this._forms.get(form) ?? this._preview;
     const wanted = new Set<number>();
     for (const c of activeClips(state.doc, frame)) {
-      if (!(state.untouched == null && c.target.kind === 'object' && this.hidden(c.target.id))) {
+      const layer = c.target.kind === 'object' ? c.target.id : null;
+      if (this._ready.has(c.effect) && (layer == null || (layers.has(layer) && !(state.untouched == null && this.hidden(layer))))) {
         this._meta[c.effect as keyof Effects]?.historyFrames?.(c, frame).forEach(i => wanted.add(i));
       }
     }
