@@ -1,8 +1,11 @@
 # Media files the footage guard lets through: exact repo paths, one per line.
-# Only upstream (Meta) assets belong here, never footage or project data.
+# Upstream assets, explicit test fixtures, and shipping UI artwork only; never user footage or project data.
 studio/src/meta/assets/icons/angery.png
 studio/src/meta/assets/icons/heart.png
 studio/src/meta/assets/icons/whistle.png
 docs/images/studio.jpg
 studio/e2e/fixtures/parity/squares.mp4
 studio/e2e/fixtures/parity/twotone.mp4
+studio/src/assets/lined-script/inspection-person.png
+studio/src/assets/lined-script/inspection-ball.png
+studio/src/assets/lined-script/inspection-tree.png

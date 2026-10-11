@@ -37,3 +37,9 @@ Approved comp: .impeccable/mocks/comp-1.png (the decision render; Codex image_ge
 - Phone and tablet layout follow once desktop is approved.
 - Exact AE key map and what today's clashing keys move to.
 - Figma kit (Astra) rebuild against this brief needs Nate's explicit resume.
+
+## Measuring reference authorization — 2026-10-11
+
+Nate explicitly answered "Yes, measuring-only composite (Recommended)" and "Yes, real footage only (Recommended)" via Claude. `.impeccable/mocks/comp-1-filmstrip-measurement.png` is the separately named measuring reference: comp-1 stays untouched; only comp-2's 112 px filmstrip band (source y608–720, target y572–684) carries. The viewer shortens 112 px; comp-1's slate, timeline, controls and Track clapper stripe retain their geometry. Bottom gate brackets and rule relocate within the shortened viewer. This is a measuring composite, not a new art direction or a generated shipping asset.
+
+The viewer and filmstrip use real runtime decoded footage and actual mattes. Their reference pixels are static comp specimens; the UI must retain its live canvas/decoded-frame behavior and must never ship synthetic footage as a substitute. Source hashes and exact unchanged-pixel verification are in `.impeccable/build/composite-verification.json`.
