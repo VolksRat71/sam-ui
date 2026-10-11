@@ -7,7 +7,7 @@ import type {CanvasForm} from 'pts';
 import {afterEach, describe, expect, it, vi} from 'vitest';
 import {normalizeParams} from '~/state/effectClips';
 import type {EffectFrameContext, EffectMask, EffectParams} from './Effect';
-import TitleEffect, {LINE_HEIGHT, entranceAt, interLoaded, lineOrigins} from './TitleEffect';
+import TitleEffect, {LINE_HEIGHT, MARGIN, clampCentre, entranceAt, fitScale, interLoaded, lineOrigins} from './TitleEffect';
 
 describe('entranceAt', () => {
   it('None is there from the first frame', () => {
@@ -60,6 +60,40 @@ describe('lineOrigins', () => {
   it('aligns lines to the left or right edge of the widest one', () => {
     expect(lineOrigins([100, 300], 'Left', 640, 360, 50).map(o => o[0])).toEqual([490, 490]);
     expect(lineOrigins([100, 300], 'Right', 640, 360, 50).map(o => o[0])).toEqual([790, 790]);
+  });
+});
+
+describe('keeping the title inside the frame', () => {
+  const [W, H] = [1280, 720];
+  const m = MARGIN * H; // 21.6 px
+
+  it('leaves a block that fits as it is', () => {
+    expect(fitScale(600, 1, 86, W, H)).toBe(1);
+    expect(clampCentre(640, 360, 600, 1, 86, W, H)).toEqual([640, 360]);
+  });
+
+  it('shrinks a line wider than the frame less its margins to fit exactly', () => {
+    const s = fitScale(2000, 1, 86, W, H);
+    expect(s).toBeCloseTo((W - 2 * m) / 2000, 10);
+    expect(2000 * s).toBeCloseTo(W - 2 * m, 6);
+  });
+
+  it('shrinks three tall lines to the frame height less its margins', () => {
+    const size = 0.4 * H;
+    const tall = 2 * size * LINE_HEIGHT + size;
+    expect(fitScale(100, 3, size, W, H)).toBeCloseTo((H - 2 * m) / tall, 10);
+  });
+
+  it('moves the centre in from an edge just far enough, on each axis', () => {
+    // a 600 x 86 block at the right and bottom edges
+    expect(clampCentre(1280, 720, 600, 1, 86, W, H)).toEqual([W - m - 300, H - m - 43]);
+    expect(clampCentre(0, 0, 600, 1, 86, W, H)).toEqual([m + 300, m + 43]);
+    // two lines: the block is a line height taller
+    expect(clampCentre(640, 0, 600, 2, 100, W, H)[1]).toBeCloseTo(m + (100 * LINE_HEIGHT + 100) / 2, 10);
+  });
+
+  it('centres a block that fills the frame less its margins', () => {
+    expect(clampCentre(10, 10, W - 2 * m, 1, H - 2 * m, W, H)).toEqual([W / 2, H / 2]);
   });
 });
 
@@ -151,23 +185,36 @@ describe('TitleEffect', () => {
   const of = (calls: Call[], name: string) => calls.filter(c => c[0] === name);
 
   it('draws each line with fillText alone, in Inter at its weight, size (of the frame height) and colour', () => {
-    const {calls} = draw({text: 'One\nTwo', weight: 300, size: 0.25, color: '#ff8800', align: 'Left', x: 0.25, y: 1, placement: 'In front'});
-    expect(of(calls, 'font=')).toEqual([['font=', '300 0.5px Inter, sans-serif']]);
+    // a 400 x 200 frame: the block (30 px wide, 50 px lines) fits; y 1 puts it at the bottom edge, so it moves up inside the margin
+    const {calls} = draw({text: 'One\nTwo', weight: 300, size: 0.25, color: '#ff8800', align: 'Left', x: 0.25, y: 1, placement: 'In front'}, {width: 400, height: 200});
+    expect(of(calls, 'font=')).toEqual([['font=', '300 50px Inter, sans-serif']]);
     expect(of(calls, 'fillStyle=')).toEqual([['fillStyle=', '#ff8800']]);
     expect(of(calls, 'textAlign=')).toEqual([['textAlign=', 'left']]);
-    expect(of(calls, 'translate')).toEqual([['translate', 1, 2]]); // x 0.25 of 4, y 1 of 2
-    const lh = 0.5 * LINE_HEIGHT;
+    const lh = 50 * LINE_HEIGHT;
+    expect(of(calls, 'translate')).toEqual([['translate', 100, 200 - MARGIN * 200 - (lh + 50) / 2]]);
     expect(of(calls, 'fillText')).toEqual([
       ['fillText', 'One', -15, -lh / 2],
       ['fillText', 'Two', -15, lh / 2],
     ]);
   });
 
+  it('draws a line too wide for the frame smaller, measured again, and inside it', () => {
+    // measureText is 10 px a character: 'ABCDEFGHIJ' is 100 px at any size, wider than the 4 px frame
+    const {calls} = draw({text: 'ABCDEFGHIJ', size: 0.25, x: 1, y: 0.5, placement: 'In front'});
+    const fit = (W - 2 * MARGIN * H) / 100;
+    expect(of(calls, 'font=')).toEqual([
+      ['font=', '700 0.5px Inter, sans-serif'],
+      ['font=', `700 ${0.5 * fit}px Inter, sans-serif`],
+    ]);
+    // the recorder's widths ignore the size, so the block stays 100 px wide: centred, it cannot fit
+    expect(of(calls, 'translate')).toEqual([['translate', W / 2, H / 2]]);
+  });
+
   it('enters on the clip clock: nothing at the first frame of a Fade, all of it once the entrance is over', () => {
     expect(of(draw({animation: 'Fade', entrance: 1, placement: 'In front'}, {time: 0}).calls, 'fillText')).toEqual([]);
     expect(of(draw({animation: 'Fade', entrance: 1, placement: 'In front'}, {time: 1}).calls, 'globalAlpha=')).toEqual([['globalAlpha=', 1]]);
-    // Rise starts half a font size (0.12 x 2 px) low
-    expect(of(draw({animation: 'Rise', entrance: 1, placement: 'In front'}, {time: 0.000001}).calls, 'translate')[0][2]).toBeCloseTo(1 + 0.12, 4);
+    // Rise starts half a font size (0.12 x 200 px) low
+    expect(of(draw({animation: 'Rise', entrance: 1, placement: 'In front'}, {time: 0.000001, width: 400, height: 200}).calls, 'translate')[0][2]).toBeCloseTo(100 + 12, 3);
   });
 
   it("Behind subjects cuts the stage below out inside the subjects' union before the text and puts it back over it; In front does not", () => {
