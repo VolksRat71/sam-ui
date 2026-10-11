@@ -330,5 +330,7 @@ body:has(.app > .toast) .agent-toast { bottom: 72px; }
 .fx-choice button { padding: 0 8px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-raised); color: var(--text); font: inherit; font-size: var(--type-label); cursor: pointer; }
 .fx-choice button:hover { border-color: var(--text-muted); }
 .fx-choice button[aria-pressed='true'] { border-color: var(--text); background: #45454a; font-weight: 600; }
+.fx-param > .effect-note { grid-column: 2; margin: 0; color: var(--text-muted); line-height: 1.45; }
+.fx-param input[type='file'] { min-width: 0; color: var(--text); font: inherit; font-size: var(--type-label); }
 .fx-settings > .button { justify-self: start; display: inline-flex; align-items: center; gap: 4px; }
 @media (pointer: coarse) { .fx-choice button, .fx-follow input { min-height: 44px; } }

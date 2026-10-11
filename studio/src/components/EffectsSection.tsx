@@ -21,6 +21,7 @@ import {EFFECT_SPECS, type ParamSpec, paramShown, styleIndex} from '@/common/com
 import {Add, BringForward, ChevronDown, ChevronRight, Copy, Cut, Reset, SendBackward, TrashCan} from '@carbon/icons-react';
 import {useEffect, useState, type ReactNode} from 'react';
 import {readJson, writeJson} from '~/lib/storage';
+import {IMAGE_TYPES} from '~/state/effectImages';
 import {
   BACKGROUND_DEFAULT,
   type EffectClip,
@@ -178,11 +179,42 @@ function ClipSettings({clip, session, layerColor, title}: {clip: EffectClip; ses
           <label className="fx-param-label" htmlFor={id}>{p.label}</label>
           <div className="fx-color">
             <input id={id} type="color" value={hex} disabled={follow} onChange={e => set(key, e.target.value)} />
-            <label className="fx-follow">
-              <input type="checkbox" checked={follow} onChange={e => session.updateClip(clip.id, {params: {...clip.params, [key]: e.target.checked ? 'layer' : layerColor}})} />
-              Follow layer colour
-            </label>
+            {clip.target.kind === 'object' && (
+              <label className="fx-follow">
+                <input type="checkbox" checked={follow} onChange={e => session.updateClip(clip.id, {params: {...clip.params, [key]: e.target.checked ? 'layer' : layerColor}})} />
+                Follow layer colour
+              </label>
+            )}
           </div>
+        </div>
+      );
+    }
+    if (p.kind === 'image') {
+      const picked = String(clip.params[key] ?? '');
+      const missing = picked !== '' && session.missingImages.has(picked);
+      return (
+        <div className="fx-param" key={key}>
+          <label className="fx-param-label" htmlFor={id}>{p.label}</label>
+          <input
+            id={id}
+            type="file"
+            accept={IMAGE_TYPES.join(',')}
+            aria-describedby={`${id}-note`}
+            onChange={e => {
+              const file = e.target.files?.[0];
+              e.target.value = ''; // the same file again is a new pick
+              if (file != null) {
+                void session.pickEffectImage(clip.id, file);
+              }
+            }}
+          />
+          <p className="effect-note" id={`${id}-note`}>
+            {missing
+              ? 'This picture is not stored in this browser (another browser, or cleared site data), so the colour shows instead. Choose it again to use it.'
+              : picked === ''
+                ? 'PNG, JPEG or WebP, scaled down to the video if larger. The colour shows until you choose one.'
+                : 'PNG, JPEG or WebP, kept in this browser. Choose another to replace it.'}
+          </p>
         </div>
       );
     }
