@@ -53,6 +53,11 @@
 //       text field takes typed text (shortcut keys too) with its count, does nothing on Enter at its
 //       third line, keeps the title while emptied; Top moves it; Reset keeps the text; with a Rise over
 //       the clip, the export matches the preview within B7's tolerance
+//   ST  slice 5, the Sticker on A (B on Original): a magenta Label at Centre sits on the middle of A's
+//       mask's bounding box (a green Erase probe on the same frame) at 0.2 of its height, on frames
+//       31 and 101 (A elsewhere), so it follows the box; at Top over A's head near the frame's top on
+//       101 it stays whole inside the frame (3 % margin); with labelled stickers on A and B (smoothed),
+//       the export matches the preview within B7's tolerance
 //   SC  Scribble (boiling Outline) on frame 101: identical after a scrub away and
 //       back and play/pause, redrawn when boil is on (differs from boil 0, which
 //       is itself steady); its export matches the preview within B7's tolerance
@@ -966,6 +971,54 @@ await step('TT', async () => {
   const frames = exportFrames(file, PARITY_FRAMES);
   const rows = PARITY_FRAMES.map((f, i) => ({frame: f + 1, ...stats(shots[i], frames[i])}));
   check('TT', rows.every(r => r.psnr >= tolerance), `export matches the preview (Rise over 3 s, behind the subjects): ${rows.map(r => `f${r.frame} ${r.psnr} dB`).join(', ')} (needs >= ${tolerance} dB)`, rows);
+});
+
+await step('ST', async () => {
+  if (tolerance == null) throw new Error('no B7 tolerance');
+  const isGreen = (img, i) => img.d[3 * i + 1] > 200 && img.d[3 * i] < 90 && img.d[3 * i + 2] < 90;
+  const plainB = clipOn(tB, 'Cutout', {style: 'Unchanged'}, 'pb'); // no Overlay tint on B
+  const found = [];
+  for (const f of [30, F3]) {
+    await putClips([clipOn(tA, 'EraseForeground', {style: 'Green'}, 'ga'), plainB]);
+    await sel(A);
+    await seekTo(f);
+    const probe = pixels(await cap(`ST-0_mask-probe_green-erase_f${f + 1}`));
+    await putClips([clipOn(tA, 'Sticker', {style: 'Label', color: '#ff00ff', outlineWidth: 0, position: 'Centre', size: 0.2, minSize: 0, smooth: 0}, 'st'), plainB]);
+    await sel(A);
+    await seekTo(f);
+    const stuck = pixels(await cap(`ST-1_label-centre_f${f + 1}`));
+    const [m, k] = [inkBox(probe, isGreen), inkBox(stuck, isMagenta)];
+    found.push({frame: f + 1, box: m, sticker: k, centre: [(m[0] + m[2]) / 2, (m[1] + m[3]) / 2], at: [(k[0] + k[2]) / 2, (k[1] + k[3]) / 2], height: k[3] - k[1] + 1, want: 0.2 * (m[3] - m[1] + 1)});
+  }
+  const near = found.every(r => Math.abs(r.at[0] - r.centre[0]) <= 3 && Math.abs(r.at[1] - r.centre[1]) <= 3 && Math.abs(r.height - r.want) <= 4);
+  const moved = Math.hypot(found[0].centre[0] - found[1].centre[0], found[0].centre[1] - found[1].centre[1]);
+  const followed = Math.hypot(found[0].at[0] - found[1].at[0], found[0].at[1] - found[1].at[1]);
+  check('ST', near && moved >= 5 && Math.abs(followed - moved) <= 4, `the sticker sits on the middle of A's box at 0.2 of its height: ${found.map(r => `f${r.frame} at (${r.at}) for (${r.centre}), ${r.height} px tall for ${r.want.toFixed(1)}`).join('; ')}; the box moved ${moved.toFixed(1)} px, the sticker ${followed.toFixed(1)}`, found);
+
+  // Top over A on frame 101, whose head nears the frame's top: above the box it would leave the frame; it comes down to the 3 % margin, whole
+  await putClips([clipOn(tA, 'Sticker', {style: 'Label', color: '#ff00ff', outlineWidth: 0, position: 'Top', size: 0.2, minSize: 0, smooth: 0}, 'st'), plainB]);
+  await sel(A);
+  await seekTo(F3);
+  const topImg = pixels(await cap('ST-1b_label-top_head-near-frame-top_f101'));
+  const t = inkBox(topImg, isMagenta);
+  const f101 = found[1];
+  const margin = 0.03 * topImg.h;
+  check('ST', f101.box[1] - f101.want < margin && t[1] >= margin - 2 && t[3] - t[1] + 1 >= f101.want - 4 && Math.abs((t[0] + t[2]) / 2 - f101.centre[0]) <= 3, `Top over a head ${f101.box[1]} px from the frame's top (the sticker is ${f101.want.toFixed(1)} px tall) stays whole inside the frame: ink y ${t[1]}-${t[3]} (margin ${margin.toFixed(1)}), centred at x ${(t[0] + t[2]) / 2} for ${f101.centre[0]}`, {box: t});
+
+  // export: labelled stickers on both layers, smoothed, at every position
+  await putClips([
+    clipOn(tA, 'Sticker', {style: 'Speech bubble', text: 'Hi!', position: 'Top-right', size: 0.25, smooth: 3}, 's1'),
+    {...clipOn(tA, 'Sticker', {style: 'Label', text: 'SALE', position: 'Centre', size: 0.15, smooth: 6}, 's2'), row: 1},
+    {...clipOn(tA, 'Sticker', {style: 'Crown', position: 'Top-left', size: 0.2}, 's3'), row: 2},
+    clipOn(tB, 'Sticker', {style: 'Price tag', text: '$5', position: 'Top-right', size: 1}, 's4'),
+    {...clipOn(tB, 'Sticker', {style: 'Arrow', position: 'Bottom', size: 1, smooth: 0}, 's5'), row: 1},
+  ]);
+  await sel(A);
+  const shots = await preview('ST-2_stickers');
+  const file = await exportVideo('ST_stickers');
+  const frames = exportFrames(file, PARITY_FRAMES);
+  const rows = PARITY_FRAMES.map((f, i) => ({frame: f + 1, ...stats(shots[i], frames[i])}));
+  check('ST', rows.every(r => r.psnr >= tolerance), `export matches the preview (five stickers, labels, smoothing 0-6): ${rows.map(r => `f${r.frame} ${r.psnr} dB`).join(', ')} (needs >= ${tolerance} dB)`, rows);
 });
 
 await step('SP', async () => {

@@ -145,11 +145,12 @@ function NumberField({label, value, min, max, step, onCommit}: {label: string; v
 /**
  * A text setting: kept as typed while focused, sent on (cleaned) whenever it
  * is valid text, so clearing it to retype never snaps back to the default;
- * blur shows the stored value. Enter on the last line does nothing; a paste
+ * blur shows the stored value. An optional one (default '': a Sticker's
+ * label) is sent on when emptied too. Enter on the last line does nothing; a paste
  * past it joins it. Counted in characters as people see them. A plain
  * textarea, so the video's and the timeline's shortcuts leave its keys alone.
  */
-function TextField({id, label, value, maxLength, maxLines, onCommit}: {id: string; label: string; value: string; maxLength: number; maxLines: number; onCommit: (v: string) => void}) {
+function TextField({id, label, value, maxLength, maxLines, optional, onCommit}: {id: string; label: string; value: string; maxLength: number; maxLines: number; optional?: boolean; onCommit: (v: string) => void}) {
   const [draft, setDraft] = useState<string | null>(null);
   const shown = draft ?? value;
   return (
@@ -181,7 +182,7 @@ function TextField({id, label, value, maxLength, maxLines, onCommit}: {id: strin
             }
             setDraft(v);
             const clean = cleanText(v, maxLength, maxLines);
-            if (clean !== '') {
+            if (clean !== '' || optional) {
               onCommit(clean);
             }
           }}
@@ -250,11 +251,13 @@ function ClipSettings({clip, session, layerColor, title}: {clip: EffectClip; ses
       );
     }
     if (p.kind === 'text') {
-      return <TextField key={key} id={id} label={p.label} value={String(clip.params[key] ?? '')} maxLength={p.maxLength} maxLines={p.maxLines} onCommit={v => set(key, v)} />;
+      return <TextField key={key} id={id} label={p.label} value={String(clip.params[key] ?? '')} maxLength={p.maxLength} maxLines={p.maxLines} optional={p.default === ''} onCommit={v => set(key, v)} />;
     }
     if (p.kind === 'image') {
       const picked = String(clip.params[key] ?? '');
       const problem = picked === '' ? undefined : session.missingImages.get(picked);
+      // without its picture a Sticker draws nothing, Replace background its colour
+      const [instead, until] = clip.effect === 'Sticker' ? ['the sticker is hidden', 'Nothing shows'] : ['the colour shows instead', 'The colour shows'];
       return (
         <div className="fx-param" key={key}>
           <label className="fx-param-label" htmlFor={id}>{p.label}</label>
@@ -273,11 +276,11 @@ function ClipSettings({clip, session, layerColor, title}: {clip: EffectClip; ses
           />
           <p className="effect-note" id={`${id}-note`}>
             {problem === 'unreadable'
-              ? "This picture can't be read, so the colour shows instead. Choose it again, or another one."
+              ? `This picture can't be read, so ${instead}. Choose it again, or another one.`
               : problem === 'missing'
-              ? 'This picture is not stored in this browser (another browser, or cleared site data), so the colour shows instead. Choose it again to use it.'
+              ? `This picture is not stored in this browser (another browser, or cleared site data), so ${instead}. Choose it again to use it.`
               : picked === ''
-                ? 'PNG, JPEG or WebP, up to 50 MB; kept no larger than the video needs. The colour shows until you choose one.'
+                ? `PNG, JPEG or WebP, up to 50 MB; kept no larger than the video needs. ${until} until you choose one.`
                 : 'PNG, JPEG or WebP, kept in this browser. Choose another to replace it.'}
           </p>
         </div>
