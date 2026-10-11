@@ -28,7 +28,10 @@
 //       back and play/pause, redrawn when boil is on (differs from boil 0, which
 //       is itself steady); its export matches the preview within B7's tolerance
 //   OB  the layer Blur draws on A, its settings carry the tracking caveat, and a
-//       larger radius changes it
+//       larger radius changes it; with the background Blur under it, frames 31 and
+//       101 (A in different places) differ as the video does there, and each
+//       matches a fresh worker's drawing (a stale pass texture froze both Blurs on
+//       the first frame they drew)
 //   PH  animated effects run on the clip clock (docs written as split and
 //       duplicate leave them, since those operations live on another branch):
 //       Noisy's split right half [s, b) at phase s - a equals the unsplit clip on
@@ -41,11 +44,12 @@
 //   S2  slice 2: S (timeline focus only) splits a Noisy clip at its middle, every checked frame (the
 //       split frame and its neighbours) pixel-identical; Duplicate puts a copy
 //       after the right part (phase 0 in the doc), drawn like a fresh Noisy clip
-//       there (no effect reads the clip clock yet, so phase shows in no pixel:
-//       the right part carried on is logged as INFO); Alt+Down passes the nearest clip it overlaps
+//       there and unlike the right part carried on (the clip clock restarts);
+//       Alt+Down passes the nearest clip it overlaps
 //       (skipping a non-overlapping Outline), a second press says why it does nothing,
 //       Move up puts it back; the one on top measured as B5 does;
-//       Cmd-Z restores each, Shift-Cmd-Z redoes it
+//       Cmd-Z restores each, Shift-Cmd-Z redoes it, each selecting the clip the
+//       edit selected then (the moved clip, the split's right part, the original)
 //   B8  from the end of tracking to here: no segmentation or tracking call
 //       reached the video worker, no job started, no job chip showed
 //   B4  frames 71-120 of A marked absent (lane actions; B's last frame first, so
@@ -53,7 +57,8 @@
 //       there and comes back on frame 121 as it was
 // Previews are compared as screenshots of the viewer canvas, decoded with
 // ffmpeg (as memory.mjs does). Captures, exports, results.json and Chrome's
-// stderr go to OUT. Any failed check exits non-zero.
+// stderr go to OUT. Any failed check exits non-zero, and so does any
+// GL_INVALID or feedback-loop line in Chrome's stderr over the whole run.
 //
 // GPU: the caller holds the machine's GPU lock (nothing in the repo takes
 // it) until the `setup` line prints: the browser engine runs the model only
@@ -566,6 +571,24 @@ await step('OB', async () => {
   const wide = await cap('OB-2_layer-blur_radius-4pct_f101');
   const d = (await doc()).clips[0];
   check('OB', d.effect === 'BlurMask' && d.params.radius === 0.04 && differs(compare(blurred, wide)), `radius 4 % blurs it more (radius ${d.params.radius})`, compare(blurred, wide));
+  // both Blurs (two passes each) on two frames where A stands in different places
+  await tile(1, 'Blur');
+  const two = {};
+  for (const f of [30, 100]) {
+    await seekTo(f);
+    two[f] = await cap(`OB-3_background-and-layer-blur_f${f + 1}`);
+  }
+  const apart = compare(two[30], two[100]);
+  const video = compare(ref[30], ref[100]);
+  check('OB', differs(apart) && apart.changedPct >= video.changedPct / 4, `background and layer Blur draw frames 31 and 101 apart: ${apart.changedPct} % of pixels differ (the video: ${video.changedPct} %)`, {apart, video});
+  await reload();
+  await sel(A);
+  const fresh = [];
+  for (const f of [100, 30]) {
+    await seekTo(f);
+    fresh.push({frame: f + 1, ...compare(two[f], await cap(`OB-4_fresh-worker_f${f + 1}`))});
+  }
+  check('OB', fresh.every(same), `a fresh worker draws each frame the same: ${fresh.map(x => `f${x.frame} ${x.changedPct} %`).join(', ')}`, fresh);
   await clearClips();
 });
 
@@ -674,7 +697,8 @@ await step('S2', async () => {
   }
   check('S2', JSON.stringify((await doc()).clips) === JSON.stringify(d0.clips) && back.every(identical), 'Cmd-Z puts the whole clip back exactly', back);
   await undo(true);
-  check('S2', JSON.stringify((await doc()).clips) === JSON.stringify(d1.clips), 'Shift-Cmd-Z splits it again');
+  const reLabel = await page.locator('.fx-clip.selected').getAttribute('aria-label');
+  check('S2', JSON.stringify((await doc()).clips) === JSON.stringify(d1.clips) && /frames 97–132/.test(reLabel ?? ''), `Shift-Cmd-Z splits it again, the right part selected as the split left it ("${reLabel}")`);
   parts = d1.clips;
 });
 
@@ -697,7 +721,8 @@ await step('S2', async () => {
   check('S2', differs(compare(plain, dup)), 'the copy draws', compare(plain, dup));
   await undo();
   const undone = await cap('S2-dup-2_undone_f141');
-  check('S2', JSON.stringify((await doc()).clips) === JSON.stringify(d0.clips) && identical(compare(plain, undone)), 'Cmd-Z removes the copy exactly', compare(plain, undone));
+  const afterUndo = await page.locator('.fx-clip.selected').getAttribute('data-clip');
+  check('S2', JSON.stringify((await doc()).clips) === JSON.stringify(d0.clips) && identical(compare(plain, undone)) && afterUndo === r.id, `Cmd-Z removes the copy exactly and selects the original (${afterUndo})`, compare(plain, undone));
   await undo(true);
   const redone = await cap('S2-dup-3_redone_f141');
   check('S2', JSON.stringify((await doc()).clips) === JSON.stringify(d1.clips) && identical(compare(dup, redone)), 'Shift-Cmd-Z puts it back', compare(dup, redone));
@@ -715,10 +740,8 @@ await step('S2', async () => {
   await seekTo(140);
   const carried = await cap('S2-dup-5_right-part-carried-on_f141');
   check('S2', same(compare(dup, fresh)), 'the copy looks like a fresh Noisy clip there (its animation from the start)', compare(dup, fresh));
-  // no effect reads the clip clock yet (Noisy animates on the video frame, frameIndex), so phase 0 cannot show in pixels: logged, not checked
   const vsCarried = compare(dup, carried);
-  console.log(`INFO S2 copy vs the right part carried on to frame 141: ${vsCarried.changedPct} % (0 while effects ignore phase)`);
-  results.S2.push({ok: true, what: 'info: copy vs right part carried on (effects ignore phase)', data: vsCarried});
+  check('S2', !same(vsCarried), `the copy restarts the animation: frame 141 differs from the right part carried on (${vsCarried.changedPct} % of pixels)`, vsCarried);
   await clearClips();
 });
 
@@ -752,9 +775,11 @@ await step('S2', async () => {
   check('S2', JSON.stringify((await doc()).clips) === JSON.stringify(d1.clips) && /not moved: no clip under it/.test(stay) && downOff, `with no overlapping clip below, Alt+Down changes nothing and says so ("${stay}"); Move down is disabled: ${downOff}`);
   await undo();
   const undone = await cap('S2-order-2_undone_f31');
-  check('S2', JSON.stringify((await doc()).clips) === JSON.stringify(d0.clips) && identical(compare(eraseOver, undone)), 'Cmd-Z restores the order exactly', compare(eraseOver, undone));
+  const undoSel = await page.locator('.fx-clip.selected').getAttribute('data-clip');
+  check('S2', JSON.stringify((await doc()).clips) === JSON.stringify(d0.clips) && identical(compare(eraseOver, undone)) && undoSel === erase.id, `Cmd-Z restores the order exactly, Erase still selected (${undoSel})`, compare(eraseOver, undone));
   await undo(true);
-  check('S2', JSON.stringify((await doc()).clips) === JSON.stringify(d1.clips) && identical(compare(gradientOver, await cap('S2-order-3_redone_f31'))), 'Shift-Cmd-Z swaps them again');
+  const redoSel = await page.locator('.fx-clip.selected').getAttribute('data-clip');
+  check('S2', JSON.stringify((await doc()).clips) === JSON.stringify(d1.clips) && identical(compare(gradientOver, await cap('S2-order-3_redone_f31'))) && redoSel === erase.id, `Shift-Cmd-Z swaps them again, Erase still selected (${redoSel})`);
   await page.locator(`.fx-clip[data-clip="${erase.id}"]`).click();
   await fx.getByRole('button', {name: 'Move up', exact: true}).click();
   await page.waitForTimeout(600);
@@ -830,6 +855,8 @@ await step('B4', async () => {
 const real = errors.filter(e => !/NetworkError|access control checks/.test(e));
 check('page', real.length === 0, `no page errors${real.length ? `: ${real.slice(0, 3).join(' | ')}` : ''}`);
 check('B11', contextLosses() === 0, `Chrome stderr has no "Too many active WebGL contexts" over the whole run (${contextLosses()})`);
+const glErrors = stderr.split('\n').filter(l => /GL_INVALID|Feedback loop/.test(l));
+check('GL', glErrors.length === 0, `Chrome stderr has no GL errors over the whole run (${glErrors.length}${glErrors.length ? `: ${glErrors[0].slice(-140)}` : ''})`);
 fs.writeFileSync(path.join(OUT, 'chrome-stderr.log'), stderr);
 fs.writeFileSync(path.join(OUT, 'results.json'), JSON.stringify({failed, results, inferenceCalls: counted}, null, 2));
 await browser.close().catch(() => {});
