@@ -18,7 +18,12 @@
 // masks, so consecutive objects sharing an effect and settings are drawn three
 // at a time; the effects are transparent outside their masks, so the passes
 // composite. Meta's 2D effects (Original, Desaturate, ...) draw straight on
-// the form and get no context.
+// the form and get no context. A background clip gets no masks, except for
+// an effect that keeps the tracked subjects as they are (EffectSpec.subjects:
+// Replace background, Colour pop): it gets every layer's mask on the frame in
+// one pass (it draws their union), less layers a hidden group keeps off the
+// preview. Pictures the clips use (`images`, sent by the page) reach every
+// effect with the frame.
 //
 // Browsers cap live WebGL contexts (Chrome: 16 per page but 4 per worker,
 // measured; past that the oldest is lost and draws nothing), so an effect's
@@ -34,7 +39,7 @@ import type {
 } from '@/common/components/video/effects/Effect';
 import {AbstractEffect} from '@/common/components/video/effects/Effect';
 import BaseGLEffect from '@/common/components/video/effects/BaseGLEffect';
-import {styleIndex} from '@/common/components/video/effects/EffectParamSpecs';
+import {EFFECT_SPECS, styleIndex} from '@/common/components/video/effects/EffectParamSpecs';
 import type {Effects} from '@/common/components/video/effects/Effects';
 import type {Tracklet} from '@/common/tracker/Tracker';
 import {CanvasForm} from 'pts';
@@ -73,6 +78,8 @@ function canonical(params: EffectParams): string {
 export default class ObjectHighlight extends AbstractEffect {
   /** Objects kept off the preview (a hidden group's members; never off an export). */
   public hidden: (objectId: number) => boolean = () => false;
+  /** Pictures the clips use, by key (state/effectImages.ts). */
+  public readonly images = new Map<string, ImageBitmap>();
   private _preview: DrawState = {doc: EMPTY_DOC, drawOrder: [], untouched: null};
   /** Canvases drawn from a state of their own (an export's), not the preview's. */
   private _forms = new WeakMap<CanvasForm, DrawState>();
@@ -213,7 +220,7 @@ export default class ObjectHighlight extends AbstractEffect {
     // one pass per clip, merged with the pass below when it is the same effect
     // and settings (three masks at most for Meta's shaders, any for the Overlay)
     // a clip's clock: its time, and its animation's length (frames trimmed off the start still count, as phase)
-    const add = (effect: string, params: EffectParams, clip: EffectClip | null, i: number | null) => {
+    const add = (effect: string, params: EffectParams, clip: EffectClip | null, i: number | null, subjects: number[] = []) => {
       const fps = context.fps > 0 ? context.fps : 30;
       const t = clip == null || effect === OVERLAY ? undefined : clipTime(clip, frame, context.fps);
       const duration = t == null ? undefined : (clip!.end - clip!.start + clip!.phase) / fps;
@@ -228,14 +235,15 @@ export default class ObjectHighlight extends AbstractEffect {
       ) {
         last.idx.push(i);
       } else {
-        passes.push({effect, params, time: t, duration, key, idx: i == null ? [] : [i]});
+        passes.push({effect, params, time: t, duration, key, idx: i == null ? subjects : [i]});
       }
     };
 
     // background clips by row; an effect this build lacks leaves the plain frame below
+    const shown = tracklets.flatMap((t, i) => (preview && this.hidden(t.id) ? [] : [i]));
     for (const c of active) {
       if (c.target.kind === 'background' && ready(c.effect)) {
-        add(c.effect, c.params, c, null);
+        add(c.effect, c.params, c, null, EFFECT_SPECS[c.effect]?.subjects ? shown : []);
       }
     }
 
@@ -271,6 +279,7 @@ export default class ObjectHighlight extends AbstractEffect {
         maskColors: p.idx.map(i => context.maskColors[i]),
         time: p.time,
         duration: p.duration,
+        images: this.images,
       };
       const objects = p.idx.map(i => tracklets[i]);
       if (p.effect === OVERLAY) {

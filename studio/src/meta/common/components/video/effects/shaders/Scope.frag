@@ -13,6 +13,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Modified by sam-ui: the shape, colour (per mask: the layer's or one chosen),
+// size, ring thickness and a darkened outside come from settings; at size 1,
+// thickness 1 and darken 0 each of Meta's variants draws as before.
+
 precision mediump float;
 
 in vec2 vTexCoord;
@@ -20,9 +24,11 @@ in vec2 vTexCoord;
 uniform sampler2D uSampler;
 uniform vec2 uSize;
 uniform int uNumMasks;
-uniform bool uFillColor;
-uniform bool uLight;
+uniform bool uFillColor; // the ring
 uniform bool uTransparency;
+uniform float uScale; // of the radius
+uniform float uThickness; // of the ring
+uniform float uDarken; // black over everything outside the circles, 0..1
 uniform sampler2D uMaskTexture0;
 uniform sampler2D uMaskTexture1;
 uniform sampler2D uMaskTexture2;
@@ -40,8 +46,8 @@ out vec4 fragColor;
 void main() {
   vec4 color = texture(uSampler, vTexCoord);
   float aspectRatio = uSize.y / uSize.x;
-  float radiusThreshold = 0.8f;
-  float tickness = 0.085f;
+  float radiusThreshold = 0.8f * uScale;
+  float tickness = 0.085f * uThickness;
 
   vec4 mask1 = vec4(0.0f);
   vec4 mask2 = vec4(0.0f);
@@ -52,7 +58,7 @@ void main() {
   vec4 scopedColor = vec4(0.0f);
 
   bool scoped = false;
-  vec4 whiteVariation = uTransparency ? vec4(0.0,0.0,0.0,1.0) : vec4(1.0);
+  bool outside = true;
 
   if(uNumMasks > 0) {
     mask1 = texture(uMaskTexture0, vec2(vTexCoord.y, vTexCoord.x));
@@ -64,15 +70,16 @@ void main() {
     float distX1 = (vTexCoord.x - center1.x) / radiusX1;
     float distY1 = (vTexCoord.y - center1.y) / radiusY1;
     float dist1 = sqrt(pow(distX1, 2.0f) + pow(distY1, 2.0f));
+    outside = outside && dist1 > radiusThreshold;
    
     if(uFillColor) {
       if(dist1 >= radiusThreshold - tickness && dist1 <= radiusThreshold) {
         scoped = true;
-        scopedColor = uLight ? whiteVariation : color1;
+        scopedColor = color1;
       }
     } else if(dist1 <= radiusThreshold) {
       scoped = true;
-      scopedColor = uLight ? whiteVariation : color1;
+      scopedColor = color1;
     }
   }
   if(uNumMasks > 1) {
@@ -85,15 +92,16 @@ void main() {
     float distX2 = (vTexCoord.x - center2.x) / radiusX2;
     float distY2 = (vTexCoord.y - center2.y) / radiusY2;
     float dist2 = sqrt(pow(distX2, 2.0f) + pow(distY2, 2.0f));
+    outside = outside && dist2 > radiusThreshold;
 
     if(uFillColor) {
       if(dist2 >= radiusThreshold - tickness && dist2 <= radiusThreshold) {
         scoped = true;
-        scopedColor = uLight ? whiteVariation : color2;
+        scopedColor = color2;
       }
     } else if(dist2 <= radiusThreshold) {
       scoped = true;
-      scopedColor = uLight ? whiteVariation : color2;
+      scopedColor = color2;
     }
   }
   if(uNumMasks > 2) {
@@ -106,15 +114,16 @@ void main() {
     float distX3 = (vTexCoord.x - center3.x) / radiusX3;
     float distY3 = (vTexCoord.y - center3.y) / radiusY3;
     float dist3 = sqrt(pow(distX3, 2.0f) + pow(distY3, 2.0f));
+    outside = outside && dist3 > radiusThreshold;
 
     if(uFillColor) {
       if(dist3 >= radiusThreshold - tickness && dist3 <= radiusThreshold) {
         scoped = true;
-        scopedColor = uLight ? whiteVariation : color3;
+        scopedColor = color3;
       }
     } else if(dist3 <= radiusThreshold) {
       scoped = true;
-      scopedColor = uLight ? whiteVariation : color3;
+      scopedColor = color3;
     }
   }
 
@@ -124,6 +133,6 @@ void main() {
     fragColor = overlap ? color : scopedColor;
     fragColor.a = uTransparency ? fragColor.a : 1.0;
   } else {
-    fragColor = overlap ? color : vec4(0.0f, 0.0f, 0.0f, 0.0f);
+    fragColor = overlap ? color : vec4(0.0f, 0.0f, 0.0f, outside ? uDarken : 0.0f);
   }
 }

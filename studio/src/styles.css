@@ -1039,9 +1039,8 @@ a {
 }
 .effect-button > span:not(.effect-variant) {
   max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  text-align: center;
+  line-height: 1.2;
 }
 .effect-button:hover:not(:disabled) {
   background: var(--gray-700);

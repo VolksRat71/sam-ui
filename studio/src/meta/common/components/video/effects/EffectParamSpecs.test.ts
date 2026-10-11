@@ -3,7 +3,7 @@ import {describe, expect, it} from 'vitest';
 import {migrateV1, normalizeParams, withStyle} from '~/state/effectClips';
 import {blurSigma, resolveBlurParams} from './BlurGLEffect';
 import type {EffectParams} from './Effect';
-import {EFFECT_SPECS, styleIndex} from './EffectParamSpecs';
+import {EFFECT_SPECS, paramShown, styleIndex} from './EffectParamSpecs';
 import AllEffects from './Effects';
 import {pixelBlock} from './PixelateEffect';
 
@@ -37,15 +37,40 @@ describe('effect param specs', () => {
     }
   });
 
-  it("shows a style-only setting only for styles the effect has", () => {
+  it("shows a conditional setting only for values its condition's choice has", () => {
     for (const [name, spec] of Object.entries(EFFECT_SPECS)) {
-      const style = spec.params.style;
       for (const p of Object.values(spec.params)) {
-        if (p.kind === 'number' && p.onlyStyles != null) {
-          expect(style?.kind === 'choice' && p.onlyStyles.every(s => style.options.includes(s)), name).toBe(true);
+        for (const [key, values] of Object.entries(p.onlyWhen ?? {})) {
+          const on = spec.params[key];
+          expect(on?.kind === 'choice' && values.every(v => on.options.includes(v)), `${name}: ${key}`).toBe(true);
         }
       }
     }
+  });
+});
+
+describe('Replace background and Colour pop', () => {
+  it('are subjects backgrounds (they get the masks); no other effect is (D8)', () => {
+    expect(Object.keys(EFFECT_SPECS).filter(n => EFFECT_SPECS[n].subjects)).toEqual(['ReplaceBackground', 'ColorPop']);
+  });
+
+  it('start from their defaults: a colour fill with no picture, a full grey', () => {
+    expect(normalizeParams('ReplaceBackground', {})).toEqual({color: '#2f6fdf', color2: '#101820', angle: 180, image: '', fit: 'Cover', feather: 0, style: 'Colour'});
+    expect(normalizeParams('ColorPop', {})).toEqual({amount: 1, contrast: 1, style: 'Gray'});
+    expect(withStyle('ColorPop', normalizeParams('ColorPop', {}), 'Muted')).toMatchObject({amount: 0.6, contrast: 1});
+  });
+
+  it('show only the settings their fill (or shape) uses', () => {
+    const shown = (effect: string, params: EffectParams) =>
+      Object.entries(EFFECT_SPECS[effect].params)
+        .filter(([, p]) => paramShown(p, normalizeParams(effect, params)))
+        .map(([k]) => k);
+    expect(shown('ReplaceBackground', {style: 'Colour'})).toEqual(['color', 'feather', 'style']);
+    expect(shown('ReplaceBackground', {style: 'Gradient'})).toEqual(['color', 'color2', 'angle', 'feather', 'style']);
+    expect(shown('ReplaceBackground', {style: 'Image'})).toEqual(['color', 'image', 'fit', 'feather', 'style']);
+    expect(shown('Scope', {style: 'Colour disc'})).not.toContain('thickness');
+    expect(shown('Scope', {style: 'Colour disc', shape: 'Ring'})).toContain('thickness');
+    expect(shown('Outline', {style: 'Scribble'})).toContain('boil');
   });
 });
 

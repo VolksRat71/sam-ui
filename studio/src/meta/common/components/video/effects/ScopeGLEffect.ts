@@ -13,12 +13,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+// Modified by sam-ui: Spotlight's settings (shape, colour, size, ring
+// thickness, darken outside) come from params; its six variants are styles
+// that set them, the 'Soft' ones still drawing the fill half see-through.
 import {hexToRgb} from '@/common/components/video/editor/VideoEditorUtils';
 import BaseGLEffect from '@/common/components/video/effects/BaseGLEffect';
 import {
   EffectFrameContext,
   EffectInit,
 } from '@/common/components/video/effects/Effect';
+import {numberParam} from '@/common/components/video/effects/EffectParamSpecs';
 import vertexShaderSource from '@/common/components/video/effects/shaders/DefaultVert.vert?raw';
 import fragmentShaderSource from '@/common/components/video/effects/shaders/Scope.frag?raw';
 import {Tracklet} from '@/common/tracker/Tracker';
@@ -69,6 +73,15 @@ export default class ScopeGLEffect extends BaseGLEffect {
 
     // dynamic uniforms per frame
     gl.uniform1i(this._numMasksUniformLocation, context.masks.length);
+    const p = this.params;
+    gl.uniform1i(gl.getUniformLocation(program, 'uFillColor'), p.shape === 'Ring' ? 1 : 0);
+    gl.uniform1i(
+      gl.getUniformLocation(program, 'uTransparency'),
+      Math.floor(this.variant / 2) % 3 === 2 ? 1 : 0,
+    );
+    gl.uniform1f(gl.getUniformLocation(program, 'uScale'), numberParam('Scope', 'size', p));
+    gl.uniform1f(gl.getUniformLocation(program, 'uThickness'), numberParam('Scope', 'thickness', p));
+    gl.uniform1f(gl.getUniformLocation(program, 'uDarken'), numberParam('Scope', 'darken', p));
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this._frameTexture);
@@ -101,14 +114,13 @@ export default class ScopeGLEffect extends BaseGLEffect {
         context.height,
       );
 
-      const styleIndex = Math.floor(this.variant / 2) % 2;
-
       // dynamic uniforms per mask
       gl.uniform1i(
         gl.getUniformLocation(program, `uMaskTexture${index}`),
         this._masksTextureUnitStart + index,
       );
-      const color = hexToRgb(context.maskColors[index]);
+      // the layer's colour, or the one chosen (alpha 128 either way: what the Soft styles draw with)
+      const color = hexToRgb(p.color === 'layer' || typeof p.color !== 'string' ? context.maskColors[index] : p.color);
       gl.uniform4f(
         gl.getUniformLocation(program, `uMaskColor${index}`),
         color.r,
@@ -117,18 +129,6 @@ export default class ScopeGLEffect extends BaseGLEffect {
         color.a,
       );
       gl.uniform4fv(gl.getUniformLocation(program, `bbox${index}`), boundaries);
-      gl.uniform1i(
-        gl.getUniformLocation(program, 'uFillColor'),
-        this.variant % 2 === 0 ? 0 : 1,
-      );
-      gl.uniform1i(
-        gl.getUniformLocation(program, 'uLight'),
-        styleIndex === 0 ? 0 : 1,
-      );
-      gl.uniform1i(
-        gl.getUniformLocation(program, 'uTransparency'),
-        Math.floor(this.variant / 2) % 3 === 2 ? 1 : 0,
-      );
 
       gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
       gl.texImage2D(

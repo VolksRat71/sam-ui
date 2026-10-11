@@ -72,6 +72,13 @@ describe('normalizeParams (U1, U2)', () => {
         } else if (p.kind === 'choice') {
           expect(at(p.options[p.options.length - 1])).toBe(p.options[p.options.length - 1]);
           expect(at('not a style')).toBe(p.default);
+        } else if (p.kind === 'image') {
+          const hash = 'ab'.repeat(32);
+          expect(at(hash)).toBe(hash);
+          expect(at('')).toBe('');
+          for (const bad of ['AB'.repeat(32), 'ab'.repeat(31), `${'ab'.repeat(32)}0`, '../../etc/passwd', 'layer']) {
+            expect(at(bad), bad).toBe('');
+          }
         } else {
           expect(at('#ABCDEF')).toBe('#abcdef');
           expect(at('#0f0')).toBe('#00ff00');

@@ -17,7 +17,7 @@ import {
   type DemoEffect,
 } from '@/common/components/effects/EffectsUtils';
 import type {EffectParams} from '@/common/components/video/effects/Effect';
-import {EFFECT_SPECS, type ParamSpec, styleIndex} from '@/common/components/video/effects/EffectParamSpecs';
+import {EFFECT_SPECS, type ParamSpec, paramShown, styleIndex} from '@/common/components/video/effects/EffectParamSpecs';
 import {Add, BringForward, ChevronDown, ChevronRight, Copy, Cut, Reset, SendBackward, TrashCan} from '@carbon/icons-react';
 import {useEffect, useState, type ReactNode} from 'react';
 import {readJson, writeJson} from '~/lib/storage';
@@ -248,7 +248,7 @@ function ClipSettings({clip, session, layerColor, title}: {clip: EffectClip; ses
         <p className="effect-note">This effect comes from a newer build of sam-ui: its settings are kept as they are.</p>
       ) : (
         Object.entries(spec.params)
-          .filter(([, p]) => p.kind !== 'number' || p.onlyStyles == null || p.onlyStyles.includes(style))
+          .filter(([, p]) => paramShown(p, clip.params))
           .map(([key, p]) => control(key, p))
       )}
       {OBSCURING.has(clip.effect) && (

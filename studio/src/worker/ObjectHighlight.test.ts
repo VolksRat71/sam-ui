@@ -17,7 +17,7 @@ import {type EffectClip, type EffectDoc, normalizeParams} from '~/state/effectCl
 import type MaskOverlayEffect from './MaskOverlayEffect';
 import ObjectHighlight from './ObjectHighlight';
 
-type Drawn = {effect: string; params: EffectParams; variant: number; ids: number[]; time?: number; duration?: number; active?: number | null};
+type Drawn = {effect: string; params: EffectParams; variant: number; ids: number[]; time?: number; duration?: number; active?: number | null; masks?: unknown[]; images?: unknown};
 
 function fakeEffect(name: string, log: Drawn[]) {
   return {
@@ -29,7 +29,7 @@ function fakeEffect(name: string, log: Drawn[]) {
     },
     setup: vi.fn(async () => {}),
     apply(_form: CanvasForm, ctx: EffectFrameContext, ts: Tracklet[]) {
-      log.push({effect: name, params: {...this.params}, variant: this.variant, ids: ts.map(t => t.id), time: ctx.time, duration: ctx.duration});
+      log.push({effect: name, params: {...this.params}, variant: this.variant, ids: ts.map(t => t.id), time: ctx.time, duration: ctx.duration, masks: ctx.masks, images: ctx.images});
     },
   };
 }
@@ -45,7 +45,7 @@ function setup() {
     },
   };
   const meta = Object.fromEntries(
-    ['Outline', 'Cutout', 'PixelateMask', 'BackgroundBlur'].map(n => [n, fakeEffect(n, log)]),
+    ['Outline', 'Cutout', 'PixelateMask', 'BackgroundBlur', 'ReplaceBackground', 'ColorPop', 'Desaturate'].map(n => [n, fakeEffect(n, log)]),
   ) as unknown as Effects;
   const h = new ObjectHighlight(overlay as unknown as MaskOverlayEffect, meta, () => ({width: 8, height: 8}));
   return {h, log, overlay};
@@ -180,6 +180,44 @@ describe('ObjectHighlight', () => {
     await h.setDoc(doc(clip(1, 'FutureEffect', {k: 1}), clip('bg', 'FutureBackground')), [1]);
     h.apply(preview, ...frame([1]));
     expect(log.map(p => [p.effect, p.ids, p.variant])).toEqual([['Overlay', [1], 0]]);
+  });
+
+  it("gives a subjects background (Replace background, Colour pop) every shown layer's mask in one pass; others none (D8)", async () => {
+    const {h, log} = setup();
+    // 5 layers: more than Meta's three slots; layer 4 has no mask on this frame (absent), 2 is in a hidden group
+    h.hidden = id => id === 2;
+    const d = doc(clip('bg', 'Desaturate'), clip('bg', 'ReplaceBackground', {}, {row: 1}), clip('bg', 'ColorPop', {}, {row: 2}), clip(1, 'Outline'));
+    await h.setDoc(d, [1, 2, 3, 4, 5, 6]);
+    const [ctx, tracklets] = frame([6, 1, 2, 3, 5]);
+    h.apply(preview, ctx, tracklets);
+    const by = Object.fromEntries(log.map(p => [p.effect, p]));
+    expect(log.map(p => [p.effect, p.ids])).toEqual([['Desaturate', []], ['ReplaceBackground', [6, 1, 3, 5]], ['ColorPop', [6, 1, 3, 5]], ['Outline', [1]], ['Overlay', [3, 5, 6]]]);
+    expect(by.Desaturate.ids).toEqual([]);
+    expect(by.Desaturate.masks).toEqual([]);
+    for (const name of ['ReplaceBackground', 'ColorPop']) {
+      expect(by[name].ids, name).toEqual([6, 1, 3, 5]);
+      expect(by[name].masks, name).toEqual([6, 1, 3, 5].map(id => ctx.masks[tracklets.findIndex(t => t.id === id)]));
+    }
+    // an export draws hidden layers: the union has them too
+    log.length = 0;
+    const state = {doc: d, drawOrder: [1, 2, 3, 4, 5, 6], untouched: 'shown' as const};
+    await h.prepare(state);
+    h.drawWith(exportForm, state);
+    h.apply(exportForm, ...frame([6, 1, 2, 3, 5]));
+    expect(log.find(p => p.effect === 'ReplaceBackground')?.ids).toEqual([6, 1, 2, 3, 5]);
+    // a frame with no layer on it: an empty union, the whole frame replaced
+    log.length = 0;
+    h.apply(preview, ...frame([]));
+    expect(log.find(p => p.effect === 'ReplaceBackground')?.ids).toEqual([]);
+  });
+
+  it('hands every effect the pictures the page sent', async () => {
+    const {h, log} = setup();
+    const pic = {width: 2, height: 2} as ImageBitmap;
+    h.images.set('ab'.repeat(32), pic);
+    await h.setDoc(doc(clip('bg', 'ReplaceBackground', {style: 'Image', image: 'ab'.repeat(32)}), clip(1, 'Outline')), [1]);
+    h.apply(preview, ...frame([1]));
+    expect(log.filter(p => p.effect !== 'Overlay').map(p => (p.images as Map<string, ImageBitmap>)?.get('ab'.repeat(32)))).toEqual([pic, pic]);
   });
 
   it('hides hidden objects in the preview only', async () => {

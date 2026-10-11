@@ -63,9 +63,14 @@ function parseColor(v: unknown): string | null {
   return /^#[0-9a-f]{3}$/.test(s) ? `#${[...s.slice(1)].map(c => c + c).join('')}` : null;
 }
 
+/** A stored picture's key (state/effectImages.ts): the hex sha-256 of its bytes. */
+export function isImageHash(v: unknown): v is string {
+  return typeof v === 'string' && /^[0-9a-f]{64}$/.test(v);
+}
+
 /**
  * Settings fit for `effect`: unknown keys dropped, numbers clamped and rounded
- * to their step, colours parsed ('layer' allowed), anything missing or
+ * to their step, colours parsed ('layer' allowed), image keys checked, anything missing or
  * malformed set to its default. An effect this build does not know keeps its
  * plain values as they are, for a newer build to read.
  */
@@ -93,11 +98,18 @@ export function normalizeParams(effect: string, raw: unknown): EffectParams {
       }
     } else if (p.kind === 'color') {
       out[key] = v === 'layer' ? 'layer' : (parseColor(v) ?? p.default);
+    } else if (p.kind === 'image') {
+      out[key] = isImageHash(v) ? v : p.default;
     } else {
       out[key] = typeof v === 'string' && p.options.includes(v) ? v : p.default;
     }
   }
   return out;
+}
+
+/** The picture keys `doc`'s clips use (any image setting), sorted, once each. */
+export function imageKeys(doc: EffectDoc): string[] {
+  return [...new Set(doc.clips.flatMap(c => Object.values(c.params).filter(isImageHash)))].sort();
 }
 
 /** `params` with style `style`'s preset applied. */
