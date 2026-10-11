@@ -31,6 +31,7 @@ import {
   Lasso,
   Opacity,
   Overlay,
+  Replicate,
   TextCreation,
   TextFont,
 } from '@carbon/icons-react';
@@ -79,6 +80,7 @@ export const highlightEffects: DemoEffect[] = [
   {title: 'Burst', Icon: Asterisk, effectName: 'Burst'},
   {title: 'Spotlight', Icon: CenterCircle, effectName: 'Scope'},
   {title: 'Outline', Icon: Lasso, effectName: 'Outline'},
+  {title: 'Echo', Icon: Replicate, effectName: 'Echo'}, // sam-ui: copies from earlier frames, behind the layer
 ];
 
 export const moreEffects: DemoEffect[] = [
