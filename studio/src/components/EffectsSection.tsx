@@ -192,8 +192,8 @@ function ClipSettings({clip, session, layerColor, title}: {clip: EffectClip; ses
   const set = (key: string, v: EffectParams[string], step = `${clip.id}:${key}`) =>
     session.updateClip(clip.id, {params: {...clip.params, [key]: v}}, step);
   const style = String(clip.params.style ?? '');
-  // Reset keeps a picked picture: content, not a setting
-  const pictures = Object.fromEntries(Object.entries(spec?.params ?? {}).flatMap(([k, p]) => (p.kind === 'image' ? [[k, clip.params[k]]] : [])));
+  // Reset keeps a picked picture and typed text: content, not settings
+  const pictures = Object.fromEntries(Object.entries(spec?.params ?? {}).flatMap(([k, p]) => (p.kind === 'image' || p.kind === 'text' ? [[k, clip.params[k]]] : [])));
   const styled = spec == null ? clip.params : {...withStyle(clip.effect, normalizeParams(clip.effect, {}), style), ...pictures};
   const atStyle = JSON.stringify(styled) === JSON.stringify(clip.params);
   const canSplit = clip.start < session.frame && session.frame < clip.end;

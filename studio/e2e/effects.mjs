@@ -47,7 +47,7 @@
 //       the page with the same font file), not the fallback sans-serif's; a Fade at
 //       the clip's first frame draws nothing, at its entrance's end all of it; the
 //       text field takes typed text (shortcut keys too) with its count, refuses a
-//       fourth line, keeps the title while emptied; Top moves it; with a Rise over
+//       fourth line, keeps the title while emptied; Top moves it; Reset keeps the text; with a Rise over
 //       the clip, the export matches the preview within B7's tolerance
 //   SC  Scribble (boiling Outline) on frame 101: identical after a scrub away and
 //       back and play/pause, redrawn when boil is on (differs from boil 0, which
@@ -863,6 +863,10 @@ await step('TT', async () => {
   titleShots['TT-8_typed-top'] = await cap('TT-8_typed_top_f101');
   const live = await page.$$eval('.effects [role=status], .effects [aria-live]', es => es.map(e => e.innerText).filter(t => /\d/.test(t)));
   check('TT', top.x === 0.5 && top.y === 0.15 && pressed === 'true' && live.length === 0, `Top puts it at (${top.x}, ${top.y}), pressed ${pressed}; no numbers in live regions (${JSON.stringify(live)})`);
+  await fx.getByRole('button', {name: /^Reset to/}).click();
+  await page.waitForTimeout(500);
+  const reset = (await doc()).clips.find(c => c.id === 'tt').params;
+  check('TT', reset.text === typed && reset.y === 0.5 && reset.size === 0.12, `Reset to defaults keeps the typed text (${JSON.stringify(reset.text)}) and resets the rest (y ${reset.y}, size ${reset.size})`, reset);
 
   // export, white text rising in over the whole clip, behind the subjects
   await putClips([title({color: '#ffffff', animation: 'Rise', entrance: 3}), ...clear()]);
