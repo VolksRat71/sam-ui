@@ -130,11 +130,19 @@ const check = (id, ok, what, data) => {
 
 // pixels: PNG buffers or a video's frames, as rgb24 through ffmpeg
 const pngSize = png => [png.readUInt32BE(16), png.readUInt32BE(20)];
-const decode = (input, vf) =>
-  execFileSync('ffmpeg', ['-v', 'error', '-i', Buffer.isBuffer(input) ? 'pipe:0' : input, ...(vf ? ['-vf', vf] : []), '-fps_mode', 'passthrough', '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1'], {
-    input: Buffer.isBuffer(input) ? input : undefined,
-    maxBuffer: 1 << 30,
-  });
+// a decode piped a PNG once sat idle for half an hour (ffmpeg never saw its stdin end): time out and try again
+const decode = (input, vf, tries = 2) => {
+  try {
+    return execFileSync('ffmpeg', ['-v', 'error', '-i', Buffer.isBuffer(input) ? 'pipe:0' : input, ...(vf ? ['-vf', vf] : []), '-fps_mode', 'passthrough', '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1'], {
+      input: Buffer.isBuffer(input) ? input : undefined,
+      maxBuffer: 1 << 30,
+      timeout: 120000,
+    });
+  } catch (error) {
+    if (tries > 1 && error.code === 'ETIMEDOUT') return decode(input, vf, tries - 1);
+    throw error;
+  }
+};
 function compare(a, b) {
   const [x, y] = [decode(a), decode(b)];
   if (x.length !== y.length) throw new Error(`sizes differ: ${pngSize(a)} vs ${pngSize(b)}`);
