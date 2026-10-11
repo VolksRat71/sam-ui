@@ -182,12 +182,12 @@ export const EFFECT_SPECS: Record<string, EffectSpec> = {
       outlineWidth: {kind: 'number', min: 0, max: 0.2, step: 0.01, default: 0.05, label: 'Outline width', onlyWhen: {style: STICKER_SHAPES}},
       position: {kind: 'choice', options: ['Top', 'Top-left', 'Top-right', 'Centre', 'Bottom'], default: 'Top', label: 'Position'},
       // in the subject's (bounding box) heights; never under minSize of the frame's
-      size: {kind: 'number', min: 0.05, max: 2, step: 0.01, default: 0.3, label: 'Size, of the subject height'},
+      size: {kind: 'number', min: 0.05, max: 2, step: 0.01, default: 0.3, label: 'Size'},
       minSize: {kind: 'number', min: 0, max: 0.3, step: 0.005, default: 0.05, label: 'Smallest size', percentOfHeight: true},
-      offsetX: {kind: 'number', min: -2, max: 2, step: 0.01, default: 0, label: 'Move across, subject heights'},
-      offsetY: {kind: 'number', min: -2, max: 2, step: 0.01, default: 0, label: 'Move down, subject heights'},
+      offsetX: {kind: 'number', min: -2, max: 2, step: 0.01, default: 0, label: 'Move across'},
+      offsetY: {kind: 'number', min: -2, max: 2, step: 0.01, default: 0, label: 'Move down'},
       // the box averaged over this many tracked frames each side
-      smooth: {kind: 'number', min: 0, max: 6, step: 1, default: 2, label: 'Smoothing, frames each side'},
+      smooth: {kind: 'number', min: 0, max: 6, step: 1, default: 2, label: 'Smoothing'},
       style: {kind: 'choice', options: [...STICKER_SHAPES, 'Your picture'], default: 'Star', label: 'Sticker'},
     },
     styles: {
