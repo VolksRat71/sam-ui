@@ -470,6 +470,14 @@ export default function Timeline({session, actions, inspector}: Props) {
                 data-lane={o.id}
                 role="group"
                 aria-label={`${objectName(o)} frame lane. Left and Right step frames, Shift selects a span; K and Shift K step keyframes.`}
+                onMouseDown={e => {
+                  // the layer row is draggable (reorder): its native drag would cancel this lane's pointer, so hold the press here
+                  if (e.button !== 0 || (e.target as HTMLElement).closest('button') != null) {
+                    return;
+                  }
+                  e.preventDefault();
+                  e.currentTarget.focus({preventScroll: true}); // what the press would have done: the lane's keys follow
+                }}
                 onPointerCancel={() => { laneDrag.current = null; }}
                 onLostPointerCapture={() => { laneDrag.current = null; }}
                 onPointerDown={e => {
