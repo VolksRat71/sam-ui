@@ -18,7 +18,7 @@ import {
 } from '@/common/components/effects/EffectsUtils';
 import type {EffectParams} from '@/common/components/video/effects/Effect';
 import {EFFECT_SPECS, type ParamSpec, styleIndex} from '@/common/components/video/effects/EffectParamSpecs';
-import {Add, ChevronDown, ChevronRight, Reset, TrashCan} from '@carbon/icons-react';
+import {Add, BringForward, ChevronDown, ChevronRight, Copy, Cut, Reset, SendBackward, TrashCan} from '@carbon/icons-react';
 import {useEffect, useState, type ReactNode} from 'react';
 import {readJson, writeJson} from '~/lib/storage';
 import {
@@ -28,6 +28,7 @@ import {
   OVERLAY,
   clipToEdit,
   normalizeParams,
+  overlapNeighbour,
   sameTarget,
   withStyle,
 } from '~/state/effectClips';
@@ -35,6 +36,8 @@ import type {StudioSessionApi} from '~/workspace/useStudioSession';
 import {clipFrames, clipTitle, effectTitle, targetName} from './effectPresentation';
 
 const OPEN_KEY = 'sam-ui-studio:effect-groups-open';
+/** Effects people use to hide something: their settings say how far the mask can be trusted. */
+const OBSCURING = new Set(['PixelateMask', 'BlurMask', 'Pixelate', 'BackgroundBlur']);
 
 type Active = {name: string; variant: number; numVariants: number};
 
@@ -145,6 +148,8 @@ function ClipSettings({clip, session, layerColor, title}: {clip: EffectClip; ses
   const style = String(clip.params.style ?? '');
   const styled = spec == null ? clip.params : withStyle(clip.effect, normalizeParams(clip.effect, {}), style);
   const atStyle = JSON.stringify(styled) === JSON.stringify(clip.params);
+  const canSplit = clip.start < session.frame && session.frame < clip.end;
+  const passes = (direction: 'up' | 'down') => session.effectDoc != null && overlapNeighbour(session.effectDoc, clip.id, direction) != null;
   const control = (key: string, p: ParamSpec) => {
     const id = `fx-${clip.id}-${key}`;
     if (p.kind === 'choice') {
@@ -200,9 +205,36 @@ function ClipSettings({clip, session, layerColor, title}: {clip: EffectClip; ses
     <div className="fx-settings" role="group" aria-label={`${title} settings`}>
       <div className="fx-settings-head">
         <strong>{title}</strong>
-        <button className="link-button" onClick={() => session.removeClip(clip.id)} title="Remove this clip (Delete in the timeline)">
-          <TrashCan size={14} /> Remove clip
-        </button>
+        <div className="fx-clip-actions">
+          <button
+            className="link-button"
+            disabled={!canSplit}
+            aria-label="Split at playhead"
+            onClick={() => session.splitClip(clip.id)}
+            title={canSplit ? 'Split this clip in two at the playhead (S in the timeline)' : 'Put the playhead inside this clip, past its first frame, to split it'}>
+            <Cut size={14} /> Split
+          </button>
+          <button className="link-button" onClick={() => session.duplicateClip(clip.id)} title="Copy this clip right after it, its animation from the start (D in the timeline)">
+            <Copy size={14} /> Duplicate
+          </button>
+          <button
+            className="link-button"
+            disabled={!passes('up')}
+            onClick={() => session.reorderClip(clip.id, 'up')}
+            title="Draw this clip over the next clip above it on its frames (Alt+Up on the clip in the timeline)">
+            <BringForward size={14} /> Move up
+          </button>
+          <button
+            className="link-button"
+            disabled={!passes('down')}
+            onClick={() => session.reorderClip(clip.id, 'down')}
+            title="Draw this clip under the next clip below it on its frames (Alt+Down on the clip in the timeline)">
+            <SendBackward size={14} /> Move down
+          </button>
+          <button className="link-button" onClick={() => session.removeClip(clip.id)} title="Remove this clip (Delete in the timeline)">
+            <TrashCan size={14} /> Remove clip
+          </button>
+        </div>
       </div>
       <div className="fx-param">
         <span className="fx-param-label" id={`fx-${clip.id}-range`}>Frames</span>
@@ -215,7 +247,16 @@ function ClipSettings({clip, session, layerColor, title}: {clip: EffectClip; ses
       {spec == null ? (
         <p className="effect-note">This effect comes from a newer build of sam-ui: its settings are kept as they are.</p>
       ) : (
-        Object.entries(spec.params).map(([key, p]) => control(key, p))
+        Object.entries(spec.params)
+          .filter(([, p]) => p.kind !== 'number' || p.onlyStyles == null || p.onlyStyles.includes(style))
+          .map(([key, p]) => control(key, p))
+      )}
+      {OBSCURING.has(clip.effect) && (
+        <p className="effect-note">
+          {clip.target.kind === 'object'
+            ? 'Follows the mask: if tracking misses a frame, the subject shows.'
+            : 'Covers the whole frame: a layer drawn on top stays clear only where tracking found it.'}
+        </p>
       )}
       {spec != null && (
         <button className="button subtle compact" disabled={atStyle} onClick={() => session.updateClip(clip.id, {params: styled})}>

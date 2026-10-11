@@ -249,17 +249,25 @@ export default function Timeline({session, actions, inspector}: Props) {
     <div
       className="timeline"
       onKeyDown={e => {
-        // Delete or Backspace with focus in the timeline removes the selected effect clip (a focused clip handles its own)
+        // with focus in the timeline: Delete or Backspace removes the selected effect clip (a focused clip handles its own),
+        // S splits it at the playhead, D duplicates it
         const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement).tagName);
-        if ((e.key === 'Delete' || e.key === 'Backspace') && !typing && session.selectedClipId != null && !e.metaKey && !e.ctrlKey) {
+        const id = session.selectedClipId;
+        if (typing || id == null || e.metaKey || e.ctrlKey) return;
+        if (e.key === 'Delete' || e.key === 'Backspace') {
           e.preventDefault();
-          session.removeClip(session.selectedClipId);
+          session.removeClip(id);
+        } else if ((e.key === 's' || e.key === 'd') && !e.altKey && !e.repeat) {
+          e.preventDefault();
+          if (e.key === 's') session.splitClip(id);
+          else session.duplicateClip(id);
         }
       }}>
       <div className="timeline-tools">
       <div className="suite-timeline-header">
         <strong>Layers</strong><span className="muted">{state.objects.length}</span>
         {actions}
+        <span className="muted small fx-note" role="status">{session.clipNote}</span>
         <label className="label-width">Label width <input type="range" min="200" max="480" step="20" value={labelWidth} onChange={e => setLabelWidth(Number(e.target.value))} /></label>
       </div>
       <div className="transport">

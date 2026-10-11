@@ -13,19 +13,23 @@ import {
   clipLines,
   clipTime,
   clipToEdit,
+  duplicateClip,
   loadEffectDoc,
   migrateV1,
   moveClip,
   newClip,
   newClipId,
   normalizeParams,
+  overlapNeighbour,
   parseEffectDoc,
   pickOnGroup,
   pickOnTarget,
   pruneClips,
   removeClip,
+  reorderClip,
   sameTarget,
   saveEffectDoc,
+  splitClip,
   trimClip,
   updateClip,
 } from './effectClips';
@@ -47,7 +51,7 @@ const styleOf = (doc: EffectDoc, id: number) => doc.clips.find(c => c.target.kin
 
 describe('normalizeParams (U1, U2)', () => {
   it('fills every default for an empty or malformed record', () => {
-    expect(normalizeParams('Outline', undefined)).toEqual({width: 0.006, color: 'layer', opacity: 1, softness: 0.25, style: 'Outline'});
+    expect(normalizeParams('Outline', undefined)).toEqual({width: 0.006, color: 'layer', opacity: 1, softness: 0.25, wobble: 0.008, boil: 8, style: 'Outline'});
     expect(normalizeParams('Outline', 'x')).toEqual(normalizeParams('Outline', {}));
     expect(normalizeParams('Outline', [1, 2])).toEqual(normalizeParams('Outline', {}));
   });
@@ -85,6 +89,8 @@ describe('normalizeParams (U1, U2)', () => {
       color: 'layer',
       opacity: 0.35,
       softness: 0.25,
+      wobble: 0.008,
+      boil: 8,
       style: 'Outline',
     });
   });
@@ -141,6 +147,9 @@ describe('clip time and phase (U6)', () => {
     }
     // and back out again restores it exactly
     expect(trimClip(doc, 'c', 'start', 10, 100).clips[0]).toMatchObject({start: 10, phase: 2});
+    // back past the animation's start (frame 8): the animation restarts at the new start
+    expect(trimClip(doc, 'c', 'start', 5, 100).clips[0]).toMatchObject({start: 5, phase: 0});
+    expect(trimClip({version: 2, clips: [clip()]}, 'c', 'start', 4, 100).clips[0]).toMatchObject({start: 4, phase: 0});
   });
 
   it('trimming the end leaves the phase; a clip keeps at least one frame and stays inside the video', () => {
@@ -257,14 +266,16 @@ describe('per-object picks (the behaviour objectEffects.test.ts pinned)', () => 
   it('a background pick is a persisted clip too (Q7)', () => {
     let doc = pick(EMPTY_DOC, BG, 'BackgroundBlur');
     doc = pick(doc, BG, 'BackgroundBlur');
-    expect(doc.clips).toEqual([expect.objectContaining({target: BG, effect: 'BackgroundBlur', params: {style: 'Medium'}})]);
+    expect(doc.clips).toEqual([expect.objectContaining({target: BG, effect: 'BackgroundBlur', params: {radius: 0.008, style: 'Medium'}})]);
     expect(parseEffectDoc(JSON.parse(JSON.stringify(doc)))).toEqual(doc);
   });
 
-  it('Outline cycles Outline -> Glow (applying the preset) -> Outline', () => {
+  it('Outline cycles Outline -> Glow (applying the preset) -> Scribble -> Outline', () => {
     let doc = pick(EMPTY_DOC, A, 'Outline');
     doc = pick(doc, A, 'Outline');
-    expect(styleOf(doc, 0)?.params).toEqual({width: 0.02, color: 'layer', opacity: 0.9, softness: 0.8, style: 'Glow'});
+    expect(styleOf(doc, 0)?.params).toEqual({width: 0.02, color: 'layer', opacity: 0.9, softness: 0.8, wobble: 0.008, boil: 8, style: 'Glow'});
+    doc = pick(doc, A, 'Outline');
+    expect(styleOf(doc, 0)?.params).toMatchObject({style: 'Scribble', width: 0.005, softness: 0.25, opacity: 1});
     doc = pick(doc, A, 'Outline');
     expect(styleOf(doc, 0)?.params).toMatchObject({style: 'Outline', softness: 0.25});
   });
@@ -307,7 +318,7 @@ describe('storage (U1)', () => {
       ],
     });
     expect(doc.clips.map(c => c.id)).toEqual(['ok', 'raw']);
-    expect(doc.clips[0].params).toEqual({width: 0.05, color: 'layer', opacity: 1, softness: 0.25, style: 'Outline'});
+    expect(doc.clips[0].params).toEqual({width: 0.05, color: 'layer', opacity: 1, softness: 0.25, wobble: 0.008, boil: 8, style: 'Outline'});
     expect(doc.clips[1]).toMatchObject({effect: 'Future', params: {k: 'v'}, row: 0, phase: 0, target: {kind: 'background'}});
     expect(parseEffectDoc({version: 1, clips: []})).toEqual(EMPTY_DOC);
     expect(parseEffectDoc(null)).toEqual(EMPTY_DOC);
@@ -357,6 +368,99 @@ describe("the session's load, prune and save (useStudioSession's wiring)", () =>
   });
 });
 
+describe('split, duplicate and stack order (slice 2)', () => {
+  const ids = (doc: EffectDoc) => doc.clips.map(c => c.id);
+  const rows = (doc: EffectDoc) => Object.fromEntries(doc.clips.map(c => [c.id, c.row]));
+
+  it('a split keeps every frame as it was: the right part continues the animation', () => {
+    const whole = clip({start: 10, end: 40, phase: 4, row: 2, effect: 'Noisy', params: normalizeParams('Noisy', {})});
+    const doc = splitClip({version: 2, clips: [clip({id: 'x', target: B}), whole]}, 'c', 25, 'r');
+    expect(ids(doc)).toEqual(['x', 'c', 'r']);
+    const [left, right] = [doc.clips[1], doc.clips[2]];
+    expect(left).toEqual({...whole, end: 25});
+    expect(right).toEqual({...whole, id: 'r', start: 25, phase: 4 + 15});
+    for (let f = 10; f < 40; f++) {
+      const part = f < 25 ? left : right;
+      expect(activeClips(doc, f).filter(c => sameTarget(c.target, A))).toEqual([part]);
+      expect(clipTime(part, f, 24)).toBe(clipTime(whole, f, 24));
+    }
+  });
+
+  it('splits only strictly inside the clip, and names the right part c<n> by default', () => {
+    const doc: EffectDoc = {version: 2, clips: [clip({id: 'c3'})]};
+    for (const f of [9, 10, 20, 21, 10.4]) {
+      expect(splitClip(doc, 'c3', f)).toBe(doc);
+    }
+    expect(splitClip(doc, 'nope', 15)).toBe(doc);
+    expect(splitClip(doc, 'c3', 10.6).clips.map(c => [c.id, c.start, c.end])).toEqual([
+      ['c3', 10, 11],
+      ['c4', 11, 20],
+    ]);
+    expect(splitClip(doc, 'c3', 19).clips[1]).toMatchObject({start: 19, end: 20, phase: 9}); // a one-frame right part
+  });
+
+  it('a duplicate goes right after the original on its row, from the start of its animation', () => {
+    const orig = clip({start: 10, end: 20, phase: 7, row: 1});
+    const doc = duplicateClip({version: 2, clips: [clip({id: 'low', row: 0, start: 0, end: 100}), orig]}, 'c', 'd', 100);
+    expect(doc.clips.at(-1)).toEqual({...orig, id: 'd', start: 20, end: 30, phase: 0});
+    expect(doc.clips.slice(0, 2)).toEqual([expect.objectContaining({id: 'low'}), orig]);
+    // it ends exactly at the video end: still fits
+    expect(duplicateClip({version: 2, clips: [orig]}, 'c', 'd', 30).clips[1]).toMatchObject({start: 20, end: 30, row: 1});
+  });
+
+  it("with no room after it (the video's end, or a clip on that row), the duplicate goes on a new top row at the same frames", () => {
+    const orig = clip({start: 10, end: 20, phase: 3});
+    expect(duplicateClip({version: 2, clips: [orig]}, 'c', 'd', 29).clips[1]).toEqual({...orig, id: 'd', phase: 0, row: 1});
+    const blocked: EffectDoc = {version: 2, clips: [orig, clip({id: 'next', start: 29, end: 50}), clip({id: 'top', row: 3, start: 60, end: 70})]};
+    expect(duplicateClip(blocked, 'c', 'd', 100).clips.at(-1)).toMatchObject({start: 10, end: 20, row: 4, phase: 0});
+    // another row, or another layer, does not block it
+    const free: EffectDoc = {version: 2, clips: [orig, clip({id: 'up', row: 1, start: 20, end: 30}), clip({id: 'b', target: B, start: 20, end: 30})]};
+    expect(duplicateClip(free, 'c', 'd', 100).clips.at(-1)).toMatchObject({start: 20, end: 30, row: 0});
+    expect(duplicateClip(free, 'gone', 'd', 100)).toBe(free);
+  });
+
+  it("moves a clip up or down its own layer's stack, past the nearest clip it overlaps", () => {
+    const doc: EffectDoc = {
+      version: 2,
+      clips: [clip({id: 'a', row: 0}), clip({id: 'b', row: 1}), clip({id: 'other', target: B, row: 0}), clip({id: 'c', row: 2})],
+    };
+    expect(rows(reorderClip(doc, 'a', 'up'))).toEqual({a: 1, b: 0, other: 0, c: 2});
+    expect(rows(reorderClip(doc, 'c', 'down'))).toEqual({a: 0, b: 2, other: 0, c: 1});
+    expect(reorderClip(doc, 'c', 'down').clips[0]).toBe(doc.clips[0]); // clips that keep their row keep their object
+    expect(reorderClip(doc, 'c', 'up')).toBe(doc); // at the top
+    expect(reorderClip(doc, 'a', 'down')).toBe(doc); // at the bottom
+    expect(reorderClip(doc, 'other', 'up')).toBe(doc); // alone on its layer
+    expect(reorderClip(doc, 'nope', 'up')).toBe(doc);
+    // the move changes which of two overlapping clips draws on top
+    expect(activeClips(reorderClip(doc, 'b', 'up'), 15).filter(x => sameTarget(x.target, A)).map(x => x.id)).toEqual(['a', 'c', 'b']);
+  });
+
+  it('skips clips it does not overlap, so every move changes what is drawn; with none to pass, nothing changes', () => {
+    // low [0, 50) and top [0, 50) overlap; mid [60, 90) overlaps neither
+    const doc: EffectDoc = {
+      version: 2,
+      clips: [clip({id: 'low', row: 0, start: 0, end: 50}), clip({id: 'mid', row: 1, start: 60, end: 90}), clip({id: 'top', row: 2, start: 0, end: 50})],
+    };
+    expect(overlapNeighbour(doc, 'top', 'down')?.id).toBe('low');
+    expect(rows(reorderClip(doc, 'top', 'down'))).toEqual({top: 0, low: 1, mid: 2}); // past mid and low; mid keeps its place above low
+    expect(rows(reorderClip(doc, 'low', 'up'))).toEqual({mid: 0, top: 1, low: 2});
+    expect(activeClips(reorderClip(doc, 'top', 'down'), 10).map(c => c.id)).toEqual(['top', 'low']);
+    expect(overlapNeighbour(doc, 'mid', 'up')).toBeNull();
+    expect(reorderClip(doc, 'mid', 'up')).toBe(doc);
+    expect(reorderClip(doc, 'mid', 'down')).toBe(doc);
+    expect(overlapNeighbour(doc, 'nope', 'up')).toBeNull();
+  });
+
+  it('keeps rows dense: gaps (after a removal) and shared rows (after a split) become 0..n-1', () => {
+    const gappy: EffectDoc = {version: 2, clips: [clip({id: 'a', row: 0}), clip({id: 'b', row: 4}), clip({id: 'c', row: 7})]};
+    expect(rows(reorderClip(gappy, 'a', 'up'))).toEqual({a: 1, b: 0, c: 2});
+    // after a split the parts share a row; the clip over both moves under the one it overlaps
+    const split = splitClip({version: 2, clips: [clip({id: 'top', row: 1, start: 0, end: 100}), clip({id: 'c'})]}, 'c', 15, 'r');
+    expect(rows(reorderClip(split, 'top', 'down'))).toEqual({top: 1, c: 0, r: 2});
+    expect(rows(reorderClip(split, 'c', 'up'))).toEqual({top: 1, c: 2, r: 0});
+  });
+});
+
 describe('clipLines (timeline band layout)', () => {
   it('stacks overlapping clips with the upper row higher, and lets clips that do not overlap share a line', () => {
     const doc = [
@@ -370,5 +474,23 @@ describe('clipLines (timeline band layout)', () => {
     expect(count).toBe(3);
     expect(clipLines([clip({id: 'a', start: 0, end: 10}), clip({id: 'b', row: 1, start: 10, end: 20})]).count).toBe(1);
     expect(clipLines([]).count).toBe(0);
+  });
+
+  it("shows on top the clip drawn on top when a split's parts or a duplicate overlap on one row", () => {
+    const base: EffectDoc = {version: 2, clips: [clip({id: 'c', start: 0, end: 60})]};
+    const overlapped = [
+      trimClip(splitClip(base, 'c', 30, 'r'), 'r', 'start', 20, 100), // the right part's start back over the left part
+      trimClip(splitClip(base, 'c', 30, 'r'), 'c', 'end', 40, 100), // the left part's end over the right part
+      moveClip(duplicateClip(base, 'c', 'r', 200), 'r', 25, 200), // the copy moved back over the original
+    ];
+    for (const doc of overlapped) {
+      expect(doc.clips.map(c => c.row)).toEqual([0, 0]);
+      const drawnTop = activeClips(doc, 35).at(-1)!.id;
+      const {line} = clipLines(doc.clips);
+      const shownTop = [...line].sort((a, b) => a[1] - b[1])[0][0];
+      expect(drawnTop).toBe('r');
+      expect(shownTop).toBe(drawnTop);
+      expect(clipToEdit(doc, A, 35, null)?.id).toBe(drawnTop); // an effect pick edits the one on top too
+    }
   });
 });

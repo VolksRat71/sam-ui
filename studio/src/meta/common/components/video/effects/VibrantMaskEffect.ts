@@ -14,10 +14,12 @@
  * limitations under the License.
  */
 // Modified by sam-ui: cleanup deletes the LUT textures.
+// Animates on effectFrame (its clip's clock), not the video's frame index.
 import BaseGLEffect from '@/common/components/video/effects/BaseGLEffect';
 import {
   EffectFrameContext,
   EffectInit,
+  effectFrame,
 } from '@/common/components/video/effects/Effect';
 import vertexShaderSource from '@/common/components/video/effects/shaders/DefaultVert.vert?raw';
 import fragmentShaderSource from '@/common/components/video/effects/shaders/VibrantMask.frag?raw';
@@ -98,7 +100,7 @@ export default class VibrantMaskEffect extends BaseGLEffect {
     gl.clear(gl.COLOR_BUFFER_BIT);
 
     // dynamic uniforms per frame
-    gl.uniform1f(this._currentFrameLocation, context.frameIndex);
+    gl.uniform1f(this._currentFrameLocation, effectFrame(context));
     gl.uniform1i(this._numMasksUniformLocation, context.masks.length);
 
     // Bind the LUT texture to texture unit 1

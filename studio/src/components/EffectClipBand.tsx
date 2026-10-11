@@ -7,8 +7,10 @@
 // body to move, either end to trim, snapping to whole frames. From the
 // keyboard: Left / Right go to the previous / next clip, Alt Left / Right
 // move it a frame (Shift: ten), Alt [ / Alt ] trim its start / end to the
-// playhead (After Effects' keys), Delete removes it, Enter opens its settings,
-// Escape drops the selection. One Tab stop per band.
+// playhead (After Effects' keys), Alt Up / Down draw it over / under the next
+// clip it overlaps, S splits it at the playhead, D duplicates it (the new part
+// or copy takes focus), Delete removes it, Enter opens its settings, Escape
+// drops the selection. One Tab stop per band.
 import {useRef, type CSSProperties, type KeyboardEvent, type PointerEvent} from 'react';
 import {type EffectClip, clipLines} from '~/state/effectClips';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
@@ -85,6 +87,9 @@ export default function EffectClipBand({clips, name, session, pos}: Props) {
     let handled = true;
     if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
       session.moveClip(c.id, c.start + (e.key === 'ArrowRight' ? 1 : -1) * (e.shiftKey ? 10 : 1), `${c.id}:nudge`);
+    } else if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+      session.reorderClip(c.id, e.key === 'ArrowUp' ? 'up' : 'down');
+      requestAnimationFrame(() => focusClip(c.id)); // its button may move in the band
     } else if (e.altKey && (e.code === 'BracketLeft' || e.code === 'BracketRight')) {
       if (e.code === 'BracketLeft') session.trimClip(c.id, 'start', frame);
       else session.trimClip(c.id, 'end', frame + 1);
@@ -92,6 +97,11 @@ export default function EffectClipBand({clips, name, session, pos}: Props) {
       handled = false;
     } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
       go(ordered[at + (e.key === 'ArrowRight' ? 1 : -1)]);
+    } else if ((e.key === 's' || e.key === 'd') && !e.repeat) {
+      select(c); // the focused clip, not whichever was selected (the timeline's S and D act on that)
+      if (e.key === 's') session.splitClip(c.id);
+      else session.duplicateClip(c.id);
+      requestAnimationFrame(() => band.current?.querySelector<HTMLElement>('.fx-clip.selected')?.focus()); // the part or copy it selected
     } else if (e.key === 'Delete' || e.key === 'Backspace') {
       const next = ordered[at + 1] ?? ordered[at - 1];
       session.removeClip(c.id);
@@ -123,8 +133,8 @@ export default function EffectClipBand({clips, name, session, pos}: Props) {
             tabIndex={c === stop ? 0 : -1}
             aria-pressed={selected}
             aria-label={`${name}: ${label}`}
-            aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight Alt+BracketLeft Alt+BracketRight Delete Enter"
-            title={`${label}. Drag to move, drag an end to trim; Alt+arrows move a frame, Alt+[ / Alt+] trim to the playhead`}
+            aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight Alt+BracketLeft Alt+BracketRight Alt+ArrowUp Alt+ArrowDown S D Delete Enter"
+            title={`${label}. Drag to move, drag an end to trim; Alt+Left / Right move a frame, Alt+[ / Alt+] trim to the playhead, Alt+Up / Down draw it over / under the next clip it overlaps, S splits at the playhead, D duplicates`}
             style={{left, width: Math.max(8, pos(c.end - 1) - left), top: `calc(${line.get(c.id) ?? 0} * var(--fx-line))`}}
             // the layer row is draggable (reorder): a native drag from here would cancel this pointer
             onMouseDown={e => e.preventDefault()}

@@ -40,6 +40,7 @@ import type {Tracklet} from '@/common/tracker/Tracker';
 import {CanvasForm} from 'pts';
 import {
   EMPTY_DOC,
+  type EffectClip,
   type EffectDoc,
   ORIGINAL,
   OVERLAY,
@@ -57,7 +58,7 @@ import type MaskOverlayEffect from './MaskOverlayEffect';
 export type DrawState = {doc: EffectDoc; drawOrder: number[]; untouched: UntouchedMode | null};
 
 type Ready = {effect: Effect; gl: WebGL2RenderingContext | null};
-type Pass = {effect: string; params: EffectParams; time?: number; key: string; idx: number[]};
+type Pass = {effect: string; params: EffectParams; time?: number; duration?: number; key: string; idx: number[]};
 
 const META_MASK_SLOTS = 3;
 /** The Overlay and Original's first styles: an untouched object's look. */
@@ -211,9 +212,12 @@ export default class ObjectHighlight extends AbstractEffect {
     const passes: Pass[] = [];
     // one pass per clip, merged with the pass below when it is the same effect
     // and settings (three masks at most for Meta's shaders, any for the Overlay)
-    const add = (effect: string, params: EffectParams, time: number | undefined, i: number | null) => {
-      const t = effect === OVERLAY ? undefined : time;
-      const key = `${effect}\u0000${canonical(params)}\u0000${t ?? ''}`;
+    // a clip's clock: its time, and its animation's length (frames trimmed off the start still count, as phase)
+    const add = (effect: string, params: EffectParams, clip: EffectClip | null, i: number | null) => {
+      const fps = context.fps > 0 ? context.fps : 30;
+      const t = clip == null || effect === OVERLAY ? undefined : clipTime(clip, frame, context.fps);
+      const duration = t == null ? undefined : (clip!.end - clip!.start + clip!.phase) / fps;
+      const key = `${effect}\u0000${canonical(params)}\u0000${t ?? ''}\u0000${duration ?? ''}`;
       const last = passes[passes.length - 1];
       if (
         i != null &&
@@ -224,14 +228,14 @@ export default class ObjectHighlight extends AbstractEffect {
       ) {
         last.idx.push(i);
       } else {
-        passes.push({effect, params, time: t, key, idx: i == null ? [] : [i]});
+        passes.push({effect, params, time: t, duration, key, idx: i == null ? [] : [i]});
       }
     };
 
     // background clips by row; an effect this build lacks leaves the plain frame below
     for (const c of active) {
       if (c.target.kind === 'background' && ready(c.effect)) {
-        add(c.effect, c.params, clipTime(c, frame, context.fps), null);
+        add(c.effect, c.params, c, null);
       }
     }
 
@@ -247,13 +251,13 @@ export default class ObjectHighlight extends AbstractEffect {
       const mine = active.filter(c => c.target.kind === 'object' && c.target.id === id);
       if (mine.length === 0) {
         const original = state.untouched === 'original' && ready(ORIGINAL);
-        add(original ? ORIGINAL : OVERLAY, original ? UNCHANGED : TINT, undefined, i);
+        add(original ? ORIGINAL : OVERLAY, original ? UNCHANGED : TINT, null, i);
       }
       for (const c of mine) {
         if (c.effect === OVERLAY || ready(c.effect)) {
-          add(c.effect, c.params, clipTime(c, frame, context.fps), i);
+          add(c.effect, c.params, c, i);
         } else {
-          add(OVERLAY, TINT, undefined, i); // unknown, or not set up yet
+          add(OVERLAY, TINT, null, i); // unknown, or not set up yet
         }
       }
     }
@@ -266,6 +270,7 @@ export default class ObjectHighlight extends AbstractEffect {
         masks: p.idx.map(i => context.masks[i]),
         maskColors: p.idx.map(i => context.maskColors[i]),
         time: p.time,
+        duration: p.duration,
       };
       const objects = p.idx.map(i => tracklets[i]);
       if (p.effect === OVERLAY) {

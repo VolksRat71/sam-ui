@@ -3,15 +3,13 @@
 // Outline's settings and what it pushes to the GPU, against a fake WebGL2
 // context that records calls (no GPU in vitest). The pixels are checked in
 // the browser harness (see the PR).
-import {DataArray, encode} from '@/jscocotools/mask';
-import type {CanvasForm} from 'pts';
-import {describe, expect, it, vi} from 'vitest';
-import type {EffectFrameContext} from './Effect';
-import OutlineGLEffect, {outlineRgb, resolveOutlineParams} from './OutlineGLEffect';
+import {describe, expect, it} from 'vitest';
+import {setUpGL} from './fakeGL';
+import OutlineGLEffect, {NOISE_SIZE, boilStep, outlineRgb, resolveOutlineParams, scribbleNoise} from './OutlineGLEffect';
 
 describe('resolveOutlineParams', () => {
   it('defaults every missing param', () => {
-    expect(resolveOutlineParams({})).toEqual({width: 0.006, color: 'layer', opacity: 1, softness: 0.25, glow: false});
+    expect(resolveOutlineParams({})).toEqual({width: 0.006, color: 'layer', opacity: 1, softness: 0.25, glow: false, scribble: false, wobble: 0.008, boil: 8});
   });
 
   it('clamps numbers to range and ignores wrong types', () => {
@@ -27,10 +25,48 @@ describe('resolveOutlineParams', () => {
     expect(resolveOutlineParams({color: '#fff'}).color).toBe('layer');
   });
 
-  it("is Glow only for style 'Glow'", () => {
+  it("is Glow only for style 'Glow', Scribble only for 'Scribble'", () => {
     expect(resolveOutlineParams({style: 'Glow'}).glow).toBe(true);
     expect(resolveOutlineParams({style: 'Outline'}).glow).toBe(false);
     expect(resolveOutlineParams({style: 'glow'}).glow).toBe(false);
+    expect(resolveOutlineParams({style: 'Scribble'})).toMatchObject({scribble: true, glow: false});
+    expect(resolveOutlineParams({style: 'Glow'}).scribble).toBe(false);
+  });
+
+  it("clamps Scribble's wobble and boil", () => {
+    expect(resolveOutlineParams({wobble: 1, boil: 100})).toMatchObject({wobble: 0.03, boil: 24});
+    expect(resolveOutlineParams({wobble: -1, boil: -3})).toMatchObject({wobble: 0, boil: 0});
+    expect(resolveOutlineParams({wobble: 'x', boil: null as unknown as number})).toMatchObject({wobble: 0.008, boil: 8});
+  });
+});
+
+describe('Scribble noise', () => {
+  it('is the same lattice for the same seed, every time', () => {
+    const a = scribbleNoise(7);
+    expect(a).toHaveLength(NOISE_SIZE * NOISE_SIZE);
+    expect(scribbleNoise(7)).toEqual(a);
+    // pinned: changing the hash changes how every saved Scribble looks
+    expect(Array.from(scribbleNoise(0).slice(0, 4))).toEqual([16, 237, 150, 115]);
+  });
+
+  it('differs between seeds and spreads over 0..255', () => {
+    const [a, b] = [scribbleNoise(0), scribbleNoise(1)];
+    const same = a.filter((v, i) => v === b[i]).length;
+    expect(same).toBeLessThan(a.length / 50);
+    const mean = a.reduce((m, v) => m + v, 0) / a.length;
+    expect(mean).toBeGreaterThan(110);
+    expect(mean).toBeLessThan(145);
+  });
+
+  it('boils on the clip clock: boil redraws a second, none at 0 or with no clock', () => {
+    expect(boilStep(0, 8)).toBe(0);
+    expect(boilStep(0.124, 8)).toBe(0);
+    expect(boilStep(0.125, 8)).toBe(1); // frame 3 at 24 fps
+    expect(boilStep(3 / 24, 8)).toBe(1);
+    expect(boilStep(1, 8)).toBe(8);
+    expect(boilStep(1001 / 30, 12)).toBe(400); // 1001/30 x 12 = 400.4
+    expect(boilStep(5, 0)).toBe(0);
+    expect(boilStep(undefined, 8)).toBe(0);
   });
 });
 
@@ -41,70 +77,7 @@ describe('outlineRgb', () => {
   });
 });
 
-type Call = [string, unknown[]];
-
-/** A WebGL2 context that records every call; constants are their own names, uniform locations their names. */
-function fakeGL() {
-  const calls: Call[] = [];
-  let ids = 0;
-  const gl = new Proxy({} as Record<string, unknown>, {
-    get(_, key) {
-      if (typeof key !== 'string') {
-        return undefined;
-      }
-      if (/^[A-Z][A-Z0-9_]*$/.test(key)) {
-        return key === 'TEXTURE0' ? 1000 : key;
-      }
-      return (...args: unknown[]) => {
-        calls.push([key, args]);
-        if (key === 'getUniformLocation') {
-          return args[1];
-        }
-        if (key === 'getProgramParameter') {
-          return true;
-        }
-        return key.startsWith('create') ? {id: ++ids, kind: key} : null;
-      };
-    },
-  });
-  return {gl: gl as unknown as WebGL2RenderingContext, calls};
-}
-
-function mask(w: number, h: number) {
-  const data = new Uint8Array(w * h);
-  for (let x = 4; x < 12; x++) for (let y = 4; y < 12; y++) data[x * h + y] = 1;
-  return {bitmap: encode(new DataArray(data, [h, w, 1]))[0], bounds: [[4, 4], [12, 12]] as [[number, number], [number, number]]};
-}
-
-async function setUp() {
-  const {gl, calls} = fakeGL();
-  const effect = new OutlineGLEffect();
-  await effect.setup({width: 32, height: 20, gl, canvas: {} as OffscreenCanvas});
-  const drawImage = vi.fn();
-  const form = {ctx: {drawImage}} as unknown as CanvasForm;
-  const context = (n: number): EffectFrameContext => ({
-    frameIndex: 0,
-    totalFrames: 1,
-    fps: 30,
-    width: 32,
-    height: 20,
-    masks: Array.from({length: n}, () => mask(32, 20)),
-    maskColors: ['#ff0000', '#0000ff', '#00ff00'].slice(0, n),
-    frame: {} as ImageBitmap,
-    actionPoint: null,
-  });
-  /** The last value given to each uniform since `from`. */
-  const uniforms = (from: number) => {
-    const out = new Map<string, unknown>();
-    for (const [name, args] of calls.slice(from)) {
-      if (name.startsWith('uniform')) {
-        out.set(args[0] as string, args.length === 2 ? args[1] : args.slice(1));
-      }
-    }
-    return out;
-  };
-  return {effect, calls, form, drawImage, context, uniforms};
-}
+const setUp = () => setUpGL(new OutlineGLEffect());
 
 describe('OutlineGLEffect', () => {
   it('pushes every setting from params on each apply', async () => {
@@ -145,7 +118,38 @@ describe('OutlineGLEffect', () => {
     expect(created()).toBe(before);
     await effect.cleanup();
     const deleted = calls.filter(([name]) => /^delete(Texture|Framebuffer)$/.test(name)).length;
-    expect(deleted).toBe(1 + 3 + 2 + 2); // frame texture, masks, targets, framebuffers
+    expect(deleted).toBe(1 + 3 + 2 + 1 + 2); // frame texture, masks, targets, noise, framebuffers
+  });
+
+  it("pushes Scribble's settings, and the lattice when the clip time's boil step changes", async () => {
+    const {effect, calls, form, context, uniforms} = await setUp();
+    const noiseUploads = (from: number) =>
+      calls.slice(from).filter(([name, args]) => name === 'texImage2D' && args[3] === NOISE_SIZE && args[4] === NOISE_SIZE).map(([, args]) => args[8] as Uint8Array);
+    expect(noiseUploads(0)).toEqual([scribbleNoise(0)]); // setup: the texture is never empty
+    const draw = (time: number | undefined) => {
+      const from = calls.length;
+      effect.apply(form, {...context(1), time}, []);
+      return {u: uniforms(from), noise: noiseUploads(from)};
+    };
+    effect.setParams({style: 'Scribble', width: 0.05, wobble: 0.03, boil: 8});
+    const a = draw(0.25);
+    expect(a.u.get('uScribble')).toBe(1);
+    expect(a.u.get('uGlow')).toBe(0);
+    expect(a.u.get('uWobble')).toBeCloseTo(0.6); // 0.03 x 20 px
+    expect(a.u.get('uRadius')).toBe(Math.ceil(0.6 + 1.5 * 1 + 1));
+    expect(a.u.get('uNoiseScale')).toBeCloseTo(16 / 20 / NOISE_SIZE); // 16 lattice cells a frame height
+    expect(a.noise).toEqual([scribbleNoise(2)]);
+    expect(draw(0.25).noise).toEqual([]); // the same frame again: the lattice it holds
+    expect(draw(0.3).noise).toEqual([]); // within the same boil step
+    expect(draw(0.375).noise).toEqual([scribbleNoise(3)]);
+    effect.setParams({style: 'Scribble', boil: 0});
+    expect(draw(9).noise).toEqual([scribbleNoise(0)]);
+    // other styles ignore the wobble and never upload the lattice
+    effect.setParams({style: 'Outline', wobble: 0.03, boil: 8});
+    const o = draw(0.25);
+    expect(o.u.get('uScribble')).toBe(0);
+    expect(o.u.get('uWobble')).toBe(0);
+    expect(o.noise).toEqual([]);
   });
 
   it('draws nothing with no masks', async () => {

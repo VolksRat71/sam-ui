@@ -17,7 +17,7 @@ import {type EffectClip, type EffectDoc, normalizeParams} from '~/state/effectCl
 import type MaskOverlayEffect from './MaskOverlayEffect';
 import ObjectHighlight from './ObjectHighlight';
 
-type Drawn = {effect: string; params: EffectParams; variant: number; ids: number[]; time?: number; active?: number | null};
+type Drawn = {effect: string; params: EffectParams; variant: number; ids: number[]; time?: number; duration?: number; active?: number | null};
 
 function fakeEffect(name: string, log: Drawn[]) {
   return {
@@ -29,7 +29,7 @@ function fakeEffect(name: string, log: Drawn[]) {
     },
     setup: vi.fn(async () => {}),
     apply(_form: CanvasForm, ctx: EffectFrameContext, ts: Tracklet[]) {
-      log.push({effect: name, params: {...this.params}, variant: this.variant, ids: ts.map(t => t.id), time: ctx.time});
+      log.push({effect: name, params: {...this.params}, variant: this.variant, ids: ts.map(t => t.id), time: ctx.time, duration: ctx.duration});
     },
   };
 }
@@ -149,11 +149,19 @@ describe('ObjectHighlight', () => {
     expect(log.map(p => p.ids)).toEqual([[9], [1]]);
   });
 
-  it('passes each clip its own clock: (frame - start + phase) / fps', async () => {
+  it('passes each clip its own clock: (frame - start + phase) / fps, and its length (end - start + phase) / fps', async () => {
     const {h, log} = setup();
-    await h.setDoc(doc(clip(1, 'Outline', {}, {start: 4, phase: 2})), [1]);
+    await h.setDoc(doc(clip(1, 'Outline', {}, {start: 4, end: 24, phase: 2})), [1]);
     h.apply(preview, ...frame([1], 10));
     expect(log[0].time).toBeCloseTo(0.8);
+    expect(log[0].duration).toBeCloseTo(2.2);
+  });
+
+  it('two clips of one effect and settings at the same clock but different lengths draw apart', async () => {
+    const {h, log} = setup();
+    await h.setDoc(doc(clip(1, 'Outline', {}, {end: 30}), clip(2, 'Outline', {}, {end: 60})), [1, 2]);
+    h.apply(preview, ...frame([1, 2], 10));
+    expect(log.map(p => [p.ids, p.duration])).toEqual([[[1], 3], [[2], 6]]);
   });
 
   it('an object with no clip on the frame shows the Overlay with editing aids in the preview', async () => {

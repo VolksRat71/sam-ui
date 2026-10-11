@@ -80,8 +80,10 @@ export function normalizeParams(effect: string, raw: unknown): EffectParams {
     );
   }
   const out: EffectParams = {};
+  // a setting the clip lacks comes from its style (a clip saved before the effect had it draws as it did)
+  const preset: Record<string, unknown> = typeof given.style === 'string' ? (spec.styles[given.style] ?? {}) : {};
   for (const [key, p] of Object.entries(spec.params)) {
-    const v = given[key];
+    const v = given[key] ?? preset[key];
     if (p.kind === 'number') {
       if (typeof v === 'number' && Number.isFinite(v)) {
         const stepped = Number((p.min + Math.round((v - p.min) / p.step) * p.step).toFixed(decimals(p.step)));
@@ -103,9 +105,18 @@ export function withStyle(effect: string, params: EffectParams, style: string): 
   return normalizeParams(effect, {...params, ...(EFFECT_SPECS[effect]?.styles[style] ?? {})});
 }
 
-/** The clips drawn on `frame` (start <= frame < end), lowest row first. */
+/**
+ * Clips in the order they are drawn, last on top: lowest row first, equal rows
+ * (a split's parts, a duplicate) in doc order. The one draw order the renderer,
+ * the timeline band and the stack operations all use.
+ */
+function drawOrder(clips: ReadonlyArray<EffectClip>): EffectClip[] {
+  return [...clips].sort((a, b) => a.row - b.row);
+}
+
+/** The clips drawn on `frame` (start <= frame < end), in draw order. */
 export function activeClips(doc: EffectDoc, frame: number): EffectClip[] {
-  return doc.clips.filter(c => c.start <= frame && frame < c.end).sort((a, b) => a.row - b.row);
+  return drawOrder(doc.clips.filter(c => c.start <= frame && frame < c.end));
 }
 
 /** A clip's own clock on `frame`, in seconds of video: it travels with the clip. */
@@ -179,14 +190,16 @@ export function moveClip(doc: EffectDoc, id: string, start: number, numFrames: n
 /**
  * Move one edge of a clip to `frame`. Trimming the start later by d frames
  * adds d to the phase (earlier: takes it off), so every frame still in the
- * clip looks exactly as before. A clip keeps at least one frame.
+ * clip looks exactly as before. The phase never goes below 0: moving the
+ * start before the animation's start restarts the animation there instead of
+ * leaving frames before it blank. A clip keeps at least one frame.
  */
 export function trimClip(doc: EffectDoc, id: string, edge: 'start' | 'end', frame: number, numFrames: number): EffectDoc {
   return change(doc, id, c => {
     const f = Math.round(frame);
     if (edge === 'start') {
       const start = Math.max(0, Math.min(f, c.end - 1));
-      return {...c, start, phase: c.phase + (start - c.start)};
+      return {...c, start, phase: Math.max(0, c.phase + (start - c.start))};
     }
     return {...c, end: Math.max(c.start + 1, Math.min(f, Math.max(numFrames, c.start + 1)))};
   });
@@ -194,6 +207,86 @@ export function trimClip(doc: EffectDoc, id: string, edge: 'start' | 'end', fram
 
 export function removeClip(doc: EffectDoc, id: string): EffectDoc {
   return {...doc, clips: doc.clips.filter(c => c.id !== id)};
+}
+
+/**
+ * Split a clip at `frame` into [start, frame) and [frame, end), the right
+ * part as `newId`: both keep the effect, settings and row, and the right
+ * part's phase continues the animation, so every frame looks as before.
+ * The exception: an animation paced over the clip's length (Text) re-paces
+ * the shorter left part. Only strictly inside the clip; anywhere else
+ * nothing changes.
+ */
+export function splitClip(doc: EffectDoc, id: string, frame: number, newId = newClipId(doc)): EffectDoc {
+  const f = Math.round(frame);
+  const c = doc.clips.find(x => x.id === id);
+  if (c == null || f <= c.start || f >= c.end) {
+    return doc;
+  }
+  // the new part goes last, where a redo (editJournal.applyEntry) puts it back
+  const right = {...c, id: newId, start: f, phase: c.phase + (f - c.start)};
+  return {...doc, clips: [...doc.clips.map(x => (x === c ? {...c, end: f} : x)), right]};
+}
+
+/**
+ * A copy of a clip as `newId`, its animation from the beginning (phase 0):
+ * right after the original on the same row when it fits there (inside the
+ * video, over no other clip of that row), else on a new top row at the
+ * original's frames.
+ */
+export function duplicateClip(doc: EffectDoc, id: string, newId: string, numFrames: number): EffectDoc {
+  const c = doc.clips.find(x => x.id === id);
+  if (c == null) {
+    return doc;
+  }
+  const after = {...c, id: newId, start: c.end, end: 2 * c.end - c.start, phase: 0};
+  const fits =
+    after.end <= numFrames && !clipsOf(doc, c.target).some(o => o.row === c.row && o.start < after.end && after.start < o.end);
+  return fits ? {...doc, clips: [...doc.clips, after]} : addClip(doc, {...c, id: newId, phase: 0});
+}
+
+/** A target's clips in draw order. */
+function stackOf(doc: EffectDoc, target: EffectTarget): EffectClip[] {
+  return drawOrder(clipsOf(doc, target));
+}
+
+/**
+ * The nearest clip above (up) or below (down) a clip in its target's stack
+ * that overlaps it in time: the one a reorder passes. Clips it does not
+ * overlap are skipped, since passing them changes nothing drawn.
+ */
+export function overlapNeighbour(doc: EffectDoc, id: string, direction: 'up' | 'down'): EffectClip | null {
+  const c = doc.clips.find(x => x.id === id);
+  if (c == null) {
+    return null;
+  }
+  const stack = stackOf(doc, c.target);
+  const at = stack.indexOf(c);
+  const side = direction === 'up' ? stack.slice(at + 1) : stack.slice(0, at).reverse();
+  return side.find(o => o.start < c.end && c.start < o.end) ?? null;
+}
+
+/**
+ * Move a clip up (drawn later, on top) or down its target's stack, just past
+ * overlapNeighbour; every other clip keeps its order, and the target's rows
+ * become 0..n-1. With no overlapping clip that way, nothing changes.
+ */
+export function reorderClip(doc: EffectDoc, id: string, direction: 'up' | 'down'): EffectDoc {
+  const past = overlapNeighbour(doc, id, direction);
+  if (past == null) {
+    return doc;
+  }
+  const c = doc.clips.find(x => x.id === id)!;
+  const stack = stackOf(doc, c.target).filter(x => x !== c);
+  stack.splice(stack.indexOf(past) + (direction === 'up' ? 1 : 0), 0, c);
+  const rows = new Map(stack.map((x, i) => [x.id, i]));
+  return {
+    ...doc,
+    clips: doc.clips.map(x => {
+      const row = rows.get(x.id);
+      return row == null || row === x.row ? x : {...x, row};
+    }),
+  };
 }
 
 /** Drop the clips of objects that no longer exist (background clips stay). */
@@ -210,8 +303,7 @@ export function pruneClips(doc: EffectDoc, objectIds: ReadonlyArray<number>): Ef
  */
 export function clipToEdit(doc: EffectDoc, target: EffectTarget, frame: number, selectedId: string | null): EffectClip | null {
   const mine = clipsOf(doc, target);
-  const top = (cs: EffectClip[]) => cs.reduce<EffectClip | null>((t, c) => (t == null || c.row > t.row ? c : t), null);
-  return mine.find(c => c.id === selectedId) ?? top(mine.filter(c => c.start <= frame && frame < c.end));
+  return mine.find(c => c.id === selectedId) ?? drawOrder(mine.filter(c => c.start <= frame && frame < c.end)).at(-1) ?? null;
 }
 
 /** What picking `effect` gives a clip: the effect it has again moves to its next style; another starts at its defaults. */
@@ -381,16 +473,17 @@ export function saveEffectDoc(path: string, doc: EffectDoc): void {
 }
 
 /**
- * Where a target's clips sit on its timeline band: line 0 at the top. A clip
- * goes one line below every higher-row clip it overlaps, so of two
- * overlapping clips the one drawn on top is always shown higher; clips that
- * do not overlap share a line, keeping the band as short as it can be.
+ * Where a target's clips (in doc order) sit on its timeline band: line 0 at
+ * the top. A clip goes one line below every clip drawn over it that it
+ * overlaps, so of two overlapping clips the one drawn on top is always shown
+ * higher; clips that do not overlap share a line, keeping the band as short
+ * as it can be.
  */
 export function clipLines(clips: ReadonlyArray<EffectClip>): {line: Map<string, number>; count: number} {
   const line = new Map<string, number>();
   const placed: EffectClip[] = [];
   let count = 0;
-  for (const c of [...clips].sort((a, b) => b.row - a.row || a.start - b.start)) {
+  for (const c of drawOrder(clips).reverse()) {
     const below = placed.filter(p => p.start < c.end && c.start < p.end).reduce((m, p) => Math.max(m, line.get(p.id)! + 1), 0);
     line.set(c.id, below);
     placed.push(c);

@@ -18,6 +18,7 @@ import type {EffectParams} from '@/common/components/video/effects/Effect';
 import * as clips from '~/state/effectClips';
 import type {EffectClip, EffectDoc, EffectTarget, UntouchedMode} from '~/state/effectClips';
 import * as journals from '~/state/editJournal';
+import {clipTitle} from '~/components/effectPresentation';
 import {parseObjectColors} from '~/state/objectColors';
 import {isOffline} from '~/lib/mode';
 import {webGpuAvailable} from '~/lib/webgpu';
@@ -1201,15 +1202,16 @@ export default function useStudioSession(video: VideoItem) {
   /**
    * Change the doc. A person's edit passes a journal `key` (edits with the
    * same key in quick succession are one undo step: a drag); loading,
-   * pruning and undo itself pass none.
+   * pruning and undo itself pass none. `select`: the clip selected before
+   * and after it, for Cmd-Z to restore when that is not the changed clip.
    */
-  const editDoc = useCallback((fn: (doc: EffectDoc) => EffectDoc, key?: string) => {
+  const editDoc = useCallback((fn: (doc: EffectDoc) => EffectDoc, key?: string, select?: journals.ClipSelection) => {
     const before = docRef.current;
     if (before != null) {
       docRef.current = fn(before);
       setEffectDoc(docRef.current);
       if (key != null) {
-        journalRef.current = journals.recordEffect(journalRef.current, before, docRef.current, key, Date.now());
+        journalRef.current = journals.recordEffect(journalRef.current, before, docRef.current, key, Date.now(), select);
       }
     }
   }, []);
@@ -1296,6 +1298,68 @@ export default function useStudioSession(video: VideoItem) {
     },
     [editDoc],
   );
+  // what the last split, duplicate or reorder did, for a live region: no frame numbers, so playback never re-announces it
+  const [clipNote, setClipNote] = useState('');
+  useEffect(() => {
+    if (clipNote !== '') {
+      const timer = setTimeout(() => setClipNote(''), 6000);
+      return () => clearTimeout(timer);
+    }
+  }, [clipNote]);
+  /** Split a clip at the playhead (its animation runs on unbroken) and select the part from the playhead on. */
+  const splitClip = useCallback(
+    (id: string) => {
+      const d = docRef.current;
+      const c = d?.clips.find(x => x.id === id);
+      if (d == null || c == null) {
+        return;
+      }
+      if (frame <= c.start || frame >= c.end) {
+        setClipNote(`${clipTitle(c)} not split: put the playhead inside the clip, past its first frame.`);
+        return;
+      }
+      const newId = clips.newClipId(d);
+      editDoc(doc => clips.splitClip(doc, id, frame, newId), ownStep(), {before: id, after: newId});
+      setSelectedClipId(newId);
+      setClipNote(`${clipTitle(c)} split in two at the playhead. The second part is selected.`);
+    },
+    [editDoc, frame],
+  );
+  /** Copy a clip (its animation from the start) right after it, or on top of it with no room there, and select the copy. */
+  const duplicateClip = useCallback(
+    (id: string) => {
+      const d = docRef.current;
+      const c = d?.clips.find(x => x.id === id);
+      if (d == null || c == null) {
+        return;
+      }
+      const newId = clips.newClipId(d);
+      const next = clips.duplicateClip(d, id, newId, meta.numFrames);
+      editDoc(() => next, ownStep(), {before: id, after: newId});
+      setSelectedClipId(newId);
+      const after = next.clips.find(x => x.id === newId)?.start === c.end;
+      setClipNote(`${clipTitle(c)} duplicated ${after ? 'right after the original' : 'on top of the original'}. The copy is selected.`);
+    },
+    [editDoc, meta.numFrames],
+  );
+  /** Move a clip up (drawn over) or down its layer's stack, past the nearest clip it overlaps. */
+  const reorderClip = useCallback(
+    (id: string, direction: 'up' | 'down') => {
+      const d = docRef.current;
+      const c = d?.clips.find(x => x.id === id);
+      if (d == null || c == null) {
+        return;
+      }
+      const other = clips.overlapNeighbour(d, id, direction);
+      if (other == null) {
+        setClipNote(`${clipTitle(c)} not moved: no clip ${direction === 'up' ? 'over' : 'under'} it on its frames.`);
+        return;
+      }
+      editDoc(doc => clips.reorderClip(doc, id, direction), ownStep(), {before: id, after: id});
+      setClipNote(`${clipTitle(c)} moved ${direction}: now drawn ${direction === 'up' ? 'over' : 'under'} ${clipTitle(other)}.`);
+    },
+    [editDoc],
+  );
 
   /**
    * The one-click effect buttons, on clips: give `target` the effect `name`
@@ -1358,7 +1422,8 @@ export default function useStudioSession(video: VideoItem) {
 
   /**
    * Cmd-Z / Shift-Cmd-Z: step this window's newest own edit (state/editJournal.ts,
-   * Nate's Q6). An effect edit puts its clips back by id and selects the clip;
+   * Nate's Q6). An effect edit puts its clips back by id and selects the clip
+   * it selected then (journals.selectionAfter);
    * a click or range edit steps that object back on the backend, as its own
    * Undo does. With nothing of this window's left, the selected object's
    * history steps, as before. Agents' changes are never in the journal.
@@ -1393,7 +1458,8 @@ export default function useStudioSession(video: VideoItem) {
         entry.objectIds.forEach(id => stepObjectSeeds(which, id));
       } else {
         editDoc(d => journals.applyEntry(d, entry.changes, which));
-        const shown = entry.changes.map(c => (which === 'undo' ? c.before : c.after)).find(c => c != null);
+        const id = journals.selectionAfter(entry, which);
+        const shown = docRef.current?.clips.find(c => c.id === id);
         if (shown?.target.kind === 'object' && shown.target.id !== stateRef.current.activeId) {
           selectObject(shown.target.id);
         }
@@ -2035,6 +2101,11 @@ export default function useStudioSession(video: VideoItem) {
     moveClip,
     trimClip,
     removeClip,
+    splitClip,
+    duplicateClip,
+    reorderClip,
+    /** What the last split, duplicate or reorder did (or why it did nothing), for a live region; cleared after a few seconds. */
+    clipNote,
     stepEdits,
     objectColors,
     setObjectColor,

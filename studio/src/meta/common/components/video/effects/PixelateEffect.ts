@@ -13,16 +13,24 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+// Modified by sam-ui: the block size comes from params (a fraction of the
+// frame height, whole pixels), not the variant's fixed 10/20/30 px.
 import BaseGLEffect from '@/common/components/video/effects/BaseGLEffect';
 import {
   EffectFrameContext,
   EffectInit,
 } from '@/common/components/video/effects/Effect';
+import {numberParam} from '@/common/components/video/effects/EffectParamSpecs';
 import vertexShaderSource from '@/common/components/video/effects/shaders/DefaultVert.vert?raw';
 import fragmentShaderSource from '@/common/components/video/effects/shaders/Pixelate.frag?raw';
 import {Tracklet} from '@/common/tracker/Tracker';
 import invariant from 'invariant';
 import {CanvasForm} from 'pts';
+
+/** A block size given as a fraction of the frame height, in whole pixels (the Fine/Medium/Coarse styles are 10/20/30 at 720p). */
+export function pixelBlock(size: number, height: number): number {
+  return Math.max(1, Math.round(size * height));
+}
 
 export default class PixelateEffect extends BaseGLEffect {
   private _blockSize: number = 10.0;
@@ -56,7 +64,7 @@ export default class PixelateEffect extends BaseGLEffect {
     gl.clearColor(0.0, 0.0, 0.0, 1.0);
     gl.clear(gl.COLOR_BUFFER_BIT);
 
-    const blockSize = [10, 20, 30][this.variant];
+    const blockSize = pixelBlock(numberParam('Pixelate', 'size', this.params), context.height);
 
     // dynamic uniforms per frame
     gl.uniform1f(gl.getUniformLocation(program, 'uBlockSize'), blockSize);
