@@ -18,6 +18,8 @@ export type ParamSpec = (
   | {kind: 'choice'; options: string[]; default: string; label: string}
   // a picture stored in this browser (state/effectImages.ts), by the sha-256 of its bytes; '' for none
   | {kind: 'image'; default: ''; label: string}
+  // typed text, drawn only with canvas fillText: trimmed, no control characters but line breaks (normalizeParams)
+  | {kind: 'text'; default: string; label: string; maxLength: number; maxLines: number}
 ) & {onlyWhen?: Record<string, string[]>};
 /**
  * subjects: a background effect drawn knowing every tracked layer's mask on
@@ -86,6 +88,25 @@ export const EFFECT_SPECS: Record<string, EffectSpec> = {
       style: {kind: 'choice', options: ['Colour', 'Gradient', 'Image'], default: 'Colour', label: 'Fill'},
     },
     styles: {Colour: {style: 'Colour'}, Gradient: {style: 'Gradient'}, Image: {style: 'Image'}},
+    subjects: true,
+  },
+  // an editable title, drawn behind the tracked subjects (their pixels put back over it) or in front
+  Title: {
+    params: {
+      text: {kind: 'text', default: 'Your title', label: 'Text', maxLength: 80, maxLines: 3},
+      weight: {kind: 'number', min: 300, max: 900, step: 100, default: 700, label: 'Weight'},
+      size: {kind: 'number', min: 0.02, max: 0.4, step: 0.005, default: 0.12, label: 'Size', percentOfHeight: true},
+      color: {kind: 'color', default: '#ffffff', label: 'Colour'},
+      align: {kind: 'choice', options: ['Left', 'Centre', 'Right'], default: 'Centre', label: 'Alignment'},
+      // the text block's centre, as fractions of the frame's width and height
+      x: {kind: 'number', min: 0, max: 1, step: 0.01, default: 0.5, label: 'Horizontal position'},
+      y: {kind: 'number', min: 0, max: 1, step: 0.01, default: 0.5, label: 'Vertical position'},
+      animation: {kind: 'choice', options: ['None', 'Fade', 'Rise', 'Pop'], default: 'Fade', label: 'Entrance'},
+      // over the clip's first `entrance` seconds, on its clock
+      entrance: {kind: 'number', min: 0.1, max: 3, step: 0.1, default: 0.6, label: 'Entrance seconds', onlyWhen: {animation: ['Fade', 'Rise', 'Pop']}},
+      placement: {kind: 'choice', options: ['Behind subjects', 'In front'], default: 'Behind subjects', label: 'Placement'},
+    },
+    styles: {},
     subjects: true,
   },
   // everything but the tracked subjects in grey

@@ -10,6 +10,7 @@ import {
   EMPTY_DOC,
   activeClips,
   addClip,
+  cleanText,
   clipLines,
   clipTime,
   clipToEdit,
@@ -79,6 +80,10 @@ describe('normalizeParams (U1, U2)', () => {
           for (const bad of ['AB'.repeat(32), 'ab'.repeat(31), `${'ab'.repeat(32)}0`, '../../etc/passwd', 'layer']) {
             expect(at(bad), bad).toBe('');
           }
+        } else if (p.kind === 'text') {
+          expect(at(' Typed ')).toBe('Typed');
+          expect(at('x'.repeat(p.maxLength + 5))).toHaveLength(p.maxLength);
+          expect(at('\u0000 ')).toBe(p.default);
         } else {
           expect(at('#ABCDEF')).toBe('#abcdef');
           expect(at('#0f0')).toBe('#00ff00');
@@ -104,6 +109,40 @@ describe('normalizeParams (U1, U2)', () => {
 
   it("keeps an unknown effect's plain values for a newer build, dropping non-values", () => {
     expect(normalizeParams('FutureEffect', {a: 1, b: 'x', c: true, d: {}, e: [1]})).toEqual({a: 1, b: 'x', c: true});
+  });
+});
+
+describe("Title's text setting (cleanText)", () => {
+  const clean = (v: unknown) => cleanText(v, 80, 3);
+
+  it('keeps typed text, trimmed, with up to three lines', () => {
+    expect(clean('  Hello world  ')).toBe('Hello world');
+    expect(clean('One\nTwo\nThree')).toBe('One\nTwo\nThree');
+    expect(clean('Win\r\nOld Mac\rEnd')).toBe('Win\nOld Mac\nEnd');
+    expect(clean('<b>not markup</b> & "quotes"')).toBe('<b>not markup</b> & "quotes"'); // fillText draws it as typed
+  });
+
+  it('joins lines past the third onto it', () => {
+    expect(clean('a\nb\nc\nd\ne')).toBe('a\nb\nc d e');
+  });
+
+  it('drops control characters but line breaks; a tab is a space', () => {
+    expect(clean('a\u0000b\u0007c\u001bd\u007fe\u0085f')).toBe('abcdef');
+    expect(clean('a\tb')).toBe('a b');
+  });
+
+  it('cuts at 80, never half a surrogate pair', () => {
+    expect(clean('x'.repeat(100))).toBe('x'.repeat(80));
+    const emoji = `${'x'.repeat(79)}\u{1F600}`; // 81 UTF-16 units, the pair straddling 80
+    expect(clean(emoji)).toBe('x'.repeat(79));
+    expect(clean(`${'x'.repeat(78)}\u{1F600}`)).toBe(`${'x'.repeat(78)}\u{1F600}`);
+  });
+
+  it("is '' for nothing left or not a string, which normalizeParams turns into the default", () => {
+    expect(['', '   ', '\n\n', '\u0000', 42, null, undefined, {}].map(clean)).toEqual(Array(8).fill(''));
+    expect(normalizeParams('Title', {text: '  \n '}).text).toBe('Your title');
+    expect(normalizeParams('Title', {text: 7}).text).toBe('Your title');
+    expect(normalizeParams('Title', {text: ' Behind\nyou '}).text).toBe('Behind\nyou');
   });
 });
 

@@ -45,7 +45,7 @@ function setup() {
     },
   };
   const meta = Object.fromEntries(
-    ['Outline', 'Cutout', 'PixelateMask', 'BackgroundBlur', 'ReplaceBackground', 'ColorPop', 'Desaturate'].map(n => [n, fakeEffect(n, log)]),
+    ['Outline', 'Cutout', 'PixelateMask', 'BackgroundBlur', 'ReplaceBackground', 'ColorPop', 'Title', 'Desaturate'].map(n => [n, fakeEffect(n, log)]),
   ) as unknown as Effects;
   const h = new ObjectHighlight(overlay as unknown as MaskOverlayEffect, meta, () => ({width: 8, height: 8}));
   return {h, log, overlay};
@@ -211,6 +211,37 @@ describe('ObjectHighlight', () => {
     expect(log.find(p => p.effect === 'ReplaceBackground')?.ids).toEqual([]);
   });
 
+  it("gives the Title the same union: every shown layer's mask in the preview, hidden ones too in an export, whatever its placement", async () => {
+    const {h, log} = setup();
+    h.hidden = id => id === 2;
+    const d = doc(clip('bg', 'Title', {placement: 'In front'}), clip(1, 'Outline'));
+    await h.setDoc(d, [1, 2, 3]);
+    h.apply(preview, ...frame([3, 1, 2]));
+    expect(log.map(p => [p.effect, p.ids])).toEqual([['Title', [3, 1]], ['Outline', [1]], ['Overlay', [3]]]);
+    log.length = 0;
+    const state = {doc: d, drawOrder: [1, 2, 3], untouched: 'shown' as const};
+    await h.prepare(state);
+    h.drawWith(exportForm, state);
+    h.apply(exportForm, ...frame([3, 1, 2]));
+    expect(log[0]).toMatchObject({effect: 'Title', ids: [3, 1, 2]});
+  });
+
+  it("an export waits for an effect's setup even when a preview draw started it (the Title's font)", async () => {
+    const {h} = setup();
+    const meta = (h as unknown as {_meta: Record<string, {setup: ReturnType<typeof vi.fn>}>})._meta;
+    let loaded!: () => void;
+    meta.Title.setup.mockImplementation(() => new Promise<void>(r => (loaded = r)));
+    void h.setDoc(doc(clip('bg', 'Title')), []); // the preview starts setting it up
+    let prepared = false;
+    const state = {doc: doc(clip('bg', 'Title')), drawOrder: [], untouched: 'shown' as const};
+    const done = h.prepare(state).then(() => (prepared = true));
+    await new Promise(r => setTimeout(r, 0));
+    expect(prepared).toBe(false);
+    loaded();
+    await done;
+    expect(meta.Title.setup).toHaveBeenCalledTimes(1);
+  });
+
   it('hands every effect the pictures the page sent', async () => {
     const {h, log} = setup();
     const pic = {width: 2, height: 2} as ImageBitmap;
@@ -356,7 +387,7 @@ describe('ObjectHighlight WebGL contexts (D1)', () => {
     const {h, draw, live, canvases} = contexts();
     const backgrounds = backgroundEffects.map(e => e.effectName);
     const objects = [...highlightEffects, ...moreEffects].map(e => e.effectName);
-    expect(backgrounds.filter(n => !isGL(n))).toEqual(['Original', 'EraseBackground', 'Desaturate', 'BackgroundText']);
+    expect(backgrounds.filter(n => !isGL(n))).toEqual(['Original', 'EraseBackground', 'Desaturate', 'BackgroundText', 'Title']);
     for (let round = 0; round < 2; round++) {
       for (const bg of backgrounds) {
         for (const fx of objects) {

@@ -10,6 +10,9 @@ import {pixelBlock} from './PixelateEffect';
 describe('effect param specs', () => {
   it("name every registered effect's variants, in order ('Overlay' is studio's four-fill MaskOverlayEffect)", () => {
     for (const [name, effect] of Object.entries(AllEffects)) {
+      if (name === 'Title') {
+        continue; // studio's own: settings, no styles
+      }
       const style = EFFECT_SPECS[name]?.params.style;
       expect(style?.kind, name).toBe('choice');
       if (Object.keys(EFFECT_SPECS[name].params).length > 1) {
@@ -50,8 +53,8 @@ describe('effect param specs', () => {
 });
 
 describe('Replace background and Colour pop', () => {
-  it('are subjects backgrounds (they get the masks); no other effect is (D8)', () => {
-    expect(Object.keys(EFFECT_SPECS).filter(n => EFFECT_SPECS[n].subjects)).toEqual(['ReplaceBackground', 'ColorPop']);
+  it('are subjects backgrounds (they get the masks), as is the Title; no other effect is (D8)', () => {
+    expect(Object.keys(EFFECT_SPECS).filter(n => EFFECT_SPECS[n].subjects)).toEqual(['ReplaceBackground', 'Title', 'ColorPop']);
   });
 
   it('start from their defaults: a colour fill with no picture, a full grey', () => {
@@ -103,5 +106,34 @@ describe('clips saved before Pixelate and Blur had settings (style only)', () =>
   it('keep settings they do have, and the feather starts hard (as before)', () => {
     expect(normalizeParams('PixelateMask', {style: 'Coarse', size: 0.02})).toMatchObject({size: 0.02, feather: 0});
     expect(normalizeParams('PixelateMask', {style: 'Medium'}).feather).toBe(0);
+  });
+});
+
+describe('Title', () => {
+  it('starts as a white bold fading title in the middle, behind the subjects', () => {
+    expect(normalizeParams('Title', {})).toEqual({
+      text: 'Your title',
+      weight: 700,
+      size: 0.12,
+      color: '#ffffff',
+      align: 'Centre',
+      x: 0.5,
+      y: 0.5,
+      animation: 'Fade',
+      entrance: 0.6,
+      placement: 'Behind subjects',
+    });
+  });
+
+  it('keeps every setting in range: Inter weights 300-900, size, position inside the frame, entrance length', () => {
+    const p = normalizeParams('Title', {weight: 1000, size: 2, x: -1, y: 1.4, entrance: 0, align: 'Justify', animation: 'Spin', placement: 'Above', color: 'red'});
+    expect(p).toMatchObject({weight: 900, size: 0.4, x: 0, y: 1, entrance: 0.1, align: 'Centre', animation: 'Fade', placement: 'Behind subjects', color: '#ffffff'});
+    expect(normalizeParams('Title', {weight: 250, size: 0}).weight).toBe(300);
+    expect(normalizeParams('Title', {weight: 640}).weight).toBe(600);
+  });
+
+  it('shows the entrance length only with an entrance', () => {
+    const shown = (animation: string) => paramShown(EFFECT_SPECS.Title.params.entrance, normalizeParams('Title', {animation}));
+    expect(['None', 'Fade', 'Rise', 'Pop'].map(shown)).toEqual([false, true, true, true]);
   });
 });

@@ -69,8 +69,27 @@ export function isImageHash(v: unknown): v is string {
 }
 
 /**
+ * Typed text as a text setting keeps it: line breaks as '\n', tabs as spaces,
+ * other control characters dropped, trimmed, lines past `maxLines` joined onto
+ * the last one, cut to `maxLength` (UTF-16 units, as a textarea's maxlength
+ * counts them, never half a surrogate pair). '' when nothing is left.
+ */
+export function cleanText(v: unknown, maxLength: number, maxLines: number): string {
+  if (typeof v !== 'string') {
+    return '';
+  }
+  const t = v.replace(/\r\n?/g, '\n').replace(/\t/g, ' ').replace(/[^\P{Cc}\n]/gu, '').trim();
+  const lines = t.split('\n');
+  let s = lines.length <= maxLines ? t : [...lines.slice(0, maxLines - 1), lines.slice(maxLines - 1).join(' ')].join('\n');
+  if (s.length > maxLength) {
+    s = s.slice(0, /[\uD800-\uDBFF]/.test(s[maxLength - 1]) ? maxLength - 1 : maxLength);
+  }
+  return s.trim();
+}
+
+/**
  * Settings fit for `effect`: unknown keys dropped, numbers clamped and rounded
- * to their step, colours parsed ('layer' allowed), image keys checked, anything missing or
+ * to their step, colours parsed ('layer' allowed), image keys checked, text cleaned (cleanText), anything missing or
  * malformed set to its default. An effect this build does not know keeps its
  * plain values as they are, for a newer build to read.
  */
@@ -100,6 +119,8 @@ export function normalizeParams(effect: string, raw: unknown): EffectParams {
       out[key] = v === 'layer' ? 'layer' : (parseColor(v) ?? p.default);
     } else if (p.kind === 'image') {
       out[key] = isImageHash(v) ? v : p.default;
+    } else if (p.kind === 'text') {
+      out[key] = cleanText(v, p.maxLength, p.maxLines) || p.default;
     } else {
       out[key] = typeof v === 'string' && p.options.includes(v) ? v : p.default;
     }

@@ -33,6 +33,7 @@ import ReplaceGLEffect from './ReplaceGLEffect';
 import ScopeGLEffect from './ScopeGLEffect';
 import SobelEffect from './SobelEffect';
 import SubjectsBackgroundGLEffect from './SubjectsBackgroundGLEffect';
+import TitleEffect from './TitleEffect';
 import VibrantMaskEffect from './VibrantMaskEffect';
 
 export type Effects = {
@@ -47,6 +48,7 @@ export type Effects = {
   Gradient: Effect;
   ReplaceBackground: Effect;
   ColorPop: Effect;
+  Title: Effect;
 
   /* Highlights */
   Overlay: Effect;
@@ -80,6 +82,7 @@ export function createEffects(): Effects {
     Gradient: new GradientEffect(),
     ReplaceBackground: new SubjectsBackgroundGLEffect('ReplaceBackground'),
     ColorPop: new SubjectsBackgroundGLEffect('ColorPop'),
+    Title: new TitleEffect(),
 
     /* Highlights */
     Overlay: new OverlayEffect(),
