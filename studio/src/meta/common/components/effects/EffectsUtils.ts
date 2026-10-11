@@ -17,6 +17,7 @@ import {Effects} from '@/common/components/video/effects/Effects';
 import type {CarbonIconType} from '@carbon/icons-react';
 import {
   AppleDash,
+  Badge,
   Asterisk,
   Barcode,
   CenterCircle,
@@ -29,8 +30,10 @@ import {
   Humidity,
   Image,
   Lasso,
+  MagicWand,
   Opacity,
   Overlay,
+  Replicate,
   TextCreation,
   TextFont,
 } from '@carbon/icons-react';
@@ -79,6 +82,9 @@ export const highlightEffects: DemoEffect[] = [
   {title: 'Burst', Icon: Asterisk, effectName: 'Burst'},
   {title: 'Spotlight', Icon: CenterCircle, effectName: 'Scope'},
   {title: 'Outline', Icon: Lasso, effectName: 'Outline'},
+  {title: 'Glitter', Icon: MagicWand, effectName: 'Glitter'}, // sam-ui: particles on and around the subject
+  {title: 'Sticker', Icon: Badge, effectName: 'Sticker'}, // sam-ui: a shape or picture that follows the layer
+  {title: 'Echo', Icon: Replicate, effectName: 'Echo'}, // sam-ui: copies from earlier frames, behind the layer
 ];
 
 export const moreEffects: DemoEffect[] = [

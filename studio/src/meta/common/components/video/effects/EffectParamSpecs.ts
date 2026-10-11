@@ -25,9 +25,15 @@ export type ParamSpec = (
 /**
  * subjects: a background effect drawn knowing every tracked layer's mask on
  * the frame (their union), to keep those subjects as they are in the video.
- * Other background effects get no masks: a layer clip draws over them.
+ * Other background effects get no masks: a layer clip draws over them. A
+ * layer effect with it gets its own masks as usual and every layer's in
+ * EffectFrameContext.subjects (Echo keeps its copies behind all subjects).
  */
-export type EffectSpec = {params: Record<string, ParamSpec>; styles: Record<string, Partial<EffectParams>>; subjects?: true};
+/**
+ * seeded: its randomness is its clip's own (EffectFrameContext.seed, from the
+ * clip id), so a clip is never drawn in another clip's pass.
+ */
+export type EffectSpec = {params: Record<string, ParamSpec>; styles: Record<string, Partial<EffectParams>>; subjects?: true; seeded?: true};
 
 /** A Meta effect's variants as named styles, in variant order. */
 function variants(...options: string[]): EffectSpec {
@@ -66,6 +72,10 @@ const SPOTLIGHT_STYLES: Record<string, Partial<EffectParams>> = {
   'Soft disc': {shape: 'Disc', color: 'layer'},
   'Soft ring': {shape: 'Ring', color: 'layer'},
 };
+
+/** The Sticker's built-in shapes (StickerEffect's SHAPES, in order), and those that take a label. */
+const STICKER_SHAPES = ['Star', 'Heart', 'Arrow', 'Speech bubble', 'Price tag', 'Sparkle', 'Crown', 'Label'];
+const STICKER_LABELS = ['Label', 'Price tag', 'Speech bubble'];
 
 export const EFFECT_SPECS: Record<string, EffectSpec> = {
   /* Backgrounds */
@@ -148,6 +158,27 @@ export const EFFECT_SPECS: Record<string, EffectSpec> = {
   BlurMask: sized('radius', 'Radius', 0.05, {Light: 6, Medium: 12, Strong: 24}, {feather: {...FEATHER, default: 0.5}}),
   Arrow: variants('White arrow', 'Rainbow arrow', 'White dot', 'Rainbow dot'),
   NoisyMask: variants('Noise'),
+  // sparkles emitted from the layer's mask, drifting out and twinkling (GlitterEffect.ts)
+  Glitter: {
+    params: {
+      // particles alive at once on a subject covering a tenth of the frame (a life after the clip starts); a subject gets them in proportion to its mask's area (4-800)
+      density: {kind: 'number', min: 10, max: 400, step: 10, default: 120, label: 'Density'},
+      size: {kind: 'number', min: 0.004, max: 0.06, step: 0.001, default: 0.014, label: 'Size', percentOfHeight: true},
+      colours: {kind: 'choice', options: ['One colour', 'Multicolour'], default: 'One colour', label: 'Colours'},
+      color: {kind: 'color', default: 'layer', label: 'Colour', onlyWhen: {colours: ['One colour']}},
+      speed: {kind: 'number', min: 0.25, max: 3, step: 0.05, default: 1, label: 'Speed'},
+      // how far a particle drifts out over its life
+      spread: {kind: 'number', min: 0, max: 0.2, step: 0.005, default: 0.03, label: 'Spread', percentOfHeight: true},
+      area: {kind: 'choice', options: ['Edge', 'Inside', 'Both'], default: 'Both', label: 'Area'},
+      style: {kind: 'choice', options: ['Glitter', 'Sparkle', 'Dust'], default: 'Glitter', label: 'Style'},
+    },
+    styles: {
+      Glitter: {style: 'Glitter', density: 120, size: 0.014, speed: 1, spread: 0.03, area: 'Both'},
+      Sparkle: {style: 'Sparkle', density: 40, size: 0.035, speed: 0.8, spread: 0.04, area: 'Edge'},
+      Dust: {style: 'Dust', density: 250, size: 0.008, speed: 0.5, spread: 0.08, area: 'Both'},
+    },
+    seeded: true,
+  },
   Outline: {
     params: {
       width: {kind: 'number', min: 0.002, max: 0.05, step: 0.001, default: 0.006, label: 'Width', percentOfHeight: true},
@@ -164,6 +195,58 @@ export const EFFECT_SPECS: Record<string, EffectSpec> = {
       Glow: {style: 'Glow', width: 0.02, softness: 0.8, opacity: 0.9},
       Scribble: {style: 'Scribble', width: 0.005, softness: 0.25, opacity: 1, wobble: 0.008, boil: 8},
     },
+  },
+  // a built-in shape or a stored picture that follows the layer's box (StickerEffect); the style is the sticker
+  Sticker: {
+    params: {
+      image: {kind: 'image', default: '', label: 'Picture', onlyWhen: {style: ['Your picture']}},
+      // '' draws no label
+      text: {kind: 'text', default: '', label: 'Label', maxLength: 24, maxLines: 2, onlyWhen: {style: STICKER_LABELS}},
+      color: {kind: 'color', default: '#ffd23f', label: 'Colour', onlyWhen: {style: STICKER_SHAPES}},
+      textColor: {kind: 'color', default: '#111111', label: 'Label colour', followsLayer: false, onlyWhen: {style: STICKER_LABELS}},
+      outline: {kind: 'color', default: '#ffffff', label: 'Outline colour', onlyWhen: {style: STICKER_SHAPES}},
+      // in sticker heights
+      outlineWidth: {kind: 'number', min: 0, max: 0.2, step: 0.01, default: 0.05, label: 'Outline width', onlyWhen: {style: STICKER_SHAPES}},
+      position: {kind: 'choice', options: ['Top', 'Top-left', 'Top-right', 'Centre', 'Bottom'], default: 'Top', label: 'Position'},
+      // in the subject's (bounding box) heights; never under minSize of the frame's
+      size: {kind: 'number', min: 0.05, max: 2, step: 0.01, default: 0.3, label: 'Size'},
+      minSize: {kind: 'number', min: 0, max: 0.3, step: 0.005, default: 0.05, label: 'Smallest size', percentOfHeight: true},
+      offsetX: {kind: 'number', min: -2, max: 2, step: 0.01, default: 0, label: 'Move across'},
+      offsetY: {kind: 'number', min: -2, max: 2, step: 0.01, default: 0, label: 'Move down'},
+      // the box averaged over this many tracked frames each side
+      smooth: {kind: 'number', min: 0, max: 6, step: 1, default: 2, label: 'Smoothing'},
+      style: {kind: 'choice', options: [...STICKER_SHAPES, 'Your picture'], default: 'Star', label: 'Sticker'},
+    },
+    styles: {
+      Star: {style: 'Star', color: '#ffd23f', outline: '#ffffff'},
+      Heart: {style: 'Heart', color: '#ff3b5c', outline: '#ffffff'},
+      Arrow: {style: 'Arrow', color: '#ffffff', outline: '#1a1a1a'},
+      'Speech bubble': {style: 'Speech bubble', color: '#ffffff', outline: '#1a1a1a', textColor: '#111111'},
+      'Price tag': {style: 'Price tag', color: '#ffd23f', outline: '#1a1a1a', textColor: '#111111'},
+      Sparkle: {style: 'Sparkle', color: '#fff4b0', outline: '#ffffff'},
+      Crown: {style: 'Crown', color: '#ffc400', outline: '#1a1a1a'},
+      Label: {style: 'Label', color: '#ffffff', outline: '#1a1a1a', textColor: '#111111'},
+      'Your picture': {style: 'Your picture'},
+    },
+  },
+  // delayed copies of the layer from earlier frames of the clip, behind it (EchoEffect)
+  Echo: {
+    params: {
+      count: {kind: 'number', min: 1, max: 6, step: 1, default: 4, label: 'Echoes'},
+      spacing: {kind: 'number', min: 1, max: 30, step: 1, default: 3, label: 'Frames apart'},
+      opacity: {kind: 'number', min: 0.05, max: 1, step: 0.05, default: 0.6, label: 'Opacity'},
+      // Echo: each copy this much fainter than the one before it
+      falloff: {kind: 'number', min: 0, max: 0.9, step: 0.05, default: 0.3, label: 'Fade per echo', onlyWhen: {style: ['Echo']}},
+      tint: {kind: 'choice', options: ['None', 'Layer colour', 'Custom'], default: 'None', label: 'Tint'},
+      color: {kind: 'color', default: '#ffffff', label: 'Tint colour', followsLayer: false, onlyWhen: {tint: ['Custom']}},
+      tintStrength: {kind: 'number', min: 0, max: 1, step: 0.05, default: 0.6, label: 'Tint strength', onlyWhen: {tint: ['Layer colour', 'Custom']}},
+      style: {kind: 'choice', options: ['Echo', 'Strobe'], default: 'Echo', label: 'Style'},
+    },
+    styles: {
+      Echo: {style: 'Echo', count: 4, spacing: 3, opacity: 0.6, falloff: 0.3},
+      Strobe: {style: 'Strobe', count: 4, spacing: 6, opacity: 0.6},
+    },
+    subjects: true,
   },
 };
 

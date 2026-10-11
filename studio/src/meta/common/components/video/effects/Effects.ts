@@ -15,6 +15,7 @@
  */
 import BackgroundTextEffect from './BackgroundTextEffect';
 import DesaturateEffect from './DesaturateEffect';
+import EchoEffect from './EchoEffect';
 import {Effect} from './Effect';
 import EraseBackgroundEffect from './EraseBackgroundEffect';
 import OriginalEffect from './OriginalEffect';
@@ -24,6 +25,7 @@ import BlurGLEffect from './BlurGLEffect';
 import BurstGLEffect from './BurstGLEffect';
 import CutoutGLEffect from './CutoutGLEffect';
 import EraseForegroundGLEffect from './EraseForegroundGLEffect';
+import GlitterEffect from './GlitterEffect';
 import GradientEffect from './GradientEffect';
 import NoisyMaskEffect from './NoisyMaskEffect';
 import OutlineGLEffect from './OutlineGLEffect';
@@ -32,6 +34,7 @@ import PixelateMaskGLEffect from './PixelateMaskGLEffect';
 import ReplaceGLEffect from './ReplaceGLEffect';
 import ScopeGLEffect from './ScopeGLEffect';
 import SobelEffect from './SobelEffect';
+import StickerEffect from './StickerEffect';
 import SubjectsBackgroundGLEffect from './SubjectsBackgroundGLEffect';
 import TitleEffect from './TitleEffect';
 import VibrantMaskEffect from './VibrantMaskEffect';
@@ -62,6 +65,9 @@ export type Effects = {
   Arrow: Effect;
   Outline: Effect;
   BlurMask: Effect;
+  Glitter: Effect;
+  Sticker: Effect;
+  Echo: Effect;
 
   /* More Effects */
   NoisyMask: Effect;
@@ -96,6 +102,9 @@ export function createEffects(): Effects {
     Arrow: new ArrowGLEffect(),
     Outline: new OutlineGLEffect(),
     BlurMask: new BlurGLEffect(true),
+    Glitter: new GlitterEffect(),
+    Sticker: new StickerEffect(),
+    Echo: new EchoEffect(),
 
     /* More Effects */
     NoisyMask: new NoisyMaskEffect(),

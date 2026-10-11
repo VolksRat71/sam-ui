@@ -21,7 +21,10 @@ export default function ExportVideoModal({session, videoName, onClose}: Props) {
   const [done, setDone] = useState<{name: string; size: number} | null>(null);
   const busy = session.exportProgress != null;
   const clips = session.effectDoc?.clips ?? [];
-  const missingPictures = session.effectDoc == null ? 0 : clipsMissingImages(session.effectDoc, session.missingImages);
+  const doc = session.effectDoc;
+  // a Sticker without its picture is hidden, not drawn in a colour
+  const missingStickers = doc == null ? 0 : clipsMissingImages({...doc, clips: doc.clips.filter(c => c.effect === 'Sticker')}, session.missingImages);
+  const missingPictures = (doc == null ? 0 : clipsMissingImages(doc, session.missingImages)) - missingStickers;
   const untouchedCount = session.state.objects.filter(
     o => !clips.some(c => c.target.kind === 'object' && c.target.id === o.id),
   ).length;
@@ -58,6 +61,12 @@ export default function ExportVideoModal({session, videoName, onClose}: Props) {
             <p className="effect-note">
               {missingPictures === 1 ? '1 clip uses a picture' : `${missingPictures} clips use pictures`} not stored in this browser or unreadable:{' '}
               {missingPictures === 1 ? 'it draws its colour' : 'they draw their colour'} instead.
+            </p>
+          )}
+          {missingStickers > 0 && (
+            <p className="effect-note">
+              {missingStickers === 1 ? '1 sticker uses a picture' : `${missingStickers} stickers use pictures`} not stored in this browser or unreadable:{' '}
+              {missingStickers === 1 ? 'it is hidden' : 'they are hidden'}.
             </p>
           )}
           <FileNameField value={file} onChange={setFile} disabled={busy} />

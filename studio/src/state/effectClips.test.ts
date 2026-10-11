@@ -383,6 +383,12 @@ describe('storage (U1)', () => {
     expect(doc.clips.map(c => c.id)).toEqual(['ok', 'raw']);
     expect(doc.clips[0].params).toEqual({width: 0.05, color: 'layer', opacity: 1, softness: 0.25, wobble: 0.008, boil: 8, style: 'Outline'});
     expect(doc.clips[1]).toMatchObject({effect: 'Future', params: {k: 'v'}, row: 0, phase: 0, target: {kind: 'background'}});
+    const seeds = parseEffectDoc({
+      version: 2,
+      clips: ['c1', 'v1-3', '', 'x'.repeat(65), 'a b', '<b>', 7, null].map((seed, i) => ({...good, id: `s${i}`, seed})),
+    });
+    expect(seeds.clips.map(c => c.seed)).toEqual(['c1', 'v1-3', undefined, undefined, undefined, undefined, undefined, undefined]);
+    expect(seeds.clips.filter(c => 'seed' in c).length).toBe(2); // older docs and bad seeds: no key at all
     expect(parseEffectDoc({version: 1, clips: []})).toEqual(EMPTY_DOC);
     expect(parseEffectDoc(null)).toEqual(EMPTY_DOC);
   });
@@ -441,12 +447,26 @@ describe('split, duplicate and stack order (slice 2)', () => {
     expect(ids(doc)).toEqual(['x', 'c', 'r']);
     const [left, right] = [doc.clips[1], doc.clips[2]];
     expect(left).toEqual({...whole, end: 25});
-    expect(right).toEqual({...whole, id: 'r', start: 25, phase: 4 + 15});
+    expect(right).toEqual({...whole, id: 'r', start: 25, phase: 4 + 15, seed: 'c'});
     for (let f = 10; f < 40; f++) {
       const part = f < 25 ? left : right;
       expect(activeClips(doc, f).filter(c => sameTarget(c.target, A))).toEqual([part]);
       expect(clipTime(part, f, 24)).toBe(clipTime(whole, f, 24));
     }
+  });
+
+  it("a split's right part keeps the clip's seed (its id, or the seed it carries); a duplicate starts its own", () => {
+    const doc = splitClip({version: 2, clips: [clip({id: 'c', start: 0, end: 90})]}, 'c', 30, 'r');
+    const again = splitClip(doc, 'r', 60, 'rr');
+    expect(again.clips.map(c => [c.id, c.seed])).toEqual([
+      ['c', undefined],
+      ['r', 'c'],
+      ['rr', 'c'],
+    ]);
+    const dup = duplicateClip(again, 'rr', 'd', 200).clips.at(-1)!;
+    expect(dup.id).toBe('d');
+    expect('seed' in dup).toBe(false);
+    expect('seed' in duplicateClip(again, 'rr', 'd', 60).clips.at(-1)!).toBe(false); // no room after it: a new row
   });
 
   it('splits only strictly inside the clip, and names the right part c<n> by default', () => {
