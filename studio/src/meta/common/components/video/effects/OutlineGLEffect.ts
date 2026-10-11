@@ -98,6 +98,7 @@ export default class OutlineGLEffect extends BaseGLEffect {
   private _targets: WebGLTexture[] = []; // [cover, spread]
   private _framebuffers: WebGLFramebuffer[] = [];
   private _noise: WebGLTexture | null = null;
+  private _noiseSeed = 0; // the boil step the lattice holds
 
   constructor() {
     super(1);
@@ -139,7 +140,14 @@ export default class OutlineGLEffect extends BaseGLEffect {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+    this._uploadNoise(gl, 0);
     gl.bindTexture(gl.TEXTURE_2D, null);
+  }
+
+  /** Scribble's lattice for redraw `seed`, into the bound noise texture. */
+  private _uploadNoise(gl: WebGL2RenderingContext, seed: number) {
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, NOISE_SIZE, NOISE_SIZE, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, scribbleNoise(seed));
+    this._noiseSeed = seed;
   }
 
   private _link(gl: WebGL2RenderingContext, fragmentSource: string): WebGLProgram {
@@ -229,13 +237,21 @@ export default class OutlineGLEffect extends BaseGLEffect {
     gl.uniform1f(at(program, 'uNoiseScale'), WOBBLE_CELLS / height / NOISE_SIZE);
     gl.activeTexture(gl.TEXTURE0 + NOISE_UNIT);
     gl.bindTexture(gl.TEXTURE_2D, this._noise);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, NOISE_SIZE, NOISE_SIZE, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, scribbleNoise(boilStep(context.time, s.boil)));
+    const seed = boilStep(context.time, s.boil);
+    if (s.scribble && seed !== this._noiseSeed) {
+      this._uploadNoise(gl, seed);
+    }
     gl.uniform1i(at(program, 'uNoise'), NOISE_UNIT);
     for (let i = 0; i < MASK_SLOTS; i++) {
       gl.uniform3fv(at(program, `uColor${i}`), outlineRgb(s.color, context.maskColors[i] ?? ''));
     }
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    // unbind the pass targets, so no later pass draws into a texture still bound for sampling (a feedback loop)
+    for (const unit of [COVER_UNIT, SPREAD_UNIT]) {
+      gl.activeTexture(gl.TEXTURE0 + unit);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+    }
 
     invariant(this._canvas !== null, 'canvas is required');
     form.ctx.drawImage(this._canvas, 0, 0);
@@ -253,6 +269,7 @@ export default class OutlineGLEffect extends BaseGLEffect {
     this._targets = [];
     this._framebuffers = [];
     this._noise = null;
+    this._noiseSeed = 0;
     this._coverProgram = null;
     this._spreadProgram = null;
   }

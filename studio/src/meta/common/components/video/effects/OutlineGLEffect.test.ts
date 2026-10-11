@@ -121,10 +121,11 @@ describe('OutlineGLEffect', () => {
     expect(deleted).toBe(1 + 3 + 2 + 1 + 2); // frame texture, masks, targets, noise, framebuffers
   });
 
-  it("pushes Scribble's settings and the lattice for the clip time's boil step", async () => {
+  it("pushes Scribble's settings, and the lattice when the clip time's boil step changes", async () => {
     const {effect, calls, form, context, uniforms} = await setUp();
     const noiseUploads = (from: number) =>
-      calls.slice(from).filter(([name, args]) => name === 'texImage2D' && args[3] === NOISE_SIZE).map(([, args]) => args[8] as Uint8Array);
+      calls.slice(from).filter(([name, args]) => name === 'texImage2D' && args[3] === NOISE_SIZE && args[4] === NOISE_SIZE).map(([, args]) => args[8] as Uint8Array);
+    expect(noiseUploads(0)).toEqual([scribbleNoise(0)]); // setup: the texture is never empty
     const draw = (time: number | undefined) => {
       const from = calls.length;
       effect.apply(form, {...context(1), time}, []);
@@ -138,16 +139,17 @@ describe('OutlineGLEffect', () => {
     expect(a.u.get('uRadius')).toBe(Math.ceil(0.6 + 1.5 * 1 + 1));
     expect(a.u.get('uNoiseScale')).toBeCloseTo(16 / 20 / NOISE_SIZE); // 16 lattice cells a frame height
     expect(a.noise).toEqual([scribbleNoise(2)]);
-    expect(draw(0.25).noise).toEqual(a.noise); // the same frame again: the same lattice
-    expect(draw(0.3).noise).toEqual(a.noise); // within the same boil step
+    expect(draw(0.25).noise).toEqual([]); // the same frame again: the lattice it holds
+    expect(draw(0.3).noise).toEqual([]); // within the same boil step
     expect(draw(0.375).noise).toEqual([scribbleNoise(3)]);
     effect.setParams({style: 'Scribble', boil: 0});
     expect(draw(9).noise).toEqual([scribbleNoise(0)]);
-    // other styles ignore the wobble
-    effect.setParams({style: 'Outline', wobble: 0.03});
+    // other styles ignore the wobble and never upload the lattice
+    effect.setParams({style: 'Outline', wobble: 0.03, boil: 8});
     const o = draw(0.25);
     expect(o.u.get('uScribble')).toBe(0);
     expect(o.u.get('uWobble')).toBe(0);
+    expect(o.noise).toEqual([]);
   });
 
   it('draws nothing with no masks', async () => {

@@ -73,6 +73,13 @@ describe('BlurGLEffect', () => {
     expect(drawImage).toHaveBeenCalledTimes(1);
   });
 
+  it.each([false, true])('never draws pass 1 into a texture still bound for the last pass 2 (layer: %s)', async masked => {
+    const {effect, form, drawImage, context} = await setUpGL(new BlurGLEffect(masked));
+    effect.apply(form, context(3), []);
+    effect.apply(form, context(3), []); // fakeGL throws on a feedback loop, as Chrome drops the draw
+    expect(drawImage).toHaveBeenCalledTimes(2);
+  });
+
   it.each([
     ['background', false, 1 + 2, ['COLOR_ATTACHMENT0', 'NONE', 'NONE', 'COLOR_ATTACHMENT3']], // frame; pass 1: colour, feathers
     ['layer', true, 1 + 3 + 4, ['COLOR_ATTACHMENT0', 'COLOR_ATTACHMENT1', 'COLOR_ATTACHMENT2', 'COLOR_ATTACHMENT3']], // frame, masks; a colour per mask, feathers

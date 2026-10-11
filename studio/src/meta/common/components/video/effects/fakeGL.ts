@@ -9,10 +9,29 @@ import type {Effect, EffectFrameContext} from './Effect';
 
 type Call = [string, unknown[]];
 
-/** A WebGL2 context that records every call; constants are their own names, uniform locations their names. */
+/**
+ * A WebGL2 context that records every call; constants are their own names,
+ * uniform locations their names. Like Chrome, a draw into a framebuffer whose
+ * texture is still bound to a texture unit throws (a feedback loop: Chrome
+ * drops the draw); stricter than Chrome, which counts only units the program samples.
+ */
 function fakeGL() {
   const calls: Call[] = [];
   let ids = 0;
+  let unit: unknown = 1000;
+  let framebuffer: unknown = null;
+  const bound = new Map<unknown, unknown>(); // unit -> texture
+  const attached = new Map<unknown, Set<unknown>>(); // framebuffer -> its textures
+  const track = (key: string, args: unknown[]) => {
+    if (key === 'activeTexture') unit = args[0];
+    else if (key === 'bindTexture') bound.set(unit, args[1]);
+    else if (key === 'bindFramebuffer') framebuffer = args[1];
+    else if (key === 'framebufferTexture2D') attached.set(framebuffer, (attached.get(framebuffer) ?? new Set()).add(args[3]));
+    else if (key === 'drawArrays' && framebuffer != null) {
+      const loop = [...bound].find(([, t]) => attached.get(framebuffer)?.has(t));
+      if (loop != null) throw new Error(`feedback loop: texture unit ${Number(loop[0]) - 1000} holds a texture of the framebuffer drawn into`);
+    }
+  };
   const gl = new Proxy({} as Record<string, unknown>, {
     get(_, key) {
       if (typeof key !== 'string') {
@@ -23,6 +42,7 @@ function fakeGL() {
       }
       return (...args: unknown[]) => {
         calls.push([key, args]);
+        track(key, args);
         if (key === 'getUniformLocation') {
           return args[1];
         }

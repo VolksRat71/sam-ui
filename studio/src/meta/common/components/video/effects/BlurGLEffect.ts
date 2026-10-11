@@ -158,6 +158,12 @@ export default class BlurGLEffect extends BaseGLEffect {
     gl.uniform1i(at('uVertical'), 1);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    // unbind pass 1's outputs: still bound when the next pass 1 draws into them, the
+    // one program samples them there (a feedback loop: Chrome drops that draw, freezing the blur)
+    slots.forEach(slot => {
+      gl.activeTexture(gl.TEXTURE0 + PASS1_UNIT + slot);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+    });
 
     invariant(this._canvas !== null, 'canvas is required');
     form.ctx.drawImage(this._canvas, 0, 0);
