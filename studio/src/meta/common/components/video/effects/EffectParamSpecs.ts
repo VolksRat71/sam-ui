@@ -14,7 +14,8 @@ import type {EffectParams} from './Effect';
 export type ParamSpec = (
   // percentOfHeight: a fraction of the frame height, shown to people as a percentage (stored as the fraction)
   | {kind: 'number'; min: number; max: number; step: number; default: number; label: string; percentOfHeight?: true}
-  | {kind: 'color'; default: string; label: string} // '#rrggbb' or 'layer' (follow the layer's mask colour)
+  // '#rrggbb' or 'layer' (follow the layer's mask colour); followsLayer false: a background's, never 'layer'
+  | {kind: 'color'; default: string; label: string; followsLayer?: false}
   | {kind: 'choice'; options: string[]; default: string; label: string}
   // a picture stored in this browser (state/effectImages.ts), by the sha-256 of its bytes; '' for none
   | {kind: 'image'; default: ''; label: string}
@@ -77,8 +78,8 @@ export const EFFECT_SPECS: Record<string, EffectSpec> = {
   // the fill behind the tracked subjects, which stay as they are (the style is the fill)
   ReplaceBackground: {
     params: {
-      color: {kind: 'color', default: '#2f6fdf', label: 'Colour'},
-      color2: {kind: 'color', default: '#101820', label: 'Second colour', onlyWhen: {style: ['Gradient']}},
+      color: {kind: 'color', default: '#2f6fdf', label: 'Colour', followsLayer: false},
+      color2: {kind: 'color', default: '#101820', label: 'Second colour', followsLayer: false, onlyWhen: {style: ['Gradient']}},
       angle: {kind: 'number', min: 0, max: 360, step: 1, default: 180, label: 'Angle', onlyWhen: {style: ['Gradient']}},
       image: {kind: 'image', default: '', label: 'Image', onlyWhen: {style: ['Image']}},
       fit: {kind: 'choice', options: ['Cover', 'Contain'], default: 'Cover', label: 'Fit', onlyWhen: {style: ['Image']}},

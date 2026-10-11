@@ -181,7 +181,7 @@ function ClipSettings({clip, session, layerColor, title}: {clip: EffectClip; ses
           <label className="fx-param-label" htmlFor={id}>{p.label}</label>
           <div className="fx-color">
             <input id={id} type="color" value={hex} disabled={follow} onChange={e => set(key, e.target.value)} />
-            {clip.target.kind === 'object' && (
+            {p.followsLayer !== false && (
               <label className="fx-follow">
                 <input type="checkbox" checked={follow} onChange={e => session.updateClip(clip.id, {params: {...clip.params, [key]: e.target.checked ? 'layer' : layerColor}})} />
                 Follow layer colour
@@ -214,7 +214,7 @@ function ClipSettings({clip, session, layerColor, title}: {clip: EffectClip; ses
             {missing
               ? 'This picture is not stored in this browser (another browser, or cleared site data), so the colour shows instead. Choose it again to use it.'
               : picked === ''
-                ? 'PNG, JPEG or WebP, scaled down to the video if larger. The colour shows until you choose one.'
+                ? 'PNG, JPEG or WebP, up to 50 MB; kept no larger than the video needs. The colour shows until you choose one.'
                 : 'PNG, JPEG or WebP, kept in this browser. Choose another to replace it.'}
           </p>
         </div>

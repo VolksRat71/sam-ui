@@ -97,7 +97,7 @@ export function normalizeParams(effect: string, raw: unknown): EffectParams {
         out[key] = p.default;
       }
     } else if (p.kind === 'color') {
-      out[key] = v === 'layer' ? 'layer' : (parseColor(v) ?? p.default);
+      out[key] = v === 'layer' && p.followsLayer !== false ? 'layer' : (parseColor(v) ?? p.default);
     } else if (p.kind === 'image') {
       out[key] = isImageHash(v) ? v : p.default;
     } else {
