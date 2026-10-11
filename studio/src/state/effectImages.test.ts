@@ -1,7 +1,7 @@
 // sam-ui (Apache-2.0). New file, not from SAM 2.
 import {describe, expect, it} from 'vitest';
 import {MemoryKv} from '~/local/kv';
-import {imageKeys} from './effectClips';
+import {clipsMissingImages, imageKeys} from './effectClips';
 import {fitWithin, loadEffectImage, sha256Hex, storeEffectImage} from './effectImages';
 
 describe('effect pictures', () => {
@@ -33,5 +33,13 @@ describe('effect pictures', () => {
     const [a, b] = ['ab'.repeat(32), 'cd'.repeat(32)];
     const clip = (id: string, params: Record<string, string>) => ({id, target: {kind: 'background' as const}, effect: 'ReplaceBackground', params, start: 0, end: 1, row: 0, phase: 0});
     expect(imageKeys({version: 2, clips: [clip('c1', {image: b}), clip('c2', {image: a}), clip('c3', {image: b}), clip('c4', {image: ''}), clip('c5', {style: 'Image'})]})).toEqual([a, b]);
+  });
+
+  it('count the clips that draw a missing picture (only with the Image fill), for the export warning', () => {
+    const [a, b] = ['ab'.repeat(32), 'cd'.repeat(32)];
+    const clip = (id: string, params: Record<string, string>) => ({id, target: {kind: 'background' as const}, effect: 'ReplaceBackground', params, start: 0, end: 1, row: 0, phase: 0});
+    const doc = {version: 2 as const, clips: [clip('c1', {style: 'Image', image: a}), clip('c2', {style: 'Image', image: a}), clip('c3', {style: 'Colour', image: a}), clip('c4', {style: 'Image', image: b})]};
+    expect(clipsMissingImages(doc, new Set([a]))).toBe(2);
+    expect(clipsMissingImages(doc, new Set())).toBe(0);
   });
 });
