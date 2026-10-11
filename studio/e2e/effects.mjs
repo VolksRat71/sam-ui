@@ -30,11 +30,14 @@
 //       capture's edge) the fill: a
 //       colour, then a picture picked in the settings (four coloured quadrants, 2x the
 //       video, stored scaled down in OPFS by its hash); a key this browser lacks
-//       draws the colour and the settings say so; with Colour pop on later frames,
-//       the export matches the preview within B7's tolerance
+//       draws the colour, and the settings and the export dialog say so; Reset keeps
+//       the picture; a Gradient (red to blue, top to bottom) lies on the red-blue line
+//       and runs the right way; feather 1 softens only a few px outside the masks; with
+//       Colour pop on later frames, the export matches the preview within B7's tolerance
 //   CP  Colour pop: outside the masks grey, inside as the plain video (colour kept)
 //   SP  Spotlight: darken 0.6 dims everything outside the circle to 0.4 and leaves
-//       A as it was; each of Meta's six styles, saved style-only as earlier builds
+//       A as it was; on A and B with different settings it darkens once (0.4, not
+//       0.16) and neither dims the other's circle; each of Meta's six styles, saved style-only as earlier builds
 //       saved them, draws pixel-identically to the base build (BASE_SERVE, served
 //       at /sam-ui-base/ on the same origin, so the same tracks and doc)
 //   SC  Scribble (boiling Outline) on frame 101: identical after a scrub away and
@@ -634,6 +637,33 @@ await step('RB', async () => {
   const colour = pixels(await cap('RB-2_colour-magenta_f101'));
   const kept = share(inside, i => off(colour, plain3, i) <= PIXEL_TOL);
   const filled = share(outside, i => offRgb(colour, i, [255, 0, 255]) <= PIXEL_TOL);
+  // feather 1: the cut softens just outside the masks, nothing inside or further out changes
+  await putClips([clipOn(tBG, 'ReplaceBackground', {style: 'Colour', color: '#ff00ff', feather: 1}, 'rb'), ...clear()]);
+  await sel(A);
+  await seekTo(F3);
+  const soft = pixels(await cap('RB-2b_colour-magenta_feather-1_f101'));
+  const near = and(morph(m, green.w, green.h, 4, true), outside);
+  const far = and(not(morph(m, green.w, green.h, 12, true)), outside);
+  const fKept = share(inside, i => off(soft, colour, i) <= PIXEL_TOL);
+  const fNear = share(near, i => off(soft, colour, i) > PIXEL_TOL);
+  const fFar = share(far, i => off(soft, colour, i) <= PIXEL_TOL);
+  check('RB', fKept.pct === 100 && fNear.pct >= 30 && fFar.pct >= 99.5, `feather 1: inside unchanged (${fKept.pct} %), ${fNear.pct} % of the 2-4 px outside the masks softened, beyond 12 px unchanged (${fFar.pct} %)`, {fKept, fNear, fFar});
+  // a Gradient, red at the top to blue at the bottom
+  await putClips([clipOn(tBG, 'ReplaceBackground', {style: 'Gradient', color: '#ff0000', color2: '#0000ff', angle: 180}, 'rb'), ...clear()]);
+  await sel(A);
+  await seekTo(F3);
+  const grad = pixels(await cap('RB-2c_gradient-red-to-blue_f101'));
+  const onLine = share(outside, i => grad.d[3 * i + 1] <= PIXEL_TOL && Math.abs(grad.d[3 * i] + grad.d[3 * i + 2] - 255) <= PIXEL_TOL);
+  const band = (from, to) => {
+    let [r, b, n] = [0, 0, 0];
+    outside.forEach((v, i) => {
+      const y = Math.floor(i / grad.w) / grad.h;
+      if (v && y >= from && y < to) (r += grad.d[3 * i], b += grad.d[3 * i + 2], n++);
+    });
+    return [Math.round(r / n), Math.round(b / n)];
+  };
+  const [top, bottom] = [band(0, 0.1), band(0.9, 1)];
+  check('RB', onLine.pct >= 99.5 && top[0] > 200 && bottom[1] > 200, `Gradient: ${onLine.pct} % of the outside on the red-blue line; top band r/b ${top}, bottom band ${bottom}`, {onLine, top, bottom});
   check('RB', kept.pct >= 99.5 && filled.pct >= 99.5, `Colour: subjects as the video inside their masks (${kept.pct} % of ${kept.n} px within ${PIXEL_TOL}), magenta outside (${filled.pct} %)`, {kept, filled});
 
   await putClips([clipOn(tBG, 'ReplaceBackground', {style: 'Image', color: '#ff00ff'}, 'rb'), ...clear()]);
@@ -667,6 +697,15 @@ await step('RB', async () => {
   });
   check('RB', pkept.pct >= 99.5 && placed.pct >= 99.5, `Image (Cover): subjects as the video (${pkept.pct} % of ${pkept.n} px), each quadrant of the picture in its place outside (${placed.pct} %)`, {kept: pkept, placed});
 
+  // Reset to defaults resets the settings and keeps the picture (content, not a setting)
+  await putClips([clipOn(tBG, 'ReplaceBackground', {style: 'Image', color: '#00ff00', feather: 0.5, fit: 'Contain', image: key}, 'rb'), ...clear()]);
+  await sel(A);
+  await page.locator('.fx-clip[data-clip="rb"]').click();
+  await fx.getByRole('button', {name: /^Reset to/}).click();
+  await page.waitForTimeout(500);
+  const reset = (await doc()).clips.find(c => c.id === 'rb').params;
+  check('RB', reset.image === key && reset.feather === 0 && reset.fit === 'Cover' && reset.color === '#2f6fdf' && reset.style === 'Image', `Reset keeps the picture and resets the rest: ${JSON.stringify(reset)}`);
+
   // a key this browser has no copy of (another browser's doc, or cleared site data)
   await putClips([clipOn(tBG, 'ReplaceBackground', {style: 'Image', color: '#ff00ff', image: 'ab'.repeat(32)}, 'rb'), ...clear()]);
   await sel(A);
@@ -676,6 +715,14 @@ await step('RB', async () => {
   const said = await fx.locator('.fx-param .effect-note').innerText();
   const fallback = share(outside, i => offRgb(missing, i, [255, 0, 255]) <= PIXEL_TOL);
   check('RB', fallback.pct >= 99.5 && /not stored in this browser/.test(said), `a picture this browser lacks draws the colour (${fallback.pct} % magenta outside); the settings say: "${said}"`, fallback);
+  await page.click('.export-menu > button');
+  await page.click('.menu-item:has-text("Video with effects")');
+  await page.waitForSelector('.modal');
+  const warned = await page.locator('.modal .effect-note').innerText().catch(() => '');
+  const allowed = await page.locator('.modal button:has-text("Export MP4")').isEnabled();
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(300);
+  check('RB', /^1 clip uses a picture not stored in this browser: it draws its colour instead\.$/.test(warned) && allowed, `the export dialog warns ("${warned}") and still allows the export (${allowed})`);
   const live = await page.$$eval('.effects [role=status], .effects [aria-live]', es => es.map(e => e.innerText).filter(t => /\d/.test(t)));
   check('RB', live.length === 0, `no numbers in the effects panel's live regions (${JSON.stringify(live)})`);
 
@@ -722,6 +769,23 @@ await step('SP', async () => {
   const changed = share(all, i => dimmed[i] === 1);
   const aKept = share(inside, i => off(s0, s1, i) <= PIXEL_TOL);
   check('SP', changed.pct >= 30 && ratio > 0.36 && ratio < 0.44 && aKept.pct >= 99.5, `darken outside 0.6: ${changed.pct} % of the frame dimmed to ${ratio} of its brightness (0.4 wanted), the subjects inside unchanged (${aKept.pct} %)`, {changed, ratio, aKept});
+
+  // two Spotlights with different settings (two passes): one darkening, and neither dims the other's circle
+  const two = async (darken, tag) => {
+    await putClips([clipOn(tA, 'Scope', {style: 'Colour disc', darken}, 'sa'), clipOn(tB, 'Scope', {style: 'Colour disc', size: 1.5, darken}, 'sb')]);
+    await sel(A);
+    await seekTo(F3);
+    return pixels(await cap(tag));
+  };
+  const t0 = await two(0, 'SP-4_A-and-B-discs_f101');
+  const t1 = await two(0.6, 'SP-5_A-and-B-discs_darken-0.6_f101');
+  const dim2 = where(t0, (_r, _g, _b, x, y) => off(t0, t1, y * t0.w + x) > 8);
+  let [m0, m1] = [0, 0];
+  dim2.forEach((v, i) => v && ((m0 += luma(t0, i)), (m1 += luma(t1, i))));
+  const ratio2 = Math.round((m1 / m0) * 1000) / 1000;
+  const discs = where(t0, (_r, _g, _b, x, y) => off(t0, plain3, y * t0.w + x) > 30);
+  const discsKept = share(discs, i => off(t0, t1, i) <= PIXEL_TOL);
+  check('SP', ratio2 > 0.36 && ratio2 < 0.44 && discsKept.pct >= 99, `two Spotlights, darken 0.6: the outside dimmed once, to ${ratio2} (0.4 wanted, 0.16 if compounded); both circles unchanged (${discsKept.pct} % of ${discsKept.n} px)`, {ratio2, discsKept});
 
   if (!process.env.BASE_SERVE) {
     console.log('SKIP SP old-style parity: BASE_SERVE not set');
