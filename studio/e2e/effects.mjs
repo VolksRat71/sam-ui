@@ -45,12 +45,13 @@
 //       at /sam-ui-base/ on the same origin, so the same tracks and doc)
 //   TT  slice 4, the Title on frame 101 over A and B (on a transparent Outline):
 //       In front, magenta text drawn where its position says and over the subjects;
+//       a long line at the default size at the right edge stays inside the frame;
 //       Behind subjects, the same text outside their masks and the plain video inside
 //       (RB's masks), and over a Desaturate below as that drew them; its ink as wide as Inter's at weights 900 and 300 (measured in
 //       the page with the same font file), not the fallback sans-serif's; a Fade at
 //       the clip's first frame draws nothing, at its entrance's end all of it; the
-//       text field takes typed text (shortcut keys too) with its count, joins a
-//       fourth line onto the third, keeps the title while emptied; Top moves it; Reset keeps the text; with a Rise over
+//       text field takes typed text (shortcut keys too) with its count, does nothing on Enter at its
+//       third line, keeps the title while emptied; Top moves it; Reset keeps the text; with a Rise over
 //       the clip, the export matches the preview within B7's tolerance
 //   SC  Scribble (boiling Outline) on frame 101: identical after a scrub away and
 //       back and play/pause, redrawn when boil is on (differs from boil 0, which
@@ -866,6 +867,14 @@ await step('TT', async () => {
   const sameOut = share(outside, i => off(behind, front, i) <= PIXEL_TOL);
   check('TT', kept.pct >= 99.5 && sameOut.pct >= 99.5 && outText.pct * outText.n >= 100 * 2000, `Behind subjects: the subjects as the plain video inside their masks (${kept.pct} % of ${kept.n} px), the text outside them as In front draws it (${sameOut.pct} %; ${Math.round((outText.pct * outText.n) / 100)} magenta px there)`, {kept, sameOut, outText});
 
+  // a long line at the default size, placed at the right edge: shrunk and moved in, all of it inside the frame
+  const LONG = 'A title far too long to fit across the frame at this size';
+  const long = await shot([title({placement: 'In front', text: LONG, size: 0.12, weight: 700, x: 1, y: 0.5}), ...clear()], F3, 'TT-2a_long-line_right-edge_f101');
+  const lbox = inkBox(long, isMagenta);
+  const edge = Math.round(0.03 * long.h * 0.5); // half the margin, in capture px
+  const longInk = share(new Uint8Array(long.w * long.h).fill(1), i => isMagenta(long, i));
+  check('TT', lbox[0] >= edge && lbox[2] <= long.w - 1 - edge && lbox[1] >= edge && lbox[3] <= long.h - 1 - edge && longInk.pct * longInk.n >= 100 * 1500, `a long line at the default size stays inside the frame: ink x ${lbox[0]}-${lbox[2]} of ${long.w}, y ${lbox[1]}-${lbox[3]} of ${long.h} (${Math.round((longInk.pct * longInk.n) / 100)} px)`, {box: lbox});
+
   // a background clip below (Desaturate): the subjects stay as it drew them, not as the raw video
   const grey = await shot([clipOn(tBG, 'Desaturate', {style: 'Gray'}, 'ds'), ...clear()], F3, 'TT-2b_desaturate_f101');
   const over = await shot([clipOn(tBG, 'Desaturate', {style: 'Gray'}, 'ds'), {...title({}), row: 1}, ...clear()], F3, 'TT-2c_title-behind-over-desaturate_f101');
@@ -927,7 +936,7 @@ await step('TT', async () => {
   await page.waitForTimeout(800);
   const typed = (await doc()).clips.find(c => c.id === 'tt').params.text;
   const count = await field.evaluate(e => document.getElementById(e.getAttribute('aria-describedby'))?.innerText ?? '');
-  check('TT', emptied === 'TITLE' && typed === 'Hello, sofa. Yes\nTwo\nThree Four' && (await frame()) === frameBefore && (await doc()).clips.length === clipsBefore && new RegExp(`^${typed.length}/80 characters`).test(count), `the text field: emptied keeps "${emptied}", typing (s, o, f, y, space, Enter) gives ${JSON.stringify(typed)} (a fourth line joins the third), frame ${(await frame()) + 1} and ${clipsBefore} clips unchanged (Space did not play); count "${count}"`, {emptied, typed, count});
+  check('TT', emptied === 'TITLE' && typed === 'Hello, sofa. Yes\nTwo\nThreeFour' && (await frame()) === frameBefore && (await doc()).clips.length === clipsBefore && new RegExp(`^${typed.length}/80 characters`).test(count), `the text field: emptied keeps "${emptied}", typing (s, o, f, y, space, Enter) gives ${JSON.stringify(typed)} (Enter on the third line does nothing), frame ${(await frame()) + 1} and ${clipsBefore} clips unchanged (Space did not play); count "${count}"`, {emptied, typed, count});
   await fx.getByRole('button', {name: 'Top', exact: true}).click();
   await page.waitForTimeout(500);
   const top = (await doc()).clips.find(c => c.id === 'tt').params;
