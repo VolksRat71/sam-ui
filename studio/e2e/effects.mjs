@@ -56,6 +56,11 @@
 //   SC  Scribble (boiling Outline) on frame 101: identical after a scrub away and
 //       back and play/pause, redrawn when boil is on (differs from boil 0, which
 //       is itself steady); its export matches the preview within B7's tolerance
+//   GL  Glitter on A and Sparkle (multicolour) on B, written as a doc: frame 101 is
+//       identical after a scrub away and back, play/pause and a reload (a fresh
+//       worker); the sparkles (where it changes the plain video) move between frames
+//       101 and 102; the same clips under other ids (other seeds) draw other
+//       sparkles; its export matches the preview within B7's tolerance
 //   OB  the layer Blur draws on A, its settings carry the tracking caveat, and a
 //       larger radius changes it; with the background Blur under it, frames 31 and
 //       101 (A in different places) differ as the video does there, and each
@@ -1060,6 +1065,59 @@ await step('SC', async () => {
   const rows = PARITY_FRAMES.map((f, i) => ({frame: f + 1, ...stats(shots[i], frames[i])}));
   check('SC', rows.every(r => r.psnr >= tolerance), `export matches the preview: ${rows.map(r => `f${r.frame} ${r.psnr} dB`).join(', ')} (needs >= ${tolerance} dB)`, rows);
   await clearClips();
+});
+
+await step('GL', async () => {
+  if (tolerance == null) throw new Error('no B7 tolerance');
+  const sparkles = (ida, idb) => [clipOn(tA, 'Glitter', {style: 'Glitter'}, ida), clipOn(tB, 'Glitter', {style: 'Sparkle', colours: 'Multicolour'}, idb)];
+  await putClips(clear());
+  const plain = {};
+  for (const f of [100, 101]) {
+    await seekTo(f);
+    plain[f] = await cap(`GL-0_plain_f${f + 1}`);
+  }
+  await putClips(sparkles('ga', 'gb'));
+  await seekTo(100);
+  const g = await cap('GL-1_glitter-A_sparkle-B_f101');
+  check('GL', differs(compare(plain[100], g)), 'Glitter draws on frame 101', compare(plain[100], g));
+  await seekTo(101);
+  const next = await cap('GL-2_glitter_f102');
+  await seekTo(60);
+  await seekTo(100);
+  const back = await cap('GL-3_glitter_f101_scrub-away-and-back');
+  await seekTo(94);
+  await page.keyboard.press(' ');
+  await page.waitForTimeout(220);
+  await page.keyboard.press(' ');
+  await page.waitForTimeout(800);
+  await seekTo(100);
+  const played = await cap('GL-4_glitter_f101_play-pause');
+  await reload();
+  await seekTo(100);
+  const fresh = await cap('GL-5_glitter_f101_fresh-worker');
+  for (const [what, png] of [['scrub away and back', back], ['play/pause', played], ['a reload (fresh worker)', fresh]]) {
+    const s = compare(g, png);
+    check('GL', s.changedPct === 0, `frame 101 identical after ${what}: MAD ${s.mad}`, s);
+  }
+  // the sparkles: pixels Glitter moved off the plain video by more than 24, on frames 101 and 102
+  const drawn = (png, base) => {
+    const [x, y] = [pixels(png), pixels(base)];
+    return where(x, (r, gg, b, px, py) => offRgb(y, py * y.w + px, [r, gg, b]) > 24);
+  };
+  const [m0, m1] = [drawn(g, plain[100]), drawn(next, plain[101])];
+  const shared = share(m0, i => m1[i] === 1);
+  check('GL', shared.n > 0 && shared.pct < 70, `the sparkles move and twinkle: ${shared.pct} % of frame 101's sparkle pixels (${shared.n}) are sparkle pixels on frame 102`, shared);
+  await putClips(sparkles('ga2', 'gb2'));
+  await seekTo(100);
+  const reseeded = await cap('GL-6_other-clip-ids_f101');
+  check('GL', !same(compare(g, reseeded)), `the same clips under other ids draw other sparkles: ${compare(g, reseeded).changedPct} % of pixels differ`, compare(g, reseeded));
+  await putClips(sparkles('ga', 'gb'));
+  const shots = await preview('GL-7_glitter');
+  const file = await exportVideo('GL_glitter-A_sparkle-B');
+  const frames = exportFrames(file, PARITY_FRAMES);
+  const rows = PARITY_FRAMES.map((f, i) => ({frame: f + 1, ...stats(shots[i], frames[i])}));
+  check('GL', rows.every(r => r.psnr >= tolerance), `export matches the preview: ${rows.map(r => `f${r.frame} ${r.psnr} dB`).join(', ')} (needs >= ${tolerance} dB)`, rows);
+  await putClips([]);
 });
 
 await step('OB', async () => {
