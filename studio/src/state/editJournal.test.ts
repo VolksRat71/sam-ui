@@ -24,6 +24,7 @@ import {
   diffClips,
   recordEffect,
   recordSeed,
+  selectionAfter,
   steppedObject,
   takeStep,
 } from './editJournal';
@@ -116,6 +117,37 @@ describe('edit journal (U9)', () => {
       press(s, 'redo', () => {});
       expect(s.doc, what).toEqual(after);
     }
+  });
+
+  it('Cmd-Z selects the clip the edit selected then, not the first clip it changed', () => {
+    // c1 [30, 102) row 0 and c2 [60, 132) row 1 overlap; c1 comes first in the doc
+    const doc = addClip(addClip(EMPTY_DOC, outline('c1', 30)), outline('c2', 60));
+    const ops: Array<[string, EffectDoc, {before: string; after: string}, [string, string]]> = [
+      // reorder: c2 selected, Alt+Down; c1's row changes too, and first
+      ['reorder', reorderClip(doc, 'c2', 'down'), {before: 'c2', after: 'c2'}, ['c2', 'c2']],
+      // split: the original selected; the edit selected the right part, which redo selects again
+      ['split', splitClip(doc, 'c1', 50, 'c3'), {before: 'c1', after: 'c3'}, ['c1', 'c3']],
+      // duplicate: undo selects the original (its copy is gone), redo the copy
+      ['duplicate', duplicateClip(doc, 'c2', 'c4', 300), {before: 'c2', after: 'c4'}, ['c2', 'c4']],
+    ];
+    for (const [what, after, select, [undone, redone]] of ops) {
+      const j = recordEffect(EMPTY_JOURNAL, doc, after, `edit:${what}`, 0, select);
+      const s = {doc: after, journal: j};
+      const step = (which: 'undo' | 'redo') => {
+        const entry = takeStep(s.journal, which, () => 'ok', () => true).entry as Extract<JournalEntry, {kind: 'effect'}>;
+        press(s, which, () => {});
+        const id = selectionAfter(entry, which);
+        expect(s.doc.clips.some(c => c.id === id), what).toBe(true);
+        return id;
+      };
+      expect(step('undo'), what).toBe(undone);
+      expect(step('redo'), what).toBe(redone);
+    }
+    // edits that name no selection select the clip they changed, or nothing once it is gone
+    const added = addClip(doc, outline('c5', 0));
+    const entry = recordEffect(EMPTY_JOURNAL, doc, added, 'add', 0).undo[0] as Extract<JournalEntry, {kind: 'effect'}>;
+    expect(selectionAfter(entry, 'redo')).toBe('c5');
+    expect(selectionAfter(entry, 'undo')).toBeNull();
   });
 
   it('merges a drag (same key, close together) into one step, but not separate edits', () => {

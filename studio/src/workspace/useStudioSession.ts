@@ -1202,15 +1202,16 @@ export default function useStudioSession(video: VideoItem) {
   /**
    * Change the doc. A person's edit passes a journal `key` (edits with the
    * same key in quick succession are one undo step: a drag); loading,
-   * pruning and undo itself pass none.
+   * pruning and undo itself pass none. `select`: the clip selected before
+   * and after it, for Cmd-Z to restore when that is not the changed clip.
    */
-  const editDoc = useCallback((fn: (doc: EffectDoc) => EffectDoc, key?: string) => {
+  const editDoc = useCallback((fn: (doc: EffectDoc) => EffectDoc, key?: string, select?: journals.ClipSelection) => {
     const before = docRef.current;
     if (before != null) {
       docRef.current = fn(before);
       setEffectDoc(docRef.current);
       if (key != null) {
-        journalRef.current = journals.recordEffect(journalRef.current, before, docRef.current, key, Date.now());
+        journalRef.current = journals.recordEffect(journalRef.current, before, docRef.current, key, Date.now(), select);
       }
     }
   }, []);
@@ -1318,7 +1319,7 @@ export default function useStudioSession(video: VideoItem) {
         return;
       }
       const newId = clips.newClipId(d);
-      editDoc(doc => clips.splitClip(doc, id, frame, newId), ownStep());
+      editDoc(doc => clips.splitClip(doc, id, frame, newId), ownStep(), {before: id, after: newId});
       setSelectedClipId(newId);
       setClipNote(`${clipTitle(c)} split in two at the playhead. The second part is selected.`);
     },
@@ -1334,7 +1335,7 @@ export default function useStudioSession(video: VideoItem) {
       }
       const newId = clips.newClipId(d);
       const next = clips.duplicateClip(d, id, newId, meta.numFrames);
-      editDoc(() => next, ownStep());
+      editDoc(() => next, ownStep(), {before: id, after: newId});
       setSelectedClipId(newId);
       const after = next.clips.find(x => x.id === newId)?.start === c.end;
       setClipNote(`${clipTitle(c)} duplicated ${after ? 'right after the original' : 'on top of the original'}. The copy is selected.`);
@@ -1354,7 +1355,7 @@ export default function useStudioSession(video: VideoItem) {
         setClipNote(`${clipTitle(c)} not moved: no clip ${direction === 'up' ? 'over' : 'under'} it on its frames.`);
         return;
       }
-      editDoc(doc => clips.reorderClip(doc, id, direction), ownStep());
+      editDoc(doc => clips.reorderClip(doc, id, direction), ownStep(), {before: id, after: id});
       setClipNote(`${clipTitle(c)} moved ${direction}: now drawn ${direction === 'up' ? 'over' : 'under'} ${clipTitle(other)}.`);
     },
     [editDoc],
@@ -1421,7 +1422,8 @@ export default function useStudioSession(video: VideoItem) {
 
   /**
    * Cmd-Z / Shift-Cmd-Z: step this window's newest own edit (state/editJournal.ts,
-   * Nate's Q6). An effect edit puts its clips back by id and selects the clip;
+   * Nate's Q6). An effect edit puts its clips back by id and selects the clip
+   * it selected then (journals.selectionAfter);
    * a click or range edit steps that object back on the backend, as its own
    * Undo does. With nothing of this window's left, the selected object's
    * history steps, as before. Agents' changes are never in the journal.
@@ -1456,7 +1458,8 @@ export default function useStudioSession(video: VideoItem) {
         entry.objectIds.forEach(id => stepObjectSeeds(which, id));
       } else {
         editDoc(d => journals.applyEntry(d, entry.changes, which));
-        const shown = entry.changes.map(c => (which === 'undo' ? c.before : c.after)).find(c => c != null);
+        const id = journals.selectionAfter(entry, which);
+        const shown = docRef.current?.clips.find(c => c.id === id);
         if (shown?.target.kind === 'object' && shown.target.id !== stateRef.current.activeId) {
           selectObject(shown.target.id);
         }

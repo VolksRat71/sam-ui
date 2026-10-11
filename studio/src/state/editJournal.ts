@@ -10,8 +10,10 @@
 import type {EffectClip, EffectDoc} from './effectClips';
 
 export type ClipChange = {id: string; before: EffectClip | null; after: EffectClip | null};
+/** The clip selected before and after an edit that names it (split, duplicate, reorder). */
+export type ClipSelection = {before: string; after: string};
 export type JournalEntry =
-  | {kind: 'effect'; changes: ClipChange[]; key: string; at: number}
+  | {kind: 'effect'; changes: ClipChange[]; key: string; at: number; select?: ClipSelection}
   | {kind: 'seed'; objectIds: number[]};
 export type Journal = {undo: JournalEntry[]; redo: JournalEntry[]};
 
@@ -44,10 +46,12 @@ function push(j: Journal, entry: JournalEntry): Journal {
 }
 
 /**
- * Record an effect edit. With the same `key` as the newest entry and within
- * MERGE_MS of it, the edit joins that entry (its first before, its latest after).
+ * Record an effect edit, with the clip it selects before and after (`select`)
+ * when that is not simply the clip it changed. With the same `key` as the
+ * newest entry and within MERGE_MS of it, the edit joins that entry (its
+ * first before, its latest after).
  */
-export function recordEffect(j: Journal, before: EffectDoc, after: EffectDoc, key: string, at: number): Journal {
+export function recordEffect(j: Journal, before: EffectDoc, after: EffectDoc, key: string, at: number, select?: ClipSelection): Journal {
   const changes = diffClips(before, after);
   if (changes.length === 0) {
     return j;
@@ -61,7 +65,13 @@ export function recordEffect(j: Journal, before: EffectDoc, after: EffectDoc, ke
     }
     return {undo: [...j.undo.slice(0, -1), {...last, changes: merged, at}], redo: []};
   }
-  return push(j, {kind: 'effect', changes, key, at});
+  return push(j, {kind: 'effect', changes, key, at, ...(select && {select})});
+}
+
+/** The clip to select once an effect entry has stepped: the one its edit selected then, else the first clip it put back. */
+export function selectionAfter(entry: Extract<JournalEntry, {kind: 'effect'}>, which: 'undo' | 'redo'): string | null {
+  const named = entry.select?.[which === 'undo' ? 'before' : 'after'];
+  return named ?? entry.changes.map(c => (which === 'undo' ? c.before : c.after)).find(c => c != null)?.id ?? null;
 }
 
 /** Record a seed change the person made on `objectIds` (the backend holds what it was). */
