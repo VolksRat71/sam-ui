@@ -321,6 +321,9 @@ body:has(.app > .toast) .agent-toast { bottom: 72px; }
 .fx-number { display: grid; grid-template-columns: minmax(0, 1fr) 76px; align-items: center; gap: 8px; }
 .fx-number input[type='range'] { width: 100%; accent-color: var(--primary); }
 .fx-settings input[type='number'] { width: 100%; min-width: 0; padding: 0 6px; border: 1px solid var(--line); border-radius: var(--radius); background: #000; color: #fff; font: inherit; font-size: var(--type-control); }
+.fx-text { display: grid; gap: 2px; min-width: 0; }
+.fx-text textarea { width: 100%; min-width: 0; padding: 4px 6px; border: 1px solid var(--line); border-radius: var(--radius); background: #000; color: #fff; font: inherit; font-size: var(--type-control); resize: vertical; }
+.fx-count { color: var(--text-muted); }
 .fx-range { display: grid; grid-template-columns: 76px auto 76px; align-items: center; gap: 8px; justify-content: start; color: var(--text-muted); }
 .fx-color { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
 .fx-color input[type='color'] { width: var(--target); height: var(--target); min-height: var(--target); padding: 2px; border: 1px solid var(--line); background: #000; cursor: pointer; }

@@ -67,7 +67,8 @@ import type MaskOverlayEffect from './MaskOverlayEffect';
  */
 export type DrawState = {doc: EffectDoc; drawOrder: number[]; untouched: UntouchedMode | null};
 
-type Ready = {effect: Effect; gl: WebGL2RenderingContext | null};
+/** setup: its effect.setup, which an export waits for even when a draw started it (Title waits there for its font). */
+type Ready = {effect: Effect; gl: WebGL2RenderingContext | null; setup?: Promise<void>};
 type Pass = {effect: string; params: EffectParams; time?: number; duration?: number; key: string; idx: number[]};
 
 const META_MASK_SLOTS = 3;
@@ -175,7 +176,7 @@ export default class ObjectHighlight extends AbstractEffect {
   private _prepare(name: string): Promise<void> | undefined {
     const ready = this._ready.get(name);
     if ((ready != null && ready.gl?.isContextLost() !== true) || this._failed.has(name)) {
-      return;
+      return ready?.setup;
     }
     this._ready.delete(name);
     const effect = this._meta[name as keyof Effects];
@@ -202,14 +203,14 @@ export default class ObjectHighlight extends AbstractEffect {
     }
     const mine: Ready = {effect, gl};
     this._ready.set(name, mine);
-    return effect.setup({width, height, canvas, gl: gl ?? undefined}).catch(error => {
+    return (mine.setup = effect.setup({width, height, canvas, gl: gl ?? undefined}).catch(error => {
       this._failed.add(name);
       if (this._ready.get(name) === mine) {
         this._ready.delete(name);
       }
       gl?.getExtension('WEBGL_lose_context')?.loseContext();
       console.warn(`the ${name} effect failed to set up; drawn as the stage default`, error);
-    });
+    }));
   }
 
   /** Free effect `name`'s GL resources and its context. */

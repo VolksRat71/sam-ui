@@ -10,10 +10,12 @@ import {
   EMPTY_DOC,
   activeClips,
   addClip,
+  cleanText,
   clipLines,
   clipTime,
   clipToEdit,
   duplicateClip,
+  graphemes,
   loadEffectDoc,
   migrateV1,
   moveClip,
@@ -79,6 +81,10 @@ describe('normalizeParams (U1, U2)', () => {
           for (const bad of ['AB'.repeat(32), 'ab'.repeat(31), `${'ab'.repeat(32)}0`, '../../etc/passwd', 'layer']) {
             expect(at(bad), bad).toBe('');
           }
+        } else if (p.kind === 'text') {
+          expect(at(' Typed ')).toBe('Typed');
+          expect(at('x'.repeat(p.maxLength + 5))).toHaveLength(p.maxLength);
+          expect(at('\u0000 ')).toBe(p.default);
         } else {
           expect(at('#ABCDEF')).toBe('#abcdef');
           expect(at('#0f0')).toBe('#00ff00');
@@ -104,6 +110,56 @@ describe('normalizeParams (U1, U2)', () => {
 
   it("keeps an unknown effect's plain values for a newer build, dropping non-values", () => {
     expect(normalizeParams('FutureEffect', {a: 1, b: 'x', c: true, d: {}, e: [1]})).toEqual({a: 1, b: 'x', c: true});
+  });
+});
+
+describe("Title's text setting (cleanText)", () => {
+  const clean = (v: unknown) => cleanText(v, 80, 3);
+
+  it('keeps typed text, trimmed, with up to three lines', () => {
+    expect(clean('  Hello world  ')).toBe('Hello world');
+    expect(clean('One\nTwo\nThree')).toBe('One\nTwo\nThree');
+    expect(clean('Win\r\nOld Mac\rEnd')).toBe('Win\nOld Mac\nEnd');
+    expect(clean('<b>not markup</b> & "quotes"')).toBe('<b>not markup</b> & "quotes"'); // fillText draws it as typed
+  });
+
+  it('joins lines past the third onto it', () => {
+    expect(clean('a\nb\nc\nd\ne')).toBe('a\nb\nc d e');
+  });
+
+  it('drops control characters but line breaks; a tab is a space', () => {
+    expect(clean('a\u0000b\u0007c\u001bd\u007fe\u0085f')).toBe('abcdef');
+    expect(clean('a\tb')).toBe('a b');
+  });
+
+  it('drops invisible format characters (bidi overrides, zero-width spaces) but keeps the joiner emoji need; Unicode line separators break lines', () => {
+    expect(clean('a\u202eb\u202dc\u2066d\u2069e\u200bf\ufeffg\u00adh')).toBe('abcdefgh');
+    const family = '\u{1F468}\u200d\u{1F469}\u200d\u{1F467}';
+    expect(clean(`hi ${family}`)).toBe(`hi ${family}`);
+    expect(clean('one\u2028two\u2029three')).toBe('one\ntwo\nthree');
+  });
+
+  it('keeps the non-joiner (Persian, Indic) and subdivision flags; drops stray tag characters', () => {
+    expect(clean('\u0645\u06cc\u200c\u0631\u0648\u0645')).toBe('\u0645\u06cc\u200c\u0631\u0648\u0645'); // "می‌روم"
+    const england = '\u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}';
+    expect(clean(`go ${england}`)).toBe(`go ${england}`);
+    expect(clean('a\u{E0067}b\u{E007F}c\u{1F3F4}')).toBe('abc\u{1F3F4}'); // tags outside a flag; a plain black flag stays
+  });
+
+  it('counts and cuts in characters as people see them (graphemes), never inside one', () => {
+    const family = '\u{1F468}\u200d\u{1F469}\u200d\u{1F467}'; // 8 UTF-16 units, one character
+    const flag = '\u{1F1EF}\u{1F1F5}';
+    expect(graphemes(`a${family}${flag}e\u0301`)).toEqual(['a', family, flag, 'e\u0301']);
+    expect(clean('x'.repeat(100))).toBe('x'.repeat(80));
+    expect(clean(family.repeat(85))).toBe(family.repeat(80));
+    expect(clean(`${'x'.repeat(79)}${family}${flag}`)).toBe(`${'x'.repeat(79)}${family}`);
+  });
+
+  it("is '' for nothing left or not a string, which normalizeParams turns into the default", () => {
+    expect(['', '   ', '\n\n', '\u0000', 42, null, undefined, {}].map(clean)).toEqual(Array(8).fill(''));
+    expect(normalizeParams('Title', {text: '  \n '}).text).toBe('Your title');
+    expect(normalizeParams('Title', {text: 7}).text).toBe('Your title');
+    expect(normalizeParams('Title', {text: ' Behind\nyou '}).text).toBe('Behind\nyou');
   });
 });
 

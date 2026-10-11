@@ -27,7 +27,9 @@ import {
   type EffectClip,
   type EffectTarget,
   OVERLAY,
+  cleanText,
   clipToEdit,
+  graphemes,
   normalizeParams,
   overlapNeighbour,
   sameTarget,
@@ -140,6 +142,62 @@ function NumberField({label, value, min, max, step, onCommit}: {label: string; v
   );
 }
 
+/**
+ * A text setting: kept as typed while focused, sent on (cleaned) whenever it
+ * is valid text, so clearing it to retype never snaps back to the default;
+ * blur shows the stored value. Enter on the last line does nothing; a paste
+ * past it joins it. Counted in characters as people see them. A plain
+ * textarea, so the video's and the timeline's shortcuts leave its keys alone.
+ */
+function TextField({id, label, value, maxLength, maxLines, onCommit}: {id: string; label: string; value: string; maxLength: number; maxLines: number; onCommit: (v: string) => void}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const shown = draft ?? value;
+  return (
+    <div className="fx-param">
+      <label className="fx-param-label" htmlFor={id}>{label}</label>
+      <div className="fx-text">
+        <textarea
+          id={id}
+          rows={Math.min(maxLines, Math.max(1, shown.split('\n').length))}
+          aria-describedby={`${id}-count`}
+          spellCheck={false}
+          value={shown}
+          onKeyDown={e => {
+            // Enter on the last line allowed: nothing (an IME's Enter commits its text, so it passes)
+            if (e.key === 'Enter' && !e.nativeEvent.isComposing && shown.split('\n').length >= maxLines) {
+              e.preventDefault();
+            }
+          }}
+          onChange={e => {
+            // a paste past the last line joins it, and past the length is cut, as stored text is
+            let v = e.target.value;
+            const lines = v.split('\n');
+            if (lines.length > maxLines) {
+              v = [...lines.slice(0, maxLines - 1), lines.slice(maxLines - 1).join(' ')].join('\n');
+            }
+            const g = graphemes(v);
+            if (g.length > maxLength) {
+              v = g.slice(0, maxLength).join('');
+            }
+            setDraft(v);
+            const clean = cleanText(v, maxLength, maxLines);
+            if (clean !== '') {
+              onCommit(clean);
+            }
+          }}
+          onBlur={() => setDraft(null)}
+        />
+        <span className="fx-count" id={`${id}-count`}>
+          {graphemes(shown).length}/{maxLength} characters, {maxLines} lines at most
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/** Title's quick positions: the text block's centre. */
+const POSITIONS: Record<string, {x: number; y: number}> = {Top: {x: 0.5, y: 0.15}, Centre: {x: 0.5, y: 0.5}, Bottom: {x: 0.5, y: 0.85}};
+
 /** One control per setting of the selected clip (EFFECT_SPECS): edits redraw at once, no track job. */
 function ClipSettings({clip, session, layerColor, title}: {clip: EffectClip; session: StudioSessionApi; layerColor: string; title: string}) {
   const spec = EFFECT_SPECS[clip.effect];
@@ -147,8 +205,8 @@ function ClipSettings({clip, session, layerColor, title}: {clip: EffectClip; ses
   const set = (key: string, v: EffectParams[string], step = `${clip.id}:${key}`) =>
     session.updateClip(clip.id, {params: {...clip.params, [key]: v}}, step);
   const style = String(clip.params.style ?? '');
-  // Reset keeps a picked picture: content, not a setting
-  const pictures = Object.fromEntries(Object.entries(spec?.params ?? {}).flatMap(([k, p]) => (p.kind === 'image' ? [[k, clip.params[k]]] : [])));
+  // Reset keeps a picked picture and typed text: content, not settings
+  const pictures = Object.fromEntries(Object.entries(spec?.params ?? {}).flatMap(([k, p]) => (p.kind === 'image' || p.kind === 'text' ? [[k, clip.params[k]]] : [])));
   const styled = spec == null ? clip.params : {...withStyle(clip.effect, normalizeParams(clip.effect, {}), style), ...pictures};
   const atStyle = JSON.stringify(styled) === JSON.stringify(clip.params);
   const canSplit = clip.start < session.frame && session.frame < clip.end;
@@ -191,6 +249,9 @@ function ClipSettings({clip, session, layerColor, title}: {clip: EffectClip; ses
         </div>
       );
     }
+    if (p.kind === 'text') {
+      return <TextField key={key} id={id} label={p.label} value={String(clip.params[key] ?? '')} maxLength={p.maxLength} maxLines={p.maxLines} onCommit={v => set(key, v)} />;
+    }
     if (p.kind === 'image') {
       const picked = String(clip.params[key] ?? '');
       const problem = picked === '' ? undefined : session.missingImages.get(picked);
@@ -223,19 +284,37 @@ function ClipSettings({clip, session, layerColor, title}: {clip: EffectClip; ses
       );
     }
     const v = Number(clip.params[key]);
+    const presets =
+      clip.effect === 'Title' && key === 'x' ? (
+        <div className="fx-param" key="position">
+          <span className="fx-param-label" id={`${id}-presets`}>Position</span>
+          <div className="fx-choice" role="group" aria-labelledby={`${id}-presets`}>
+            {Object.entries(POSITIONS).map(([name, at]) => (
+              <button
+                key={name}
+                type="button"
+                aria-pressed={clip.params.x === at.x && clip.params.y === at.y}
+                onClick={() => session.updateClip(clip.id, {params: {...clip.params, ...at}})}>
+                {name}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null;
     // the field shows a percentage of the frame height for such settings; the slider and the doc keep the fraction
     const k = p.percentOfHeight ? 100 : 1;
     const shown = (x: number) => Math.round(x * k * 1e6) / 1e6;
     const label = p.percentOfHeight ? `${p.label}, % of frame height` : p.label;
-    return (
+    return [
+      presets,
       <div className="fx-param" key={key}>
         <label className="fx-param-label" htmlFor={id} title={label}>{p.percentOfHeight ? `${p.label} %` : p.label}</label>
         <div className="fx-number">
           <input id={id} type="range" min={p.min} max={p.max} step={p.step} value={v} aria-valuetext={p.percentOfHeight ? `${shown(v)} %` : undefined} onChange={e => set(key, e.target.valueAsNumber)} />
           <NumberField label={`${label}, ${shown(p.min)} to ${shown(p.max)}`} value={shown(v)} min={shown(p.min)} max={shown(p.max)} step={shown(p.step)} onCommit={x => set(key, x / k)} />
         </div>
-      </div>
-    );
+      </div>,
+    ];
   };
   return (
     <div className="fx-settings" role="group" aria-label={`${title} settings`}>
@@ -397,6 +476,7 @@ export default function EffectsSection({session}: Props) {
       settings:
         selected != null && target != null && sameTarget(selected.target, target) ? (
           <ClipSettings
+            key={selected.id} // a draft in one clip's fields never reaches another's
             clip={selected}
             session={session}
             layerColor={kind === 'object' ? (focusedObject?.color ?? '#ffffff') : '#ffffff'}

@@ -43,6 +43,16 @@
 //       0.16) and neither dims the other's circle; each of Meta's six styles, saved style-only as earlier builds
 //       saved them, draws pixel-identically to the base build (BASE_SERVE, served
 //       at /sam-ui-base/ on the same origin, so the same tracks and doc)
+//   TT  slice 4, the Title on frame 101 over A and B (on a transparent Outline):
+//       In front, magenta text drawn where its position says and over the subjects;
+//       a long line at the default size at the right edge stays inside the frame;
+//       Behind subjects, the same text outside their masks and the plain video inside
+//       (RB's masks), and over a Desaturate below as that drew them; its ink as wide as Inter's at weights 900 and 300 (measured in
+//       the page with the same font file), not the fallback sans-serif's; a Fade at
+//       the clip's first frame draws nothing, at its entrance's end all of it; the
+//       text field takes typed text (shortcut keys too) with its count, does nothing on Enter at its
+//       third line, keeps the title while emptied; Top moves it; Reset keeps the text; with a Rise over
+//       the clip, the export matches the preview within B7's tolerance
 //   SC  Scribble (boiling Outline) on frame 101: identical after a scrub away and
 //       back and play/pause, redrawn when boil is on (differs from boil 0, which
 //       is itself steady); its export matches the preview within B7's tolerance
@@ -121,11 +131,19 @@ const check = (id, ok, what, data) => {
 
 // pixels: PNG buffers or a video's frames, as rgb24 through ffmpeg
 const pngSize = png => [png.readUInt32BE(16), png.readUInt32BE(20)];
-const decode = (input, vf) =>
-  execFileSync('ffmpeg', ['-v', 'error', '-i', Buffer.isBuffer(input) ? 'pipe:0' : input, ...(vf ? ['-vf', vf] : []), '-fps_mode', 'passthrough', '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1'], {
-    input: Buffer.isBuffer(input) ? input : undefined,
-    maxBuffer: 1 << 30,
-  });
+// a decode piped a PNG once sat idle for half an hour (ffmpeg never saw its stdin end): time out and try again
+const decode = (input, vf, tries = 2) => {
+  try {
+    return execFileSync('ffmpeg', ['-v', 'error', '-i', Buffer.isBuffer(input) ? 'pipe:0' : input, ...(vf ? ['-vf', vf] : []), '-fps_mode', 'passthrough', '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1'], {
+      input: Buffer.isBuffer(input) ? input : undefined,
+      maxBuffer: 1 << 30,
+      timeout: 120000,
+    });
+  } catch (error) {
+    if (tries > 1 && error.code === 'ETIMEDOUT') return decode(input, vf, tries - 1);
+    throw error;
+  }
+};
 function compare(a, b) {
   const [x, y] = [decode(a), decode(b)];
   if (x.length !== y.length) throw new Error(`sizes differ: ${pngSize(a)} vs ${pngSize(b)}`);
@@ -256,7 +274,7 @@ const sel = async i => {
 // group 0: the selected layer's tiles, 1: the background's
 const group = gi => page.locator('.effect-group').nth(gi);
 const tile = async (gi, title) => {
-  await group(gi).locator('.effect-button', {hasText: new RegExp(`^${title}`)}).first().click();
+  await group(gi).locator('.effect-button', {hasText: new RegExp(`^${title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`)}).first().click();
   await page.waitForTimeout(500);
 };
 const addEffect = async (gi, title) => {
@@ -808,6 +826,139 @@ await step('CP', async () => {
   const colourful = share(inside, i => chroma(plain3, i) > 40);
   check('CP', grey.pct >= 99.5 && wasColour.pct >= 5, `outside the subjects grey (${grey.pct} % within ${PIXEL_TOL} of grey; ${wasColour.pct} % of it was coloured)`, {grey, wasColour});
   check('CP', kept.pct >= 99.5 && colourful.pct * colourful.n >= 100 * 100, `inside them as the video, colour kept (${kept.pct} % of ${kept.n} px; ${Math.round((colourful.pct * colourful.n) / 100)} of them strongly coloured)`, {kept, colourful});
+});
+
+// slice 4: the Title, over the middle of A and B's masks
+const MAGENTA = [255, 0, 255];
+const isMagenta = (img, i) => offRgb(img, i, MAGENTA) <= 40;
+// the ink's bounding box in a capture: [x0, y0, x1, y1]
+const inkBox = (img, test) => {
+  let [x0, y0, x1, y1] = [Infinity, Infinity, -1, -1];
+  for (let i = 0; i < img.w * img.h; i++) {
+    if (!test(img, i)) continue;
+    const [x, y] = [i % img.w, Math.floor(i / img.w)];
+    [x0, y0, x1, y1] = [Math.min(x0, x), Math.min(y0, y), Math.max(x1, x), Math.max(y1, y)];
+  }
+  return [x0, y0, x1, y1];
+};
+const titleShots = {};
+await step('TT', async () => {
+  if (inside == null || tolerance == null) throw new Error('no masks from RB or no B7 tolerance');
+  // the text's centre: the middle of the subjects' masks
+  let [sx, sy, n] = [0, 0, 0];
+  inside.forEach((v, i) => v && ((sx += i % plain3.w), (sy += Math.floor(i / plain3.w)), n++));
+  const [x, y] = [Math.round((sx / n / plain3.w) * 100) / 100, Math.round((sy / n / plain3.h) * 100) / 100];
+  const SIZE = 0.25;
+  const title = (params, start = 0, end = FRAMES) => clipOn(tBG, 'Title', {text: 'TITLE', size: SIZE, weight: 900, color: '#ff00ff', x, y, animation: 'None', ...params}, 'tt', start, end);
+  const shot = async (clips, f, tag) => {
+    await putClips(clips);
+    await sel(A);
+    await seekTo(f);
+    return pixels((titleShots[tag] = await cap(tag)));
+  };
+  const front = await shot([title({placement: 'In front'}), ...clear()], F3, 'TT-1_in-front_f101');
+  const behind = await shot([title({}), ...clear()], F3, 'TT-2_behind-subjects_f101');
+  const box = inkBox(front, isMagenta);
+  const [cx, cy] = [(box[0] + box[2]) / 2 / front.w, (box[1] + box[3]) / 2 / front.h];
+  const covered = share(inside, i => isMagenta(front, i));
+  check('TT', Math.abs(cx - x) < 0.02 && Math.abs(cy - y) < 0.03 && covered.pct >= 10, `In front: the text is centred at (${cx.toFixed(3)}, ${cy.toFixed(3)}) for (${x}, ${y}), and covers ${covered.pct} % of the subjects' ${covered.n} px`, {box, covered});
+  const kept = share(inside, i => off(behind, plain3, i) <= PIXEL_TOL);
+  const outText = share(outside, i => isMagenta(front, i));
+  const sameOut = share(outside, i => off(behind, front, i) <= PIXEL_TOL);
+  check('TT', kept.pct >= 99.5 && sameOut.pct >= 99.5 && outText.pct * outText.n >= 100 * 2000, `Behind subjects: the subjects as the plain video inside their masks (${kept.pct} % of ${kept.n} px), the text outside them as In front draws it (${sameOut.pct} %; ${Math.round((outText.pct * outText.n) / 100)} magenta px there)`, {kept, sameOut, outText});
+
+  // a long line at the default size, placed at the right edge: shrunk and moved in, all of it inside the frame
+  const LONG = 'A title far too long to fit across the frame at this size';
+  const long = await shot([title({placement: 'In front', text: LONG, size: 0.12, weight: 700, x: 1, y: 0.5}), ...clear()], F3, 'TT-2a_long-line_right-edge_f101');
+  const lbox = inkBox(long, isMagenta);
+  const edge = Math.round(0.03 * long.h * 0.5); // half the margin, in capture px
+  const longInk = share(new Uint8Array(long.w * long.h).fill(1), i => isMagenta(long, i));
+  check('TT', lbox[0] >= edge && lbox[2] <= long.w - 1 - edge && lbox[1] >= edge && lbox[3] <= long.h - 1 - edge && longInk.pct * longInk.n >= 100 * 1500, `a long line at the default size stays inside the frame: ink x ${lbox[0]}-${lbox[2]} of ${long.w}, y ${lbox[1]}-${lbox[3]} of ${long.h} (${Math.round((longInk.pct * longInk.n) / 100)} px)`, {box: lbox});
+
+  // a background clip below (Desaturate): the subjects stay as it drew them, not as the raw video
+  const grey = await shot([clipOn(tBG, 'Desaturate', {style: 'Gray'}, 'ds'), ...clear()], F3, 'TT-2b_desaturate_f101');
+  const over = await shot([clipOn(tBG, 'Desaturate', {style: 'Gray'}, 'ds'), {...title({}), row: 1}, ...clear()], F3, 'TT-2c_title-behind-over-desaturate_f101');
+  const keptGrey = share(inside, i => off(over, grey, i) <= PIXEL_TOL);
+  const unlikePlain = share(inside, i => off(over, plain3, i) > PIXEL_TOL);
+  check('TT', keptGrey.pct >= 99.5 && unlikePlain.pct >= 5, `over Desaturate, the subjects stay grey behind the title (${keptGrey.pct} % as Desaturate alone; ${unlikePlain.pct} % unlike the colour video)`, {keptGrey, unlikePlain});
+
+  // Inter: the ink as wide as the font file gives it in the page, at both ends of the weights
+  // ("rattle": 10 % wider than the fallback sans-serif at 900, 7 % narrower at 300)
+  const WORD = 'rattle';
+  const measured = {};
+  for (const weight of [900, 300]) {
+    const img = await shot([title({placement: 'In front', text: WORD, weight}), ...clear()], F3, `TT-3_${WORD}_weight-${weight}_f101`);
+    const b = inkBox(img, isMagenta);
+    measured[weight] = (b[2] - b[0] + 1) * (1280 / img.w);
+  }
+  const want = await page.evaluate(async ([px, word]) => {
+    const face = new FontFace('InterCheck', `url(${new URL('fonts/Inter-VariableFont_opsz,wght.ttf', location.href)})`, {weight: '100 900'});
+    document.fonts.add(await face.load());
+    const ctx = new OffscreenCanvas(8, 8).getContext('2d');
+    const ink = font => {
+      ctx.font = font;
+      const m = ctx.measureText(word);
+      return m.actualBoundingBoxLeft + m.actualBoundingBoxRight;
+    };
+    return Object.fromEntries([900, 300].map(w => [w, {inter: ink(`${w} ${px}px InterCheck`), fallback: ink(`${w} ${px}px sans-serif`)}]));
+  }, [SIZE * 720, WORD]);
+  const fonts = [900, 300].map(w => ({weight: w, measured: Math.round(measured[w]), inter: Math.round(want[w].inter), fallback: Math.round(want[w].fallback)}));
+  check('TT', fonts.every(f => Math.abs(f.measured - f.inter) / f.inter < 0.015 && Math.abs(f.measured - f.fallback) > 2 * Math.abs(f.measured - f.inter)) && fonts[0].measured > fonts[1].measured * 1.05, `drawn in Inter at its weight: "${WORD}" ink ${fonts.map(f => `${f.weight}: ${f.measured} px (Inter ${f.inter}, fallback ${f.fallback})`).join('; ')}`, fonts);
+
+  // a Fade from frame 101 over 1 s (24 frames), in front
+  const plainF = await shot([...clear()], F3, 'TT-4_no-title_f101');
+  await shot([title({placement: 'In front'}), ...clear()], F3 + 24, 'TT-5_in-front_f125');
+  await putClips([title({placement: 'In front', animation: 'Fade', entrance: 1}, F3), ...clear()]);
+  await sel(A);
+  const fade = {};
+  for (const k of [0, 12, 24]) {
+    await seekTo(F3 + k);
+    fade[k] = pixels((titleShots[`TT-6_fade_t${k}`] = await cap(`TT-6_fade-from-f101_f${F3 + k + 1}`)));
+  }
+  const all = new Uint8Array(plainF.w * plainF.h).fill(1);
+  const start = share(all, i => off(fade[0], plainF, i) <= PIXEL_TOL);
+  const end = compare(titleShots['TT-6_fade_t24'], titleShots['TT-5_in-front_f125']);
+  const mid = share(all, i => isMagenta(fade[12], i));
+  check('TT', start.pct >= 99.9 && end.changedPct === 0 && mid.pct > 0 && !same(compare(titleShots['TT-6_fade_t12'], titleShots['TT-5_in-front_f125'])), `Fade: nothing at the clip's first frame (${start.pct} % as without it), all of it at 1 s (${end.changedPct} % off In front), part way at 0.5 s`, {start, end, mid});
+
+  // the settings: type into the text field, shortcut keys included
+  await putClips([title({}), ...clear()]);
+  await sel(A);
+  await seekTo(F3);
+  await page.locator('.fx-clip[data-clip="tt"]').click();
+  const field = fx.getByRole('textbox', {name: 'Text', exact: true});
+  const frameBefore = await frame();
+  const clipsBefore = (await doc()).clips.length;
+  await field.fill('');
+  await page.waitForTimeout(400);
+  const emptied = (await doc()).clips.find(c => c.id === 'tt').params.text;
+  await page.keyboard.type('Hello, sofa. Yes\nTwo\nThree\nFour', {delay: 15});
+  await page.waitForTimeout(800);
+  const typed = (await doc()).clips.find(c => c.id === 'tt').params.text;
+  const count = await field.evaluate(e => document.getElementById(e.getAttribute('aria-describedby'))?.innerText ?? '');
+  check('TT', emptied === 'TITLE' && typed === 'Hello, sofa. Yes\nTwo\nThreeFour' && (await frame()) === frameBefore && (await doc()).clips.length === clipsBefore && new RegExp(`^${typed.length}/80 characters`).test(count), `the text field: emptied keeps "${emptied}", typing (s, o, f, y, space, Enter) gives ${JSON.stringify(typed)} (Enter on the third line does nothing), frame ${(await frame()) + 1} and ${clipsBefore} clips unchanged (Space did not play); count "${count}"`, {emptied, typed, count});
+  await fx.getByRole('button', {name: 'Top', exact: true}).click();
+  await page.waitForTimeout(500);
+  const top = (await doc()).clips.find(c => c.id === 'tt').params;
+  const pressed = await fx.getByRole('button', {name: 'Top', exact: true}).getAttribute('aria-pressed');
+  titleShots['TT-7_settings'] = await fx.screenshot();
+  fs.writeFileSync(path.join(OUT, 'TT-7_settings-panel.png'), titleShots['TT-7_settings']);
+  titleShots['TT-8_typed-top'] = await cap('TT-8_typed_top_f101');
+  const live = await page.$$eval('.effects [role=status], .effects [aria-live]', es => es.map(e => e.innerText).filter(t => /\d/.test(t)));
+  check('TT', top.x === 0.5 && top.y === 0.15 && pressed === 'true' && live.length === 0, `Top puts it at (${top.x}, ${top.y}), pressed ${pressed}; no numbers in live regions (${JSON.stringify(live)})`);
+  await fx.getByRole('button', {name: /^Reset to/}).click();
+  await page.waitForTimeout(500);
+  const reset = (await doc()).clips.find(c => c.id === 'tt').params;
+  check('TT', reset.text === typed && reset.y === 0.5 && reset.size === 0.12, `Reset to defaults keeps the typed text (${JSON.stringify(reset.text)}) and resets the rest (y ${reset.y}, size ${reset.size})`, reset);
+
+  // export, white text rising in over the whole clip, behind the subjects
+  await putClips([title({color: '#ffffff', animation: 'Rise', entrance: 3}), ...clear()]);
+  await sel(A);
+  const shots = await preview('TT-9_rise');
+  const file = await exportVideo('TT_title-rise-behind');
+  const frames = exportFrames(file, PARITY_FRAMES);
+  const rows = PARITY_FRAMES.map((f, i) => ({frame: f + 1, ...stats(shots[i], frames[i])}));
+  check('TT', rows.every(r => r.psnr >= tolerance), `export matches the preview (Rise over 3 s, behind the subjects): ${rows.map(r => `f${r.frame} ${r.psnr} dB`).join(', ')} (needs >= ${tolerance} dB)`, rows);
 });
 
 await step('SP', async () => {

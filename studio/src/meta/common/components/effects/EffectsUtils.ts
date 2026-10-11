@@ -31,6 +31,7 @@ import {
   Lasso,
   Opacity,
   Overlay,
+  TextCreation,
   TextFont,
 } from '@carbon/icons-react';
 
@@ -54,12 +55,13 @@ export const backgroundEffects: DemoEffect[] = [
     effectName: 'Pixelate',
   },
   {title: 'Desaturate', Icon: ColorSwitch, effectName: 'Desaturate'},
-  {title: 'Text', Icon: TextFont, effectName: 'BackgroundText'},
+  {title: 'Text (demo)', Icon: TextFont, effectName: 'BackgroundText'}, // sam-ui: Meta's fixed copy; Title is the editable one
   {title: 'Blur', Icon: Humidity, effectName: 'BackgroundBlur'},
   {title: 'Edges', Icon: AppleDash, effectName: 'Sobel'}, // sam-ui: 'Outline' is the layer effect
   // sam-ui: backgrounds that keep the tracked subjects sharp
   {title: 'Replace background', Icon: ImageReference, effectName: 'ReplaceBackground'},
   {title: 'Colour pop', Icon: Opacity, effectName: 'ColorPop'},
+  {title: 'Title', Icon: TextCreation, effectName: 'Title'}, // sam-ui: an editable title behind the subjects
 ];
 
 export const highlightEffects: DemoEffect[] = [

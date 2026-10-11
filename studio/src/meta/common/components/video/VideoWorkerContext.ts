@@ -793,13 +793,15 @@ export default class VideoWorkerContext {
       },
     ];
     requiredFonts.forEach(requiredFont => {
+      // sam-ui: the variable font's whole weight range (a Title draws any weight),
+      // and in the set while it loads, so fonts.load() waits for it (TitleEffect)
       const fontFace = new FontFace(
         'Inter',
         `url('${requiredFont.url}') format('${requiredFont.format}')`,
+        {weight: '100 900'},
       );
-      fontFace.load().then(font => {
-        self.fonts.add(font);
-      });
+      self.fonts.add(fontFace);
+      fontFace.load().catch(error => console.warn('Inter did not load', error));
     });
   }
 

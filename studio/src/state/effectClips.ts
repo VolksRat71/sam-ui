@@ -68,9 +68,43 @@ export function isImageHash(v: unknown): v is string {
   return typeof v === 'string' && /^[0-9a-f]{64}$/.test(v);
 }
 
+type Segmenter = {segment(s: string): Iterable<{segment: string}>};
+const SEGMENTER = (Intl as unknown as {Segmenter?: new (locale?: string, o?: {granularity: 'grapheme'}) => Segmenter}).Segmenter;
+const graphemer = SEGMENTER == null ? null : new SEGMENTER(undefined, {granularity: 'grapheme'});
+
+/** `s` as the characters people see (graphemes: an emoji family, a flag, an accented letter is one), else code points. */
+export function graphemes(s: string): string[] {
+  return graphemer == null ? Array.from(s) : Array.from(graphemer.segment(s), g => g.segment);
+}
+
+/**
+ * Typed text as a text setting keeps it: line breaks (and Unicode's line and
+ * paragraph separators) as '\n', tabs as spaces, other control characters and
+ * invisible format characters (bidi overrides, zero-width spaces; not the
+ * zero-width joiner emoji need, the non-joiner Persian and Indic scripts need,
+ * or the tag characters of a subdivision flag like England's) dropped,
+ * trimmed, lines past `maxLines`
+ * joined onto the last one, cut to `maxLength` characters as people count
+ * them (graphemes). '' when nothing is left.
+ */
+export function cleanText(v: unknown, maxLength: number, maxLines: number): string {
+  if (typeof v !== 'string') {
+    return '';
+  }
+  const t = v
+    .replace(/\r\n?|[\u2028\u2029]/g, '\n')
+    .replace(/\t/g, ' ')
+    .replace(/\u{1F3F4}[\u{E0020}-\u{E007E}]+\u{E007F}|[^\P{Cc}\n]|[^\P{Cf}\u200c\u200d]/gu, m => (m.startsWith('\u{1F3F4}') ? m : ''))
+    .trim();
+  const lines = t.split('\n');
+  const s = lines.length <= maxLines ? t : [...lines.slice(0, maxLines - 1), lines.slice(maxLines - 1).join(' ')].join('\n');
+  const g = graphemes(s);
+  return (g.length > maxLength ? g.slice(0, maxLength).join('') : s).trim();
+}
+
 /**
  * Settings fit for `effect`: unknown keys dropped, numbers clamped and rounded
- * to their step, colours parsed ('layer' allowed), image keys checked, anything missing or
+ * to their step, colours parsed ('layer' allowed), image keys checked, text cleaned (cleanText), anything missing or
  * malformed set to its default. An effect this build does not know keeps its
  * plain values as they are, for a newer build to read.
  */
@@ -100,6 +134,8 @@ export function normalizeParams(effect: string, raw: unknown): EffectParams {
       out[key] = v === 'layer' && p.followsLayer !== false ? 'layer' : (parseColor(v) ?? p.default);
     } else if (p.kind === 'image') {
       out[key] = isImageHash(v) ? v : p.default;
+    } else if (p.kind === 'text') {
+      out[key] = cleanText(v, p.maxLength, p.maxLines) || p.default;
     } else {
       out[key] = typeof v === 'string' && p.options.includes(v) ? v : p.default;
     }
