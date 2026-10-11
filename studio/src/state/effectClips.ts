@@ -190,14 +190,16 @@ export function moveClip(doc: EffectDoc, id: string, start: number, numFrames: n
 /**
  * Move one edge of a clip to `frame`. Trimming the start later by d frames
  * adds d to the phase (earlier: takes it off), so every frame still in the
- * clip looks exactly as before. A clip keeps at least one frame.
+ * clip looks exactly as before. The phase never goes below 0: moving the
+ * start before the animation's start restarts the animation there instead of
+ * leaving frames before it blank. A clip keeps at least one frame.
  */
 export function trimClip(doc: EffectDoc, id: string, edge: 'start' | 'end', frame: number, numFrames: number): EffectDoc {
   return change(doc, id, c => {
     const f = Math.round(frame);
     if (edge === 'start') {
       const start = Math.max(0, Math.min(f, c.end - 1));
-      return {...c, start, phase: c.phase + (start - c.start)};
+      return {...c, start, phase: Math.max(0, c.phase + (start - c.start))};
     }
     return {...c, end: Math.max(c.start + 1, Math.min(f, Math.max(numFrames, c.start + 1)))};
   });

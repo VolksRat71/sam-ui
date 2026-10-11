@@ -147,6 +147,9 @@ describe('clip time and phase (U6)', () => {
     }
     // and back out again restores it exactly
     expect(trimClip(doc, 'c', 'start', 10, 100).clips[0]).toMatchObject({start: 10, phase: 2});
+    // back past the animation's start (frame 8): the animation restarts at the new start
+    expect(trimClip(doc, 'c', 'start', 5, 100).clips[0]).toMatchObject({start: 5, phase: 0});
+    expect(trimClip({version: 2, clips: [clip()]}, 'c', 'start', 4, 100).clips[0]).toMatchObject({start: 4, phase: 0});
   });
 
   it('trimming the end leaves the phase; a clip keeps at least one frame and stays inside the video', () => {
