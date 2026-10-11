@@ -42,21 +42,43 @@ describe('Spotlight (Scope) settings', () => {
       // white was vec4(1) with alpha forced to 1; (255, 255, 255, a) / 255 with alpha forced to 1 is the same
       expect(u.get('uMaskColor0'), s).toEqual(white ? [255, 255, 255, 128] : [255, 0, 0, 128]);
       expect(u.get('uMaskColor1'), s).toEqual(white ? [255, 255, 255, 128] : [0, 0, 255, 128]);
-      expect([u.get('uScale'), u.get('uThickness'), u.get('uDarken')], s).toEqual([1, 1, 0]);
+      expect([u.get('uScale'), u.get('uThickness'), u.get('uDimCount')], s).toEqual([1, 1, 0]);
     }
   });
 
-  it('draws the chosen shape, colour, size, thickness and darkness, set again on every apply', async () => {
+  it('draws the chosen shape, colour, size and thickness, set again on every apply; never darkens in a pass', async () => {
     const {effect, calls, form, context, uniforms} = await setUpGL(new ScopeGLEffect());
     effect.setParams(normalizeParams('Scope', {style: 'Colour disc', shape: 'Ring', color: '#00ff00', size: 1.5, thickness: 2, darken: 0.6}));
     let from = calls.length;
     effect.apply(form, context(1), []);
     let u = uniforms(from);
-    expect([u.get('uFillColor'), u.get('uMaskColor0'), u.get('uScale'), u.get('uThickness'), u.get('uDarken')]).toEqual([1, [0, 255, 0, 128], 1.5, 2, 0.6]);
+    expect([u.get('uFillColor'), u.get('uMaskColor0'), u.get('uScale'), u.get('uThickness'), u.get('uDimCount')]).toEqual([1, [0, 255, 0, 128], 1.5, 2, 0]);
     effect.setParams(normalizeParams('Scope', {style: 'Colour disc'}));
     from = calls.length;
     effect.apply(form, context(1), []);
     u = uniforms(from);
-    expect([u.get('uFillColor'), u.get('uMaskColor0'), u.get('uScale'), u.get('uThickness'), u.get('uDarken')]).toEqual([0, [255, 0, 0, 128], 1, 1, 0]);
+    expect([u.get('uFillColor'), u.get('uMaskColor0'), u.get('uScale'), u.get('uThickness'), u.get('uDimCount')]).toEqual([0, [255, 0, 0, 128], 1, 1, 0]);
+  });
+
+  it('dims once outside any number of circles, each at its size, and the next pass is a normal one again', async () => {
+    const {effect, calls, form, context, uniforms, drawImage} = await setUpGL(new ScopeGLEffect());
+    const ctx = context(3);
+    const circles = ctx.masks.map((mask, k) => ({mask, size: [1, 1.5, 0.5][k]}));
+    let from = calls.length;
+    effect.dim(form, ctx, circles, 0.6);
+    let u = uniforms(from);
+    expect(u.get('uDimCount')).toBe(3);
+    expect(u.get('uDarken')).toBe(0.6);
+    expect([...(u.get('uDimScale') as Float32Array).slice(0, 3)]).toEqual([1, 1.5, 0.5]);
+    expect([...(u.get('uDimBox') as Float32Array).slice(0, 4)]).toEqual([4 / 32, 4 / 20, 12 / 32, 12 / 20].map(Math.fround));
+    expect(calls.slice(from).filter(([n]) => n === 'drawArrays')).toHaveLength(1);
+    expect(drawImage).toHaveBeenCalledTimes(1);
+    effect.dim(form, ctx, [], 0.6); // nothing to cut out: nothing drawn
+    expect(drawImage).toHaveBeenCalledTimes(1);
+    effect.setParams(normalizeParams('Scope', {}));
+    from = calls.length;
+    effect.apply(form, ctx, []);
+    u = uniforms(from);
+    expect(u.get('uDimCount')).toBe(0);
   });
 });

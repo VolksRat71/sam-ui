@@ -14,8 +14,10 @@
  * limitations under the License.
  */
 // Modified by sam-ui: Spotlight's settings (shape, colour, size, ring
-// thickness, darken outside) come from params; its six variants are styles
-// that set them, the 'Soft' ones still drawing the fill half see-through.
+// thickness) come from params; its six variants are styles that set them, the
+// 'Soft' ones still drawing the fill half see-through. Darken outside is not
+// drawn per pass: `dim` draws it once a frame outside every Spotlight circle
+// (ObjectHighlight calls it), so Spotlights never dim each other's circles.
 import {hexToRgb} from '@/common/components/video/editor/VideoEditorUtils';
 import BaseGLEffect from '@/common/components/video/effects/BaseGLEffect';
 import {
@@ -25,13 +27,20 @@ import {
 import {numberParam} from '@/common/components/video/effects/EffectParamSpecs';
 import vertexShaderSource from '@/common/components/video/effects/shaders/DefaultVert.vert?raw';
 import fragmentShaderSource from '@/common/components/video/effects/shaders/Scope.frag?raw';
+import {EffectMask} from '@/common/components/video/effects/Effect';
 import {Tracklet} from '@/common/tracker/Tracker';
 import {normalizeBounds, preAllocateTextures} from '@/common/utils/ShaderUtils';
 import {RLEObject, decode} from '@/jscocotools/mask';
 import invariant from 'invariant';
 import {CanvasForm} from 'pts';
 
+/** The most circles one dim pass cuts out (the shader's arrays; studio's default object limit). */
+export const DIM_CIRCLES = 16;
+
 export default class ScopeGLEffect extends BaseGLEffect {
+  private _dimBoxes = new Float32Array(4 * DIM_CIRCLES);
+  private _dimScales = new Float32Array(DIM_CIRCLES);
+
   private _numMasks: number = 0;
   private _numMasksUniformLocation: WebGLUniformLocation | null = null;
 
@@ -81,7 +90,7 @@ export default class ScopeGLEffect extends BaseGLEffect {
     );
     gl.uniform1f(gl.getUniformLocation(program, 'uScale'), numberParam('Scope', 'size', p));
     gl.uniform1f(gl.getUniformLocation(program, 'uThickness'), numberParam('Scope', 'thickness', p));
-    gl.uniform1f(gl.getUniformLocation(program, 'uDarken'), numberParam('Scope', 'darken', p));
+    gl.uniform1i(gl.getUniformLocation(program, 'uDimCount'), 0);
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this._frameTexture);
@@ -156,6 +165,40 @@ export default class ScopeGLEffect extends BaseGLEffect {
     const ctx = form.ctx;
     invariant(this._canvas !== null, 'canvas is required');
     ctx.drawImage(this._canvas, 0, 0);
+  }
+
+  /**
+   * Black at `darken` over everything outside the circles of these masks
+   * (each at its clip's size), and nothing inside them: Spotlight's darkened
+   * outside, drawn once a frame under the circles.
+   * ponytail: circles past DIM_CIRCLES are not cut out; a bigger array if the object limit grows.
+   */
+  dim(form: CanvasForm, context: EffectFrameContext, circles: ReadonlyArray<{mask: EffectMask; size: number}>, darken: number) {
+    const gl = this._gl;
+    const program = this._program;
+    if (!program || circles.length === 0) {
+      return;
+    }
+    invariant(gl !== null, 'WebGL2 context is required');
+    const n = Math.min(circles.length, DIM_CIRCLES);
+    for (let k = 0; k < n; k++) {
+      const [[x0, y0], [x1, y1]] = circles[k].mask.bounds;
+      // as normalizeBounds, so a circle's edge falls where its pass draws it
+      this._dimBoxes[4 * k] = x0 / context.width;
+      this._dimBoxes[4 * k + 1] = y0 / context.height;
+      this._dimBoxes[4 * k + 2] = x1 / context.width;
+      this._dimBoxes[4 * k + 3] = y1 / context.height;
+      this._dimScales[k] = circles[k].size;
+    }
+    gl.clearColor(0.0, 0.0, 0.0, 0.0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.uniform1i(gl.getUniformLocation(program, 'uDimCount'), n);
+    gl.uniform4fv(gl.getUniformLocation(program, 'uDimBox'), this._dimBoxes);
+    gl.uniform1fv(gl.getUniformLocation(program, 'uDimScale'), this._dimScales);
+    gl.uniform1f(gl.getUniformLocation(program, 'uDarken'), darken);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    invariant(this._canvas !== null, 'canvas is required');
+    form.ctx.drawImage(this._canvas, 0, 0);
   }
 
   async cleanup(): Promise<void> {

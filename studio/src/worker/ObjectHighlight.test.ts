@@ -45,8 +45,11 @@ function setup() {
     },
   };
   const meta = Object.fromEntries(
-    ['Outline', 'Cutout', 'PixelateMask', 'BackgroundBlur', 'ReplaceBackground', 'ColorPop', 'Desaturate'].map(n => [n, fakeEffect(n, log)]),
+    ['Outline', 'Cutout', 'PixelateMask', 'BackgroundBlur', 'ReplaceBackground', 'ColorPop', 'Desaturate', 'Scope'].map(n => [n, fakeEffect(n, log)]),
   ) as unknown as Effects;
+  // Spotlight's once-a-frame darkened outside
+  (meta.Scope as unknown as {dim: unknown}).dim = (_f: CanvasForm, _c: EffectFrameContext, circles: {mask: {bitmap: {id: number}}; size: number}[], darken: number) =>
+    log.push({effect: 'dim', params: {darken}, variant: 0, ids: circles.map(c => c.mask.bitmap.id), masks: circles.map(c => c.size)});
   const h = new ObjectHighlight(overlay as unknown as MaskOverlayEffect, meta, () => ({width: 8, height: 8}));
   return {h, log, overlay};
 }
@@ -209,6 +212,29 @@ describe('ObjectHighlight', () => {
     log.length = 0;
     h.apply(preview, ...frame([]));
     expect(log.find(p => p.effect === 'ReplaceBackground')?.ids).toEqual([]);
+  });
+
+  it("darkens once a frame for every Spotlight: before the first Spotlight pass, outside all their circles, at the strongest darken", async () => {
+    const {h, log} = setup();
+    h.hidden = id => id === 4;
+    // 1 and 2 differ (two passes), 3 has darken 0 (its circle is still cut out), 4 is hidden in the preview
+    const d = doc(
+      clip(1, 'Scope', {darken: 0.3}),
+      clip(2, 'Scope', {darken: 0.6, size: 1.5}),
+      clip(3, 'Scope', {style: 'White ring'}),
+      clip(4, 'Scope', {darken: 0.9}),
+      clip(5, 'Outline'),
+    );
+    await h.setDoc(d, [5, 1, 2, 3, 4]);
+    h.apply(preview, ...frame([1, 2, 3, 4, 5]));
+    expect(log.map(p => [p.effect, p.ids])).toEqual([['Outline', [5]], ['dim', [1, 2, 3]], ['Scope', [1]], ['Scope', [2]], ['Scope', [3]]]);
+    expect(log[1].params.darken).toBe(0.6);
+    expect(log[1].masks).toEqual([1, 1.5, 1]);
+    // no darken anywhere: no dim pass (old clips draw as before)
+    const plain = setup();
+    await plain.h.setDoc(doc(clip(1, 'Scope', {style: 'Colour disc'}), clip(2, 'Scope', {style: 'Soft ring'})), [1, 2]);
+    plain.h.apply(preview, ...frame([1, 2]));
+    expect(plain.log.map(p => p.effect)).toEqual(['Scope', 'Scope']);
   });
 
   it('hands every effect the pictures the page sent', async () => {
