@@ -10,9 +10,11 @@ import {
   addClip,
   duplicateClip,
   newClip,
+  activeClips,
   removeClip,
   reorderClip,
   splitClip,
+  trimClip,
   updateClip,
 } from './effectClips';
 import {
@@ -95,9 +97,29 @@ describe('edit journal (U9)', () => {
     const doc = addClip(EMPTY_DOC, outline('c1', 40));
     const gone = removeClip(doc, 'c1');
     const changes = diffClips(doc, gone);
-    expect(changes).toEqual([{id: 'c1', before: doc.clips[0], after: null}]);
+    expect(changes).toEqual([{id: 'c1', before: doc.clips[0], after: null, place: {next: null, index: 0}}]);
     expect(applyEntry(gone, changes, 'undo').clips).toEqual(doc.clips);
     expect(applyEntry(doc, changes, 'redo').clips).toEqual([]);
+  });
+
+  it('undo of a delete puts the clip back in its place in draw order, not on top', () => {
+    // c1 [0, 72) split at 36 into c1 and c2 on one row, then c1 trimmed into c2: on 36-49 c2 is drawn on top (later in the doc)
+    const s = {doc: addClip(EMPTY_DOC, outline('c1', 0)), journal: EMPTY_JOURNAL};
+    const edit = (fn: (d: EffectDoc) => EffectDoc, key: string) => {
+      const was = s.doc;
+      s.doc = fn(was);
+      s.journal = recordEffect(s.journal, was, s.doc, key, 0);
+    };
+    edit(d => splitClip(d, 'c1', 36, 'c2'), 'split');
+    edit(d => trimClip(d, 'c1', 'end', 50, 300), 'trim');
+    const overlapped = s.doc;
+    expect(activeClips(overlapped, 40).at(-1)?.id).toBe('c2');
+    edit(d => removeClip(d, 'c1'), 'remove');
+    press(s, 'undo', () => {});
+    expect(s.doc).toEqual(overlapped);
+    expect(activeClips(s.doc, 40).at(-1)?.id).toBe('c2');
+    press(s, 'redo', () => {});
+    expect(s.doc.clips.map(c => c.id)).toEqual(['c2']);
   });
 
   it('a split, a duplicate and a reorder are one step each: undo restores the doc exactly, redo puts it back', () => {

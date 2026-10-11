@@ -8,8 +8,9 @@
 // keyboard: Left / Right go to the previous / next clip, Alt Left / Right
 // move it a frame (Shift: ten), Alt [ / Alt ] trim its start / end to the
 // playhead (After Effects' keys), Alt Up / Down draw it over / under the next
-// clip it overlaps, Delete removes it, Enter opens its settings, Escape drops
-// the selection (S and D, split and duplicate, are the timeline's). One Tab stop per band.
+// clip it overlaps, S splits it at the playhead, D duplicates it (the new part
+// or copy takes focus), Delete removes it, Enter opens its settings, Escape
+// drops the selection. One Tab stop per band.
 import {useRef, type CSSProperties, type KeyboardEvent, type PointerEvent} from 'react';
 import {type EffectClip, clipLines} from '~/state/effectClips';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
@@ -96,6 +97,11 @@ export default function EffectClipBand({clips, name, session, pos}: Props) {
       handled = false;
     } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
       go(ordered[at + (e.key === 'ArrowRight' ? 1 : -1)]);
+    } else if ((e.key === 's' || e.key === 'd') && !e.repeat) {
+      select(c); // the focused clip, not whichever was selected (the timeline's S and D act on that)
+      if (e.key === 's') session.splitClip(c.id);
+      else session.duplicateClip(c.id);
+      requestAnimationFrame(() => band.current?.querySelector<HTMLElement>('.fx-clip.selected')?.focus()); // the part or copy it selected
     } else if (e.key === 'Delete' || e.key === 'Backspace') {
       const next = ordered[at + 1] ?? ordered[at - 1];
       session.removeClip(c.id);
