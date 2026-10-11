@@ -60,7 +60,9 @@
 //       identical after a scrub away and back, play/pause and a reload (a fresh
 //       worker); the sparkles (where it changes the plain video) move between frames
 //       101 and 102; the same clips under other ids (other seeds) draw other
-//       sparkles; its export matches the preview within B7's tolerance
+//       sparkles; a split (written as splitClip leaves it: the right part keeps the
+//       clip's seed) draws frame 91 identically to the unsplit clip; its export
+//       matches the preview within B7's tolerance
 //   OB  the layer Blur draws on A, its settings carry the tracking caveat, and a
 //       larger radius changes it; with the background Blur under it, frames 31 and
 //       101 (A in different places) differ as the video does there, and each
@@ -1111,8 +1113,17 @@ await step('GL', async () => {
   await seekTo(100);
   const reseeded = await cap('GL-6_other-clip-ids_f101');
   check('GL', !same(compare(g, reseeded)), `the same clips under other ids draw other sparkles: ${compare(g, reseeded).changedPct} % of pixels differ`, compare(g, reseeded));
+  // split at frame 81: the right part [80, 120) at phase 40 with the clip's seed, against the unsplit [40, 120)
+  const on = (id, start, end, phase, seed) => ({...clipOn(tA, 'Glitter', {style: 'Glitter'}, id, start, end), phase, ...(seed && {seed})});
+  await putClips([on('gs', 40, 120, 0)]);
+  await seekTo(90);
+  const unsplit = await cap('GL-7_glitter-41-120_f91');
+  await putClips([on('gs', 40, 80, 0), on('gr', 80, 120, 40, 'gs')]);
+  await seekTo(90);
+  const split = await cap('GL-8_split-at-81_right-part_f91');
+  check('GL', compare(unsplit, split).changedPct === 0, `a split's right part keeps the sparkles: frame 91 identical (MAD ${compare(unsplit, split).mad})`, compare(unsplit, split));
   await putClips(sparkles('ga', 'gb'));
-  const shots = await preview('GL-7_glitter');
+  const shots = await preview('GL-9_glitter');
   const file = await exportVideo('GL_glitter-A_sparkle-B');
   const frames = exportFrames(file, PARITY_FRAMES);
   const rows = PARITY_FRAMES.map((f, i) => ({frame: f + 1, ...stats(shots[i], frames[i])}));
