@@ -40,7 +40,7 @@ import type {
   EffectFrameContext,
   EffectParams,
 } from '@/common/components/video/effects/Effect';
-import {AbstractEffect} from '@/common/components/video/effects/Effect';
+import {AbstractEffect, clipSeed} from '@/common/components/video/effects/Effect';
 import BaseGLEffect from '@/common/components/video/effects/BaseGLEffect';
 import {EFFECT_SPECS, numberParam, styleIndex} from '@/common/components/video/effects/EffectParamSpecs';
 import type ScopeGLEffect from '@/common/components/video/effects/ScopeGLEffect';
@@ -69,7 +69,7 @@ export type DrawState = {doc: EffectDoc; drawOrder: number[]; untouched: Untouch
 
 /** setup: its effect.setup, which an export waits for even when a draw started it (Title waits there for its font). */
 type Ready = {effect: Effect; gl: WebGL2RenderingContext | null; setup?: Promise<void>};
-type Pass = {effect: string; params: EffectParams; time?: number; duration?: number; key: string; idx: number[]};
+type Pass = {effect: string; params: EffectParams; time?: number; duration?: number; seed?: number; key: string; idx: number[]};
 
 const META_MASK_SLOTS = 3;
 const SPOTLIGHT = 'Scope';
@@ -243,8 +243,10 @@ export default class ObjectHighlight extends AbstractEffect {
       const fps = context.fps > 0 ? context.fps : 30;
       const t = clip == null || effect === OVERLAY ? undefined : clipTime(clip, frame, context.fps);
       const duration = t == null ? undefined : (clip!.end - clip!.start + clip!.phase) / fps;
+      // a seeded effect's randomness is its clip's: its own pass
+      const seed = clip != null && EFFECT_SPECS[effect]?.seeded ? clipSeed(clip.id) : undefined;
       // darken is drawn once a frame (dim), not by the pass: clips differing only in it share a pass
-      const key = `${effect}\u0000${canonical(effect === SPOTLIGHT ? {...params, darken: 0} : params)}\u0000${t ?? ''}\u0000${duration ?? ''}`;
+      const key = `${effect}\u0000${canonical(effect === SPOTLIGHT ? {...params, darken: 0} : params)}\u0000${t ?? ''}\u0000${duration ?? ''}\u0000${seed ?? ''}`;
       const last = passes[passes.length - 1];
       if (
         i != null &&
@@ -255,7 +257,7 @@ export default class ObjectHighlight extends AbstractEffect {
       ) {
         last.idx.push(i);
       } else {
-        passes.push({effect, params, time: t, duration, key, idx: i == null ? subjects : [i]});
+        passes.push({effect, params, time: t, duration, seed, key, idx: i == null ? subjects : [i]});
       }
     };
 
@@ -306,6 +308,7 @@ export default class ObjectHighlight extends AbstractEffect {
         maskColors: p.idx.map(i => context.maskColors[i]),
         time: p.time,
         duration: p.duration,
+        seed: p.seed,
         images: this.images,
       };
       const objects = p.idx.map(i => tracklets[i]);

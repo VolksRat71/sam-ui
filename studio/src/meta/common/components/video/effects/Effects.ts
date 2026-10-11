@@ -24,6 +24,7 @@ import BlurGLEffect from './BlurGLEffect';
 import BurstGLEffect from './BurstGLEffect';
 import CutoutGLEffect from './CutoutGLEffect';
 import EraseForegroundGLEffect from './EraseForegroundGLEffect';
+import GlitterEffect from './GlitterEffect';
 import GradientEffect from './GradientEffect';
 import NoisyMaskEffect from './NoisyMaskEffect';
 import OutlineGLEffect from './OutlineGLEffect';
@@ -62,6 +63,7 @@ export type Effects = {
   Arrow: Effect;
   Outline: Effect;
   BlurMask: Effect;
+  Glitter: Effect;
 
   /* More Effects */
   NoisyMask: Effect;
@@ -96,6 +98,7 @@ export function createEffects(): Effects {
     Arrow: new ArrowGLEffect(),
     Outline: new OutlineGLEffect(),
     BlurMask: new BlurGLEffect(true),
+    Glitter: new GlitterEffect(),
 
     /* More Effects */
     NoisyMask: new NoisyMaskEffect(),

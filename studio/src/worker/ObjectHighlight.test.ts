@@ -9,7 +9,7 @@
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {backgroundEffects, highlightEffects, moreEffects} from '@/common/components/effects/EffectsUtils';
 import BaseGLEffect from '@/common/components/video/effects/BaseGLEffect';
-import {AbstractEffect, type EffectFrameContext, type EffectInit, type EffectParams} from '@/common/components/video/effects/Effect';
+import {AbstractEffect, clipSeed, type EffectFrameContext, type EffectInit, type EffectParams} from '@/common/components/video/effects/Effect';
 import AllEffects, {type Effects} from '@/common/components/video/effects/Effects';
 import type {Tracklet} from '@/common/tracker/Tracker';
 import type {CanvasForm} from 'pts';
@@ -17,7 +17,7 @@ import {type EffectClip, type EffectDoc, normalizeParams} from '~/state/effectCl
 import type MaskOverlayEffect from './MaskOverlayEffect';
 import ObjectHighlight from './ObjectHighlight';
 
-type Drawn = {effect: string; params: EffectParams; variant: number; ids: number[]; time?: number; duration?: number; active?: number | null; masks?: unknown[]; images?: unknown};
+type Drawn = {effect: string; params: EffectParams; variant: number; ids: number[]; time?: number; duration?: number; seed?: number; active?: number | null; masks?: unknown[]; images?: unknown};
 
 function fakeEffect(name: string, log: Drawn[]) {
   return {
@@ -30,7 +30,7 @@ function fakeEffect(name: string, log: Drawn[]) {
     setup: vi.fn(async () => {}),
     cleanup: vi.fn(async () => {}),
     apply(_form: CanvasForm, ctx: EffectFrameContext, ts: Tracklet[]) {
-      log.push({effect: name, params: {...this.params}, variant: this.variant, ids: ts.map(t => t.id), time: ctx.time, duration: ctx.duration, masks: ctx.masks, images: ctx.images});
+      log.push({effect: name, params: {...this.params}, variant: this.variant, ids: ts.map(t => t.id), time: ctx.time, duration: ctx.duration, seed: ctx.seed, masks: ctx.masks, images: ctx.images});
     },
   };
 }
@@ -46,7 +46,7 @@ function setup() {
     },
   };
   const meta = Object.fromEntries(
-    ['Outline', 'Cutout', 'PixelateMask', 'BackgroundBlur', 'ReplaceBackground', 'ColorPop', 'Title', 'Desaturate', 'Scope'].map(n => [n, fakeEffect(n, log)]),
+    ['Outline', 'Cutout', 'PixelateMask', 'BackgroundBlur', 'ReplaceBackground', 'ColorPop', 'Title', 'Desaturate', 'Scope', 'Glitter'].map(n => [n, fakeEffect(n, log)]),
   ) as unknown as Effects;
   // Spotlight's once-a-frame darkened outside
   (meta.Scope as unknown as {dim: unknown}).dim = (_f: CanvasForm, _c: EffectFrameContext, circles: {mask: {bitmap: {id: number}}; size: number}[], darken: number) =>
@@ -124,6 +124,18 @@ describe('ObjectHighlight', () => {
     expect(log.map(p => [p.effect, p.ids, p.variant])).toEqual([
       ['PixelateMask', [1, 2, 3], 2],
       ['PixelateMask', [4], 2],
+    ]);
+  });
+
+  it("a seeded effect (Glitter) draws each clip in its own pass with its clip's seed; others get none and still share", async () => {
+    const {h, log} = setup();
+    const glitter = [1, 2].map(id => clip(id, 'Glitter'));
+    await h.setDoc(doc(...glitter, ...[3, 4].map(id => clip(id, 'PixelateMask'))), [1, 2, 3, 4]);
+    h.apply(preview, ...frame([1, 2, 3, 4]));
+    expect(log.map(p => [p.effect, p.ids, p.seed])).toEqual([
+      ['Glitter', [1], clipSeed(glitter[0].id)],
+      ['Glitter', [2], clipSeed(glitter[1].id)],
+      ['PixelateMask', [3, 4], undefined],
     ]);
   });
 

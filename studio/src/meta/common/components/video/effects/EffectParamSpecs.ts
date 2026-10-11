@@ -27,7 +27,11 @@ export type ParamSpec = (
  * the frame (their union), to keep those subjects as they are in the video.
  * Other background effects get no masks: a layer clip draws over them.
  */
-export type EffectSpec = {params: Record<string, ParamSpec>; styles: Record<string, Partial<EffectParams>>; subjects?: true};
+/**
+ * seeded: its randomness is its clip's own (EffectFrameContext.seed, from the
+ * clip id), so a clip is never drawn in another clip's pass.
+ */
+export type EffectSpec = {params: Record<string, ParamSpec>; styles: Record<string, Partial<EffectParams>>; subjects?: true; seeded?: true};
 
 /** A Meta effect's variants as named styles, in variant order. */
 function variants(...options: string[]): EffectSpec {
@@ -148,6 +152,27 @@ export const EFFECT_SPECS: Record<string, EffectSpec> = {
   BlurMask: sized('radius', 'Radius', 0.05, {Light: 6, Medium: 12, Strong: 24}, {feather: {...FEATHER, default: 0.5}}),
   Arrow: variants('White arrow', 'Rainbow arrow', 'White dot', 'Rainbow dot'),
   NoisyMask: variants('Noise'),
+  // sparkles emitted from the layer's mask, drifting out and twinkling (GlitterEffect.ts)
+  Glitter: {
+    params: {
+      // particles per layer: about this many are alive at once, a life after the clip starts
+      density: {kind: 'number', min: 10, max: 400, step: 10, default: 120, label: 'Density'},
+      size: {kind: 'number', min: 0.004, max: 0.06, step: 0.001, default: 0.014, label: 'Size', percentOfHeight: true},
+      colours: {kind: 'choice', options: ['One colour', 'Multicolour'], default: 'One colour', label: 'Colours'},
+      color: {kind: 'color', default: 'layer', label: 'Colour', onlyWhen: {colours: ['One colour']}},
+      speed: {kind: 'number', min: 0.25, max: 3, step: 0.05, default: 1, label: 'Speed'},
+      // how far a particle drifts out over its life
+      spread: {kind: 'number', min: 0, max: 0.2, step: 0.005, default: 0.03, label: 'Spread', percentOfHeight: true},
+      area: {kind: 'choice', options: ['Edge', 'Inside', 'Both'], default: 'Both', label: 'Area'},
+      style: {kind: 'choice', options: ['Glitter', 'Sparkle', 'Dust'], default: 'Glitter', label: 'Style'},
+    },
+    styles: {
+      Glitter: {style: 'Glitter', density: 120, size: 0.014, speed: 1, spread: 0.03, area: 'Both'},
+      Sparkle: {style: 'Sparkle', density: 40, size: 0.035, speed: 0.8, spread: 0.04, area: 'Edge'},
+      Dust: {style: 'Dust', density: 250, size: 0.008, speed: 0.5, spread: 0.08, area: 'Both'},
+    },
+    seeded: true,
+  },
   Outline: {
     params: {
       width: {kind: 'number', min: 0.002, max: 0.05, step: 0.001, default: 0.006, label: 'Width', percentOfHeight: true},

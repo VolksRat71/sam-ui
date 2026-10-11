@@ -29,6 +29,7 @@ import {
   Humidity,
   Image,
   Lasso,
+  MagicWand,
   Opacity,
   Overlay,
   TextCreation,
@@ -79,6 +80,7 @@ export const highlightEffects: DemoEffect[] = [
   {title: 'Burst', Icon: Asterisk, effectName: 'Burst'},
   {title: 'Spotlight', Icon: CenterCircle, effectName: 'Scope'},
   {title: 'Outline', Icon: Lasso, effectName: 'Outline'},
+  {title: 'Glitter', Icon: MagicWand, effectName: 'Glitter'}, // sam-ui: particles on and around the subject
 ];
 
 export const moreEffects: DemoEffect[] = [

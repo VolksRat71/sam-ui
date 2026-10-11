@@ -63,6 +63,8 @@ export type EffectFrameContext = {
   duration?: number;
   /** Pictures the clips use, by their key (state/effectImages.ts); missing ones are not in this browser (sam-ui). */
   images?: ReadonlyMap<string, ImageBitmap>;
+  /** Its clip's id as a number (clipSeed), set for effects whose randomness is the clip's own (EffectSpec.seeded) (sam-ui). */
+  seed?: number;
   actionPoint: EffectActionPoint | null;
 };
 
@@ -78,6 +80,15 @@ export function effectTime(context: EffectFrameContext): number {
  */
 export function effectFrame(context: EffectFrameContext): number {
   return effectTime(context) * 24;
+}
+
+/** A clip id as a 32-bit seed (FNV-1a): the same id, the same particles, wherever the clip is drawn (sam-ui). */
+export function clipSeed(id: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < id.length; i++) {
+    h = Math.imul(h ^ id.charCodeAt(i), 0x01000193);
+  }
+  return h >>> 0;
 }
 
 export interface Effect {
