@@ -60,7 +60,8 @@
 //       play/pause, a jump from far away and back, and on a fresh worker (cold
 //       frame cache); its clip's first frame looks as B on Original (no copies
 //       from before the clip), the first copy appears `spacing` frames later; a
-//       tinted Strobe's export matches the preview (A on Original) within B7's tolerance
+//       tinted Strobe's export matches the preview (A on Original) within B7's tolerance;
+//       Echo on A (the person, the top layer) leaves the ball's pixels inside its mask as they are
 //   OB  the layer Blur draws on A, its settings carry the tracking caveat, and a
 //       larger radius changes it; with the background Blur under it, frames 31 and
 //       101 (A in different places) differ as the video does there, and each
@@ -1114,7 +1115,8 @@ await step('EC', async () => {
   const first = compare(orig[100], await cap('EC-5_echo-from-f101_f101'));
   await seekTo(103);
   const later = compare(orig[103], await cap('EC-6_echo-from-f101_f104'));
-  check('EC', start === 100 && same(first) && differs(later), `a clip starting at frame 101 starts clean (${first.changedPct} % off B on Original), its first copy shows on frame 104 (${later.changedPct} %)`, {start, first, later});
+  // (only a sliver of that copy shows: it passes behind the person, who is in front of every copy)
+  check('EC', start === 100 && first.changedPct === 0 && later.changedPct > 0, `a clip starting at frame 101 starts clean (${first.changedPct} % off B on Original), its first copy shows on frame 104 (${later.changedPct} %)`, {start, first, later});
   await fx.locator('input[aria-label="First frame"]').fill('1');
   await setting('style', 'Strobe');
   await fx.getByRole('button', {name: 'Custom', exact: true}).click();
@@ -1131,6 +1133,23 @@ await step('EC', async () => {
   const frames = exportFrames(file, PARITY_FRAMES);
   const rows = PARITY_FRAMES.map((f, i) => ({frame: f + 1, ...stats(shots[i], frames[i])}));
   check('EC', rows.every(r => r.psnr >= tolerance), `export matches the preview: ${rows.map(r => `f${r.frame} ${r.psnr} dB`).join(', ')} (needs >= ${tolerance} dB)`, rows);
+  // Echo on A (the person, the top layer): its copies pass behind the ball too, whose pixels inside its mask stay as they are
+  const FE = 70;
+  const at = async (clips, name) => {
+    await putClips(clips);
+    await sel(A);
+    await jump(FE);
+    return pixels(await cap(name));
+  };
+  const probe = await at([clipOn(tA, 'Cutout', {style: 'Unchanged'}, 'pa'), clipOn(tB, 'EraseForeground', {style: 'Green'}, 'gb')], `EC-8_ball-mask-probe_f${FE + 1}`);
+  const framed = where(probe, (_r, _g, _b, x, y) => x >= 6 && y >= 6 && x < probe.w - 6 && y < probe.h - 6);
+  const ballMask = where(probe, (r, g, b) => g > 200 && r < 90 && b < 90);
+  const ball = and(morph(ballMask, probe.w, probe.h, 2, false), framed);
+  const plainE = await at([clipOn(tA, 'Cutout', {style: 'Unchanged'}, 'pa'), clipOn(tB, 'Cutout', {style: 'Unchanged'}, 'pb')], `EC-9_plain_f${FE + 1}`);
+  const echoA = await at([clipOn(tA, 'Echo', {style: 'Echo'}, 'ea'), clipOn(tB, 'Cutout', {style: 'Unchanged'}, 'pb')], `EC-10_person-echo_ball-original_f${FE + 1}`);
+  const kept = share(ball, i => off(echoA, plainE, i) <= PIXEL_TOL);
+  const drawn = share(and(not(ball), framed), i => off(echoA, plainE, i) > PIXEL_TOL);
+  check('EC', kept.n > 500 && kept.pct === 100 && drawn.n > 0 && drawn.pct > 0.1, `the person's copies stay behind the ball: inside its mask (eroded 2 px, ${kept.n} px) ${kept.pct} % unchanged; ${drawn.pct} % of the rest changed`, {kept, drawn});
   await clearClips();
 });
 
