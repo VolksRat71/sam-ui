@@ -11,7 +11,7 @@
 // keeps the doc in React state and in localStorage (v2 key; the v1
 // per-object map is only ever read, once).
 import type {EffectParams, EffectParamValue} from '@/common/components/video/effects/Effect';
-import {EFFECT_SPECS} from '@/common/components/video/effects/EffectParamSpecs';
+import {EFFECT_SPECS, paramShown} from '@/common/components/video/effects/EffectParamSpecs';
 import {readJson, writeJson} from '~/lib/storage';
 
 export type EffectTarget = {kind: 'object'; id: number} | {kind: 'background'};
@@ -131,6 +131,13 @@ export function normalizeParams(effect: string, raw: unknown): EffectParams {
 /** The picture keys `doc`'s clips use (any image setting), sorted, once each. */
 export function imageKeys(doc: EffectDoc): string[] {
   return [...new Set(doc.clips.flatMap(c => Object.values(c.params).filter(isImageHash)))].sort();
+}
+
+/** How many of `doc`'s clips draw a picture in `missing` (one this browser has no copy of): they draw their colour instead. */
+export function clipsMissingImages(doc: EffectDoc, missing: ReadonlySet<string>): number {
+  return doc.clips.filter(c =>
+    Object.entries(EFFECT_SPECS[c.effect]?.params ?? {}).some(([k, p]) => p.kind === 'image' && missing.has(String(c.params[k])) && paramShown(p, c.params)),
+  ).length;
 }
 
 /** `params` with style `style`'s preset applied. */

@@ -22,7 +22,10 @@
 // an effect that keeps the tracked subjects as they are (EffectSpec.subjects:
 // Replace background, Colour pop): it gets every layer's mask on the frame in
 // one pass (it draws their union), less layers a hidden group keeps off the
-// preview. Pictures the clips use (`images`, sent by the page) reach every
+// preview. Spotlight's darkened outside is drawn once a frame, just before
+// the first Spotlight pass, outside every Spotlight circle on the frame at
+// the strongest darken among them, so Spotlights never dim each other's
+// circles or darken the outside twice. Pictures the clips use (`images`, sent by the page) reach every
 // effect with the frame.
 //
 // Browsers cap live WebGL contexts (Chrome: 16 per page but 4 per worker,
@@ -39,7 +42,8 @@ import type {
 } from '@/common/components/video/effects/Effect';
 import {AbstractEffect} from '@/common/components/video/effects/Effect';
 import BaseGLEffect from '@/common/components/video/effects/BaseGLEffect';
-import {EFFECT_SPECS, styleIndex} from '@/common/components/video/effects/EffectParamSpecs';
+import {EFFECT_SPECS, numberParam, styleIndex} from '@/common/components/video/effects/EffectParamSpecs';
+import type ScopeGLEffect from '@/common/components/video/effects/ScopeGLEffect';
 import type {Effects} from '@/common/components/video/effects/Effects';
 import type {Tracklet} from '@/common/tracker/Tracker';
 import {CanvasForm} from 'pts';
@@ -67,6 +71,7 @@ type Ready = {effect: Effect; gl: WebGL2RenderingContext | null; setup?: Promise
 type Pass = {effect: string; params: EffectParams; time?: number; duration?: number; key: string; idx: number[]};
 
 const META_MASK_SLOTS = 3;
+const SPOTLIGHT = 'Scope';
 /** The Overlay and Original's first styles: an untouched object's look. */
 const TINT = normalizeParams(OVERLAY, {});
 const UNCHANGED = normalizeParams(ORIGINAL, {});
@@ -249,6 +254,8 @@ export default class ObjectHighlight extends AbstractEffect {
     }
 
     // objects with a mask on this frame, bottom layer first (ids the order does not name yet go below it)
+    const circles: Parameters<ScopeGLEffect['dim']>[2][number][] = [];
+    let darken = 0;
     const at = new Map(tracklets.map((t, i) => [t.id, i]));
     const listed = new Set(state.drawOrder);
     const ids = [...tracklets.map(t => t.id).filter(id => !listed.has(id)), ...state.drawOrder.filter(id => at.has(id))];
@@ -265,6 +272,10 @@ export default class ObjectHighlight extends AbstractEffect {
       for (const c of mine) {
         if (c.effect === OVERLAY || ready(c.effect)) {
           add(c.effect, c.params, c, i);
+          if (c.effect === SPOTLIGHT) {
+            circles.push({mask: context.masks[i], size: numberParam(SPOTLIGHT, 'size', c.params)});
+            darken = Math.max(darken, numberParam(SPOTLIGHT, 'darken', c.params));
+          }
         } else {
           add(OVERLAY, TINT, null, i); // unknown, or not set up yet
         }
@@ -292,6 +303,10 @@ export default class ObjectHighlight extends AbstractEffect {
         }
       } else {
         const effect = this._ready.get(p.effect)!.effect;
+        if (p.effect === SPOTLIGHT && darken > 0) {
+          (effect as unknown as ScopeGLEffect).dim(form, context, circles, darken);
+          darken = 0; // once a frame
+        }
         effect.setParams(p.params);
         effect.variant = styleIndex(p.effect, p.params);
         effect.apply(form, ctx, objects);
