@@ -1,5 +1,7 @@
 // sam-ui (Apache-2.0). Presentation adapter; existing components retain editing behavior.
-import {useEffect, useState, type ReactNode} from 'react';
+import {useEffect, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode} from 'react';
+import {readJson, writeJson} from '../../lib/storage';
+import {clampPanelLayout, DEFAULT_PANEL_LAYOUT, panelLimits, type PanelLayout} from './panelLayout';
 import {isAeVideo} from '../../state/aeBridge';
 import {objectName, NAME_MAX} from '../../state/fileNames';
 import type {StudioSessionApi} from '../../workspace/useStudioSession';
@@ -21,6 +23,63 @@ import './lined-live.css';
 
 type Props = {session: StudioSessionApi; videoPath: string; videoName: string; mode: LabelMode; onModeChange: (mode: LabelMode) => void; onExport: (choice: ExportChoice) => void; utilities: ReactNode; renderMedia: (locked: boolean) => ReactNode};
 export default function LinedWorkspace({session, videoPath, videoName, mode, onModeChange, onExport, utilities, renderMedia}: Props) {
+  const workspace = useRef<HTMLElement>(null);
+  const drag = useRef<{axis: keyof PanelLayout; pointer: number; origin: number; value: number} | null>(null);
+  const [bounds, setBounds] = useState({width: 1600, height: 1000});
+  const [layout, setLayout] = useState(DEFAULT_PANEL_LAYOUT);
+  const [layoutReady, setLayoutReady] = useState(false);
+  useEffect(() => {
+    const element = workspace.current;
+    if (element == null) return;
+    let initial = true;
+    const resize = () => {
+      const stored = initial ? readJson('sam-ui-lined:panels', DEFAULT_PANEL_LAYOUT) : undefined;
+      initial = false;
+      const next = {width: element.clientWidth, height: element.clientHeight};
+      setBounds(next);
+      setLayout(current => clampPanelLayout(stored === undefined ? current : stored, next.width, next.height));
+      setLayoutReady(true);
+    };
+    const observer = new ResizeObserver(resize);
+    observer.observe(element);
+    resize();
+    return () => observer.disconnect();
+  }, []);
+  useEffect(() => {if (layoutReady) writeJson('sam-ui-lined:panels', layout);}, [layout, layoutReady]);
+  const limits = panelLimits(bounds.width, bounds.height);
+  const updateLayout = (axis: keyof PanelLayout, value: number) => setLayout(current => clampPanelLayout({...current, [axis]: value}, bounds.width, bounds.height));
+  const finishDrag = (event: PointerEvent<HTMLDivElement>) => {
+    drag.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+  };
+  const separator = (axis: keyof PanelLayout) => {
+    const columns = axis === 'columns';
+    const base = columns ? .7438 : .51;
+    return <div className={`lined-panel-divider ${columns ? 'lined-panel-columns' : 'lined-panel-rows'}`} role="separator" tabIndex={0}
+      aria-label={columns ? 'Resize viewer and inspector' : 'Resize workspace and timeline'} aria-orientation={columns ? 'vertical' : 'horizontal'}
+      aria-controls={columns ? 'viewer inspector' : 'viewer inspector filmstrip timeline'} aria-valuemin={Math.round((base + Math.min(0, limits[axis].min)) * 100)} aria-valuemax={Math.round((base + Math.max(0, limits[axis].max)) * 100)} aria-valuenow={Math.round((base + layout[axis]) * 100)}
+      onPointerDown={event => {
+        if (event.button !== 0) return;
+        event.preventDefault(); event.currentTarget.focus(); event.currentTarget.setPointerCapture(event.pointerId);
+        drag.current = {axis, pointer: event.pointerId, origin: columns ? event.clientX : event.clientY, value: layout[axis]};
+      }} onPointerMove={event => {
+        const active = drag.current;
+        if (active == null || active.axis !== axis || active.pointer !== event.pointerId) return;
+        updateLayout(axis, active.value + ((columns ? event.clientX : event.clientY) - active.origin) / (columns ? bounds.width : bounds.height));
+      }} onPointerUp={finishDrag} onPointerCancel={finishDrag} onLostPointerCapture={() => {drag.current = null;}}
+      onDoubleClick={() => updateLayout(axis, 0)} onKeyDown={event => {
+        const negative = columns ? 'ArrowLeft' : 'ArrowUp', positive = columns ? 'ArrowRight' : 'ArrowDown';
+        const step = (event.shiftKey ? 40 : 10) / (columns ? bounds.width : bounds.height);
+        let value: number;
+        if (event.key === negative) value = layout[axis] - step;
+        else if (event.key === positive) value = layout[axis] + step;
+        else if (event.key === 'Home') value = limits[axis].min;
+        else if (event.key === 'End') value = limits[axis].max;
+        else if (event.key === 'Enter' || event.key === 'Escape') value = 0;
+        else return;
+        event.preventDefault(); event.stopPropagation(); updateLayout(axis, value);
+      }} />;
+  };
   const [toolsOpen, setToolsOpen] = useState(false);
   const [looksOpen, setLooksOpen] = useState(false);
   const [inspector, setInspector] = useState<HTMLDivElement | null>(null);
@@ -32,7 +91,8 @@ export default function LinedWorkspace({session, videoPath, videoName, mode, onM
   const status = selected == null ? 'Select a layer' : trackPresentation(selected.state, selected.running).label;
   const color = selected?.color ?? '#b3b4b6';
   const saveName = () => {if (selected != null && nameDraft != null) session.renameObject(selected.id, nameDraft); setNameDraft(null);};
-  return <main className="ls-kit lined-editor" aria-label="Rotoscoping workspace">
+  return <main ref={workspace} className="ls-kit lined-editor" aria-label="Rotoscoping workspace" data-panels-resized={layout.columns !== 0 || layout.rows !== 0}
+    style={{'--lined-column-delta': `${layout.columns * 100}cqw`, '--lined-row-delta': `${layout.rows * 100}cqh`} as CSSProperties}>
     <header id="slate" className="ls-slate">
       <button id="app-name" className="lined-brand" onClick={() => setToolsOpen(open => !open)} aria-expanded={toolsOpen} aria-controls="workspace-tools">sam-ui studio</button>
       <SlateText id="clip-name" className="ls-slate-clip">{videoName.replace(/\.mp4$/i, '')}</SlateText>
@@ -72,8 +132,10 @@ export default function LinedWorkspace({session, videoPath, videoName, mode, onM
     </section>
     <LiveFilmstrip session={session} />
     <section id="timeline" className="lined-timeline" aria-label="Layers and exact frame coverage"><Timeline session={session} inspector={inspector} presentation="lined" toolsOpen={toolsOpen} /></section>
+    {separator('columns')}{separator('rows')}
     <aside id="workspace-tools" className="lined-tools" hidden={!toolsOpen} aria-label="Workspace controls">
       <button className="button" onClick={() => setToolsOpen(false)}>Close workspace controls</button>
+      <button className="button" onClick={() => setLayout(DEFAULT_PANEL_LAYOUT)}>Reset panel sizes</button>
       {utilities}
       <details open><summary>Layer actions</summary><div ref={setInspector} /></details>
       <details><summary>Media</summary>{renderMedia(session.state.jobs.length > 0)}</details>
