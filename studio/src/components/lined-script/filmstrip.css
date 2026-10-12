@@ -1,0 +1,6 @@
+.ls-filmstrip{position:relative;background:#101215;touch-action:none;cursor:ew-resize;user-select:none}
+.ls-filmstrip-scrub{position:absolute;inset:0;z-index:1}
+.ls-kit .ls-filmstrip-scrub:focus-visible{z-index:1}
+.ls-filmstrip>button{position:relative;z-index:3}
+.ls-frame-thumbnail{padding:0;border:0;background:#101215;overflow:hidden;pointer-events:none}
+.ls-filmstrip-playhead{position:absolute;top:0;width:2px;height:100%;background:var(--ls-blue);display:block;pointer-events:none;z-index:2}
