@@ -5,6 +5,7 @@
 // in click order, and each ends with a sync from objectTracks, the backend's
 // word on every object's track state. Track jobs run beside them: the backend
 // serves clicks between a job's frames, so nothing locks while jobs run.
+import {mattePreview, reconcilePreviewImages, type MatteView} from '~/state/matteView';
 import type {
   DecodeEvent,
   FrameUpdateEvent,
@@ -1198,6 +1199,10 @@ export default function useStudioSession(video: VideoItem) {
   // so an older build keeps its own copy. docRef is the doc as of the last
   // edit, so edits in one tick build on each other.
   const [effectDoc, setEffectDoc] = useState<EffectDoc | null>(null);
+  const [matteView, setMatteView] = useState<MatteView>('overlay');
+  useEffect(() => {
+    if (state.activeId == null || !state.objects.some(o => o.id === state.activeId)) setMatteView('overlay');
+  }, [state.activeId, state.objects]);
   const docRef = useRef<EffectDoc | null>(null);
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
   /**
@@ -1252,12 +1257,9 @@ export default function useStudioSession(video: VideoItem) {
       clips.saveEffectDoc(video.path, effectDoc);
     }
   }, [video.path, effectDoc]);
-  useEffect(() => {
-    if (effectDoc != null) {
-      const drawOrder = drawKey === '' ? [] : drawKey.split(',').map(Number);
-      bridge?.call('setEffectDoc', {doc: effectDoc, drawOrder}).catch(error => setWarning(message(error)));
-    }
-  }, [bridge, effectDoc, drawKey]);
+  const previewDoc = useMemo(() => mattePreview(effectDoc, matteView, state.activeId, idsKey === '' ? [] : idsKey.split(',').map(Number), meta.numFrames), [effectDoc, matteView, state.activeId, idsKey, meta.numFrames]);
+  const previewDocRef = useRef(previewDoc);
+  previewDocRef.current = previewDoc;
 
   // Pictures the clips use (Replace background), from this browser's store
   // (state/effectImages.ts), sent to the worker once each, and again to a new
@@ -1265,6 +1267,13 @@ export default function useStudioSession(video: VideoItem) {
   // picture no clip uses). One this browser lacks, or cannot decode, is in
   // `missingImages` with why: the clip draws its colour.
   const sentImages = useRef(new Set<string>());
+  const imageQueue = useRef<Promise<unknown>>(Promise.resolve());
+  const queueImages = useCallback(<T,>(run: () => Promise<T>): Promise<T> => {
+    // A failed upload reports its error to the caller; later preview edits still run.
+    const next = imageQueue.current.catch(() => {}).then(run);
+    imageQueue.current = next;
+    return next;
+  }, []);
   const [missingImages, setMissingImages] = useState<ReadonlyMap<string, ImageProblem>>(new Map());
   useEffect(() => {
     sentImages.current = new Set();
@@ -1272,11 +1281,9 @@ export default function useStudioSession(video: VideoItem) {
   const sendImages = useCallback(
     async (doc: EffectDoc | null) => {
       const keys = clips.imageKeys(doc ?? clips.EMPTY_DOC);
-      if (doc === docRef.current) {
-        sentImages.current.forEach(k => !keys.includes(k) && sentImages.current.delete(k));
-      }
+      const sent = sentImages.current;
       for (const key of keys) {
-        if (bridge == null || sentImages.current.has(key)) {
+        if (bridge == null || sent.has(key)) {
           continue;
         }
         const image = await loadEffectImage(key);
@@ -1287,7 +1294,7 @@ export default function useStudioSession(video: VideoItem) {
           } finally {
             image.close(); // the worker has its own copy
           }
-          sentImages.current.add(key);
+          sent.add(key);
         }
         setMissingImages(m => {
           if ((m.get(key) ?? null) === problem) {
@@ -1305,10 +1312,18 @@ export default function useStudioSession(video: VideoItem) {
     },
     [bridge],
   );
-  const imagesKey = effectDoc == null ? '' : clips.imageKeys(effectDoc).join(',');
   useEffect(() => {
-    void sendImages(docRef.current).catch(error => setWarning(message(error)));
-  }, [sendImages, imagesKey]);
+    if (bridge == null || previewDoc == null) return;
+    const drawOrder = drawKey === '' ? [] : drawKey.split(',').map(Number);
+    let cancelled = false;
+    void queueImages(async () => {
+      if (cancelled) return;
+      await bridge.call('setEffectDoc', {doc: previewDoc, drawOrder});
+      reconcilePreviewImages(sentImages.current, previewDoc);
+      await sendImages(previewDoc);
+    }).catch(error => setWarning(message(error)));
+    return () => {cancelled = true;};
+  }, [bridge, previewDoc, drawKey, sendImages, queueImages]);
   /** Store a picked picture and make it clip `id`'s image (one undo step); a refusal becomes the warning. */
   const pickEffectImage = useCallback(
     async (id: string, file: File) => {
@@ -1318,12 +1333,11 @@ export default function useStudioSession(video: VideoItem) {
         if (clip != null) {
           editDoc(d => clips.updateClip(d, id, {params: {...clip.params, image: key}}), ownStep());
         }
-        await sendImages(docRef.current); // also when the key is unchanged: a missing picture picked again
       } catch (error) {
         setWarning(message(error));
       }
     },
-    [editDoc, sendImages, meta.width, meta.height],
+    [editDoc, meta.width, meta.height],
   );
 
   /** Add a clip of `effect` on `target` at the playhead (3 s, clamped to the end) on top of its clips, and select it. */
@@ -1615,17 +1629,34 @@ export default function useStudioSession(video: VideoItem) {
         throw new Error('no session');
       }
       setExportProgress(0);
+      const doc = docRef.current ?? clips.EMPTY_DOC;
       try {
         const drawOrder = orderedObjects(stateRef.current).map(o => o.id).reverse();
-        const doc = docRef.current ?? clips.EMPTY_DOC;
-        await sendImages(doc);
-        const buffer = await bridge.call('exportVideo', {doc, drawOrder, untouched});
+        let rendered: Promise<ArrayBuffer> | undefined;
+        await queueImages(async () => {
+          await sendImages(doc);
+          // Start the export before a later preview can free its authored pictures.
+          rendered = bridge.call('exportVideo', {doc, drawOrder, untouched});
+        });
+        const buffer = await rendered!;
         return new Blob([buffer], {type: 'video/mp4'});
       } finally {
-        setExportProgress(null);
+        try {
+          await queueImages(async () => {
+            const preview = previewDocRef.current;
+            // Export finish may have freed these before a queued preview regained them.
+            clips.imageKeys(doc).forEach(key => sentImages.current.delete(key));
+            reconcilePreviewImages(sentImages.current, preview);
+            await sendImages(preview);
+          });
+        } catch (error) {
+          setWarning(message(error));
+        } finally {
+          setExportProgress(null);
+        }
       }
     },
-    [bridge, sendImages],
+    [bridge, sendImages, queueImages],
   );
 
   // Where SAM 2 and SAM 3 disagree, for objects both track with current
@@ -2125,6 +2156,8 @@ export default function useStudioSession(video: VideoItem) {
     return result;
   };
   return {
+    matteView,
+    setMatteView,
     detailRequest,
     bridge,
     state,

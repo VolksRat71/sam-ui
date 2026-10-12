@@ -56,12 +56,13 @@ import ObjectsSection from './ObjectsSection';
 import EffectClipBand from './EffectClipBand';
 import {sameTarget, type EffectTarget} from '~/state/effectClips';
 import LaneActions from './LaneActions';
+import LinedInspectionMarks from './lined-script/LinedInspectionMarks';
 import {reviewSpans} from './reviewPresentation';
 import {ReviewGlyph} from './ReviewSection';
 
 const FILMSTRIP_HEIGHT = 44;
 
-type Props = {session: StudioSessionApi; actions?: ReactNode; inspector?: HTMLElement | null};
+type Props = {session: StudioSessionApi; actions?: ReactNode; inspector?: HTMLElement | null; presentation?: 'lined'; toolsOpen?: boolean};
 
 function useWidth() {
   const ref = useRef<HTMLDivElement>(null);
@@ -94,16 +95,17 @@ function candidatesOf(o: StudioObject | undefined): Mark[] {
   return o?.marks.filter(m => m.state === CANDIDATE) ?? [];
 }
 
-export default function Timeline({session, actions, inspector}: Props) {
+export default function Timeline({session, actions, inspector, presentation, toolsOpen}: Props) {
   const {bridge, meta, frame, playing, state, tracklets, seek, togglePlay} = session;
   const n = meta.numFrames;
   const {ref: trackRef, width} = useWidth();
   const filmstripRef = useRef<HTMLCanvasElement>(null);
+  const [layerHeader, setLayerHeader] = useState<HTMLDivElement | null>(null);
   const dragging = useRef(false);
   const [selection, setSelectionState] = useState<Selection | null>(null);
   const [picked, setPicked] = useState<Picked | null>(null);
   // the legend folds behind a toggle on a phone, where it would crowd out the lanes
-  const [labelWidth, setLabelWidth] = useState(320);
+  const [labelWidth, setLabelWidth] = useState(presentation === 'lined' ? 332 : 320);
   const [legendOpen, setLegendOpen] = useState(false);
   const laneDrag = useRef<{id: number; from: number; x: number; moved: boolean} | null>(null);
   // a drag selection and a picked candidate are never both open
@@ -206,7 +208,7 @@ export default function Timeline({session, actions, inspector}: Props) {
 
   // Meta's filmstrip, drawn by the worker once decoding is done
   useEffect(() => {
-    if (bridge == null || !meta.decoded || width < 1) {
+    if (presentation === 'lined' || bridge == null || !meta.decoded || width < 1) {
       return;
     }
     let cancelled = false;
@@ -227,7 +229,7 @@ export default function Timeline({session, actions, inspector}: Props) {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [bridge, meta.decoded, width]);
+  }, [bridge, meta.decoded, width, presentation]);
 
   function frameAt(event: PointerEvent<HTMLDivElement>): number {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -235,7 +237,12 @@ export default function Timeline({session, actions, inspector}: Props) {
     return rect.width <= 0 || n <= 1 ? 0 : Math.round((x / rect.width) * (n - 1));
   }
 
-  const ticks = n > 0 ? tickFrames(n, width) : [];
+  const ticks = n > 0 ? (presentation === 'lined' ? linedTickFrames(n, width) : tickFrames(n, width)) : [];
+  const majorTicks = new Set(ticks);
+  const minorStep = ticks.length > 2 ? Math.max(1, Math.round((ticks[2] - ticks[1]) / 5)) : 1;
+  const minorTicks = presentation === 'lined' && n > 1
+    ? Array.from({length: Math.floor((n - 1) / minorStep)}, (_, i) => (i + 1) * minorStep - 1).filter(t => !majorTicks.has(t))
+    : [];
   const span = selection == null ? null : {a: Math.min(selection.start, selection.end), b: Math.max(selection.start, selection.end)};
   const covered = selected != null && span != null ? spanKinds(timelineView(selected.ranges, selected.marks), span.a, span.b) : null;
   const active = state.objects.find(o => o.id === state.activeId);
@@ -247,7 +254,7 @@ export default function Timeline({session, actions, inspector}: Props) {
 
   return (
     <div
-      className="timeline"
+      className={presentation === 'lined' ? 'timeline lined-live-timeline' : 'timeline'} data-tools-open={toolsOpen === true}
       onKeyDown={e => {
         // with focus in the timeline: Delete or Backspace removes the selected effect clip (a focused clip handles its own),
         // S splits it at the playhead, D duplicates it
@@ -263,7 +270,7 @@ export default function Timeline({session, actions, inspector}: Props) {
           else session.duplicateClip(id);
         }
       }}>
-      <div className="timeline-tools">
+      <div className="timeline-tools" hidden={presentation === 'lined' && !toolsOpen && selection == null && picked == null}>
       <div className="suite-timeline-header">
         <strong>Layers</strong><span className="muted">{state.objects.length}</span>
         {actions}
@@ -417,8 +424,8 @@ export default function Timeline({session, actions, inspector}: Props) {
             session.selectObject(o.id);
           }
         }}>
-        <div className="suite-ruler">
-          <div className="lane-label scrub-label">Layer / keyframes</div>
+        <div className="suite-ruler" id={presentation === 'lined' ? 'ruler' : undefined}>
+          <div className="lane-label scrub-label" id={presentation === 'lined' ? 'layers-heading' : undefined}>{presentation === 'lined' ? `Layers (${state.objects.length + 1})` : 'Layer / keyframes'}{presentation === 'lined' && <div ref={setLayerHeader} />}</div>
           <div className="lane-tracks" ref={trackRef}>
           <div
             className="scrubber"
@@ -439,7 +446,7 @@ export default function Timeline({session, actions, inspector}: Props) {
               dragging.current = false;
               e.currentTarget.releasePointerCapture(e.pointerId);
             }}>
-            <canvas ref={filmstripRef} className="filmstrip" />
+            {presentation !== 'lined' && <canvas ref={filmstripRef} className="filmstrip" />}
                 {reviewSpans(session.review?.queue ?? [])
                   .map(span => { const e = span.peak; return (
                     <button
@@ -456,9 +463,11 @@ export default function Timeline({session, actions, inspector}: Props) {
                       <ReviewGlyph reviewed={e.reviewed} size={9} />
                     </button>
                   ); })}
+            {presentation === 'lined' && <span className="lined-ruler-playhead" id="playhead-label" style={{left: pos(frame)}}>{frame + 1}</span>}
             <div className="ticks">
+              {minorTicks.map(t => <span key={`minor-${t}`} className="lined-minor-tick" aria-hidden="true" style={{left: pos(t)}} />)}
               {ticks.map(t => (
-                <span key={t} className="tick" style={{left: pos(t)}}>
+                <span key={t} className="tick" id={presentation === 'lined' ? `ruler-label-${t + 1}` : undefined} style={{left: pos(t)}}>
                   {t + 1}
                 </span>
               ))}
@@ -466,7 +475,7 @@ export default function Timeline({session, actions, inspector}: Props) {
           </div>
           </div>
         </div>
-          <ObjectsSection session={session} inspector={inspector} renderLane={o => {
+          <ObjectsSection session={session} inspector={inspector} addLayerHost={presentation === 'lined' ? layerHeader : undefined} renderLane={o => {
             const lane = tracklets.get(o.id);
             const sel = selection?.id === o.id && span != null ? span : null;
             const effects = clipsOf({kind: 'object', id: o.id});
@@ -520,6 +529,7 @@ export default function Timeline({session, actions, inspector}: Props) {
                 <LaneActions name={objectName(o)} disabled={n <= 0 || session.busy || session.status !== 'ready' || o.running || o.state === 'tracking'} onAbsent={() => session.markAbsentUntilNextSeed(o.id, frame)} />
                 {n > 0 && <div className="playhead" style={{left: pos(frame)}} />}
                 <div className="swimlane-line" style={{background: o.color}} />
+                {presentation === 'lined' && <LinedInspectionMarks session={session} objectId={o.id} />}
                 {lane?.segments.map(([a, b]) => (
                   <div
                     key={a}
@@ -616,19 +626,19 @@ export default function Timeline({session, actions, inspector}: Props) {
                 ))}
               </div>
               {effects.length > 0 && <>
-                <div className="fx-label" onClick={e => e.stopPropagation()}>Effects <span className="muted">{effects.length}</span></div>
+                <div className="fx-label" onClick={e => e.stopPropagation()}>{presentation === 'lined' ? 'Looks' : 'Effects'} <span className="muted">{effects.length}</span></div>
                 <EffectClipBand clips={effects} name={objectName(o)} session={session} pos={pos} />
               </>}
             </>);
           }} />
-          {backgroundClips.length > 0 && (
+          {(backgroundClips.length > 0 || presentation === 'lined') && (
             <div className="object-row fx-background-row">
               <div className="layer-controls"><div className="layer-summary"><span className="layer-swatch" aria-hidden="true" />Background</div></div>
-              <EffectClipBand clips={backgroundClips} name="Background" session={session} pos={pos} />
+              {backgroundClips.length > 0 ? <EffectClipBand clips={backgroundClips} name="Background" session={session} pos={pos} /> : <div className="swimlane lined-background"><div className="swimlane-line" style={{background: '#b3b4b6'}} /></div>}
             </div>
           )}
       </div>
-      {session.ordered.length > 0 && (
+      {session.ordered.length > 0 && presentation !== 'lined' && (
         <div className={`lane-footer${legendOpen ? ' open' : ''}`}>
           <button
             type="button"
@@ -707,5 +717,20 @@ function tickFrames(n: number, width: number): number[] {
   for (let f = 0; f < n; f += step) {
     out.push(f);
   }
+  return out;
+}
+
+/** Whole-clip ruler uses displayed frame numbers and always includes both endpoints. */
+function linedTickFrames(n: number, width: number): number[] {
+  if (n <= 1) return [0];
+  const maxIntervals = Math.max(2, Math.floor((width > 0 ? width : 1250) / 110));
+  const steps = [1, 2, 5, 10, 25, 50, 100, 250, 500, 1000];
+  const step = steps.find(s => (n - 1) / s <= maxIntervals) ?? Math.ceil((n - 1) / maxIntervals / 1000) * 1000;
+  const out = [0];
+  for (let displayed = step; displayed < n; displayed += step) {
+    const index = displayed - 1;
+    if (index > 0 && (n - 1 - index) * (width > 0 ? width : 1250) / (n - 1) >= 40) out.push(index);
+  }
+  out.push(n - 1);
   return out;
 }

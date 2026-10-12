@@ -258,10 +258,43 @@ const clickAt = async (nx, ny) => {
   await page.mouse.click(b.x + nx * b.w, b.y + ny * b.h);
 };
 const settle = () => page.waitForFunction(() => !/Updating/.test(document.querySelector('.topbar-status')?.innerText ?? ''), null, {timeout: 180000});
+const openMedia = async () => {
+  await page.waitForSelector('.dropzone', {state: 'attached', timeout: 60000});
+  const brand = page.locator('#app-name');
+  if (await brand.count()) {
+    if (await brand.getAttribute('aria-expanded') !== 'true') await brand.click();
+    const media = page.locator('#workspace-tools details').filter({has: page.locator('summary', {hasText: /^Media$/})});
+    if (!(await media.evaluate(el => el.open))) await media.locator('summary').click();
+  }
+  await page.waitForSelector('.dropzone', {timeout: 60000});
+  const wording = await page.locator('.dropzone-button').innerText();
+  if (!/Open a video.*stays in this browser/s.test(wording)) throw new Error('Effects setup must open local browser media, not upload to a backend');
+};
+const closeTools = async () => {
+  const brand = page.locator('#app-name');
+  if (await brand.count() && await brand.getAttribute('aria-expanded') === 'true') await page.getByRole('button', {name: 'Close workspace controls', exact: true}).click();
+};
+const openLooks = async () => {
+  const looks = page.locator('#looks-heading');
+  if (await looks.count() && await looks.getAttribute('aria-expanded') !== 'true') await looks.click();
+};
+const closeLooks = async () => {
+  const looks = page.locator('#looks-heading');
+  if (await looks.count() && await looks.getAttribute('aria-expanded') === 'true') await looks.click();
+};
 const opened = async () => {
   await page.waitForSelector('.engine-button', {timeout: 60000});
   await page.waitForFunction(() => !document.querySelector('.stage-overlay'), null, {timeout: 60000});
-  await page.waitForFunction(() => !/decoding/.test(document.querySelector('.frame-counter')?.innerText ?? ''), null, {timeout: 120000});
+  await page.waitForFunction(() => {
+    const strip = document.getElementById('filmstrip');
+    if (strip != null) {
+      const canvases = [...strip.querySelectorAll('canvas')];
+      return canvases.length > 0 && canvases.every(canvas => canvas.height === 84);
+    }
+    return !/decoding/.test(document.querySelector('.frame-counter')?.innerText ?? '');
+  }, null, {timeout: 120000});
+  await closeTools();
+  await openLooks();
   await page.waitForTimeout(1000);
 };
 const reload = async () => {
@@ -270,26 +303,45 @@ const reload = async () => {
   await opened();
   await page.waitForFunction(() => document.querySelectorAll('.swimlane-segment').length >= 2, null, {timeout: 60000});
 };
-const frame = async () => Number(await page.$eval('.frame-counter strong', e => e.innerText)) - 1;
+const frame = async () => page.evaluate(() => Number((document.querySelector('#current-frame strong') ?? document.querySelector('.frame-counter strong'))?.innerText) - 1);
 const seekTo = async n => {
   await page.evaluate(() => document.activeElement?.blur());
   for (let i = 0; i < 600; i++) {
     const f = await frame();
     if (f === n) break;
     await page.keyboard.press(f < n ? 'ArrowRight' : 'ArrowLeft');
-    await page.waitForFunction(f => Number(document.querySelector('.frame-counter strong')?.innerText) - 1 !== f, f, {timeout: 2000}).catch(() => {});
+    await page.waitForFunction(f => Number((document.querySelector('#current-frame strong') ?? document.querySelector('.frame-counter strong'))?.innerText) - 1 !== f, f, {timeout: 2000}).catch(() => {});
   }
-  await page.waitForFunction(n => Number(document.querySelector('.frame-counter strong')?.innerText) - 1 === n, n, {timeout: 10000});
+  await page.waitForFunction(n => Number((document.querySelector('#current-frame strong') ?? document.querySelector('.frame-counter strong'))?.innerText) - 1 === n, n, {timeout: 10000});
   await page.waitForTimeout(700);
 };
 // straight to frame n from wherever the playhead is (a click on the filmstrip, then arrows for the last few)
 const jump = async n => {
-  const b = await page.locator('.scrubber').boundingBox();
+  const looks = page.locator('#looks-heading');
+  const restoreLooks = await looks.count() && await looks.getAttribute('aria-expanded') === 'true';
+  if (restoreLooks) await looks.click(); // the open settings popover overlaps the filmstrip
+  const band = await page.locator('#filmstrip').count() ? page.locator('#filmstrip') : page.locator('.scrubber');
+  const b = await band.boundingBox();
   await page.mouse.click(b.x + ((n + 0.5) / FRAMES) * b.width, b.y + b.height / 2);
   await page.waitForTimeout(300);
   await seekTo(n);
+  if (restoreLooks) await openLooks();
 };
 const cap = async name => {
+  const slate = page.locator('.lined-editor #slate');
+  if (await slate.count()) {
+    const box = await slate.boundingBox();
+    if (box == null) throw new Error('Lined slate is not visible for capture');
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.evaluate(() => {
+      const active = document.activeElement;
+      if (active instanceof HTMLElement && active.closest('.preview') != null) active.blur();
+    });
+    await page.waitForFunction(() => {
+      const toolbar = document.querySelector('.lined-editor .preview-toolbar');
+      return toolbar != null && Number(getComputedStyle(toolbar).opacity) === 0;
+    }, null, {timeout: 5000});
+  }
   const png = await page.locator('.stage-canvas').screenshot();
   fs.writeFileSync(path.join(OUT, `${name}.png`), png);
   return png;
@@ -300,24 +352,41 @@ const doc = () =>
     return k == null ? null : JSON.parse(localStorage.getItem(k));
   });
 const sel = async i => {
-  const row = page.locator('.object-row').nth(i);
-  if (!(await row.evaluate(r => r.classList.contains('active')))) await row.locator('.layer-summary').click();
+  const row = page.locator('.object-row:has([data-lane])').nth(i);
+  const option = row.locator('[data-layer-option]');
+  const id = await option.getAttribute('data-layer-option');
+  if (await option.getAttribute('aria-selected') !== 'true') await row.locator('.layer-summary .layer-swatch').click();
+  await page.waitForFunction(id => document.querySelector('.object-row.active [data-layer-option]')?.getAttribute('data-layer-option') === id && document.querySelector(`[data-layer-option="${id}"]`)?.getAttribute('aria-selected') === 'true', id, {timeout: 10000});
   await page.waitForTimeout(300);
 };
 // group 0: the selected layer's tiles, 1: the background's
 const group = gi => page.locator('.effect-group').nth(gi);
 const tile = async (gi, title) => {
+  await openLooks();
+  const disclosure = group(gi).locator('.effect-group-title');
+  if (await disclosure.getAttribute('aria-expanded') !== 'true') await disclosure.click();
   await group(gi).locator('.effect-button', {hasText: new RegExp(`^${title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`)}).first().click();
   await page.waitForTimeout(500);
 };
 const addEffect = async (gi, title) => {
+  await openLooks();
+  const disclosure = group(gi).locator('.effect-group-title');
+  if (await disclosure.getAttribute('aria-expanded') !== 'true') await disclosure.click();
   await group(gi).locator('button:has-text("Add effect")').click();
   await tile(gi, title);
+};
+const clickClip = async locator => {
+  await closeLooks();
+  const clip = await locator.elementHandle();
+  if (clip == null) throw new Error('Effect clip target is missing');
+  await clip.click();
+  await openLooks();
+  await clip.focus(); // preserve the clicked clip for Delete and other timeline shortcuts
 };
 const clips = () => page.locator('.fx-clip').count();
 const clearClips = async () => {
   while ((await clips()) > 0) {
-    await page.locator('.fx-clip').first().click();
+    await clickClip(page.locator('.fx-clip').first());
     await page.keyboard.press('Delete');
     await page.waitForTimeout(300);
   }
@@ -325,6 +394,7 @@ const clearClips = async () => {
 };
 const fx = page.locator('.fx-settings');
 const setting = async (what, value) => {
+  await openLooks();
   if (['width', 'boil', 'radius'].includes(what)) await fx.locator(`input[type=number][aria-label^="${what[0].toUpperCase()}${what.slice(1)}"]`).fill(value);
   else if (what === 'last') await fx.locator('input[aria-label="Last frame"]').fill(value);
   else if (what === 'style') await fx.getByRole('button', {name: value, exact: true}).click();
@@ -425,7 +495,7 @@ await page.evaluate(async () => {
   for await (const name of root.keys()) await root.removeEntry(name, {recursive: true}).catch(() => {});
 });
 await page.reload();
-await page.waitForSelector('.dropzone', {timeout: 60000});
+await openMedia();
 await page.setInputFiles('.dropzone input[type=file]', CLIP);
 await page.waitForFunction(() => document.querySelector('.media-item.selected .media-name')?.title?.startsWith('local/'), null, {timeout: 120000});
 await opened();
@@ -446,10 +516,11 @@ await seekTo(0);
 await page.click('button:has-text("Add layer")');
 await clickAt(0.508, 0.444);
 await settle();
-await page.waitForFunction(() => document.querySelectorAll('.object-row').length === 2, null, {timeout: 60000});
+await page.waitForFunction(() => document.querySelectorAll('.object-row:has([data-lane])').length === 2, null, {timeout: 60000});
 const t0 = Date.now();
-await page.click('.cta');
-await page.waitForFunction(() => !document.querySelector('.job-chip') && document.querySelector('.cta')?.innerText === 'Nothing to track', null, {timeout: 600000});
+await closeLooks();
+await page.click(await page.locator('#track').count() ? '#track' : '.cta');
+await page.waitForFunction(() => !document.querySelector('.job-chip') && (document.querySelector('#track')?.title === 'Nothing to track' || document.querySelector('.cta')?.innerText === 'Nothing to track'), null, {timeout: 600000});
 const t1 = Date.now();
 // C: the tree trunk on frame 201 only (CB's third layer); untracked, so the other steps never see it
 await jump(FC);
@@ -457,11 +528,11 @@ await page.click('button:has-text("Add layer")');
 await clickAt(0.21, 0.36);
 await settle();
 await page.waitForFunction(() => document.querySelectorAll('[data-lane]').length === 3, null, {timeout: 60000});
-const rows = await page.$$eval('.object-row .layer-summary', rs => rs.map(r => r.innerText.replace(/\n/g, ' ')));
+const rows = await page.$$eval('.object-row:has([data-lane]) .layer-summary', rs => rs.map(r => r.innerText.replace(/\n/g, ' ')));
 check('setup', rows.length === 3 && rows.filter(r => /Tracked/.test(r)).length === 2, `two layers tracked in ${Math.round((t1 - t0) / 1000)} s, C on frame ${FC + 1} only ${JSON.stringify(rows)}`);
 // layer ids in creation order (A first); rows hold their frame lanes
 const [aId, bId, cId] = (await page.$$eval('[data-lane]', ls => ls.map(l => Number(l.dataset.lane)))).sort((x, y) => x - y);
-const rowOf = id => page.$$eval('.object-row', (rs, id) => rs.findIndex(r => r.querySelector(`[data-lane="${id}"]`) != null), id);
+const rowOf = id => page.$$eval('.object-row:has([data-lane])', (rs, id) => rs.findIndex(r => r.querySelector(`[data-lane="${id}"]`) != null), id);
 const [A, B] = [await rowOf(aId), await rowOf(bId)];
 console.log(`A (person): id ${aId}, row ${A}; B (ball): id ${bId}, row ${B}`);
 // B8 starts here: nothing below should segment or track until B4
@@ -501,7 +572,7 @@ await step('B1', async () => {
 await step('B5', async () => {
   // the Erase clip was added last: it draws over the Glow clip
   check('B5', differs(compare(glow, both)), 'the later clip (Erase) shows over the earlier one (Glow)', compare(glow, both));
-  await page.locator('.fx-clip.selected').click();
+  await clickClip(page.locator('.fx-clip.selected'));
   await page.keyboard.press('Delete');
   await page.waitForTimeout(500);
   const revealed = await cap('B5-1_erase-removed_f31');
@@ -513,7 +584,7 @@ await step('B5', async () => {
   await addEffect(0, 'Gradient');
   await addEffect(0, 'Erase');
   const gradThenErase = await cap('B5-2_gradient-then-erase_f31');
-  await page.locator('.fx-clip:not(.selected)').click(); // the Gradient clip
+  await clickClip(page.locator('.fx-clip:not(.selected)')); // the Gradient clip
   await page.keyboard.press('Delete');
   await page.waitForTimeout(500);
   const eraseOnly = await cap('B5-3_erase-only_f31');
@@ -686,7 +757,7 @@ const storedPicture = key =>
 // pick a picture for the background clip 'rb' in its settings; its new key
 const pickPicture = async file => {
   const old = await pictureKey();
-  await page.locator('.fx-clip[data-clip="rb"]').click();
+  await clickClip(page.locator('.fx-clip[data-clip="rb"]'));
   await fx.locator('input[type=file]').setInputFiles(file);
   await page.waitForFunction(old => {
     const k = Object.keys(localStorage).find(k => k.startsWith('sam-ui-studio:effects:v2:local/'));
@@ -772,7 +843,7 @@ await step('RB', async () => {
   await putClips([clipOn(tBG, 'ReplaceBackground', {style: 'Image', color: '#ff00ff'}, 'rb'), ...clear()]);
   await sel(A);
   await seekTo(F3);
-  await page.locator('.fx-clip[data-clip="rb"]').click();
+  await clickClip(page.locator('.fx-clip[data-clip="rb"]'));
   const picker = fx.locator('input[type=file]');
   const name = await picker.evaluate(e => e.labels?.[0]?.innerText ?? '');
   const before = await fx.locator('.fx-param .effect-note').innerText();
@@ -796,7 +867,7 @@ await step('RB', async () => {
   // Reset to defaults resets the settings and keeps the picture (content, not a setting)
   await putClips([clipOn(tBG, 'ReplaceBackground', {style: 'Image', color: '#00ff00', feather: 0.5, fit: 'Contain', image: key}, 'rb'), ...clear()]);
   await sel(A);
-  await page.locator('.fx-clip[data-clip="rb"]').click();
+  await clickClip(page.locator('.fx-clip[data-clip="rb"]'));
   await fx.getByRole('button', {name: /^Reset to/}).click();
   await page.waitForTimeout(500);
   const reset = (await doc()).clips.find(c => c.id === 'rb').params;
@@ -806,7 +877,7 @@ await step('RB', async () => {
   await putClips([clipOn(tBG, 'ReplaceBackground', {style: 'Image', color: '#ff00ff', image: 'ab'.repeat(32)}, 'rb'), ...clear()]);
   await sel(A);
   await seekTo(F3);
-  await page.locator('.fx-clip[data-clip="rb"]').click();
+  await clickClip(page.locator('.fx-clip[data-clip="rb"]'));
   const missing = pixels(await cap('RB-4_missing-picture_colour-instead_f101'));
   const said = await fx.locator('.fx-param .effect-note').innerText();
   const fallback = share(outside, i => offRgb(missing, i, [255, 0, 255]) <= PIXEL_TOL);
@@ -965,7 +1036,7 @@ await step('TT', async () => {
   await putClips([title({}), ...clear()]);
   await sel(A);
   await seekTo(F3);
-  await page.locator('.fx-clip[data-clip="tt"]').click();
+  await clickClip(page.locator('.fx-clip[data-clip="tt"]'));
   const field = fx.getByRole('textbox', {name: 'Text', exact: true});
   const frameBefore = await frame();
   const clipsBefore = (await doc()).clips.length;
@@ -1244,7 +1315,7 @@ await step('EC', async () => {
     check('EC', s.changedPct === 0, `frame 101 identical after ${what}: MAD ${s.mad}`, s);
   }
   // trimming its start to frame 101 keeps every frame as it was: frame 101 keeps its copies (they come from the animation's start, start - phase)
-  await page.locator('.fx-clip').first().click();
+  await clickClip(page.locator('.fx-clip').first());
   await fx.locator('input[aria-label="First frame"]').fill('101');
   await page.waitForTimeout(500);
   const trimmed = (await doc()).clips[0];
@@ -1262,7 +1333,7 @@ await step('EC', async () => {
   check('EC', first.changedPct === 0 && later.changedPct > 0, `a fresh clip starting at frame 101 starts clean (${first.changedPct} % off B on Original), its first copy shows on frame 104 (${later.changedPct} %)`, {first, later});
   await putClips([{...trimmed, start: 0, phase: 0}]);
   await sel(B);
-  await page.locator('.fx-clip').first().click();
+  await clickClip(page.locator('.fx-clip').first());
   await page.waitForTimeout(500);
   await setting('style', 'Strobe');
   await fx.getByRole('button', {name: 'Custom', exact: true}).click();
@@ -1506,7 +1577,7 @@ await step('S2', async () => {
   await seekTo(140);
   const plain = await cap('S2-dup-0_no-clip_f141');
   const d0 = await doc();
-  await page.locator(`.fx-clip[data-clip="${r.id}"]`).click();
+  await clickClip(page.locator(`.fx-clip[data-clip="${r.id}"]`));
   await fx.getByRole('button', {name: 'Duplicate', exact: true}).click();
   await page.waitForTimeout(600);
   const d1 = await doc();
@@ -1530,10 +1601,10 @@ await step('S2', async () => {
   await addEffect(0, 'Noisy');
   await seekTo(140);
   const fresh = await cap('S2-dup-4_fresh-noisy-from-f133_f141');
-  await page.locator('.fx-clip.selected').click();
+  await clickClip(page.locator('.fx-clip.selected'));
   await page.keyboard.press('Delete');
   await page.waitForTimeout(400);
-  await page.locator(`.fx-clip[data-clip="${r.id}"]`).click();
+  await clickClip(page.locator(`.fx-clip[data-clip="${r.id}"]`));
   await setting('last', '168');
   await seekTo(140);
   const carried = await cap('S2-dup-5_right-part-carried-on_f141');
@@ -1578,7 +1649,7 @@ await step('S2', async () => {
   await undo(true);
   const redoSel = await page.locator('.fx-clip.selected').getAttribute('data-clip');
   check('S2', JSON.stringify((await doc()).clips) === JSON.stringify(d1.clips) && identical(compare(gradientOver, await cap('S2-order-3_redone_f31'))) && redoSel === erase.id, `Shift-Cmd-Z swaps them again, Erase still selected (${redoSel})`);
-  await page.locator(`.fx-clip[data-clip="${erase.id}"]`).click();
+  await clickClip(page.locator(`.fx-clip[data-clip="${erase.id}"]`));
   await fx.getByRole('button', {name: 'Move up', exact: true}).click();
   await page.waitForTimeout(600);
   const up = await cap('S2-order-4_move-up_f31');
@@ -1587,7 +1658,7 @@ await step('S2', async () => {
   // which one is on top, as B5 measures it (Gradient's LUT is random per setup, so no rebuilt reference):
   // with Erase on top Gradient barely shows against Erase alone; moved over it, it does
   const gradient = d0.clips.find(c => c.effect === 'VibrantMask');
-  await page.locator(`.fx-clip[data-clip="${gradient.id}"]`).click();
+  await clickClip(page.locator(`.fx-clip[data-clip="${gradient.id}"]`));
   await page.keyboard.press('Delete');
   await page.waitForTimeout(500);
   const eraseOnly = await cap('S2-order-5_erase-only_f31');
@@ -1612,10 +1683,12 @@ await step('B4', async () => {
   // viewer shrinks it: mark B's last frame absent first, so every capture has the strip
   const markAbsent = async (id, f) => {
     await seekTo(f);
+    await closeLooks();
     await page.locator(`[data-lane="${id}"] .lane-actions button`).click();
     await page.click('.lane-action-menu button:has-text("Mark absent")');
     await page.waitForFunction(id => document.querySelectorAll(`[data-lane="${id}"] .swimlane-absent`).length > 0, id, {timeout: 20000});
     await page.waitForTimeout(800);
+    await openLooks();
   };
   await markAbsent(bId, FRAMES - 1);
   await sel(B);

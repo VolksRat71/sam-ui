@@ -19,7 +19,7 @@ import type {StudioSessionApi} from '~/workspace/useStudioSession';
 
 export type ExportChoice = 'videos' | 'folder' | 'vectors' | 'ae' | 'effects';
 
-type Props = {session: StudioSessionApi; videoPath: string; onChoose: (c: ExportChoice) => void};
+type Props = {session: StudioSessionApi; videoPath: string; onChoose: (c: ExportChoice) => void; lined?: boolean};
 
 /** A menu item that cannot be used yet: why on hover or focus, with a link when there is one. */
 function Unavailable({label, why, href}: {label: string; why: string; href?: string}) {
@@ -41,7 +41,7 @@ function Unavailable({label, why, href}: {label: string; why: string; href?: str
   );
 }
 
-export default function ExportMenu({session, videoPath, onChoose}: Props) {
+export default function ExportMenu({session, videoPath, onChoose, lined}: Props) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   const {state, meta} = session;
@@ -73,8 +73,8 @@ export default function ExportMenu({session, videoPath, onChoose}: Props) {
       : 'Written by the backend, under its export root';
 
   return (
-    <div className="export-menu" ref={root}>
-      <button className="button" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(o => !o)} disabled={!meta.decoded}>
+    <div className="export-menu" id={lined ? 'export' : undefined} ref={root}>
+      <button className={lined ? 'ls-button ls-export' : 'button'} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(o => !o)} disabled={!meta.decoded}>
         <Download size={16} /> Export <ChevronDown size={16} />
       </button>
       {open && (

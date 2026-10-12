@@ -5,8 +5,6 @@
 // along the bottom. Every divider drags; sizes are remembered per browser.
 import {Close, Renew} from '@carbon/icons-react';
 import {useEffect, useState, type ReactNode} from 'react';
-import {Panel, PanelGroup, PanelResizeHandle} from 'react-resizable-panels';
-import {panelStorage} from '~/lib/storage';
 import {videoDisplayName} from '~/lib/uploadNames';
 import {BROWSER_ENGINE, engineLabel} from '~/state/engines';
 import {objectName} from '~/state/fileNames';
@@ -18,16 +16,12 @@ import AgentActivity from './AgentActivity';
 import ConfirmModal from './ConfirmModal';
 import {DemoBanner, DemoTag, UnsupportedNotice} from './DemoNotice';
 import {pageNotice} from '~/state/notices';
-import EnginePicker from './EnginePicker';
-import EffectsSection from './EffectsSection';
-import ExportMenu, {type ExportChoice} from './ExportMenu';
+import {type ExportChoice} from './ExportMenu';
 import ExportPanel from './ExportPanel';
 import MaskExportModal from './MaskExportModal';
 import ExportVideoModal from './ExportVideoModal';
-import Preview, {type LabelMode} from './Preview';
-import ReviewSection from './ReviewSection';
-import Sidebar from './Sidebar';
-import Timeline from './Timeline';
+import {type LabelMode} from './Preview';
+import LinedWorkspace from './lined-script/LinedWorkspace';
 import UpdateBanner from './UpdateBanner';
 import ShortcutSheet from './ShortcutSheet';
 
@@ -38,15 +32,13 @@ type Props = {
 
 export default function Workspace({video, renderMedia}: Props) {
   const session = useStudioSession(video);
-  const {state, dirty, meta} = session;
-  const [inspector, setInspector] = useState<HTMLDivElement | null>(null);
+  const {state, meta} = session;
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [mode, setMode] = useState<LabelMode>('positive');
   const [confirmStartOver, setConfirmStartOver] = useState(false);
   const [exporting, setExporting] = useState<ExportChoice | null>(null);
   const videoName = videoDisplayName(video.path);
   const jobs = state.jobs;
-  const selectedLayer = state.objects.find(o => o.id === state.activeId);
   // no backend, or none of its engines can run: the browser engine is all there is
   const browserOnly = session.engines.length > 0 && session.engines.every(e => e.local || !e.available);
   const notice = pageNotice({backend: session.backend, webgpu: session.webgpu, browserOnly});
@@ -110,14 +102,10 @@ export default function Workspace({video, renderMedia}: Props) {
     return () => window.removeEventListener('keydown', onKey);
   }, [session, state.activeId]);
 
-  const trackLabel =
-    dirty.length === 0
-      ? 'Nothing to track'
-      : `Track ${dirty.length} ${dirty.length === 1 ? 'layer' : 'layers'}`;
-
   return (
     <div className="app">
-      <header className="topbar">
+      <LinedWorkspace session={session} videoPath={video.path} videoName={videoName} mode={mode} onModeChange={setMode} onExport={setExporting} renderMedia={renderMedia} utilities={
+<header className="topbar">
         <div className="brand">
           <span className="brand-mark" />
           sam-ui <span className="muted">studio</span>
@@ -191,7 +179,6 @@ export default function Workspace({video, renderMedia}: Props) {
             </button>
           )}
           {state.engine === BROWSER_ENGINE && !session.noEngine && <DemoTag />}
-          <ExportMenu session={session} videoPath={video.path} onChoose={setExporting} />
           <button
             className="button subtle"
             onClick={() => setConfirmStartOver(true)}
@@ -201,6 +188,7 @@ export default function Workspace({video, renderMedia}: Props) {
           </button>
         </div>
       </header>
+      } />
 
       {notice === 'unsupported' ? <UnsupportedNotice /> : <DemoBanner show={session.status === 'ready' && notice === 'demo'} />}
       <UpdateBanner />
@@ -213,62 +201,6 @@ export default function Workspace({video, renderMedia}: Props) {
           </button>
         </div>
       )}
-
-      <PanelGroup direction="vertical" autoSaveId="sam-ui-suite:rows" storage={panelStorage} className="main">
-        <Panel id="top" order={0} defaultSize={40} minSize={25}>
-          <PanelGroup direction="horizontal" autoSaveId="sam-ui-studio:cols" storage={panelStorage}>
-            <Panel id="preview" order={0} defaultSize={65} minSize={30}>
-              <Preview session={session} mode={mode} onModeChange={setMode} />
-            </Panel>
-            <PanelResizeHandle className="resize-handle vertical" />
-            <Panel id="sidebar" order={1} defaultSize={35} minSize={24} collapsible collapsedSize={0}>
-              <Sidebar
-                sections={[
-                  {
-                    id: 'review',
-                    title: 'Review',
-                    badge:
-                      session.review != null && session.review.queue.length > 0
-                        ? `${session.review.queue.filter(e => !e.reviewed).length} to check / ${session.review.queue.length}`
-                        : undefined,
-                    content: <ReviewSection session={session} />,
-                  },
-                  {
-                    id: 'info', title: 'Layer info',
-                    content: <>
-                      {selectedLayer == null && <p className="empty">Select a layer in the timeline.</p>}
-                      <div ref={setInspector} />
-                    </>,
-                  },
-                  {
-                    id: 'effects',
-                    title: 'Effects',
-                    content: (
-                      <EffectsSection session={session} />
-                    ),
-                  },
-                  {id: 'media', title: 'Media', content: renderMedia(jobs.length > 0)},
-                ]}
-              />
-            </Panel>
-          </PanelGroup>
-        </Panel>
-        <PanelResizeHandle className="resize-handle horizontal" />
-        <Panel id="timeline" order={1} defaultSize={60} minSize={30}>
-          <Timeline session={session} inspector={inspector} actions={<>
-          <EnginePicker session={session} />
-          <div className="track-action">
-            <button
-              className="button cta"
-              onClick={session.track}
-              disabled={dirty.length === 0 || session.busy}
-              title="Track the objects that are untracked or changed; running jobs keep theirs">
-              {trackLabel}
-            </button>
-          </div>
-          </>} />
-        </Panel>
-      </PanelGroup>
 
       {shortcutsOpen && <ShortcutSheet onClose={() => setShortcutsOpen(false)} />}
 

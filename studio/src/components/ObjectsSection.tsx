@@ -55,7 +55,7 @@ import {
 } from '~/state/objects';
 import type {StudioSessionApi} from '~/workspace/useStudioSession';
 
-type Props = {session: StudioSessionApi; renderLane?: (o: StudioObject) => ReactNode; inspector?: HTMLElement | null};
+type Props = {session: StudioSessionApi; renderLane?: (o: StudioObject) => ReactNode; inspector?: HTMLElement | null; addLayerHost?: HTMLElement | null};
 
 function StateBadge({o}: {o: StudioObject}) {
   const track = trackPresentation(o.state, o.running);
@@ -441,6 +441,11 @@ function ObjectRow({
             if (e.key === 'Enter' && inspector != null) {
               e.preventDefault(); e.stopPropagation();
               session.selectObject(o.id);
+              const linedName = document.querySelector<HTMLInputElement>('.lined-editor #layer-name');
+              if (linedName != null) {
+                requestAnimationFrame(() => linedName.focus());
+                return;
+              }
               document.getElementById('tab-info')?.click();
               const header = document.querySelector<HTMLButtonElement>('[data-section="info"] .section-header');
               if (header?.getAttribute('aria-expanded') === 'false') header.click();
@@ -814,12 +819,19 @@ function GroupBlock({
   );
 }
 
-export default function ObjectsSection({session, renderLane, inspector}: Props) {
+export default function ObjectsSection({session, renderLane, inspector, addLayerHost}: Props) {
   const {state, canAdd} = session;
   const [groupFilter, setGroupFilter] = useState('');
   const [dragged, setDragged] = useState<Dragged | null>(null);
   const layout = arrange(state.layout, state.objects.map(o => o.id));
   const byId = new Map(state.objects.map(o => [o.id, o]));
+  const addLayer = <button
+            className="button"
+            onClick={session.addObject}
+            disabled={!canAdd}
+            title={state.objects.length >= OBJECT_LIMIT ? `A video holds at most ${OBJECT_LIMIT} objects` : undefined}>
+            <Add size={16} /> Add layer
+          </button>;
   return (
     <div className="objects">
       <div className="objects-actions">
@@ -829,13 +841,7 @@ export default function ObjectsSection({session, renderLane, inspector}: Props) 
           {state.layout.groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
         </select></label>
         <span className="objects-buttons">
-          <button
-            className="button"
-            onClick={session.addObject}
-            disabled={!canAdd}
-            title={state.objects.length >= OBJECT_LIMIT ? `A video holds at most ${OBJECT_LIMIT} objects` : undefined}>
-            <Add size={16} /> Add layer
-          </button>
+          {addLayerHost != null ? createPortal(addLayer, addLayerHost) : addLayer}
           <button
             className="button subtle"
             onClick={() => session.addGroup()}

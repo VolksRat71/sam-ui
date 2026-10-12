@@ -29,6 +29,7 @@ type Props = {
   session: StudioSessionApi;
   mode: LabelMode;
   onModeChange: (mode: LabelMode) => void;
+  presentation?: 'lined';
 };
 
 function useFittedBox(aspect: number) {
@@ -55,7 +56,7 @@ function useFittedBox(aspect: number) {
   return {ref, box};
 }
 
-export default function Preview({session, mode, onModeChange}: Props) {
+export default function Preview({session, mode, onModeChange, presentation}: Props) {
   const {bridge, meta, state, frame, status, statusError, start} = session;
   const aspect = meta.width > 0 && meta.height > 0 ? meta.width / meta.height : 16 / 9;
   const {ref, box} = useFittedBox(aspect);
@@ -198,7 +199,7 @@ export default function Preview({session, mode, onModeChange}: Props) {
   const stroke = 2;
 
   return (
-    <div className="preview">
+    <div className="preview" id={presentation === 'lined' ? 'viewer-footage' : undefined}>
       <div className="preview-toolbar">
         <div className="points-toggle" role="group" aria-label="Click adds">
           <button
